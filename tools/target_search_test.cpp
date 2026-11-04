@@ -37,21 +37,27 @@
 //                   (fight_move_unseen_walked_past); after the kill the leg
 //                   goes on to its goal (fight_move_continues).
 //
-//   shared_sight    Retail's default shared sight (4f6770 / 4c66b0, D2): a
-//                   human's plane holds a same-team human ally's units' sight,
-//                   so an idle archer takes an enemy only its ally's scout
-//                   sees (allied_human_spots); a computer ally, a computer
-//                   player and an enemy-team player share nothing
-//                   (computer_never_shares, other_team_no_share); an AI
-//                   takeover stops the sharing (takeover_stops_sharing); an
+//   shared_sight    Shared sight (4f6770 / 4c66b0), widened by the owner's D2
+//                   decision to every ally, human or computer: a player's plane
+//                   holds every ally's units' sight and its explored bits their
+//                   exploration, so an idle archer takes an enemy only its
+//                   ally's scout sees -- human+human, human+computer either way
+//                   and computer+computer (human_human, human_ai, ai_human,
+//                   ai_ai); a player on another team shares nothing
+//                   (other_team_no_share); a mid-game AI takeover keeps the
+//                   sharing (takeover_keeps_sharing); leaving and rejoining the
+//                   team moves even a frozen footprint (alliance_change); an
 //                   ally's dying scout's revealer stays in both planes for its
-//                   60 ticks (death_revealer_shared); and the counts always
-//                   equal the sum of the footprints over their planes.
+//                   60 ticks (death_revealer_shared). Throughout, the counts
+//                   equal the sum of the footprints over their planes and the
+//                   client's display plane (client/retailfog.h) shows in view
+//                   exactly the cells the player's own plane counts.
 //
 // The other scenarios of the plan join as their steps land.
 //
 // A dev harness; not shipped in a game.
 
+#include "client/retailfog.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include "sim/sim.h"
@@ -426,16 +432,42 @@ bool countsMatchFootprints(const sim::World& w) {
     return expect == w.viewCounts();
 }
 
+// The local display (client/retailfog.h, as GameView::captureFog builds it:
+// the local player's Mapping bit, every allied player's plane) shows in view
+// exactly where the player's own plane counts a footprint: the fog a player
+// sees is the plane its units pick from.
+bool displayMatchesPlane(const sim::World& w, int player) {
+    const int width = w.viewPlaneW(), height = w.viewPlaneH();
+    const size_t cells = size_t(width) * height;
+    if (!cells || w.viewCounts().size() < size_t(w.numPlayers()) * cells) return false;
+    retailfog::PlaneSource source;
+    source.width = width; source.height = height; source.player = player;
+    for (int p = 0; p < w.numPlayers(); ++p)
+        if (w.allied(player, p)) source.viewers |= 1u << p;
+    source.viewCounts = w.viewCounts();
+    source.explored = w.navigationExploration();
+    std::vector<uint8_t> display;
+    retailfog::buildPlane(source, display);
+    const uint16_t* own = w.viewCounts().data() + size_t(player) * cells;
+    for (size_t i = 0; i < cells; ++i) {
+        const bool explored = w.navigationExploration()[i] >> player & 1;
+        if ((display[i] == retailfog::kInView) != (explored && own[i] != 0)) return false;
+    }
+    return true;
+}
+
 // Players 0 and 1 on `team1` (0 = allied with 0), player 2 the enemy. Player
 // 0's archer (sight 40) at (250, 400) on Fire At Will, with a passive second
 // unit far off; player 1's scout (sight 200) beside player 2's Archer, which
 // stands in the bow's range. ai0/ai1: that player is a computer.
+enum class After { None, Takeover, Realign, Revealer };
 struct Share {
-    bool sees0 = false, sees1 = false, engaged = false, consistent = true;
-    bool takeoverSees = true, revealerHeld = false, revealerGone = false;
-    bool explored0 = false, lockedOwnSees = false;
+    bool sees0 = false, sees1 = false, engaged = false, consistent = true, display = true;
+    bool explored0 = false;
+    bool afterSees0 = false, afterSees1 = false, rejoinSees0 = false;
+    bool revealerHeld = false, revealerGone = false;
 };
-Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, bool takeover, bool revealer) {
+Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, After after = After::None) {
     Flat flat;
     sim::World w;
     flat.into(w);
@@ -459,9 +491,14 @@ Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, bo
     w.unit(foe)->moveState = 0;
     w.unit(foe)->hp = sim::Fixed::fromInt(30000);
     Share out;
+    auto audit = [&] {
+        out.consistent = out.consistent && countsMatchFootprints(w);
+        for (int p = 0; p < 3; ++p) out.display = out.display && displayMatchesPlane(w, p);
+    };
+    auto sees = [&](int p) { return w.unit(foe) && w.playerSees(p, *w.unit(foe)); };
     for (int i = 0; i < 60; ++i) {
         w.tick(kTick);
-        out.consistent = out.consistent && countsMatchFootprints(w);
+        audit();
         const sim::Unit* a = w.unit(me);
         if (!a || !w.unit(foe)) break;
         out.engaged = out.engaged ||
@@ -473,17 +510,26 @@ Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, bo
         out.sees1 = w.playerSees(1, *f);
         out.explored0 = w.exploredAt(0, f->x.toFloat(), f->z.toFloat());
     }
-    if (takeover) {
-        // The scout is frozen through the takeover: its footprint stays where
-        // it stands and moves to its owner's own plane alone.
-        w.unit(spot)->frozenFor = 200;
+    if (after == After::Takeover) {
+        // A computer takes over the ally mid-game: still an ally, so its sight
+        // stays shared.
         w.player(1).automaticGates = true;
-        w.tick(kTick);
-        out.consistent = out.consistent && countsMatchFootprints(w);
-        out.takeoverSees = w.unit(foe) && w.playerSees(0, *w.unit(foe));
-        out.lockedOwnSees = w.unit(foe) && w.playerSees(1, *w.unit(foe));
+        for (int i = 0; i < 8; ++i) { w.tick(kTick); audit(); }
+        out.afterSees0 = sees(0); out.afterSees1 = sees(1);
     }
-    if (revealer) {
+    if (after == After::Realign) {
+        // The ally leaves the team mid-game with its scout frozen: the
+        // footprint stays where it stands and moves to its owner's plane
+        // alone; back on the team it is shared again.
+        w.unit(spot)->frozenFor = 200;
+        w.setTeam(1, 1);
+        w.tick(kTick); audit();
+        out.afterSees0 = sees(0); out.afterSees1 = sees(1);
+        w.setTeam(1, 0);
+        w.tick(kTick); audit();
+        out.rejoinSees0 = sees(0);
+    }
+    if (after == After::Revealer) {
         w.unit(me)->fireState = 0;
         w.destroy(spot);
         int deadAt = -1;
@@ -496,7 +542,7 @@ Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, bo
             if (i == deadAt + 30) out.revealerHeld = w.playerSees(0, *f) && w.playerSees(1, *f);
             if (i == deadAt + 70) {
                 out.revealerGone = !w.playerSees(0, *f) && !w.playerSees(1, *f);
-                out.consistent = out.consistent && countsMatchFootprints(w);
+                audit();
                 break;
             }
         }
@@ -509,29 +555,37 @@ void sharedSights(const sim::TypeRegistry& reg) {
     if (!archer || archer->weapons.empty()) { check(false, "shipped araarch loads"); return; }
     auto describe = [](const Share& s) {
         return "sees0 " + std::to_string(s.sees0) + " sees1 " + std::to_string(s.sees1) + " engaged " +
-               std::to_string(s.engaged) + " consistent " + std::to_string(s.consistent);
+               std::to_string(s.engaged) + " explored0 " + std::to_string(s.explored0) + " consistent " +
+               std::to_string(s.consistent) + " display " + std::to_string(s.display);
     };
-    const Share human = sharedSight(*archer, 0, false, false, true, false);
-    check(human.sees0 && human.sees1 && human.engaged && human.consistent,
-          "allied_human_spots: a same-team human ally's scout puts the enemy in player 0's plane; the archer takes it",
-          describe(human));
-    check(!human.takeoverSees, "takeover_stops_sharing: once the ally is a computer its sight leaves player 0's plane");
-    check(human.lockedOwnSees && human.consistent,
-          "takeover_frozen_scout: a frozen scout's footprint stays in its owner's plane through the takeover");
-    check(human.explored0, "explore_shared: the human ally's scout explores for player 0 too");
-    const Share aiAlly = sharedSight(*archer, 0, false, true, false, false);
-    check(!aiAlly.sees0 && aiAlly.sees1 && !aiAlly.engaged && aiAlly.consistent,
-          "computer_never_shares: a computer ally's sight stays its own", describe(aiAlly));
-    check(!aiAlly.explored0, "computer_never_explores_for_ally: a computer ally's scout explores for itself alone");
-    const Share aiMe = sharedSight(*archer, 0, true, false, false, false);
-    check(!aiMe.sees0 && aiMe.sees1 && !aiMe.engaged && aiMe.consistent,
-          "computer_never_shares: a computer player gets no human ally's sight", describe(aiMe));
-    check(!aiMe.explored0, "computer_never_explores_for_ally: a computer player gets no human ally's explored cells");
-    const Share enemy = sharedSight(*archer, 1, false, false, false, false);
-    check(!enemy.sees0 && enemy.sees1 && !enemy.engaged && enemy.consistent,
+    auto shares = [](const Share& s) { return s.sees0 && s.sees1 && s.engaged && s.explored0 && s.consistent && s.display; };
+    // D2 (owner decision, beyond retail's humans-only 4f6770): every ally shares.
+    const Share humans = sharedSight(*archer, 0, false, false);
+    check(shares(humans), "human_human: a human ally's scout puts the enemy in player 0's plane and explores for it; "
+          "the archer takes it", describe(humans));
+    const Share aiAlly = sharedSight(*archer, 0, false, true);
+    check(shares(aiAlly), "human_ai: a computer ally's scout spots and explores for the human", describe(aiAlly));
+    const Share aiMe = sharedSight(*archer, 0, true, false);
+    check(shares(aiMe), "ai_human: a computer gets its human ally's sight and explored cells", describe(aiMe));
+    const Share aiAi = sharedSight(*archer, 0, true, true);
+    check(shares(aiAi), "ai_ai: two allied computers share sight and explored cells", describe(aiAi));
+    const Share enemy = sharedSight(*archer, 1, false, false);
+    check(!enemy.sees0 && enemy.sees1 && !enemy.engaged && !enemy.explored0 && enemy.consistent && enemy.display,
           "other_team_no_share: a player on another team shares nothing", describe(enemy));
-    const Share dies = sharedSight(*archer, 0, false, false, false, true);
-    check(dies.revealerHeld && dies.revealerGone && dies.consistent,
+    const Share enemyAi = sharedSight(*archer, 1, false, true);
+    check(!enemyAi.sees0 && enemyAi.sees1 && !enemyAi.engaged && !enemyAi.explored0 && enemyAi.consistent &&
+          enemyAi.display, "other_team_no_share: a computer on another team shares nothing", describe(enemyAi));
+    const Share takeover = sharedSight(*archer, 0, false, false, After::Takeover);
+    check(takeover.afterSees0 && takeover.afterSees1 && takeover.consistent && takeover.display,
+          "takeover_keeps_sharing: a computer taking over the ally mid-game keeps its sight in player 0's plane");
+    const Share realign = sharedSight(*archer, 0, false, false, After::Realign);
+    check(!realign.afterSees0 && realign.afterSees1 && realign.rejoinSees0 && realign.consistent && realign.display,
+          "alliance_change: a frozen scout's footprint leaves player 0's plane with the alliance, stays in its "
+          "owner's, and comes back with it",
+          "after0 " + std::to_string(realign.afterSees0) + " after1 " + std::to_string(realign.afterSees1) +
+              " rejoin0 " + std::to_string(realign.rejoinSees0) + " consistent " + std::to_string(realign.consistent));
+    const Share dies = sharedSight(*archer, 0, false, false, After::Revealer);
+    check(dies.revealerHeld && dies.revealerGone && dies.consistent && dies.display,
           "death_revealer_shared: the dying scout's revealer holds in both planes, then goes after 60 ticks",
           "held " + std::to_string(dies.revealerHeld) + " gone " + std::to_string(dies.revealerGone) +
               " consistent " + std::to_string(dies.consistent));

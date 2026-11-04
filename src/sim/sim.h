@@ -1395,8 +1395,7 @@ struct alignas(64) Unit {
     RetailSightFootprint viewSight;
     int8_t viewPlayer = -1;
     // The planes viewSight is counted in (bit per player): the owner's, plus
-    // each same-team human ally's when the owner is human (retail's default
-    // ShareMapAndLOS, 4f6770; World::viewShareMask). 0 = none. Hashed.
+    // each ally's, human or computer (World::viewShareMask). 0 = none. Hashed.
     uint16_t viewPlanes = 0;
     // An upgrade consumes its old building when the new site is admitted. Keep
     // its presentation independent of retired/reused unit slots.
@@ -2261,12 +2260,12 @@ public:
     // after each tick, beside updateNavigationExploration.
     void updateViewCounts();
     // The players whose current-view plane a unit of `owner` counts in: the
-    // owner, and when the owner is human every human on its team. Retail's
-    // game start (4f6770) sets ShareMapAndLOS (+0xf7[]/+0x101[]) both ways
-    // for each pair of players on one lobby team unless either is a computer,
-    // and a unit's sight object (4c66b0) then stamps into the sharing
-    // player's plane. A computer shares with nobody, allied computers
-    // included. Bit per player; 0 for a neutral or out-of-range owner.
+    // owner and every allied player, human or computer (owner decision D2,
+    // beyond retail). Retail's game start (4f6770) sets ShareMapAndLOS
+    // (+0xf7[]/+0x101[]) both ways for each pair of players on one lobby team
+    // unless either is a computer, and a unit's sight object (4c66b0) then
+    // stamps into the sharing player's plane; World shares between computers
+    // too. Bit per player; 0 for a neutral or out-of-range owner.
     uint16_t viewShareMask(int owner) const;
     // Test reference: move counted footprints by retail's full removal and
     // re-add instead of retailSightMove (the counts and hashes must not differ).

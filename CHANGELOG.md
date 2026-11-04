@@ -38,14 +38,40 @@ their validation reports; both live in [`docs/`](docs/).
 - **Reclaimed trees and rocks fade out.** As in the original game, a reclaimed tree or
   rock turns into a white silhouette of itself that fades away over about a second,
   instead of vanishing at once. Trees destroyed by damage still change at once.
+- **Units pick their own targets the way the original game does.** Every target a
+  unit chooses for itself now comes from the original game's own search:
+  - A unit only goes after an enemy that your side can see, with its own sight or
+    another of your units'. Catapults, trebuchets and other long-range units need a
+    unit near the enemy to spot for them; they no longer fire into the fog.
+  - Units on standby, patrol or an attack-move take only enemies already in weapon
+    range. They no longer walk up to an enemy just outside it. Units that fight hand
+    to hand still go after any enemy they see.
+  - Among the enemies in reach, the choice is the original game's weighted draw:
+    nearer, weaker and easier targets are likelier, instead of always the nearest.
+  - Towers and other buildings fire only at enemies your side can see in their range,
+    and let go of a target that walks out of range or behind a wall. A tower still
+    answers an enemy that hits it.
+  - Guards no longer hunt on their own. They defend the unit they guard when it is
+    hit, and fire at enemies that pass within range.
+  - Units on Hold Position break off a patrol for an enemy and come back, as in the
+    original game; idle units on Hold Position never chase.
+  - A moving unit answers the last unit that hit it, even a cloaked one, as the
+    original game does.
+  - Wandering monsters attack enemies they see while they roam.
+- **Attack-move stops, fights and comes back.** A unit on an attack-move stops for an
+  enemy it sees in range, fights it, returns to where it stopped and carries on to its
+  destination. This is the original game's own fight-move (it had no key for it).
+  Kirenna on an attack-move now fires at the enemy in front of her (a known limit since
+  0.9.3), and so does any unit whose longest weapon outranges the one it has selected.
+- **Allies share sight.** Every player on your team, human or computer, sees for
+  you: your units now attack an enemy that only an ally's units can see, and computer
+  allies act on what you and the rest of the team see. The original game shared sight
+  only between human teammates; here computer allies share too.
 - **Investigated, no change needed:**
   - A computer's Sea Dragon on Hold Position with an enemy just outside Tsunami's range
     keeps switching weapons and never fires: the original game does exactly the same.
   - A Prismatic Mirror holding a target without firing (0.9.3) was a Mirror still being
     built; this was fixed in 0.9.12, and the original game does the same as now.
-  - Kirenna on an attack-move can stand in range aiming and not fire at an enemy her
-    side cannot see. The attack-move is not in the original game; this stays a known
-    limit for now.
 
 ## 0.9.19
 *2026-11-03 · protocol 311 · replay format 15 · does not play with 0.9.18 or earlier, nor their replays*

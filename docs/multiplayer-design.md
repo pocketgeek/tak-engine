@@ -1221,6 +1221,21 @@ or off the pad when its next site is refused (`World::clearYardDoor`, docs/retai
 replays are refused (a 311 peer would desync, and a 311 replay would play differently).
 It follows 0.9.19 and is in no release yet.
 
+Protocol 312 also carries the retail target search (fx-tsearch, docs/retail-engine.md
+"Mission target scan"), hashed in both pathfinding modes. Every automatic pick goes
+through retail's mission scan (`4d8370` -> `412620`) over the owner's 7-tick
+visible-enemy list, from the mission that runs it (Standby, Standby_Wander,
+VTOL_Standby, Patrol, VTOL_Patrol, Move/VTOL_Move and their formation forms, the air
+retargets, Attack_Melee); the per-stride `findTarget` scan, `acquireTarget` and
+`acqStride_` are gone, and Guard_NoMove only releases slots (`401a90`). Attack-move legs
+are retail's MoveFight: Move_Ground/VTOL_Move with response mode -1. Each player's sight
+plane (`viewCounts_`) and explored bits now also take the footprints of every allied
+player, human or computer (`World::viewShareMask`: retail's game-start sharing `4f6770`
+covers same-team humans only; the owner widened it to every ally). New hashed state: `Unit::viewPlanes`, `RetailDeathSight::planes` and the
+Attack_Melee retarget wake tick (in the order's `airRunCount`). The RNG streams change
+(`fireRand` per scan, mission wake draws), so every hash changes. Nothing on the wire
+changes and it needed no further bump: it rides on 312 because 312 was not yet released.
+
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
 in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each

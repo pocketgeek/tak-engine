@@ -14473,8 +14473,8 @@ void World::updateExplorationPlane() {
     // A footprint explores the same players' bits it counts in: 4c6800 ORs
     // the Mapping bit of the sight object's player (4c685f..4c6871,
     // 4c6a11..4c6a1f), the same player whose +0x88 plane it counts in, so a
-    // shared ally explores for the human it shares with and a computer for
-    // itself alone (viewShareMask). Neutral scenery keeps the allied rule.
+    // shared ally explores for every player it shares with (viewShareMask:
+    // all allies, human or computer). Neutral scenery keeps the allied rule.
     std::vector<uint16_t> playerViewers(players_.size(),0);
     for (size_t owner=0;owner<players_.size();++owner) {
         if (!isNeutralPlayer(int(owner))) { playerViewers[owner]=viewShareMask(int(owner));continue; }
@@ -14577,9 +14577,10 @@ void World::updateExplorationPlane() {
 // The per-player current-view counters (player +0x88). One pass per tick
 // after the tick, like exploration (retail runs it once per frame, 52654e ->
 // 4f6ae0). A unit counts in its owner's plane and in each plane its owner
-// shares sight with (viewShareMask: same-team humans, retail's default
-// ShareMapAndLOS); retail's machines each stamp a sharing ally's units into
-// the local plane (4c66b0), and every plane here is every machine's. Retail removes a changed footprint and adds it again; a footprint
+// shares sight with (viewShareMask: every ally, human or computer -- the
+// owner's D2 rule; retail's default ShareMapAndLOS covers same-team humans
+// only); retail's machines each stamp a sharing ally's units into the local
+// plane (4c66b0), and every plane here is every machine's. Retail removes a changed footprint and adds it again; a footprint
 // that stays counted on the same plane instead changes only the cells whose
 // admission differs (retailSightMove), which leaves the same counts. The plane
 // always equals the sum of the active footprints plus the death revealers.
@@ -14589,10 +14590,10 @@ uint16_t World::viewShareMask(int owner) const {
     const size_t planes=players_.size();
     if (owner<0 || size_t(owner)>=planes || owner>=16 || isNeutralPlayer(owner)) return 0;
     uint16_t mask=uint16_t(1u<<owner);
-    if (computerOwned(owner)) return mask;
+    // Owner decision (D2, beyond retail): every allied player shares, human
+    // or computer. Retail's 4f6770 leaves a computer out both ways.
     for (size_t j=0;j<planes && j<16;++j)
-        if (int(j)!=owner && !computerOwned(int(j)) && players_[j].team==players_[size_t(owner)].team)
-            mask|=uint16_t(1u<<j);
+        if (int(j)!=owner && !isNeutralPlayer(int(j)) && allied(owner,int(j))) mask|=uint16_t(1u<<j);
     return mask;
 }
 
@@ -14610,8 +14611,8 @@ void World::updateViewCounts() {
         for (auto& u:units_) { u.viewSight={};u.viewPlayer=-1;u.viewPlanes=0; }
     }
     if (!planes) return;
-    // Each owner's share set, once per pass (team and computer ownership are
-    // hashed; an AI takeover takes the player out of its team's sharing).
+    // Each owner's share set, once per pass (teams are hashed; a team change
+    // moves the footprints on this pass, an AI takeover changes nothing).
     std::array<uint16_t,16> shareMask{};
     for (size_t p=0;p<planes && p<16;++p) shareMask[p]=viewShareMask(int(p));
     auto heightAt=[&](int x,int z){return explorationHeights_[size_t(z)*width+x];};

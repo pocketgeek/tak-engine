@@ -5447,7 +5447,17 @@ without force: a plain attack with mode 1.
   `<`). The weapon tests follow (`+0x268` bits 2 and 4, melee needs a ground
   target, `+0xc8` air bits, damage > 0). **No visibility test, no cloak test
   and no fire-state test**: a Hold Fire unit on a move with a response mode
-  answers its attacker; only `4d8370` gates on Fire At Will.
+  answers its attacker; only `4d8370` gates on Fire At Will. **No carried
+  test on the attacker either** (S, `402e40..402e9b` reads only `+0x130`
+  alive/dying, `+0x108` and the alliance byte; the `+0xa8` test at `402efb`
+  is the mover's own carrier, and `4de530`'s head, `4de53c..4de583`, tests
+  only alive/dying): an attacker since carried off is taken, and the attack
+  it gets is removed at its first dispatch by its own head (Attack_Chase
+  `403c9c..403cb0`, Attack_Melee `404778..40478d`, AirToGround/AirToAir
+  `41c8f6`/`41d654`: `+0x114 & 4`). World skips a carried attacker in the
+  fallback instead (`retailMoveFallback`, an engine guard): the outcome, no
+  chase, is the same, but the Move's state after retail's round trip was not
+  read and World's flyer attack does not drop a carried target.
 - Mode > 0 on Maneuver drops a hit (scanned or fallback) at or beyond
   maneuverleashlength from the move's goal (`+0x24/+0x2c`), with no rescan;
   Roam keeps it at any distance.
@@ -5522,30 +5532,34 @@ ShareMapAndLOS box (`0x4b6b60`, disabled for a computer row) sets the local
 handler `0x4f59c0` sets the receiver's `+0xf7[sender]` and re-points the
 sender's units' sight objects.
 
-**Ported** (fx-tsearch step 8, D2): `World::updateViewCounts` counts each
-unit's footprint in every plane of `World::viewShareMask(owner)`: the owner's,
-plus, when the owner is human, each human player on its team. A computer's
-units count in its own plane alone and no ally's count in its plane. Each
-footprint records its planes (`Unit::viewPlanes`, hashed), so an AI takeover
-(`automaticGates` set mid-game) moves the sight out of the team's planes on
-the next pass, and a dying unit's 60-tick revealer (`4c6750`) stays in the
-planes it was counted in. Retail stamps an ally's units into the *local*
-plane on each machine; our every-plane-on-every-peer sim gives each human the
-same union. Not ported: the in-game ShareMapAndLOS toggle (no Diplomacy
-checkbox here), and the "fewer than 20" revealer cap is still counted by the
-dying unit's owner, not per receiving plane (I).
+**Ported, then widened by the owner** (fx-tsearch step 8, then the owner's
+D2 override of 2026-11-03: every ally shares, beyond retail).
+`World::updateViewCounts` counts each unit's footprint in every plane of
+`World::viewShareMask(owner)`: the owner's and every allied player's, human
+or computer (human+human as retail; human+computer and computer+computer are
+ours). Each footprint records its planes (`Unit::viewPlanes`, hashed), so a
+team change moves the sight on the next pass (an AI takeover changes nothing:
+the ally is still an ally), and a dying unit's 60-tick revealer (`4c6750`)
+stays in the planes it was counted in (`RetailDeathSight::planes`, hashed).
+Retail stamps an ally's units into the *local* plane on each machine; our
+every-plane-on-every-peer sim gives each ally the same union. The client's
+fog display ORs the local player's allies' planes (`captureFog`), which is
+now exactly the local plane. Not ported: the in-game ShareMapAndLOS toggle
+(no Diplomacy checkbox here). Inferred, not read (I): the revealer is still
+kept only for a human owner's dying unit and its "fewer than 20" cap counted
+by that owner, not per receiving plane, so a computer ally's dying scout
+leaves every plane at once.
 
 **Exploration follows the same planes** (S). `0x4c6800` takes the Mapping bit
 from the sight object's player (`[esi]`, `+0xeb` -> `1 << index`,
 `0x4c685f..0x4c6871`) and ORs it into `game+0x19ef4` at every admitted cell
 (`0x4c6a11..0x4c6a1f`) of the same pass that adds to that player's `+0x88`
 counts (`0x4c69f1..0x4c6a0f`). So a footprint explores for exactly the
-player whose plane it counts in: a shared human ally's units explore for the
-local human, a computer's units for the computer alone. Ported in
-`updateExplorationPlane` with the same `viewShareMask` (it marked every
-allied player's bit before, computer allies included); neutral scenery keeps
-the allied rule. A status-locked unit (stone, freeze) whose share set changes
-keeps its footprint where it stands and moves it to the new planes.
+player whose plane it counts in. Ported in `updateExplorationPlane` with the
+same `viewShareMask`, so under D2 every ally's units explore for every ally;
+neutral scenery keeps the allied rule. A status-locked unit (stone, freeze)
+whose share set changes keeps its footprint where it stands and moves it to
+the new planes.
 Guard: `target_search_test shared_sight`.
 
 **Double sight is ours** (S). Retail has no such option: `def+0x226` is
@@ -5696,6 +5710,39 @@ then by its mission. A switcher scans with its selected slot alone: the
 Crusades Angel (Soul Stealer selected, no damage to Undead) leaves a zombie
 on a fight-move, as retail's does. The SIMSTATS fields `acq_scans` and
 `acq_gate_walks*` went with the scan; `mission_scans` counts the ported one.
+
+**Ledger** (fx-tsearch, protocol 312; every automatic pick and where it now
+comes from):
+
+| Site | Retail | State | Mark | Guard |
+|---|---|---|---|---|
+| Fire-at-will sweep | `40f330` -> `412620` | ported before this work; paralyzer immunity added | E | `check_fire_sweep_picker` |
+| Mission scan | `4d8370`, `519ac0` | ported (`retailMissionScan`, `retailScanSlot`); radius uses `sightDistance` (our doubleSight) | E | `check_mission_scan` |
+| Attack gate | `4d7de0` | ported before; no point argument needed | E | `check_issue_gate` |
+| Standby | `407839` | ported | E (host) | `check_standby`, `mission_ports` |
+| Standby_Wander | `40797e` | scan ported; the stroll is World's | S | `mission_ports` |
+| VTOL_Standby, Legion lift | `4176bc` | ported | E (host) | `check_vtol_standby` |
+| Patrol, VTOL_Patrol | `40395e`, `41a24d` | ported (forced leash) | S, E (host) | `check_ground_patrol`, `check_flight_patrol` |
+| Move_Ground / VTOL_Move response, `+0xf8` fallback | `402e2e`, `4181b1` | ported; the fallback skips a carried attacker (engine guard: retail takes it and its attack's head drops it, 402e40..402e9b, 403c9c, 404778) | E (`probe_move_ground_response`), S | `attack_move` |
+| Move_Ground_Formation | `402988` | ported | S | `mission_ports` |
+| VTOL_Move_Formation | `4179f0` | not ported: FormationStandby branch not run | S | -- |
+| Air retargets | `41962a`, `41baf0`, `41c428`, `41ce68`/`41d10d`, `41e02e` | ported | E (hosts) | the air oracles |
+| Attack_Melee retarget | `4049a0` | ported | S | `mission_ports` |
+| Attack_Chase retarget | `404075` | not ported: needs the approach sub-states; never fires at mode 100 | E (`probe_attack_chase_mode`) | -- |
+| Guard_NoMove | `401bb0` -> `401a90` | ported; no pick (D3) | E | `check_guard_nomove` |
+| Fight-move | `4b0e40` / `5214b0` mode -1 | ported as the attack-move (D1 = AM-1) | S | `attack_move`, `vermage_fight` |
+| Shared sight and exploration | `4f6770`, `4c66b0`, `4c6800` | ported, widened to every ally, human or computer (owner's D2 override; retail: same-team humans) | E, S | `shared_sight` |
+| ShareMapAndLOS toggle | `4b6b60`, `4f59c0` | not ported (no Diplomacy box) | S | -- |
+| Line-of-fire test in the picker | none in retail | kept as an engine extension (D4) | E (`probe_weapon_gate_loss`) | `blocked_shot` |
+| Hit response, guard alarms, AttackUType | `409a50`, `407f90`/`418860`, `401580` | unchanged (no vision, as retail) | E, S | -- |
+| Stride scan, `findTarget`, `acquireTarget` | none in retail | removed (D3) | -- | `idle_coverage` |
+
+Known consequence (Legion, open): a Legion fight leg ends at its formation
+slot round the goal, so on `attackring-fight-60` a third or more of the
+attackers can stop 110-180 px from the target, past their 96 px gun, where
+Standby (in range only, as retail) never picks; Retail's mover keeps pressing
+to the goal and gets them in range. Before this work the stride scan's
+range + 90 px picked them up.
 
 ## Mission order strings (icd 0x513fb0, 2026-10-30)
 
