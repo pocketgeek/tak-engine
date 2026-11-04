@@ -700,7 +700,7 @@ public:
 
     bool canPickPoint(float x, float z) const { return noFog_ || cellVisibleR(x, z); }
     bool canPickUnit(const UnitR& u) const {
-        return !u.embarked() && (alliedToLocal(u.player) || unitShownR(u));
+        return !u.embarked() && unitShownR(u);   // sight-sharing allies always, as drawn
     }
     // Impacts are ONE-SHOT and the sim clears them every tick, while the render
     // only ever sees the newest published snapshot. Whenever the sim outruns the

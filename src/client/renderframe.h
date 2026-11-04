@@ -213,7 +213,6 @@ struct UnitR {
                                                // unlike a normal corpse which lies flat
     int justBuilt = 0;                         // one-tick: unit id produced this tick, else 0
     bool disco = false, headbang = false;      // cached world_.disco/headbangTarget(player)
-    bool alliedToLocal = false;                // cached alliedToLocal(player)
     bool sightShared = false;                  // cached sharesSightToLocal(player)
     // The local display's sight of this unit (client/retailfog.h), for another
     // side's unit: losSeen is the main view's LosOn (0x4f7210) on the local plane,

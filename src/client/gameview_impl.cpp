@@ -909,8 +909,9 @@
         effectVisibility_->expire(world_.tickCount());
         for (const auto& unit:world_.units()) {
             // Transport cargo keeps a live footprint (4f6a60 has no attachment test).
+            // A passive neutral's sight is not the local player's (World::viewShareMask).
             const bool eligible=unit.type && unit.alive() && !unit.underConstruction &&
-                                alliedToLocal(unit.player);
+                                sharesSightToLocal(unit.player);
             effectVisibility_->track(unit.id,unit.player,localPlayer_,eligible,unit.alive(),
                                      unit.sightFootprint,world_.tickCount());
         }
@@ -1114,7 +1115,6 @@
         s.justBuilt = u.justBuilt;
         s.disco = u.alive() && world_.discoTarget(u.player, u.id);
         s.headbang = u.alive() && world_.headbangTarget(u.player, u.id);
-        s.alliedToLocal = alliedToLocal(u.player);
         s.sightShared = sharesSightToLocal(u.player);
         // The local view's sight of another side's unit, on the plane captureFog
         // just built (a dying or dead unit is tested where it lies).
@@ -1390,9 +1390,11 @@
     }
 
     bool GameView::localSeesLive(const tak::sim::Unit& u) const {
-        if (noFog_ || alliedToLocal(u.player)) return true;
+        // The players whose sight the local plane holds (World::viewShareMask):
+        // an allied passive neutral's units and eyes count only through them.
+        if (noFog_ || sharesSightToLocal(u.player)) return true;
         for (int p = 0; p < world_.numPlayers(); ++p)
-            if (alliedToLocal(p) && world_.playerSees(p, u)) return true;
+            if (sharesSightToLocal(p) && world_.playerSees(p, u)) return true;
         return false;
     }
 
