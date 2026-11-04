@@ -1635,11 +1635,16 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // keeps every direction any member standing in it has had. passAhead
     // skips its lane scan when no block the scan reads holds a direction
     // that can be oncoming (passOpposed): the scan would find no oncoming
-    // body. Never hashed.
+    // body. Only an allied body is oncoming traffic, so each block keeps one
+    // mask per player (passSlot), and the scan reads its allies' alone.
+    // Never hashed.
     static constexpr int kPassBlock=8;
     std::vector<uint16_t> passMask;
     std::vector<int> passMaskList;   // non-zero entries of passMask
-    int passMaskW=0;
+    int passMaskW=0,passMaskP=0;
+    // A player's mask in each block; one shared slot for an owner outside the
+    // player table (allied to none of them).
+    int passSlot(int player) const {return player>=0&&player<passMaskP-1?player:passMaskP-1;}
     // 16 sectors of 22.5 degrees from +x toward +z; each an interval of
     // directions (boundaries at tan 22.5 ~ 0.414214).
     static int sector16(int64_t x,int64_t z) {
@@ -1679,9 +1684,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         const uint16_t bits=widenSector(uint16_t(1u<<sector16(odx,odz)));
         const int x0=std::max(ox-1,0),z0=std::max(oz-1,0),x1=std::min(ox+fx,w.occW_-1),z1=std::min(oz+fz,w.occH_-1);
         if(x0>x1||z0>z1)return;
+        const int slot=passSlot(u.player);
         for(int bz=z0/kPassBlock;bz<=z1/kPassBlock;++bz)for(int bx=x0/kPassBlock;bx<=x1/kPassBlock;++bx) {
-            uint16_t& b=passMask[size_t(bz)*passMaskW+bx];
-            if(!b)passMaskList.push_back(bz*passMaskW+bx);
+            const int at=(bz*passMaskW+bx)*passMaskP+slot;
+            uint16_t& b=passMask[size_t(at)];
+            if(!b)passMaskList.push_back(at);
             b|=bits;
         }
     }
@@ -1690,9 +1697,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(u)markPass(*u,*m);
     }
     void buildPassMask() {
-        if(w.occW_<=0||w.occH_<=0) {passMask.clear();passMaskList.clear();passMaskW=0;return;}
+        if(w.occW_<=0||w.occH_<=0) {passMask.clear();passMaskList.clear();passMaskW=passMaskP=0;return;}
         passMaskW=(w.occW_+kPassBlock-1)/kPassBlock;
-        const size_t n=size_t(passMaskW)*size_t((w.occH_+kPassBlock-1)/kPassBlock);
+        passMaskP=w.numPlayers()+1;
+        const size_t n=size_t(passMaskW)*size_t((w.occH_+kPassBlock-1)/kPassBlock)*size_t(passMaskP);
         if(passMask.size()!=n) {passMask.assign(n,0);passMaskList.clear();}
         for(int b:passMaskList)passMask[size_t(b)]=0;
         passMaskList.clear();
@@ -13517,10 +13525,17 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         bool opposed=passMask.empty();
         if(!opposed) {
             const uint16_t want=passOpposed()[size_t((dx+1)*3+dz+1)];
+            // The mask slots of the players allied to this body (its own
+            // included); an owner outside the table reads the shared slot.
+            // Past 64 slots every slot is read.
+            uint64_t friends=passMaskP>64?~uint64_t(0):0;
+            for(int q=0;q<passMaskP-1&&q<64;++q)if(w.allied(q,u.player))friends|=uint64_t(1)<<q;
+            if(passSlot(u.player)==passMaskP-1&&passMaskP<=64)friends|=uint64_t(1)<<(passMaskP-1);
             const int x0=std::max(ox+std::min(dx,kPassCells*dx),0),x1=std::min(ox+std::max(dx,kPassCells*dx)+fx-1,w.occW_-1);
             const int z0=std::max(oz+std::min(dz,kPassCells*dz),0),z1=std::min(oz+std::max(dz,kPassCells*dz)+fz-1,w.occH_-1);
-            for(int bz=z0/kPassBlock;bz<=z1/kPassBlock&&!opposed&&x0<=x1;++bz)for(int bx=x0/kPassBlock;bx<=x1/kPassBlock;++bx)
-                if(passMask[size_t(bz)*passMaskW+bx]&want) {opposed=true;break;}
+            for(int bz=z0/kPassBlock;bz<=z1/kPassBlock&&!opposed&&x0<=x1;++bz)for(int bx=x0/kPassBlock;bx<=x1/kPassBlock&&!opposed;++bx)
+                for(int q=0;q<passMaskP;++q)
+                    if((q>=64||(friends>>q&1))&&(passMask[size_t((bz*passMaskW+bx)*passMaskP+q)]&want)) {opposed=true;break;}
         }
         bool oncoming=false;
         const Member* oncomingPeer=nullptr;
@@ -13552,6 +13567,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(!peer||peer->state==Arrived||peer->state==Trapped||peer->state==Engaged)continue;
             const Unit* other=w.unit(o);
             if(!other||other->orders.empty()||peer->goal<0)continue;
+            // Passing makes way for traffic: an enemy body is never oncoming
+            // traffic (a fight-move column meeting the enemy's would step
+            // aside for it), so only an allied body counts.
+            if(!w.allied(other->player,u.player))continue;
             // Oncoming by intent, not heading: the other body's way to its
             // own goal points back at this one by more than ~112 degrees. A
             // body that has not turned yet (fresh or reversed order) is not
