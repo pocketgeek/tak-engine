@@ -5011,7 +5011,13 @@ the AI and scripts send 0/1 only, so their queued routes are never toggled
 The interrupted leg is rewound to its queued state (its route and what its run
 pushed ahead of it go; its mission restarts at stage 0 on a fresh controller);
 a builder at work on a placed site comes back to it as a HelpBuild (I: retail
-resumes the MobileBuild mission itself).
+resumes the MobileBuild mission itself). A Ctrl Load front-inserts on the
+carrier as well as the passenger (its pickup is the carrier's mission), a tower
+takes Ctrl on its own list, and Ctrl on an empty list is the plain order. A
+Shift/Ctrl Patrol on a patrol point takes back only that leg: retail's patrol
+initializer appends the anchor (return) as a mission of its own, so the toggle's
+first match is the outbound leg alone (I, from `0x4d7a30`'s match rule; not
+emulated) -- ours keeps that.
 
 ## Drag boxes: world-anchored corners and the 32-pixel test (icd, 2026-10-21)
 
