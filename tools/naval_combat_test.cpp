@@ -110,7 +110,14 @@ int main(int argc,char**argv) {
             auto victim=*registry.find("aratrans");victim.maxHp=30000;
             victim.weapon.damage=0;victim.weapons.clear();victim.maxVel={};
             const int a=w.spawn(&defender,1100,800,-1.570796327f,0);
-            w.spawn(&victim,800,800,0,1);
+            // 200 px off, inside the flag's 230 sight: a structure fires only
+            // through the sweep (Guard_NoMove picks nothing, 401a90), at what
+            // its player sees (40f330, list +5); and a second unit of the
+            // defender's, passive, as the sweep's walk skips a player's only
+            // unit.
+            w.spawn(&victim,900,800,0,1);
+            const int mate=w.spawn(registry.find("verman"),1500,1500,0,0);
+            w.unit(mate)->fireState=0;w.unit(mate)->moveState=0;
             bool fired=false;
             for (int tick=0;tick<300 && !fired;++tick) { w.tick(1.f/30.f);fired=w.unit(a)->justFired; }
             check(fired,"shore defender acquires and fires at a ship across water");

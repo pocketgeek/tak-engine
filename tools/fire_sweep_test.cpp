@@ -7,7 +7,9 @@
 // `fire_sweep_test --picker` is the oracle tools/re/check_fire_sweep_picker.py
 // compares with retail's target picker 412620; `--scan` is
 // tools/re/check_mission_scan.py's (the mission scan 4d8370) and `--gate`
-// tools/re/check_issue_gate.py's (the attack-issuing gate 4d7de0).
+// tools/re/check_issue_gate.py's (the attack-issuing gate 4d7de0) and
+// `--guard` tools/re/check_guard_nomove.py's (Guard_NoMove's slot release
+// 401a90).
 #include "sim/sim.h"
 #include "sim/retailcost.h"
 #include "sim/retailexploration.h"
@@ -128,12 +130,14 @@ void sites();
 int pickerOracle();
 int scanOracle();
 int gateOracle();
+int guardOracle();
 
 int main(int argc,char** argv) {
     const std::string part=argc>1 ? argv[1] : "all";
     if(part=="--picker")return pickerOracle();
     if(part=="--scan")return scanOracle();
     if(part=="--gate")return gateOracle();
+    if(part=="--guard")return guardOracle();
     if(part=="vision" || part=="all")vision();
     if(part=="vision" || part=="all")shootMe();
     if(part=="switch" || part=="all")weaponSwitch();
@@ -690,6 +694,51 @@ int gateOracle() {
             out+=" attack:"+std::to_string(a.autoTarget ? 1 : 0)+":"+std::to_string(a.chaseLeashed ? a.chaseLeash : 0)+
                  ":"+std::to_string(a.chaseLeashed ? a.chaseOrigin.x : 0)+":"+std::to_string(a.chaseLeashed ? a.chaseOrigin.z : 0);
         }
+        std::printf("%s\n",out.c_str());
+    }
+    return 0;
+}
+
+// One row per line: slots switcher selected bits draw, then per slot its
+// automatic flag and target state (0 none, 1 inside the minimum range, 2 out
+// of reach, 3 good). Answers per slot the final automatic flag and whether
+// its target was cleared, then the event word's slot bits left.
+int guardOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        int slots=0,switcher=0,selected=0,draw=0;uint32_t bits=0;
+        in>>slots>>switcher>>selected>>bits>>draw;
+        sim::UnitType tower;tower.id="tower";tower.maxHp=500;tower.footX=tower.footZ=2;
+        tower.canMove=false;tower.maxVel=sim::Fixed();tower.sight=400;tower.sightHeight=24;
+        tower.weaponSwitching=switcher!=0;
+        for (int s=0;s<slots;++s) {
+            sim::Weapon wp;wp.name="w"+std::to_string(s);wp.range=300;wp.minRange=100;wp.damage=10;wp.reload=1;
+            tower.weapons.push_back(wp);
+        }
+        if (!tower.weapons.empty()) tower.weapon=tower.weapons[0];
+        const auto d=dummy();
+        sim::World w;setup(w,2);
+        const int id=w.spawn(&tower,1000,1000,0,0);
+        static constexpr float kDist[4]={0,50,450,200};
+        static constexpr float kDir[3][2]={{1,0},{0,1},{-1,0}};
+        std::array<int,3> before{};
+        for (int s=0;s<slots;++s) {
+            int automatic=0,state=0;in>>automatic>>state;
+            auto& u=*w.unit(id);
+            u.slotAuto=automatic ? uint8_t(u.slotAuto|1u<<s) : uint8_t(u.slotAuto&~(1u<<s));
+            if (state) {
+                const int foe=w.spawn(&d,1000+kDir[s][0]*kDist[state],1000+kDir[s][1]*kDist[state],0,1);
+                w.unit(id)->slotTarget[size_t(s)]=foe;before[size_t(s)]=foe;
+            } else w.unit(id)->slotTarget[size_t(s)]=0;
+        }
+        auto& u=*w.unit(id);
+        u.weaponSlot=selected;u.missionEvents=bits;
+        w.retailGuardNoMoveSlots(u,draw);
+        std::string out;
+        for (int s=0;s<slots;++s)
+            out+=std::to_string(u.slotAuto>>s&1)+":"+std::to_string(before[size_t(s)] && !u.slotTarget[size_t(s)] ? 1 : 0)+" ";
+        out+=std::to_string(u.missionEvents&0xe00000u);
         std::printf("%s\n",out.c_str());
     }
     return 0;

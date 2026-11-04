@@ -2478,8 +2478,9 @@ void World::tickFlightBody(Unit& u) {
 
 void World::tickGuardNoMove(Unit& u) {
     const bool eligible=u.guardNoMoveAllowed && u.type->isStructure() && !u.underConstruction &&
-        u.buildQueue.empty() && !u.buildSiteId &&
-        (u.orders.empty() || u.orders.front().autoTarget);
+        u.buildQueue.empty() && !u.buildSiteId && u.orders.empty();
+    // An attack in front (a hit response's, an order's) is the head mission
+    // in retail, ahead of Guard_NoMove, which then does not run.
     if (!eligible) { u.guardNoMoveActive=false; return; }
     if (!u.guardNoMoveActive) { u.guardNoMoveState={}; u.guardNoMoveActive=true; }
     struct Host {
@@ -2494,7 +2495,7 @@ void World::tickGuardNoMove(Unit& u) {
         void clear() { u.guardNoMoveActive=false; }
         int handle(RetailMissionState& m,uint32_t) {
             return retailGuardNoMove(m,w.tickCounter_,true,!u.type->weapons.empty(),
-                [&](int n){return random(n);},[&]{ w.acquireTarget(u,true); });
+                [&](int n){return random(n);},[&]{ w.retailGuardNoMoveSlots(u); });
         }
     } host{*this,u};
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
@@ -7294,6 +7295,29 @@ bool World::retailMissionAttack(Unit& u,int targetId,MissionAttack how,const std
     if (issued && idleFlyer && (how==MissionAttack::Vtol || how==MissionAttack::VtolPatrol))
         u.orders.front().aheadOfDefault=true;
     return issued;
+}
+
+void World::retailGuardNoMoveSlots(Unit& u,int draw) {
+    if (!u.type) return;
+    const int slots=int(std::min<size_t>(3,u.type->weapons.size()));
+    auto release=[&](int s) { setSlotMode(u,s,false); setSlotMode(u,s,true); };   // 519b70, 519b10
+    if (const uint32_t bits=u.missionEvents&0xe00000u) {
+        const uint32_t r=draw>=0 ? uint32_t(draw) : pathRand(3);
+        if (r==0)
+            for (int s=0;s<slots;++s)
+                if (bits&(0x200000u<<s)) release(s);
+        u.missionEvents&=~0xe00000u;
+    }
+    for (int s=0;s<slots;++s) {
+        if (u.type->weaponSwitching && s!=u.weaponSlot) continue;
+        const Unit* t=unit(u.slotTarget[size_t(s)]);   // 51a9a0
+        // slotClearShot: the engine's line-of-fire deviation, which is part of
+        // "in reach" wherever the sweep and the weapon update test it (D4), so
+        // a tower lets go of a target its owner's new wall hides.
+        if (t && t->alive() && !slotInsideMinRange(u,*t,s) && slotInRange(u,*t,s) && slotClearShot(u,*t,s))
+            continue;
+        release(s);
+    }
 }
 
 int World::retailHostScan(Unit& u) {

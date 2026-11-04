@@ -5483,7 +5483,8 @@ calls `4d8370` or `412620`:
    calls after a hit: enemy damage at most twice the own damage sets the
    shot's slot bit (`+0xd8` bits 2-3), more sets `+0xd0 & 0x1000000`.
 2. Then each present slot (a switcher only its selected one) whose target
-   (`51a9a0`) is missing, bad (`52adf0`) or out of reach (`!52ad60`) is
+   (`51a9a0`) is missing, inside its minimum range (`52adf0`) or out of
+   reach (`!52ad60`) is
    released.
 
 "Release" is `519b70(i)` then `519b10(i)`: `519b70` clears the slot's
@@ -5609,6 +5610,24 @@ mission_ports` guards the rules: no pick of an unseen enemy in range, a pick
 once an own spotter sees it, none past the range, no Standby attack on Hold
 Position while its patrol gets the forced leashed attack and return move,
 and Standby_Wander's leash on Maneuver and plain attack on Roam.
+
+**Structures** (fx-tsearch step 5). `tickGuardNoMove` calls
+`World::retailGuardNoMoveSlots` (`401a90`) in place of a pick: the shot bits
+(0x200000 << slot, already posted to `Unit::missionEvents` by `applyHit`'s
+`4099e0` port) release their slots on rand(3) == 0 and clear on either draw,
+and each present slot (a switcher's selected one) whose target is gone,
+inside its minimum range or out of reach is released (`setSlotMode` off then
+on: automatic, no target). World adds its line-of-fire deviation
+(`slotClearShot`, D4) to "in reach", as the sweep and the weapon update do,
+so a tower lets go of a target its owner's new wall hides. Guard_NoMove runs
+only with no order in front: an attack (a hit response's, an order's) is the
+head mission in retail. So a structure fires only through the sweep and the
+hit response, at what its player sees: a Trebuchet (sight 200, range 2700)
+needs a spotter. `tools/re/check_guard_nomove.py` (E, 3,000 random calls
+against `fire_sweep_test --guard`: one to three slots, switchers, the shot
+bits and the draw, each slot automatic or manual with no target, one inside
+the minimum range, one out of reach or a good one): the same final slot
+modes, cleared targets and bits, and a draw exactly when a bit is set.
 
 ## Mission order strings (icd 0x513fb0, 2026-10-30)
 

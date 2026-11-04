@@ -22,13 +22,15 @@ struct RetailMissionState {
     }
 };
 
-// 401bb0: Guard_NoMove's attack scan and repeat timer. Weapon firing is a
-// separate per-tick update; an unarmed structure sleeps for 150 ticks.
-template<class Random, class Scan>
+// 401bb0: Guard_NoMove's slot release and repeat timer. It picks no
+// target: an armed structure calls 401a90 (World::retailGuardNoMoveSlots,
+// which hands stale slots back to the sweep) and sleeps 7 + rand(15); an
+// unarmed one sleeps 150. Weapon firing is the per-tick sweep and update.
+template<class Random, class Release>
 int retailGuardNoMove(RetailMissionState& m, uint32_t tick, bool enabled,
-                      bool armed, Random random, Scan scan) {
+                      bool armed, Random random, Release release) {
     if (!enabled) return 8;
-    if (armed) scan();
+    if (armed) release();
     m.sleep(tick, armed ? random(15)+7 : 150);
     m.stage=0;
     return 2;

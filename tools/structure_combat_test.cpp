@@ -145,6 +145,15 @@ int siteCase(const char* data) {
     const int site=w.spawn(mirror,4096,4096,0,0);
     const int shooter=w.spawn(trebuchet,4096+distance,4096,0,1);
     w.unit(site)->underConstruction=true;
+    // A spotter per side, passive and without shootme (a human-owned sweep
+    // skips it): neither structure's sight reaches 1469 px, and a structure
+    // fires only through the sweep (Guard_NoMove picks nothing, 401a90) at
+    // what its player sees (40f330, list +5).
+    auto eye=*registry.find("verman");eye.id="eye";eye.shootMe=false;
+    for(const auto& [x,player]:{std::pair{4096.0f+distance-150,0},{4096.0f+150,1}}) {
+        const int id=w.spawn(&eye,x,4096+120,0,player);
+        w.unit(id)->fireState=0;w.unit(id)->moveState=0;
+    }
     // Kept just under full each tick: one stone (2001) never kills it, and
     // an unattended site neither decays nor counts as finished.
     const auto siteHp=tak::sim::Fixed::fromInt(mirror->maxHp-1);
@@ -162,7 +171,7 @@ int siteCase(const char* data) {
     const bool quiet=hits>=2 && heldTicks==0;
     std::printf("%s unfinished crepris under aratre fire at %.0f px: %d hits, %d ticks with a target\n",
                 quiet?"PASS":"FAIL",distance,hits,heldTicks);
-    // Finished, the Mirror chooses for itself (Guard_NoMove's scan).
+    // Finished, the Mirror chooses for itself (the sweep, its spotter seeing).
     w.unit(site)->underConstruction=false;
     long damage=0;
     for(int tick=0;tick<900;++tick) {

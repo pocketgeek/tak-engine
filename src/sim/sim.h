@@ -3718,6 +3718,16 @@ public:
     // Standby_Wander's scan (40797e): 4d8370, the Maneuver post's leash on
     // the pick, then the attack it builds (no return move). Whether it went in.
     bool retailWanderScan(Unit& u);
+    // Guard_NoMove's armed step (401a90): no pick. When a shot of a slot
+    // posted 0x200000 << slot to the mission event word (4099e0: it did the
+    // other side no more than twice what it did its own), rand(3) == 0
+    // releases each such slot, and the bits clear on either draw; then each
+    // present slot (a switcher's selected one alone) whose target is gone,
+    // inside its minimum range (52adf0) or out of reach (52ad60, plus the
+    // engine's clear-shot test, slotClearShot) is released. Release is 519b70 then 519b10: the slot ends automatic with
+    // no target, back to the sweep. `draw` >= 0 stands in for the rand(3)
+    // (the oracle's); otherwise pathRand, Guard_NoMove's own stream.
+    void retailGuardNoMoveSlots(Unit& u,int draw=-1);
     // Attack_Melee's retarget (4049a0) for a ground melee walker closing on
     // an automatic attack's target: at each stage-2 timer wake. True when the
     // front order took another target (the caller returns).
