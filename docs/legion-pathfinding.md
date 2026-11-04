@@ -351,7 +351,7 @@ stopped permille 288,524 to 288,538, Legion work flat.
   since nothing moves until a cell frees, and it never triggers a re-plan, so
   a long queue at a choke costs no search work.
 * **Oncoming traffic, before contact** (`passAhead`): a mover scans its own
-  swept lane 6 cells ahead. If an allied Legion mover is there whose way to its own
+  swept lane 6 cells ahead. If a Legion mover is there whose way to its own
   goal points back at this body by more than about 112° (judged by goal
   direction, not heading, so a body that has not turned yet is not
   oncoming), the body commits to a one-cell step to its right, forward-right
@@ -359,11 +359,13 @@ stopped permille 288,524 to 288,538, Legion work flat.
   travel speed. For the next 300 ticks (`kPassHold`) a direct-line body keeps
   walking straight in its new lane, and the flow-around shuffle may not step
   back across the lane it left. No pass happens within 12 cells of either
-  body's goal, where bodies are packing into place. An enemy body is never
-  oncoming traffic (2026-11-03): two fight-moving armies that march at each
-  other do not step aside for each other. The lane-scan skip mask (A7) keeps
-  one sector mask per player, so a scan whose lane holds only enemy goals is
-  skipped.
+  body's goal, where bodies are packing into place. Two enemies' fight legs
+  (attack-move or patrol) are never oncoming traffic to each other
+  (2026-11-03): two fight-moving armies that march at each other do not step
+  aside for each other. A plain move still makes way for any body, enemy or
+  ally, and a fight leg still makes way for an enemy on a plain move. The
+  lane-scan skip mask (A7) keeps one sector mask per player and leg kind, so
+  a fight leg's scan whose lane holds only enemy fight-leg goals is skipped.
 * **Opposing traffic, in contact**: after 6 held updates against a body with
   orders facing more than 90° away, the unit commits to one lateral step to
   its own right. The step does not turn the course (turning 90° and back in a
