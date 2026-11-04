@@ -100,7 +100,8 @@ armed region; `ownerByte==0` = the human) · `UnitCreated(unitId, 0)` (build fin
 · `UnitDestroyed(unitId)` · `WindChange` (periodic).
 
 ### `MAP_COMMAND` verbs (retail dispatcher `0x4d35c0`)
-`Create <TYPE>` (spawn; **returns unit id**; `(x,y)` or `(player,x,y)`) ·
+`Create <TYPE>` (spawn; **returns unit id**; `(x,y)` or `(player,x,y)`, the type's
+footprint corner at the cell) ·
 `SetMission <unitId>` + order-queue string (see below) · `SetTrigger <id> …`
 (arm region: `(id,x,y,r)` circle / `(id,x1,y1,x2,y2)` rect) · `RemoveTrigger <id>`
 · `GetUtype <TYPE>` (**returns** type id) · `WriteValue <name>` / `ReadValue <name>`

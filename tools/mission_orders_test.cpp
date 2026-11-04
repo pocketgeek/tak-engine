@@ -18,6 +18,7 @@
 // And where units come into a mission:
 //   [units]   XPos*16 with no half cell; a building snapped by 5085c0 so XPos is
 //             its centre cell; Angle the raw retail heading word (514b40)
+//   Create    the type's footprint corner at the cell, birth heading (4d35c0)
 //
 // Synthetic types from a scratch FBI tree, on a flat map. With a retail install
 // (`mission_orders_test --data <dir>`) it checks shipped missions instead: takx04's
@@ -564,8 +565,8 @@ static void tableCompacts(Fixture& f) {
           "and the 70000th order still arrives", std::to_string(b->orders.size()) + " order(s)");
 }
 
-// ---- 13. where placed units stand ------------------------------------------------------
-// Emulated values: retail 514b40 / 5085c0 for an .ota record.
+// ---- 13. where placed and created units stand ------------------------------------------------------
+// Emulated values: retail 514b40 / 5085c0 for an .ota record, 4d35c0 for Create.
 
 static sim::UnitType sized(int fx, int fz, int bmcode) {
     sim::UnitType t;
@@ -574,7 +575,7 @@ static sim::UnitType sized(int fx, int fz, int bmcode) {
 }
 
 static void placement() {
-    std::printf("placed units:\n");
+    std::printf("placed and created units:\n");
     auto px = [](int fx, int fz, int bm, int x, int z) {
         const auto p = sim::MissionScript::placedPoint(sized(fx, fz, bm), x, z);
         return std::to_string(p.x.v / 65536.0) + "," + std::to_string(p.z.v / 65536.0);
@@ -598,6 +599,31 @@ static void placement() {
           "Angle is the raw heading word (A<<16)/360: 180 -> 0x8000, 359 -> 0xff49");
     check(sim::retailHeadingToPort(sim::MissionScript::placedHeading(180)).v == 0,
           "so Angle 180 faces the way an unturned unit does (it faced the other way)");
+    auto createdAt = [](int fx, int fz, int bm, int x, int z, int ex, int ez) {
+        const auto p = sim::MissionScript::createPoint(sized(fx, fz, bm), x, z);
+        return p.x == Fixed::fromInt(ex) && p.z == Fixed::fromInt(ez);
+    };
+    check(createdAt(2, 2, 1, 10, 20, 176, 336), "Create puts a 2x2 mobile's corner at 10,20: 176,336 (it was 168,328)");
+    check(createdAt(5, 1, 0, 0, 0, 40, 8), "and a 5x1 building's at 0,0: 40,8");
+    check(createdAt(2, 2, 0, 3, -1, 64, 0), "a building's too, a negative cell included");
+}
+
+static void creates(Fixture& f) {
+    std::printf("Create:\n");
+    auto w = makeWorld();
+    sim::MissionScript m(std::vector<uint8_t>{}, tdf::Node{}, f.reg, 0, "create fixture");
+    m.start(*w);
+    const int id = m.command(*w, "Create soldier", {1, 10, 20});
+    const Unit* u = w->unit(id);
+    check(u && u->x == Fixed::fromInt(176) && u->z == Fixed::fromInt(336) && u->player == 1,
+          "Create soldier 1 10 20 puts the 2x2's corner at cell 10,20 (it was its centre)",
+          u ? std::to_string(u->x.toFloat()) + "," + std::to_string(u->z.toFloat()) : "none");
+    const int keep = m.command(*w, "Create keep", {0, 3, 4});
+    check(w->unit(keep) && w->unit(keep)->x == Fixed::fromInt(80) && w->unit(keep)->z == Fixed::fromInt(96),
+          "and a 4x4 keep's at 3,4: 80,96");
+    const size_t before = w->units().size();
+    check(m.command(*w, "Create soldier", {0, 1, 2, 3}) == 0 && m.command(*w, "Create soldier", {5}) == 0 &&
+          w->units().size() == before, "4 args or 1 make nothing");
 }
 
 // ---- shipped missions -----------------------------------------------------------------------------
@@ -717,6 +743,7 @@ int main(int argc, char** argv) {
         setMission(f);
         tableCompacts(f);
         placement();
+        creates(f);
     }
     std::printf(g_fail ? "mission_orders_test: %d FAILED\n" : "mission_orders_test: all passed\n", g_fail);
     return g_fail ? 1 : 0;

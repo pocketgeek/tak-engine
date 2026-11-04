@@ -73,6 +73,9 @@ public:
     // The record's Angle as the raw retail heading word, (A<<16)/360 chopped
     // toward zero (4c8d2b); 514d02 stores it over the birth heading.
     static uint16_t placedHeading(int angle) { return uint16_t(int32_t(uint32_t(angle) << 16) / 360); }
+    // Create X Z (4d35c0): the type's footprint corner at the cell,
+    // (X*2 + footprint) << 19, for mobiles and buildings alike.
+    static Point createPoint(const UnitType& type, int x, int z);
 
     void start(World& w);              // run the "Start" script once (initial spawns/triggers)
     void step(World& w, float dt);     // tick the VM, sweep triggers, evaluate conditions
@@ -81,6 +84,8 @@ public:
     void unitDied(World& w, int id);   // a unit died -> UnitDestroyed(id)
 
     int outcome() const { return outcome_; }   // 0 running / +1 victory / -1 defeat
+    // Run one MAP_COMMAND by its name, as the script would (tests).
+    int32_t command(World& w, const std::string& name, const std::vector<int32_t>& args);
     // Fold mission state into the sim's state hash (so mission progress is checksummed).
     void foldHash(uint64_t& h) const;
 
@@ -102,7 +107,9 @@ private:
     // ---- VM callback plumbing ----
     MissionScript(const MissionScript&)=default;
     void wireVm();   // the hooks bind this object, so a copy wires its own
-    int32_t mapCommand(World& w, int nameIdx, const std::vector<int32_t>& args);
+    int32_t mapCommand(World& w, int nameIdx, const std::vector<int32_t>& args) {
+        return command(w, cob_.name(uint32_t(nameIdx)), args);
+    }
     int32_t getValue(World& w, int32_t valId, const std::vector<int32_t>& args);
     void setUnitValue(int32_t valId, int32_t value);
 

@@ -166,8 +166,9 @@ void MissionScript::unitDied(World& w, int id) {
 
 // ---- MAP_COMMAND dispatch (on the resolved verb string) --------------------
 
-int32_t MissionScript::mapCommand(World& w, int nameIdx, const std::vector<int32_t>& a) {
-    auto [verb, rest] = splitVerb(cob_.name(uint32_t(nameIdx)));
+int32_t MissionScript::command(World& w, const std::string& name, const std::vector<int32_t>& a) {
+    world_ = &w;
+    auto [verb, rest] = splitVerb(name);
     if (ieq(verb, "create"))        return doCreate(w, rest, a);
     if (ieq(verb, "setmission"))  { if (!a.empty()) applyOrders(w, a[0], rest, false); return 0; }
     if (ieq(verb, "settrigger")) {
@@ -210,9 +211,11 @@ int32_t MissionScript::mapCommand(World& w, int nameIdx, const std::vector<int32
 int32_t MissionScript::doCreate(World& w, const std::string& type, const std::vector<int32_t>& a) {
     const UnitType* t = findType(type);
     if (!t) { std::fprintf(stderr, "mission %s: create unknown type '%s'\n", origin_.c_str(), type.c_str()); return 0; }
+    // Retail 4d35c0: exactly 3 args (player byte, x, z) or 2 (x, z); any
+    // other count makes nothing.
     int player, cx, cy;
-    if (a.size() >= 3)      { player = a[0]; cx = a[1]; cy = a[2]; }   // (player, x, y), player 0-based
-    else if (a.size() >= 2) { player = 0;    cx = a[0]; cy = a[1]; }   // default -> the human
+    if (a.size() == 3)      { player = uint8_t(a[0]); cx = int16_t(a[1]); cy = int16_t(a[2]); }   // player 0-based
+    else if (a.size() == 2) { player = 0;             cx = int16_t(a[0]); cy = int16_t(a[1]); }   // default -> the human
     else return 0;
     // The script's 0-based player is a .ota id (0 == Player1); map it to the World slot
     // the placements used, so scripted units land on the right side.
@@ -220,7 +223,10 @@ int32_t MissionScript::doCreate(World& w, const std::string& type, const std::ve
     if (otaN >= 1 && otaN < int(playerMap_.size()) && playerMap_[size_t(otaN)] >= 0)
         player = playerMap_[size_t(otaN)];
     player = std::clamp(player, 0, w.numPlayers() - 1);
-    int id = w.spawn(t, cellToWorld(float(cx)), cellToWorld(float(cy)), 0.0f, player);
+    // createPoint: the footprint's corner at the cell, which 5085c0 leaves as
+    // it is. No heading is given, so the unit keeps its birth heading (511990).
+    const Point at = createPoint(*t, cx, cy);
+    int id = w.spawn(t, at.x.toFloat(), at.z.toFloat(), std::nullopt, player);
     if (id >= 0) getUnitContext_ = id;
     return id >= 0 ? id : 0;
 }
@@ -323,6 +329,10 @@ MissionScript::Point MissionScript::placedPoint(const UnitType& t, int xpos, int
     // 4c1768 reads any bmcode other than 0 or 1 as 0, and 5085c0 snaps those.
     if (t.buildMovementCode != 1) { p.x = footprintSnap(p.x, t.footX); p.z = footprintSnap(p.z, t.footZ); }
     return p;
+}
+
+MissionScript::Point MissionScript::createPoint(const UnitType& t, int x, int z) {
+    return {Fixed::fromInt(x * 16 + t.footX * 8), Fixed::fromInt(z * 16 + t.footZ * 8)};
 }
 
 void MissionScript::applyOrders(World& w, int unitId, const std::string& orders, bool initial) {

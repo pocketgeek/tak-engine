@@ -6449,6 +6449,20 @@ use 180). `MissionScript::placedPoint` / `placedHeading` and `footprintSnap`
 port it (`mission_orders_test`, `tools/re/check_mission_regions.py`). Skirmish
 start positions are unaffected: this path only reads a mission's `.ota`.
 
+**`Create` (2026-11-04, E).** `4d35c0` takes 3 args (player = a0's low byte,
+X = int16 a1, Z = int16 a2) or 2 (the player byte from `[game+0x306e]`); any
+other count makes nothing and returns 0. All 1851 shipped calls pass 3. The
+point is x = (X*2 + footprintx) << 19 = X*16 + footprintx*8, the same for z:
+the type's footprint corner at the cell, for mobiles and buildings alike.
+`5085c0` leaves it unchanged (for a building it only sets y to the terrain at
+X,Z); a mobile's y is recomputed by `51b2a0`. Then `512060(player, typeid, pos,
+1,1,0,0,1)`, the flags placement uses: no search, no free-spot check and no
+heading, so the unit keeps 511990's birth heading (0x8000 + orientation -
+buildangle/2 + rand(buildangle)). It returns the unit id (`+2`). Ours used
+X*16+8 and heading 0 through 0.9.19, right only for a 1x1; 154 of the shipped
+calls were off, an 8x18 building by 56 px in x and 136 in z.
+`MissionScript::createPoint` ports it.
+
 When the parser has pushed a mission it clears the unit's selectable bit 0x20,
 and unless the last of them was a patrol, an attack on the ground, `s` or `d`
 it appends MAKESELECTABLE (`514a7d`): a player's unit under a script cannot be

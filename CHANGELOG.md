@@ -196,6 +196,8 @@ their validation reports; both live in [`docs/`](docs/).
 - **Campaign units start where the original put them.** The units a mission starts
   with stand on the same squares as in the original, and face the same way: they
   stood half a square off, and most of them faced the other way.
+- **Units a mission brings in mid-mission appear where the original put them.**
+  Large ones could be several squares off.
 - **Fedora 45 packages.** Fedora 45 now has its own x86-64 and ARM64 RPMs, beside
   Fedora 44's.
 - **Investigated, no change needed:**
