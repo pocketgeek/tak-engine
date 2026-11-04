@@ -14927,12 +14927,19 @@ void World::clearProductionRoom(Unit& producer,const UnitType* type,Fixed x,Fixe
 // The factory's own parked outputs move only off the pad or off an output they
 // hold up, not for every next one that walks past them (the Navy Yard's first
 // rule moved them each time). The point is pointOutside's: free, reachable,
-// not where another mover was sent. Units with any order (guards too), with
-// production of their own, other players' units (allies included: nothing in
-// the sim orders another player's units, and clearBuildSite and
-// clearProductionRoom move only the builder's own) and flyers stay; a mobile
-// producer (Zhon) has clearProductionRoom instead. The move is tagged
-// productionExit: held up once clear of where it stood, it is done.
+// not where another mover was sent. The owner's guards move too (user-requested
+// after the 0.9.19 known limit: a dozen guards at a Legion Academy's door held
+// all six outputs in), as clearBuildSite moves them: the move goes ahead of the
+// guard, which resumes when it ends, and a guard steps aside once per output
+// (Unit::doorYieldFor), so walking back into its ring does not start it again.
+// A guard fighting (an attack or a job ahead of its guard, its ward's alarm
+// still to answer, a weapon slot on a target) stays (doorGuard). Units with any
+// other order, with production of their own, other players' units (allies
+// included: nothing in the sim orders another player's units, and
+// clearBuildSite and clearProductionRoom move only the builder's own) and
+// flyers stay; a mobile producer (Zhon) has clearProductionRoom instead. The
+// move is tagged productionExit: held up once clear of where it stood, it is
+// done.
 void World::clearYardDoor(const Unit& factory) {
     static constexpr uint32_t kDoorRetry=15;
     static constexpr int kDoorCells=8;
@@ -14961,10 +14968,13 @@ void World::clearYardDoor(const Unit& factory) {
     // crowds; moving its parked outputs there put them back in the lane
     // (legion_park, measured 2026-11-03).
     const Unit* leaving=nullptr;
+    int newest=0;   // the factory's newest finished output near it
     std::vector<std::array<int,4>> held;   // World px: left, right, top, bottom.
     forEachNear(float(cx),float(cz),reach,[&](int index) {
         const Unit& k=units_[size_t(index)];
-        if (!body(k) || k.builtBy!=factory.id || k.orders.empty()) return;
+        if (!body(k) || k.builtBy!=factory.id) return;
+        newest=std::max(newest,k.id);
+        if (k.orders.empty()) return;
         // On its way out: on its PARK round this factory, still on the pad, or
         // on a plain move (its rally). An older output guarding, building,
         // patrolling or attacking near its factory is not leaving the door: it
@@ -14983,6 +14993,13 @@ void World::clearYardDoor(const Unit& factory) {
     });
     const UnitType* next=!factory.productionSiteId && !factory.buildQueue.empty() ? factory.buildQueue.front() : nullptr;
     const bool refused=next && !next->canFly && tickCounter_<factory.productionRetryTick;
+    // The pad: the yard, and with a refused site that site's footprint too.
+    int pl=yl,pr=yr,pt=yt,pb=yb;
+    if (refused) {
+        const int sx=footprintOrigin(Fixed::fromInt(factory.refusedSiteX),next->footX)*16;
+        const int sz=footprintOrigin(Fixed::fromInt(factory.refusedSiteZ),next->footZ)*16;
+        pl=std::min(pl,sx);pr=std::max(pr,sx+next->footX*16);pt=std::min(pt,sz);pb=std::max(pb,sz+next->footZ*16);
+    }
     if (!leaving && !refused && held.empty()) return;
     // The plane that has to be clear: a ship's, or a land unit's. Every output
     // of one factory shares it (a yard builds only ships).
@@ -15009,19 +15026,27 @@ void World::clearYardDoor(const Unit& factory) {
         zl=left;zr=right;zt=top;zb=bottom;
         if (!water && alongZ) (az>=0 ? zt : zb)=cz;
         else if (!water) (ax>=0 ? zl : zr)=cx;
-    } else if (refused) {zl=yl;zr=yr;zt=yt;zb=yb;}
+    } else if (refused) {zl=pl;zr=pr;zt=pt;zb=pb;}
     struct Mover {int id,heldBy;};   // heldBy: index into held, or -1 for the zone.
     std::vector<Mover> movers;
+    // A guard steps aside once per output: 2 x the newest one out with one
+    // leaving or held up, 2 x that + 1 for the next one's refused site. Ids
+    // only grow, so a newer output outranks both.
+    const int forOutput=leaving || !held.empty() ? 2*newest : 2*newest+1;
     forEachNear(float(cx),float(cz),reach,[&](int index) {
         const Unit& k=units_[size_t(index)];
-        if (!body(k) || (k.type->domain==UnitType::Domain::Water)!=water || !k.orders.empty() ||
+        if (!body(k) || (k.type->domain==UnitType::Domain::Water)!=water ||
+            !(k.orders.empty() || doorGuard(k)) ||
             !k.buildQueue.empty() || k.productionSiteId || !yieldsToSite(k,factory.player)) return;
         int at=-1;
         for (size_t i=0;i<held.size() && at<0;++i)
             if (overlaps(k,held[i][0],held[i][1],held[i][2],held[i][3])) at=int(i);
         // Its own parked output only off the pad, or when it is what holds up
         // the output leaving after it: not for every next one that walks past.
-        const bool zone=overlaps(k,zl,zr,zt,zb) && (k.builtBy!=factory.id || overlaps(k,yl,yr,yt,yb));
+        // A guard (its own output or not) steps aside for each output once.
+        const bool guarding=!k.orders.empty();
+        const bool zone=overlaps(k,zl,zr,zt,zb) && (guarding || k.builtBy!=factory.id || overlaps(k,pl,pr,pt,pb));
+        if (guarding && (zone || at>=0) && k.doorYieldFor>=forOutput) return;
         if (zone) movers.push_back({k.id,-1});
         else if (at>=0) movers.push_back({k.id,at});
     });
@@ -15060,10 +15085,36 @@ void World::clearYardDoor(const Unit& factory) {
         taken.push_back({footprintOrigin(Fixed::fromInt(px),k.type->footX),footprintOrigin(Fixed::fromInt(pz),k.type->footZ),
                          k.type->footX,k.type->footZ});
         const std::pair<Fixed,Fixed> from{k.x,k.z};
+        if (k.orders.empty()) {
+            order(id,float(px),float(pz),false);
+            if (Unit* moved=unit(id);moved && !moved->orders.empty())
+                moved->orders[currentLeg(moved->orders)].productionExit=from;
+            continue;
+        }
+        // A guard: the move goes ahead of its guard, which resumes when it
+        // ends (clearBuildSite's step aside).
+        OrdersNote note{*this,id};
+        k.doorYieldFor=forOutput;
+        guardStandAside(k);
+        std::vector<Order> rest;rest.swap(k.orders);
+        cancelPath(k);k.routeStamp=0;
         order(id,float(px),float(pz),false);
-        if (Unit* moved=unit(id);moved && !moved->orders.empty())
-            moved->orders[currentLeg(moved->orders)].productionExit=from;
+        Unit& moved=*unit(id);
+        if (!moved.orders.empty()) moved.orders[currentLeg(moved.orders)].productionExit=from;
+        moved.orders.insert(moved.orders.end(),std::make_move_iterator(rest.begin()),std::make_move_iterator(rest.end()));
     }
+}
+
+// A guard that may step aside out of a factory's door: on its guard of a live
+// ward (not on a job or an attack put ahead of it), with no alarm of its ward
+// still to answer and no weapon slot on a target: a guard fighting stays.
+bool World::doorGuard(const Unit& k) const {
+    if (k.orders.empty()) return false;
+    const Order& o=k.orders[currentLeg(k.orders)];
+    if (!o.guard || o.productionExit) return false;
+    const Unit* g=unit(o.targetId);
+    if (!g || !g->alive() || guardAlarm(k,*g)) return false;
+    return std::all_of(k.slotTarget.begin(),k.slotTarget.end(),[](int32_t t){return t==0;});
 }
 
 // GetBuilt's release (0x402220, emulated): a structure's finished output with no
@@ -16325,7 +16376,10 @@ void World::tickProduction(Unit& u, float dt) {
         if (tickCounter_<u.productionRetryTick) return;
         Fixed spawnX,spawnZ,spawnY;
         if (!productionPosition(producerId,t,spawnX,spawnY,spawnZ)) {
-            if (u.type->productionScript) u.productionRetryTick=tickCounter_+7+gameRand(15);
+            if (u.type->productionScript) {
+                u.productionRetryTick=tickCounter_+7+gameRand(15);
+                u.refusedSiteX=spawnX.floorInt();u.refusedSiteZ=spawnZ.floorInt();
+            }
             if (!u.type->isStructure() && !u.rally.empty()) clearProductionRoom(u,t,spawnX,spawnZ);
             return;
         }
@@ -19525,6 +19579,7 @@ uint64_t World::stateHash() const {
         if (u.cloakBlockedUntil) { mix(0x434c4f4bu); mix(u.cloakBlockedUntil); }
         if (u.guardHelpTick) { mix(0x47554152u); mix(u.guardHelpTick); }
         if (u.guardHeard) { mix(0x47484541u); mix(u.guardHeard); }
+        if (u.doorYieldFor) { mix(0x444f4f52u); mix(uint32_t(u.doorYieldFor)); }
         if (u.reviveTarget) {
             mix(0x52455649u);mix(uint32_t(u.reviveTarget));mix(uint32_t(u.reviveWork));mix(uint8_t(u.reviveMode));
         }

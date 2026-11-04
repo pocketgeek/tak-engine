@@ -14,7 +14,9 @@
 // first 3x3 output wedged just out of the yard and the yard built two ships of
 // six; the Iron Clad on the pad stopped the yard outright. Now the yard owner's
 // idle ships in front of the yard move aside (World::clearYardDoor), and the
-// yard builds as fast as with the door clear.
+// yard builds as fast as with the door clear. Last, the eight Iron Clads guard
+// the yard: they step aside too, at most once per ship, and end back on their
+// guard near it.
 //
 // The remaining time out of a door facing a shore is retail's own: a boat
 // whose forward probe meets a shore cell or a body within 176 px runs at a
@@ -26,6 +28,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -48,6 +51,10 @@ const char* layoutName(Layout l) {return l==Layout::Open?"open":"shore";}
 
 struct Result {
     int produced=0,stuck=0,lastDone=-1,refusals=0,inDoor=0,nudged=0;
+    // Ward: guards back on their guard of the yard and near it at the end, the
+    // farthest one's distance (px), and moves aside of one ship while the same
+    // output was the first one leaving.
+    int guarding=0,farthest=0,twice=0,asides=0;
     std::vector<int> clear,door;
     int median(std::vector<int> v) const {
         if(v.empty())return -1;
@@ -56,8 +63,10 @@ struct Result {
     int max(const std::vector<int>& v) const {return v.empty()?-1:*std::max_element(v.begin(),v.end());}
 };
 
-enum class Crowd {None,Door,Pad};
-const char* crowdName(Crowd c) {return c==Crowd::None?"none":c==Crowd::Door?"door":"pad";}
+// Ward: the eight Iron Clads at the door guard the yard.
+enum class Crowd {None,Door,Pad,Ward};
+const char* crowdName(Crowd c) {return c==Crowd::None?"none":c==Crowd::Door?"door":c==Crowd::Pad?"pad":"ward";}
+constexpr int kSimDoorCells=8;   // clearYardDoor's door area
 
 Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,Layout layout,const char* shipName,int count,
            Crowd crowd) {
@@ -85,14 +94,18 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,Layout la
     // on the pad.
     const float doorZ=float((yard.z+yard.h)*16);
     std::vector<int> idle;
-    if(crowd==Crowd::Door)
+    if(crowd==Crowd::Door || crowd==Crowd::Ward)
         for(int i=0;i<8;++i) {
             // On the shore layout the crowd shifts west, onto the water.
             const float x=(layout==Layout::Shore?fx-208:fx-96)+float(i%4)*64;
             idle.push_back(w.spawn(iron,x,doorZ+40+float(i/4)*64,0,0));
         }
     if(crowd==Crowd::Pad)idle.push_back(w.spawn(iron,fx,fz+32,0,0));
-    for(int t=0;t<30;++t)w.tick(1.f/30);
+    if(crowd==Crowd::Ward)for(int k:idle)w.guard(k,id,false);
+    for(int t=0;t<(crowd==Crowd::Ward ? 300 : 30);++t)w.tick(1.f/30);
+    const Rect simDoor{yard.x-kSimDoorCells,yard.z-kSimDoorCells,yard.w+2*kSimDoorCells,yard.h+2*kSimDoorCells};
+    std::vector<std::optional<std::pair<sim::Fixed,sim::Fixed>>> lastAside(idle.size());
+    std::vector<std::vector<int>> asideFor(idle.size());
     w.player(0).mana=1000000;w.train(id,ship,count);
     struct Out {int id,done,clear=-1,door=-1;Rect birth;bool rested=false;};
     std::vector<Out> outs;Result r;uint32_t lastRetry=0;int tick=0;
@@ -101,6 +114,27 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,Layout la
         const auto* f=w.unit(id);
         if(f->productionRetryTick && f->productionRetryTick!=lastRetry)++r.refusals;
         lastRetry=f->productionRetryTick;
+        int leaving=0;
+        for(const auto& u:w.units())
+            if(u.alive() && u.type==ship && !u.underConstruction && u.builtBy==id && !u.orders.empty() &&
+               intersects(footprint(u),simDoor) && (!leaving || u.id<leaving))leaving=u.id;
+        for(size_t i=0;i<idle.size();++i)if(const auto* u=w.unit(idle[i]);u && u->alive()) {
+            std::optional<std::pair<sim::Fixed,sim::Fixed>> aside;
+            for(const auto& o:u->orders)if(o.productionExit)aside=o.productionExit;
+            if(aside && aside!=lastAside[i]) {
+                ++r.asides;
+                // What it made way for: the factory's next output while that
+                // one's site is refused, else its newest finished one.
+                const auto* f=w.unit(id);
+                const bool refused=!f->productionSiteId && !f->buildQueue.empty() && w.tickCount()<f->productionRetryTick;
+                const int finished=int(std::count_if(w.units().begin(),w.units().end(),
+                    [&](const sim::Unit& o){return o.builtBy==id && !o.underConstruction;}));
+                leaving=finished*2+(refused ? 1 : 0)+1;
+                if(leaving && std::find(asideFor[i].begin(),asideFor[i].end(),leaving)!=asideFor[i].end())++r.twice;
+                asideFor[i].push_back(leaving);
+            }
+            lastAside[i]=aside;
+        }
         for(const auto& u:w.units()) {
             if(!u.alive() || u.type!=ship || u.underConstruction || u.id==id)continue;
             auto at=std::find_if(outs.begin(),outs.end(),[&](const Out& o){return o.id==u.id;});
@@ -128,12 +162,33 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,Layout la
     }
     for(int settle=0;settle<1500;++settle)w.tick(1.f/30);
     r.produced=int(outs.size());
+    if(crowd==Crowd::Ward)for(int k:idle)if(const auto* u=w.unit(k);u && u->alive()) {
+        const auto& o=u->orders;
+        const int dx=u->x.floorInt()-w.unit(id)->x.floorInt(),dz=u->z.floorInt()-w.unit(id)->z.floorInt();
+        const int d=int(std::sqrt(double(dx)*dx+double(dz)*dz));
+        r.farthest=std::max(r.farthest,d);
+        // Within the guard ring's outer edge (World::guardRing) and two bodies.
+        const int outer=(std::max(yard.w,yard.h)+u->type->footX+2)*16+3*16+2*u->type->footX*16;
+        const bool aside=std::any_of(o.begin(),o.end(),[](const sim::Order& q){return bool(q.productionExit);});
+        const bool ok=!o.empty() && o[sim::World::currentLeg(o)].guard && o[sim::World::currentLeg(o)].targetId==id &&
+            !aside && d<=outer;
+        r.guarding+=ok;
+        if(!ok)std::printf("  guard %d: orders=%zu guard=%d aside=%d d=%d outer=%d\n",k,o.size(),
+            int(!o.empty() && o[sim::World::currentLeg(o)].guard),int(aside),d,outer);
+    }
     // An output stuck: still in the yard, or still on its way out (it never
     // finished its PARK) by the end.
     for(const auto& o:outs) {
         if(o.clear>=0)r.clear.push_back(o.clear-o.done);
         if(o.door>=0)r.door.push_back(o.door-o.done);
-        if(const auto* u=w.unit(o.id);u && u->alive() && (intersects(footprint(*u),yard) || !u->orders.empty()))++r.stuck;
+        if(const auto* u=w.unit(o.id);u && u->alive() && (intersects(footprint(*u),yard) || !u->orders.empty())) {
+            ++r.stuck;
+            const auto& q=u->orders;
+            std::printf("  stuck %d at %d,%d goal %d,%d speed=%.2f inYard=%d orders=%zu park=%d exit=%d streak=%d\n",o.id,
+                u->x.floorInt(),u->z.floorInt(),q.empty()?0:q.back().x.floorInt(),q.empty()?0:q.back().z.floorInt(),
+                u->speed.toFloat(),int(intersects(footprint(*u),yard)),q.size(),int(!q.empty() && bool(q.front().park)),
+                int(!q.empty() && bool(q.back().productionExit)),int(u->bodyBlockStreak));
+        }
     }
     // Every idle ship that stood in front of the door is out of the yard's way
     // by the end: clear of the yard and of the strip straight out of its door
@@ -141,9 +196,9 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,Layout la
     const Rect strip{yard.x,yard.z,yard.w,yard.h+6};
     for(int k:idle)if(const auto* u=w.unit(k);u && u->alive())r.inDoor+=intersects(footprint(*u),strip);
     std::printf("exit mode=%s layout=%s ship=%s crowd=%s produced=%d/%d stuck=%d lastDone=%d refusals=%d inDoor=%d nudged=%d "
-                "clear med=%d max=%d door med=%d max=%d ticks=%d hash=%016llx\n",
+                "asides=%d twice=%d guarding=%d farthest=%d clear med=%d max=%d door med=%d max=%d ticks=%d hash=%016llx\n",
         mode==sim::PathfindingMode::Legion?"Legion":"Retail",layoutName(layout),shipName,crowdName(crowd),r.produced,count,r.stuck,
-        r.lastDone,r.refusals,r.inDoor,r.nudged,r.median(r.clear),r.max(r.clear),r.median(r.door),r.max(r.door),tick,
+        r.lastDone,r.refusals,r.inDoor,r.nudged,r.asides,r.twice,r.guarding,r.farthest,r.median(r.clear),r.max(r.clear),r.median(r.door),r.max(r.door),tick,
         (unsigned long long)w.stateHash());
     std::printf("  door:");for(const auto& o:outs)std::printf(" %d",o.door<0?-1:o.door-o.done);std::printf("\n");
     return r;
@@ -180,6 +235,17 @@ int main(int argc,char** argv) {
                 const Result pad=run(registry,mode,layout,ship,kShips,Crowd::Pad);
                 check(pad.produced==kShips && int(pad.clear.size())==kShips && pad.inDoor==0,
                       label+"an idle Iron Clad on the pad moves off it and the yard builds");
+                const Result ward=run(registry,mode,layout,ship,kShips,Crowd::Ward);
+                // Known limit, as before guards stepped aside: under Legion an
+                // Iron Clad leaving a door onto a shore can be held in the yard by
+                // the yard's own parked outputs (Legion does not move them).
+                if(!(mode==sim::PathfindingMode::Legion && layout==Layout::Shore && std::string(ship)=="creiron"))
+                    check(ward.produced==kShips && int(ward.clear.size())==kShips,
+                          label+"eight Iron Clads guarding the yard at its door let all six out of the yard ("+
+                          std::to_string(int(ward.clear.size()))+", "+std::to_string(ward.stuck)+" not settled)");
+                check(ward.guarding==8,label+"each guard ends back on its guard near the yard ("+
+                      std::to_string(ward.guarding)+" of 8, farthest "+std::to_string(ward.farthest)+" px)");
+                check(ward.twice==0,label+"no guard moves aside twice for one output ("+std::to_string(ward.twice)+")");
             }
     std::printf("navyyard exit: %d cases, %d failures\n",cases,failures);
     return failures?1:0;
