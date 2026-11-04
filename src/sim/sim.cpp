@@ -362,6 +362,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.attractsGods = info->numberOr("attractsgods", 0) != 0;
             t.weaponSwitching = info->numberOr("weaponswitching", 0) != 0;
             t.kamikaze = info->numberOr("kamikaze", 0) != 0;
+            t.kamikazeDist = int32_t(uint16_t(int(info->numberOr("kamikazedistance", 0))));
             t.shootMe = info->numberOr("shootme", 0) != 0;
             {
                 auto tokens=[](const std::string& text) {

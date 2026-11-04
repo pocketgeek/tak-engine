@@ -285,6 +285,7 @@ public:
     void rightClickOrder(float wx, float wz, bool queue);
     // Retail's order line: beads strung between a selected unit's queued orders.
     void drawOrderTrails(int mvw, int winH);
+    void drawRangeCircles(int mvw, int winH);   // retail's Shift range circles (0x4d6530)
     static constexpr int kTrailUnits = 3;    // retail beaded only its few "focus" units
     static constexpr int kTrailBeads = 96;   // per leg, so a map-long order can't run away
     struct OrderTrailCache {
@@ -1466,7 +1467,6 @@ private:
     // before any unit, so a stump or a mana decal never paints over a unit.
     struct PaintItem { float z; const UnitR* u; const FeatureInst* f; int layer = 0; };
     std::vector<PaintItem> paintItems_;   // per-frame painter list (capacity reused)
-    std::unordered_set<int> targetSet_;   // per-frame attack-target ids (reused)
     // Parsed COB scripts shared per unit type (see registerUnit).
     struct CobCache {
         std::shared_ptr<const tak::cob::File> file;

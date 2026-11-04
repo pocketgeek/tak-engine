@@ -518,6 +518,9 @@ struct UnitType {
     // kamikaze (UnitDef+0x260 bit 28): the sweep's selector skips the in-range
     // test for these (icd 412789).
     bool kamikaze = false;
+    // kamikazedistance (UnitDef+0x236, 0x4c0876). Load-time data nothing in the
+    // simulation reads: only the client's Shift range circle (0x4d6530) draws it.
+    int32_t kamikazeDist = 0;
     // shootme (UnitDef+0x260 bit 15): the sweep's selector lets a HUMAN-owned
     // shooter auto-pick only types that set it (icd 412620). FBIs that omit it
     // read 0 (aranull, cregate, npcflag); synthetic types default to shootable.
