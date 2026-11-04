@@ -2812,13 +2812,19 @@ private:
     // units, buildings, AND the feature decals (mana deposits, trees) -- so a mana
     // deposit sits at the height its heightmap claims and a lodestone/units built on
     // it stack right on top instead of the decal being flat while units float above.
-    float uLiftY(const tak::sim::Unit& u) { return terrainLift(u.x.toFloat(), u.z.toFloat()); }
+    // The Y lift is of the BODY, so a wading or floating unit's waterline sink is
+    // folded in: over deep water it rides at sea - waterline, and every overlay
+    // (health bar, squad marker, cull, camera centring) has to follow it there.
+    float uLiftY(const tak::sim::Unit& u) {
+        const float x = u.x.toFloat(), z = u.z.toFloat();
+        return terrainLift(x, z) - waterSink(u.type, x, z);
+    }
     float uLiftX(const tak::sim::Unit& u) { return terrainLiftX(u.x.toFloat(), u.z.toFloat()); }
     // Snapshot overloads. A FLYER rides the coarse dilated datum, not the relief
     // under its nose -- see flyerGround.
     float uLiftY(const UnitR& u) {
         if (u.type && u.type->canFly) return flyerDatum(u) * kHeightScale_;
-        return terrainLift(u.x, u.z);
+        return terrainLift(u.x, u.z) - waterSink(u.type, u.x, u.z);
     }
     float uLiftX(const UnitR& u) {
         if (u.type && u.type->canFly) return flyerDatum(u) * kHeightScaleX_;

@@ -3321,12 +3321,10 @@
         float ix, iz, ih; interpPose(u, ix, iz, ih);   // match the gliding model position
         // uLiftX/uLiftY, NOT terrainLift: a flyer rides the coarse dilated datum,
         // and picking has to use the same one the body is drawn with or you click
-        // where the unit is not. The waterline sink moves the drawn body too, so
-        // this follows that as well -- else a wading god can't be clicked where you
-        // see it.
+        // where the unit is not. uLiftY already carries the waterline sink the drawn
+        // body has, so a wading god or a ship is clicked where you see it.
         return {(ix - mapView_.offX()) * zm - uLiftX(u) * zm,
-                (iz - mapView_.offY()) * zm - uLiftY(u) * zm
-                    + waterSink(u.type, ix, iz) * zm - altLift(u) * zm - 12.0f * zm};
+                (iz - mapView_.offY()) * zm - uLiftY(u) * zm - altLift(u) * zm - 12.0f * zm};
     }
 
     const SDL_FRect& GameView::unitHitBox(const tak::sim::UnitType* type) {
@@ -3373,14 +3371,24 @@
         // front-most self-consistent surface -- the largest h where the candidate's
         // actual height drops through the assumed h. Handles the X/Z coupling so a
         // click on a wall top resolves to that top, not the ground behind it.
+        //
+        // Over water the surface clicked is the WATER, not the seabed: a ship or a
+        // wading god rides at sea - waterline (waterSink), so inverting through the
+        // seabed would send it to a point drawn (sea - seabed)/2 px north of the
+        // cursor. Flooring the sampled height at sea level puts the order where the
+        // ship will be drawn, to within waterline/2. A land unit wading the shallows
+        // is then off by (sea - seabed)/2, small where it can walk. (Inferred:
+        // retail's own click inversion over water has not been traced in the icd.)
+        const float sea = float(int(uint8_t(m.seaLevel)));
+        const auto surfaceH = [&](float x, float z) { return std::max(heightAbove(x, z), sea); };
         const float maxH = 255.0f;
         float bestH = 0.0f;
-        float prevDiff = heightAbove(cwx, cwz);   // actualH - 0 at h = 0
+        float prevDiff = surfaceH(cwx, cwz);   // actualH - 0 at h = 0
         const float step = 1.0f;
         for (float h = step; h <= maxH + 2; h += step) {
             float ax = cwx + h * kHeightScaleX_;
             float az = cwz + h * kHeightScale_;
-            float diff = heightAbove(ax, az) - h;
+            float diff = surfaceH(ax, az) - h;
             // Front-most self-consistent surface: interpolate the zero-crossing of
             // (actualHeight - h) so we land ON the surface, not past its far edge.
             if (prevDiff > 0 && diff <= 0)
@@ -3409,7 +3417,9 @@
             // ~height*kHeightScale_ (the art leans it up-and-back) -- the same scale
             // the unit lift and picking use, so occlusion, seating and clicks agree.
             float proj = float(h) * kHeightScale_;
-            float wy = (float(cz) * 16 + 8 - mapView_.offY()) * zm - proj * zm;
+            // Height k belongs to the cell's north-west CORNER at 16k (retail's
+            // sampler, terrainlift.h), so the wall's top edge is at z = 16cz.
+            float wy = (float(cz) * 16 - mapView_.offY()) * zm - proj * zm;
             if (wy < best) best = wy;
         }
         return best;
