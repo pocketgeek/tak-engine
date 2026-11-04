@@ -18,6 +18,7 @@
 #include "client/retaildeathsfx.h"
 #include "client/runtimesettings.h"
 #include "client/buildline.h"
+#include "client/cursortiming.h"
 #include "sim/retailmotion.h"
 #include <cctype>
 #include <cmath>
@@ -3561,6 +3562,48 @@
             writableWorld().stop(builder);writableWorld().stop(flyer);
             writableWorld().setPathfindingMode(savedPathfinding);
             std::fprintf(stderr,"PASS: group right-click shares supported destination areas and preserves Retail/fallback offsets\n");
+            // Shift shows an attack order's target with the order kind's own animated
+            // cursor (retail 0x4d5930, drawOrderTrails): the Attack cursor sits on the
+            // target, steps its frame with the game tick, and is gone without Shift.
+            // Drawn alone onto black, so only the overlay's pixels count. The target
+            // is a building, so the marker stays put while the game ticks.
+            {
+                if(!cursors_.ok()) {cursorsInit_=true;cursors_.load(ren_,vfs_,settings_);}
+                mapView_.setZoom(1);mapView_.setOffset(1400,1500);
+                const int foe=spawn("creacad",2000,2250,0,1);
+                if(foe<0)throw std::runtime_error("attack-marker fixture needs an enemy building");
+                selection_={soldier};writableWorld().attack(soldier,foe,false);publish();
+                const auto overlay=[&](SDL_Keymod mods) {
+                    const SDL_FPoint p=unitScreen(*frameUnitP(foe));
+                    const SDL_Rect box{int(p.x)-64,int(p.y)-64,128,128};
+                    SDL_SetRenderDrawColor(ren_,0,0,0,255);SDL_RenderClear(ren_);
+                    SDL_SetModState(mods);drawOrderTrails(mapViewW(winW_),winH_);
+                    std::vector<uint32_t> px(size_t(box.w)*size_t(box.h));
+                    if(SDL_RenderReadPixels(ren_,&box,SDL_PIXELFORMAT_ARGB8888,px.data(),box.w*4)!=0)
+                        throw std::runtime_error(std::string("attack-marker readback: ")+SDL_GetError());
+                    return px;
+                };
+                const auto lit=[](const std::vector<uint32_t>& px) {
+                    size_t n=0;for(uint32_t v:px)n+=(v&0xffffffu)!=0;return n;
+                };
+                const auto plain=overlay(KMOD_NONE),shifted=overlay(KMOD_LSHIFT);
+                if(world_.unit(soldier)->orders.empty() || world_.unit(soldier)->orders.front().targetId!=foe)
+                    throw std::runtime_error("attack-marker fixture lost its attack order");
+                if(lit(plain)!=0)throw std::runtime_error("order overlay drawn without Shift");
+                if(lit(shifted)<20)throw std::runtime_error("Shift shows no Attack cursor on an attack order's target");
+                const size_t frames=cursors_.frameCount(tak::CursorId::Attack);
+                const auto frameAt=[&](uint64_t tick) {
+                    return tak::cursorOrderMarkerFrameAt(frames,cursors_.firstFrameDelayTicks(tak::CursorId::Attack),tick);
+                };
+                const size_t first=frameAt(front().gameTick);
+                bool stepped=false;
+                for(int i=0;i<120 && !stepped;++i) {writableWorld().tick(1.f/30);publish();stepped=frameAt(front().gameTick)!=first;}
+                const auto later=overlay(KMOD_LSHIFT);
+                if(frames<2 || !stepped || lit(later)<20 || later==shifted)
+                    throw std::runtime_error("the Attack cursor on the target does not animate with the game tick");
+                SDL_SetModState(savedMod);writableWorld().stop(soldier);publish();
+                std::fprintf(stderr,"PASS: Shift shows the animated Attack cursor on an attack order's target, nothing without Shift\n");
+            }
             resultParticipants_=uint8_t((1u<<0)|(1u<<3));
             playerName_[0]="PLAYER";playerName_[3]="AI";
             writableWorld().player(3).defeated=true;publish();
