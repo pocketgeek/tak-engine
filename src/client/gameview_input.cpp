@@ -790,7 +790,7 @@
         const auto* u = frameUnitP(id);
         if (!u) return;
         mapView_.setOffset(u->x - (winW_ / 2.0f) / mapView_.zoom(),
-                           u->z - (winH_ / 2.0f) / mapView_.zoom());
+                           u->z - uLiftY(*u) - (winH_ / 2.0f) / mapView_.zoom());
     }
 
     bool GameView::centerOnSelection() {
@@ -798,7 +798,7 @@
         int n = 0;
         for (int id : selection_) {
             const auto* u = frameUnitP(id);
-            if (u && u->alive()) { cx += u->x; cz += u->z; ++n; }
+            if (u && u->alive()) { cx += u->x; cz += u->z - uLiftY(*u); ++n; }
         }
         if (!n) return false;
         mapView_.setOffset(cx / n - (winW_ / 2.0f) / mapView_.zoom(),

@@ -68,6 +68,12 @@ their validation reports; both live in [`docs/`](docs/).
   from there, as in the original game. The Thirsha, the Ghost Ship, the Dirigible and
   the Dark and Darkest Priests start on Hold Position, so idle ones now stay put: set
   them to Maneuver to have them go after enemies.
+- **Units stand where the ground is painted.** Every unit, tree, effect and the fog
+  used to be drawn too far down the screen by half the height of the map's most common
+  ground: 110 pixels on a map whose ground is high, such as INDUSTRIAL Zone, enough to
+  draw units on a road beside lava in the lava itself. Now everything is drawn at its
+  own height, as in the original game, on every map. Ships and wading units ride at
+  the water surface over deep water, and the camera centres on where a unit is drawn.
 - **Investigated, no change needed:**
   - A computer's Sea Dragon on Hold Position with an enemy just outside Tsunami's range
     keeps switching weapons and never fires: the original game does exactly the same.

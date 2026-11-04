@@ -109,7 +109,7 @@
             px = starts[0].first; pz = starts[0].second;
         }
         // Camera opens on the player's Monarch.
-        mapView_.setOffset(px - 640 / 0.9f, pz - 400 / 0.9f);
+        mapView_.setOffset(px - 640 / 0.9f, pz - terrainLift(px, pz) - 400 / 0.9f);
 #ifndef NDEBUG
         // Local dev/test match layouts (TAK_FFA, the 2-monarch start, demo armies):
         // gameview_devharness.cpp. A release build is always `bare` -- the match is built
@@ -432,7 +432,8 @@
         loadPanel(side_);
         loadGui(side_);
         if (!spots.empty())
-            mapView_.setOffset(spots[0].first - 640 / 0.9f, spots[0].second - 400 / 0.9f);
+            mapView_.setOffset(spots[0].first - 640 / 0.9f,
+                               spots[0].second - terrainLift(spots[0].first, spots[0].second) - 400 / 0.9f);
     }
 
     void GameView::replayStep(float dt) {
@@ -1637,7 +1638,7 @@
                 }
                 auto lift = [&](const auto& position,float x,float z) {
                     return position ? float((*position)[1] >> 16) * 0.5f -
-                        float(heightRef_) * 0.5f - terrainLift(x,z) - 12.f : 0.f;
+                        terrainLift(x,z) - 12.f : 0.f;
                 };
                 b.alt1 = lift(h.fromPosition,b.x1,b.z1);
                 b.alt2 = lift(h.position,b.x2,b.z2);
@@ -1694,7 +1695,7 @@
                 // 4dd2a0's centre of the piece's drawn bounds, as the sim aims.
                 float bx = h.x, bz = h.z;
                 float ba = h.position ? float((*h.position)[1] >> 16) * 0.5f -
-                    float(heightRef_) * 0.5f - terrainLift(bx,bz) : 0.f;
+                    terrainLift(bx,bz) : 0.f;
                 if (h.victimId && (noFog_ || cellVisibleR(h.x, h.z)))
                     if (auto vi = anims_.find(h.victimId); vi != anims_.end() &&
                         vi->second.vm && vi->second.pieceNames)
@@ -1963,8 +1964,8 @@
                 // Flight height already follows the retail controller in the sim.
                 // The old independent 0.7s ascent and terrain servo could draw a
                 // conjurer far north of her actual position, especially near hills.
-                const float datum=flyerGround(u.x,u.z); // also resolves heightRef_
-                const auto [ground,altitude]=u.flightRenderHeight(datum,heightRef_);
+                const float datum=flyerGround(u.x,u.z);
+                const auto [ground,altitude]=u.flightRenderHeight(datum);
                 a.groundY=ground;a.groundInit=true;a.altitude=altitude;
                 flyerAltitudeSeen_=std::max(flyerAltitudeSeen_,altitude);   // cursor picking's flyer bound
                 // Occupancy is authoritative too: a hovering conjurer stays active
@@ -3220,62 +3221,44 @@
         return playerColors_[(s >= 0 && s < 10) ? s : 0];
     }
 
-    // Raw bilinear heightmap value at a world point -- NOT shifted by the ground
-    // reference and NOT clamped at zero, so water cells report their true (low)
-    // height. heightAbove() below is this minus the reference, floored at 0; only
-    // the waterline sink needs the unclamped value.
+    // Terrain height at a world point with retail's sampler (0x511170, the one
+    // the sim's unit Y uses): height k belongs to the cell CORNER at 16k, and each
+    // interpolation truncates. Clamped to the map so the edge rows hold instead of
+    // reading the sampler's -1 sentinel.
     float GameView::rawHeight(float wx, float wz) {
         const auto& m = mapView_.map();
-        if (m.heights.empty() || m.width <= 0) return 0.0f;
-        float gx = (wx - 8.0f) / 16.0f, gz = (wz - 8.0f) / 16.0f;
-        int x0 = std::clamp(int(std::floor(gx)), 0, m.width - 1);
-        int z0 = std::clamp(int(std::floor(gz)), 0, m.height - 1);
-        int x1 = std::min(x0 + 1, m.width - 1), z1 = std::min(z0 + 1, m.height - 1);
-        float fx = std::clamp(gx - float(x0), 0.0f, 1.0f);
-        float fz = std::clamp(gz - float(z0), 0.0f, 1.0f);
-        auto H = [&](int x, int z) { return float(m.heights[size_t(z) * m.width + x]); };
-        return H(x0, z0) * (1 - fx) * (1 - fz) + H(x1, z0) * fx * (1 - fz) +
-               H(x0, z1) * (1 - fx) * fz + H(x1, z1) * fx * fz;
+        return tak::client::lift::terrainHeight(m.heights.data(), m.width, m.height, wx, wz);
     }
 
-    // Retail anchors a wading or floating unit at max(terrainHeight, waterLevel -
-    // waterline) (KINGDOMS.icd 0x51b220 for canhover, 0x4dad78 for floater), so the
-    // model sinks up to `waterline` height units and no further once the seabed
-    // rises to meet it. Our sim has no Y, so this is a pure screen-Y offset, added
-    // where terrainLift is subtracted.
+    // The screen-Y offset (down positive) of a wading or floating body from the
+    // terrain lift. Retail stands a canhover unit at max(terrain, sea - waterline)
+    // and a floater at sea - waterline (0x51b220 / 0x51b2fa), so over deep water
+    // the body rides near the surface, not on the seabed.
     float GameView::waterSink(const tak::sim::UnitType* t, float wx, float wz) {
-        if (!t || t->waterline <= 0 || !(t->canHover || t->floater)) return 0.0f;
+        if (!t || !(t->canHover || t->floater)) return 0.0f;
         const auto& m = mapView_.map();
         if (m.heights.empty()) return 0.0f;
-        float depth = float(m.seaLevel) - rawHeight(wx, wz);
-        return std::clamp(depth, 0.0f, float(t->waterline)) * kHeightScale_;
+        const float terrain = rawHeight(wx, wz);
+        const float body = tak::client::lift::bodyHeight(terrain, m.seaLevel, t->waterline,
+                                                         t->canHover, t->floater);
+        return std::floor(terrain * kHeightScale_) - std::floor(body * kHeightScale_);
     }
 
     float GameView::heightAbove(float wx, float wz) {
         const auto& m = mapView_.map();
         if (m.heights.empty() || m.width <= 0) return 0.0f;
-        // Geometry workers call this concurrently. The terrain datum is resolved
-        // on the render thread before dispatch; sample without shared memo state.
-        if (heightRef_ < 0) {
+        // Geometry workers call this concurrently. The debug scales are read on
+        // the render thread before dispatch; sample without shared memo state.
+        if (!liftReady_) {
+            liftReady_ = true;
             long hist[256] = {0};
             for (uint8_t v : m.heights) hist[v]++;
-            int best = 0;
-            for (int i = 1; i < 256; ++i) if (hist[i] > hist[best]) best = i;
-            heightRef_ = best;
+            for (int i = 1; i < 256; ++i) if (hist[i] > hist[modalHeight_]) modalHeight_ = i;
             if (const char* e = tak::devEnv("TAK_HSCALE")) kHeightScale_ = std::stof(e);
             if (const char* e = tak::devEnv("TAK_HSCALEX")) kHeightScaleX_ = std::stof(e);
             if (tak::devEnv("TAK_HDEBUG")) showHDebug_ = true;
         }
-        float gx = (wx - 8.0f) / 16.0f, gz = (wz - 8.0f) / 16.0f;
-        int x0 = std::clamp(int(std::floor(gx)), 0, m.width - 1);
-        int z0 = std::clamp(int(std::floor(gz)), 0, m.height - 1);
-        int x1 = std::min(x0 + 1, m.width - 1), z1 = std::min(z0 + 1, m.height - 1);
-        float fx = std::clamp(gx - float(x0), 0.0f, 1.0f);
-        float fz = std::clamp(gz - float(z0), 0.0f, 1.0f);
-        auto H = [&](int x, int z) { return float(m.heights[size_t(z) * m.width + x]); };
-        float h = H(x0, z0) * (1 - fx) * (1 - fz) + H(x1, z0) * fx * (1 - fz) +
-                  H(x0, z1) * (1 - fx) * fz + H(x1, z1) * fx * fz;
-        return std::max(0.0f, h - float(heightRef_));
+        return rawHeight(wx, wz);
     }
 
     // Retail's flyer datum, built once per map (icd 0x50e740). One byte per
@@ -3290,15 +3273,13 @@
         flyGround_.clear();
         flyGroundW_ = flyGroundH_ = 0;
         if (m.heights.empty() || m.width <= 0 || m.height <= 0) return;
-        heightAbove(0, 0);                       // force heightRef_ to be resolved
-        const int kCells = 8;                    // 8 cells of 16 units = one 128-unit sector
+                const int kCells = 8;                    // 8 cells of 16 units = one 128-unit sector
         flyGroundW_ = (m.width + kCells - 1) / kCells;
         flyGroundH_ = (m.height + kCells - 1) / kCells;
         std::vector<uint8_t> maxv(size_t(flyGroundW_) * size_t(flyGroundH_), 0);
         for (int z = 0; z < m.height; ++z)
             for (int x = 0; x < m.width; ++x) {
-                int h = int(m.heights[size_t(z) * m.width + x]) - heightRef_;
-                if (h < 0) h = 0;                // below the water datum reads as flat
+                const int h = std::max<int>(m.heights[size_t(z) * m.width + x], m.seaLevel);
                 uint8_t& dst = maxv[size_t(z / kCells) * size_t(flyGroundW_) + size_t(x / kCells)];
                 if (h > int(dst)) dst = uint8_t(h > 255 ? 255 : h);
             }
@@ -3340,12 +3321,10 @@
         float ix, iz, ih; interpPose(u, ix, iz, ih);   // match the gliding model position
         // uLiftX/uLiftY, NOT terrainLift: a flyer rides the coarse dilated datum,
         // and picking has to use the same one the body is drawn with or you click
-        // where the unit is not. The waterline sink moves the drawn body too, so
-        // this follows that as well -- else a wading god can't be clicked where you
-        // see it.
+        // where the unit is not. uLiftY already carries the waterline sink the drawn
+        // body has, so a wading god or a ship is clicked where you see it.
         return {(ix - mapView_.offX()) * zm - uLiftX(u) * zm,
-                (iz - mapView_.offY()) * zm - uLiftY(u) * zm
-                    + waterSink(u.type, ix, iz) * zm - altLift(u) * zm - 12.0f * zm};
+                (iz - mapView_.offY()) * zm - uLiftY(u) * zm - altLift(u) * zm - 12.0f * zm};
     }
 
     const SDL_FRect& GameView::unitHitBox(const tak::sim::UnitType* type) {
@@ -3392,14 +3371,24 @@
         // front-most self-consistent surface -- the largest h where the candidate's
         // actual height drops through the assumed h. Handles the X/Z coupling so a
         // click on a wall top resolves to that top, not the ground behind it.
-        float maxH = std::max(0.0f, float(255 - (heightRef_ < 0 ? 0 : heightRef_)));
+        //
+        // Over water the surface clicked is the WATER, not the seabed: a ship or a
+        // wading god rides at sea - waterline (waterSink), so inverting through the
+        // seabed would send it to a point drawn (sea - seabed)/2 px north of the
+        // cursor. Flooring the sampled height at sea level puts the order where the
+        // ship will be drawn, to within waterline/2. A land unit wading the shallows
+        // is then off by (sea - seabed)/2, small where it can walk. (Inferred:
+        // retail's own click inversion over water has not been traced in the icd.)
+        const float sea = float(int(uint8_t(m.seaLevel)));
+        const auto surfaceH = [&](float x, float z) { return std::max(heightAbove(x, z), sea); };
+        const float maxH = 255.0f;
         float bestH = 0.0f;
-        float prevDiff = heightAbove(cwx, cwz);   // actualH - 0 at h = 0
+        float prevDiff = surfaceH(cwx, cwz);   // actualH - 0 at h = 0
         const float step = 1.0f;
         for (float h = step; h <= maxH + 2; h += step) {
             float ax = cwx + h * kHeightScaleX_;
             float az = cwz + h * kHeightScale_;
-            float diff = heightAbove(ax, az) - h;
+            float diff = surfaceH(ax, az) - h;
             // Front-most self-consistent surface: interpolate the zero-crossing of
             // (actualHeight - h) so we land ON the surface, not past its far edge.
             if (prevDiff > 0 && diff <= 0)
@@ -3413,7 +3402,7 @@
     float GameView::wallOcclusionY(float wx, float wz) {
         const auto& m = mapView_.map();
         if (m.heights.empty()) return 1e9f;
-        terrainLift(wx, wz);   // ensure heightRef_/kHeightScale_ are initialised
+        terrainLift(wx, wz);   // ensure kHeightScale_ is initialised
         float zm = mapView_.zoom();
         int cx = std::clamp(int(wx) / 16, 0, m.width - 1);
         int cz0 = std::clamp(int(wz) / 16, 0, m.height - 1);
@@ -3427,8 +3416,10 @@
             // The wall's painted top projects north of its heightmap footprint by
             // ~height*kHeightScale_ (the art leans it up-and-back) -- the same scale
             // the unit lift and picking use, so occlusion, seating and clicks agree.
-            float proj = std::max(0.0f, float(h - heightRef_) * kHeightScale_);
-            float wy = (float(cz) * 16 + 8 - mapView_.offY()) * zm - proj * zm;
+            float proj = float(h) * kHeightScale_;
+            // Height k belongs to the cell's north-west CORNER at 16k (retail's
+            // sampler, terrainlift.h), so the wall's top edge is at z = 16cz.
+            float wy = (float(cz) * 16 - mapView_.offY()) * zm - proj * zm;
             if (wy < best) best = wy;
         }
         return best;

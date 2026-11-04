@@ -9,27 +9,32 @@ terrain skew). Everything below lives in the client's `GameView`
 
 ## Unit lift
 
-- `heightAbove(wx, wz)` = bilinear heightmap sample minus the map's **modal**
-  height (`heightRef_`), clamped ≥ 0. The modal reference means a uniformly-high
-  map lifts nothing.
-- `terrainLift = heightAbove * kHeightScale_` (screen-Y, toward north) and
-  `terrainLiftX = heightAbove * kHeightScaleX_` (screen-X). The 2.5D view is
-  tilted diagonally, so height could displace both axes. Current constants:
-  `kHeightScale_ = 0.5` (retail's: its screen projection at `0x426820` forms
-  `screenY = (z << 4) - cameraY - (height >> 1)`, confirmed under emulation;
-  shared by the seat lift, wall occlusion, and picking — an earlier art-calibrated
-  1.1 lifted units 2.2× too far) and `kHeightScaleX_ = 0` (horizontal **off**:
-  retail's screen X has no height term at all). Live-tunable via `TAK_HSCALE` /
-  `TAK_HSCALEX` (debug builds).
-- Applied to **every height-anchored draw** of a mobile unit: sprite, shadow,
-  HP bars, selection brackets, order rings, build ghosts, projectiles,
-  particles, effects.
-- **Buildings are exempt.** Use `isStructure(type) = type->maxVel <= 0` (the FBI
-  `canmove` flag is unreliable — the Keep sets `canmove=1` with no velocity). A
-  building sits flat on its footprint; `uLiftX(u)` / `uLiftY(u)` return 0 for
-  structures. (Mana-deposit cells carry a large heightmap value while their
-  medallion — a feature — draws unlifted, so lifting a lodestone there would float
-  it off its base.)
+- `heightAbove(wx, wz)` = the **absolute** terrain height at a point, from
+  retail's sampler (`0x511170`, the one the sim's unit Y uses; ported in
+  `src/client/terrainlift.h`): cell `(cx, cz)`'s height belongs to its
+  north-west corner at world `(16cx, 16cz)`, the sub-pixel fraction is dropped
+  and each interpolation truncates. No per-map reference is subtracted: retail
+  draws every object at `screenY = z - (y >> 1) - cameraY` with `y` its own
+  absolute height (units `0x4fcd1f`, features `0x421dad`, minimap dots
+  `0x4f95c5`), and the shipped maps' heightmaps are painted to that rule — a
+  plateau of height 220 is painted 110px north of its heightmap cells.
+  Through 0.9.19 we subtracted the map's **modal** height (and used cell-centre
+  sampling), which drew every unit, feature, effect and the fog `min(h, modal)/2`
+  px south of retail: 110px on the INDUSTRIAL Zone map, whose ground is at 220,
+  enough to stand units on a lava-side road in the painted lava.
+- `terrainLift = floor(heightAbove * kHeightScale_)` (screen-Y, toward north) and
+  `terrainLiftX = heightAbove * kHeightScaleX_` (screen-X). Current constants:
+  `kHeightScale_ = 0.5` (retail's `sar $1`; an earlier art-calibrated 1.1 lifted
+  units 2.2× too far) and `kHeightScaleX_ = 0` (retail's screen X has no height
+  term at all). Live-tunable via `TAK_HSCALE` / `TAK_HSCALEX` (debug builds).
+- A wading (`canhover`) body stands at `max(terrain, sea - waterline)` and a
+  floater at `sea - waterline` (`0x51b220` / `0x51b2fa`); `waterSink` is the
+  difference from the terrain lift.
+- Applied to **every height-anchored draw**: units (buildings included — retail
+  lifts every unit by its `y`), shadows, HP bars, selection brackets, order rings,
+  build ghosts, features, projectiles, particles, effects, minimap dots. Things
+  that carry a sim Y (projectiles, particles, flames) draw at `z - (y >> 1)`
+  directly. The camera centres a unit at its lifted position.
 
 ## Wall occlusion
 
@@ -103,8 +108,8 @@ draws nothing.
   texture is bilinear-filtered and alpha-blended, and it is modulated by the
   vertex colour: unexplored ground is opaque black, explored ground the
   side's `FogColor` (`gamedata/sidedata.tdf`; white for Aramon) at 8/15. It is
-  drawn flat (no per-corner lift: the plane is already projected), offset by
-  half the map's modal height like the unit lift, under a grid of quads
+  drawn flat (no per-corner lift: the plane is already projected, in the same
+  `z - y/2` rows the units are drawn in), under a grid of quads
   anchored to the map (160 px, coarser far out; retail cuts the screen 6 x 6).
   **RollingFog** multiplies each vertex colour by
   `(sin(P/32*0.31 + 0.17t) * sin(X/32*0.11 - 0.4t) * sin(0.5t) + 1) / 2` and

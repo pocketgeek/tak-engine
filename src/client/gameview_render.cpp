@@ -403,7 +403,7 @@
         const bool kNoShadow = !shadowsOnFrame_;
         // Resolve the lazy height datum/debug scales on this thread. Worker
         // projection and terrain occlusion then read immutable height state.
-        if(heightRef_<0)(void)heightAbove(0,0);
+        if(!liftReady_)(void)heightAbove(0,0);
         // Distant-image lookup inputs (workstream G), fixed before the pass: each
         // worker asks the cache whether its unit's image will be shown without a
         // repaint, and if so leaves the body (not the shadow) for later. The cache
@@ -2196,7 +2196,7 @@
                         const int x=point[0]>>16,y=point[1]>>16,z=point[2]>>16;
                         (void)heightAbove(float(x),float(z));
                         const float sx=(float(x)-mapView_.offX())*zm0;
-                        const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm0;
+                        const float sy=(float(z-(y>>1))-mapView_.offY())*zm0;
                         if(!tak::retailViewportCenterAdmitted(sx,sy,
                                 float(mapViewW(winW_)),float(winH_)))continue;
                         SDL_FRect dst{sx-frame.ax*zm0,
@@ -2428,7 +2428,7 @@
             if (!front().flames.empty()) (void)heightAbove(0,0);
             const auto flameInViewport=[&](const std::array<int,2>& point) {
                 const float sx=(float(point[0])-mapView_.offX())*zm;
-                const float sy=(float(point[1])+float(heightRef_)*0.5f-mapView_.offY())*zm;
+                const float sy=(float(point[1])-mapView_.offY())*zm;
                 return sx>=0 && sx<=mvw && sy>=0 && sy<=winH;
             };
             for(const auto& stream:front().flames) {
@@ -2445,7 +2445,7 @@
                     if(frame<0 || size_t(frame)>=art->frames.size())continue;
                     const auto& f=art->frames[size_t(frame)];
                     SDL_FRect dst{(float(projected[0])-mapView_.offX()-f.ax)*zm,
-                        (float(projected[1])+float(heightRef_)*0.5f-mapView_.offY()-f.ay)*zm,f.w*zm,f.h*zm};
+                        (float(projected[1])-mapView_.offY()-f.ay)*zm,f.w*zm,f.h*zm};
                     SDL_RenderCopyF(ren_,f.tex,nullptr,&dst);
 #ifndef NDEBUG
                     ++debugFlameDrawCount_;
@@ -2476,10 +2476,9 @@
                     st.x.v,st.z.v,terrain.width,terrain.height,[&](int x,int z) {
                         return terrain.heights[size_t(z)*size_t(terrain.width)+size_t(x)];
                     });
-                heightAbove(st.x.toFloat(),st.z.toFloat()); // Initialize map height reference.
                 const int x=st.x.v>>16,z=st.z.v>>16;
                 float sx = (float(x) - mapView_.offX()) * zm;
-                float sy = (float(z-(height>>1)) + float(heightRef_)*0.5f - mapView_.offY()) * zm;
+                float sy = (float(z-(height>>1)) - mapView_.offY()) * zm;
                 float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
                 // Anchored at the storm's FOOT: these sprites are tall columns whose
                 // anchor sits near the base, so the funnel stands on the ground.
@@ -2531,7 +2530,7 @@
                             if(b.fromPosition && b.position) {
                                 const float y1=float((*b.fromPosition)[1]>>16);
                                 const float y2=float((*b.position)[1]>>16);
-                                sy=(z-(y1+(y2-y1)*t)*0.5f+float(heightRef_)*0.5f-mapView_.offY())*zm;
+                                sy=(z-(y1+(y2-y1)*t)*0.5f-mapView_.offY())*zm;
                             }
                             const auto origin = tak::retailEffectSpriteOrigin(sx, sy, fr.ax, fr.ay, zm);
                             SDL_FRect dst{origin.x, origin.y, fr.w * zm, fr.h * zm};
@@ -2608,7 +2607,7 @@
                             (projectedY-mapView_.offY()-f.ay)*zm,f.w*zm,f.h*zm};
                         SDL_RenderCopyF(ren_,f.tex,nullptr,&dst);
                     };
-                    if(lightning)sprite(w.weaponArt,float(z-(y>>1))+float(heightRef_)*0.5f,false);
+                    if(lightning)sprite(w.weaponArt,float(z-(y>>1)),false);
                     const std::string& projectileModel = p.projectileUsesVeteranModel &&
                         !w.veteranShotModel.empty() ? w.veteranShotModel : w.shotModel;
                     if(lightning && p.lightningEffect && w.lightningEffect) {
@@ -2629,8 +2628,8 @@
                             }
                             SDL_UpdateTexture(texture,nullptr,pixels.data(),tw*int(sizeof(uint32_t)));
                             const auto quad=tak::retailLightningQuad(
-                                {mx-int(mapView_.offX()),mz-(my>>1)+int(float(heightRef_)*0.5f-mapView_.offY())},
-                                {x-int(mapView_.offX()),z-(y>>1)+int(float(heightRef_)*0.5f-mapView_.offY())},
+                                {mx-int(mapView_.offX()),mz-(my>>1)+int(-mapView_.offY())},
+                                {x-int(mapView_.offX()),z-(y>>1)+int(-mapView_.offY())},
                                 int(winW/zm),int(winH/zm),effect.width,effect.height,tw,th);
                             if(quad) {
                                 SDL_Vertex vertices[4];
@@ -2646,7 +2645,7 @@
                     if(!lightning && !projectileModel.empty())
                         drawShotModel(projectileModel,p.fromPlayer,float(x),float(z),0,
                             3.14159265358979323846f-float(p.angles[1])*(6.283185307179586f/65536.f),&p);
-                    if(!lightning)sprite(w.weaponArt,float(z-(y>>1))+float(heightRef_)*0.5f,false);
+                    if(!lightning)sprite(w.weaponArt,float(z-(y>>1)),false);
                     continue;
                 }
                 const bool native3d=p.ballistic3d || p.guided3d;
@@ -2672,7 +2671,7 @@
                     const int x=whole(p.position[0]),y=whole(p.position[1]),z=whole(p.position[2]);
                     (void)heightAbove(float(x),float(z));
                     nativeSpriteX=(float(x)-mapView_.offX())*zm;
-                    nativeSpriteY=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+                    nativeSpriteY=(float(z-(y>>1))-mapView_.offY())*zm;
                 }
                 // Ground shadow (shadowgaf/shadowart, 218 weapons) and light pool
                 // (lightmap, 36): both sit on the GROUND under the shot, not at its
@@ -2817,7 +2816,7 @@
                         float sx = native3d ? (fx-mapView_.offX())*zm :
                             (fx - mapView_.offX()) * zm - terrainLiftX(fx, fz) * zm;
                         float sy = native3d ?
-                            (fz-(shotWorldY+by*back)*0.5f+float(heightRef_)*0.5f-mapView_.offY())*zm :
+                            (fz-(shotWorldY+by*back)*0.5f-mapView_.offY())*zm :
                             (fz - mapView_.offY()) * zm - 12 * zm - terrainLift(fx, fz) * zm - palt;
                         float r = (4.0f - s * 0.6f) * zm;   // shrinks toward the tail
                         Uint8 aA = Uint8(200 - s * 30);
@@ -3691,22 +3690,22 @@
     }
 
     // Workstream L: the lift (world px, subtracted from the position before the zoom)
-    // any unit's anchor can carry. Ground units sample heightAbove (the heightmap above
-    // the modal datum, floored at 0); a flyer rides its smoothed datum, which never
-    // exceeds the dilated sector maximum of the same heights. Both are at most the
-    // map's highest height above the datum. Cached per map and height settings.
+    // any unit's anchor can carry. Ground units sample heightAbove (the absolute
+    // terrain height); a flyer rides its datum, the dilated sector maximum of the same
+    // heights floored at the sea; a wading or floating body rides at most the sea. So
+    // all are at most max(highest height, sea level). Cached per map and height settings.
     tak::render::LiftBounds GameView::unitLiftBounds() {
         const auto& m = mapView_.map();
-        if (heightRef_ < 0) (void)heightAbove(0, 0);   // resolves heightRef_ and the debug scales
-        const LiftBoundsKey key{&m, m.heights.data(), m.heights.size(), heightRef_, kHeightScale_, kHeightScaleX_};
+        if (!liftReady_) (void)heightAbove(0, 0);   // reads the debug scales
+        const LiftBoundsKey key{&m, m.heights.data(), m.heights.size(), kHeightScale_, kHeightScaleX_};
         if (key.map != unitLiftKey_.map || key.heights != unitLiftKey_.heights || key.size != unitLiftKey_.size ||
-            key.ref != unitLiftKey_.ref || key.scale != unitLiftKey_.scale || key.scaleX != unitLiftKey_.scaleX) {
+            key.scale != unitLiftKey_.scale || key.scaleX != unitLiftKey_.scaleX) {
             unitLiftKey_ = key;
             int top = 0;
             for (uint8_t v : m.heights) top = std::max(top, int(v));
-            // +1: the bilinear sample's float rounding may exceed the largest corner by an ulp.
+            // +1: margin over the largest corner (the sampler never exceeds it).
             const float above = m.heights.empty() || m.width <= 0 ? 0.0f
-                                : float(std::max(0, top - std::max(heightRef_, 0))) + 1.0f;
+                                : float(std::max(top, m.seaLevel)) + 1.0f;
             const float y = above * kHeightScale_, x = above * kHeightScaleX_;
             unitLift_ = {std::min(0.0f, x), std::max(0.0f, x), std::min(0.0f, y), std::max(0.0f, y)};
         }
@@ -6997,7 +6996,7 @@
         for (int cz = cz0; cz < cz1; ++cz)
             for (int cx = cx0; cx < cx1; ++cx) {
                 int h = m.heights[size_t(cz) * m.width + cx];
-                int d = h - (heightRef_ < 0 ? 0 : heightRef_);
+                int d = h - modalHeight_;
                 if (d < 8) continue;
                 Uint8 a = Uint8(std::min(150, 30 + d));
                 SDL_SetRenderDrawColor(ren_, 220, 40, 40, a);
@@ -7082,8 +7081,9 @@
     //
     // The plane is in PROJECTED coordinates (x, z - y/2): its rows already are
     // the rows of the tile art units are drawn on, so the overlay is flat -- no
-    // per-corner terrain lift. Our renderer draws a unit at z - (h - heightRef)/2,
-    // i.e. at projected z + heightRef/2, so the overlay is offset by the same.
+    // per-corner terrain lift. Units draw at z - h/2 too, so no offset either.
+    // (Through 0.9.19 the bodies were drawn at z - (h - modal)/2 and the overlay
+    // was pushed modal/2 south to follow them.)
     void GameView::drawFog() {
         if (noFog_) return;
         const Frame& f = front();
@@ -7105,8 +7105,8 @@
             } catch (const std::exception&) {}
         }
         const float zm = mapView_.zoom();
-        heightAbove(0.0f, 0.0f);   // resolve heightRef_
-        const float lift = float(std::max(heightRef_, 0)) * kHeightScale_;
+        // The plane and the bodies share retail's projection, so no offset.
+        const float lift = 0.0f;
         const float ox = mapView_.offX(), oy = mapView_.offY();
         const float mapW = float(f.fogW) * 32.0f, planeH = float(f.fogH) * 32.0f;
         // The map's art rows [0, planeH] show the projected rows [-lift, planeH - lift];
@@ -7382,7 +7382,7 @@
         // so relative to that body anchor the detached shadow moves +y/4 in both
         // screen axes, exactly like buildUnitShadow's altitude offset.
         const float sx = (float(x) - mapView_.offX()) * zm + kShadowLX * altitude * zm;
-        const float sy = (float(z - (y >> 1)) + float(heightRef_) * 0.5f - mapView_.offY()) * zm +
+        const float sy = (float(z - (y >> 1)) - mapView_.offY()) * zm +
                          (kProjY - kShadowLZ) * altitude * zm;
         detachedShadowVerts_.reserve(tris_.size() * 3);
         detachedMaskedShadows_.reserve(tris_.size());
@@ -7449,7 +7449,7 @@
             if(!noFog_ && !effectVisibleR(particle.position))return;
             const int x=particle.position[0]>>16,y=particle.position[1]>>16,z=particle.position[2]>>16;
             const float sx=(float(x)-mapView_.offX())*zm;
-            const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+            const float sy=(float(z-(y>>1))-mapView_.offY())*zm;
             SDL_SetRenderDrawColor(ren_,uint8_t(particle.color>>16),uint8_t(particle.color>>8),
                 uint8_t(particle.color),uint8_t(particle.color>>24));
             SDL_RenderDrawPointF(ren_,sx,sy);
@@ -7476,7 +7476,7 @@
             const auto& position=debris.motion.position;
             const int x=position[0]>>16,y=position[1]>>16,z=position[2]>>16;
             const float sx=(float(x)-mapView_.offX())*zm;
-            const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+            const float sy=(float(z-(y>>1))-mapView_.offY())*zm;
             for(auto& triangle:tris_) {
                 for(auto& vertex:triangle.v) {
                     vertex.position.x=vertex.position.x*zm+sx;
@@ -7498,7 +7498,7 @@
             if(glow.worldPosition) {
                 const auto& p=*glow.worldPosition;
                 x=(float(p[0]>>16)-mapView_.offX())*zm;
-                y=(float((p[2]>>16)-((p[1]>>16)>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+                y=(float((p[2]>>16)-((p[1]>>16)>>1))-mapView_.offY())*zm;
             }
             const auto fan=tak::retailGlowMesh(x,y,float(radii[0])*zm,float(radii[1])*zm,196);
             std::array<SDL_Vertex,36> triangles;
@@ -7530,7 +7530,7 @@
             (void)heightAbove(float(x), float(z));
             const auto& f = effect.anim->frames[index];
             SDL_FRect dst{(float(x) - mapView_.offX() - f.ax) * zm,
-                (float(z - (y >> 1)) + float(heightRef_) * 0.5f - mapView_.offY() - f.ay) * zm,
+                (float(z - (y >> 1)) - mapView_.offY() - f.ay) * zm,
                 f.w * zm, f.h * zm};
             SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
 #ifndef NDEBUG
@@ -7562,7 +7562,7 @@
                 const auto& position=*e.worldPosition;
                 const int x=position[0]>>16,y=position[1]>>16,z=position[2]>>16;
                 sx=(float(x)-mapView_.offX()-f.ax)*zm;
-                sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY()-f.ay)*zm;
+                sy=(float(z-(y>>1))-mapView_.offY()-f.ay)*zm;
             }
             SDL_FRect dst{sx, sy, f.w * zm, f.h * zm};
             SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
@@ -7582,7 +7582,7 @@
             for(const auto& particle:particles) {
                 const int x=particle.position[0]>>16,y=particle.position[1]>>16,z=particle.position[2]>>16;
                 const float sx=(float(x)-mapView_.offX())*zm;
-                const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+                const float sy=(float(z-(y>>1))-mapView_.offY())*zm;
                 if(!tak::retailViewportCenterAdmitted(sx,sy,
                         float(mapViewW(winW_)),float(winH_)))continue;
                 const auto color=particle.color();
@@ -7603,7 +7603,7 @@
                 const auto& f=sprite.art->frames[particle.frame];
                 const int x=particle.position[0]>>16,y=particle.position[1]>>16,z=particle.position[2]>>16;
                 const float sx=(float(x)-mapView_.offX())*zm;
-                const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+                const float sy=(float(z-(y>>1))-mapView_.offY())*zm;
                 if(!tak::retailViewportCenterAdmitted(sx,sy,
                         float(mapViewW(winW_)),float(winH_)))continue;
                 SDL_FRect dst{sx-f.ax*zm,sy-f.ay*zm,f.w*zm,f.h*zm};
@@ -7625,7 +7625,7 @@
                 const auto& f=sprite.art->frames[sprite.clock.frame];
                 const int x=sprite.position[0]>>16,y=sprite.position[1]>>16,z=sprite.position[2]>>16;
                 const float sx=(float(x)-mapView_.offX())*zm;
-                const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+                const float sy=(float(z-(y>>1))-mapView_.offY())*zm;
                 if(!tak::retailViewportCenterAdmitted(sx,sy,
                         float(mapViewW(winW_)),float(winH_)))continue;
                 SDL_FRect dst{sx-f.ax*zm,sy-f.ay*zm,f.w*zm,f.h*zm};
@@ -7968,7 +7968,7 @@
             const int y=std::bit_cast<int16_t>(uint16_t(uint32_t(native->position[1])>>16));
             (void)heightAbove(x,z);
             ax=(x-mapView_.offX())*zm;
-            ay=(z-float(y>>1)+float(heightRef_)*0.5f-mapView_.offY())*zm;
+            ay=(z-float(y>>1)-mapView_.offY())*zm;
         }
         for (auto& t : tris_) for (auto& v : t.v) {
             v.position.x = v.position.x * zm + ax;
