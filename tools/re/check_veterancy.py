@@ -14,6 +14,8 @@ Three native pieces, each against the port's --veterancy rows:
   * getLevel 519310 and getMult 5193c0: experience over the unit's own
     experiencepoints, noveteran (+0x268 & 0x10), `v F` (+0xf4).
   * setLevel 519370: an authored level's experience through _ftol.
+  * the uncredited deaths: deadly water (51a140, kind 13), the mission Kill
+    (513130, kind 10), and the mission Capture's owner change (514da0).
 
     python3 tools/re/check_veterancy.py [build-o2/retail_script_test]
 """
@@ -23,7 +25,7 @@ import struct
 import subprocess
 import sys
 
-from emu import Icd, HEAP
+from emu import Icd, HEAP, RETURN_MAGIC
 from unicorn.x86_const import UC_X86_REG_FPCW, UC_X86_REG_ESI, UC_X86_REG_EBX, UC_X86_REG_ESP, UC_X86_REG_EBP
 
 STACK_TOP = 0x70000000 + 0x100000 - 0x2000
@@ -133,6 +135,77 @@ def main():
     credited = sum(1 for r, w in zip(rows[:credits], expected[:credits]) if w != r.split()[-1])
     print('veterancy: %d kill-credit cases (%d credited), %d getLevel/getMult, %d setLevel rows match'
           % (credits, credited, levels, len(rows) - credits - levels))
+    print(uncredited_deaths())
+
+
+def uncredited_deaths():
+    """The death kinds of two deaths no attack causes, natively.
+
+    * Deadly water (51e13f) hurts through 51a140 with no attacker and damage
+      kind 13: the lethal hit keeps the last hitter (+0xf8, +0xfc), records
+      kind 13 at +0x10f (what 51e36c hands 512610) and sets the dying bit.
+    * The mission Kill (0x4d36eb -> 513130) hands 512610 death kind 10 for
+      every unit this machine runs (owner +0xea 1 or 2), none of a remote one.
+    Neither 13 nor 10 is a kind the credit switch at 512b71 credits."""
+    p = Icd()
+    game, units, victim_type, owner, remote, hitter = (HEAP + i * 0x20000 for i in range(6))
+
+    def put(address, value, fmt='I'):
+        p.uc.mem_write(address, struct.pack('<' + fmt, value))
+
+    def get(address, fmt='I'):
+        return struct.unpack('<' + fmt, p.uc.mem_read(address, struct.calcsize(fmt)))[0]
+
+    calls = []
+    def record(name, nargs):
+        def hook(uc, sp):
+            calls.append((name,) + struct.unpack('<%dI' % nargs, uc.mem_read(sp, 4 * nargs)))
+            return nargs, 0
+        return hook
+    p.hooks[0x52ae30] = record('52ae30', 2)
+    p.hooks[0x512610] = record('512610', 2)
+    p.hooks[0x512ae0] = record('512ae0', 1)
+    put(0x62d55c, game)
+    put(owner, 1); put(owner + 0xea, 2, 'B')
+    put(remote, 1); put(remote + 0xea, 3, 'B')
+    put(victim_type + 0x1be, 100)
+
+    def unit(index, record_):
+        u = units + index * 0x138
+        p.uc.mem_write(u, bytes(0x138))
+        put(u + 2, index, 'H'); put(u + 0x130, 0x1000000); put(u + 0xb4, victim_type); put(u + 0xb8, record_)
+        put(u + 0x10c, 5, 'H')
+        return u
+    put(game + 0x14e84, units); put(game + 0x14e88, units + 3 * 0x138)
+    for i in range(4):
+        p.uc.mem_write(units + i * 0x138, bytes(0x138))
+    v = unit(1, owner)
+    put(v + 0xf8, hitter); put(v + 0xfc, 4, 'B')
+    p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
+    _, error = p.call(0x51a140, (0, v, 40, 13, 0))
+    assert not error, error
+    assert get(v + 0xf8) == hitter and get(v + 0xfc, 'B') == 4, 'water damage replaced the last hitter'
+    assert get(v + 0x10f, 'B') == 13 and get(v + 0x130) & 0x1000, 'water damage was not a kind-13 kill'
+    assert not calls, calls
+    unit(1, owner); unit(2, remote)
+    _, error = p.call(0x513130)
+    assert not error, error
+    assert calls == [('52ae30', v, 1), ('512610', v, 10)], calls
+    # The mission Capture (0x4d3c57, the verb matched): unit id and player in
+    # the argument block [ebp+0x10]; it changes the owner through 514da0.
+    calls.clear(); p.hooks[0x514da0] = record('514da0', 3)
+    v = unit(1, owner)
+    player = 1; record_ = game + 0x2404 + player * 0x110; slot = HEAP + 0x380000
+    p.uc.mem_write(record_, bytes(0x110)); put(record_, 1); put(record_ + 0xea, 2, 'B'); put(record_ + 0xeb, 1, 'B')
+    put(record_ + 0xe8, 1, 'H'); put(record_ + 0x50, slot); p.uc.mem_write(slot, bytes(0x100))
+    block = HEAP + 0x390000; put(block, 1, 'H'); put(block + 4, player, 'B')
+    frame = STACK_TOP - 0x400
+    put(frame, 0); put(frame + 4, RETURN_MAGIC); put(frame + 0x10, block)
+    p.uc.reg_write(UC_X86_REG_EBP, frame); p.uc.reg_write(UC_X86_REG_ESP, frame - 0x2b0)
+    p.uc.emu_start(0x4d3c57, RETURN_MAGIC, count=200)
+    assert calls == [('514da0', v, record_, 0)], calls
+    return ('uncredited deaths: deadly water kills with kind 13 keeping the last hitter; mission Kill sends'
+            ' kind 10; mission Capture changes the owner through 514da0')
 
 
 if __name__ == '__main__':

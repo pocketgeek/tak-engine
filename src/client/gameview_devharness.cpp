@@ -181,7 +181,7 @@
                 if (tak::sim::Unit* su = writableWorld().unit(uid)) {   // apply the .crt stats
                     if (su->type)
                         su->hp = tak::sim::Fixed::fromFloat(su->type->maxHp * float(std::clamp(u.health, 0, 100)) / 100.0f);
-                    su->veteran = std::clamp(u.veteran, 0, 10);
+                    writableWorld().setVeteranLevel(*su, u.veteran);
                 }
                 if (player == 0) { cx += wx; cz += wz; ++n; }
             }
@@ -5716,7 +5716,7 @@
         size_t k=0;
         for(const auto& unit:world_.units()) {
             if(!unit.alive() || !unit.type || !unit.type->canMove || k++%5)continue;
-            if(auto* u=writableWorld().unit(unit.id))u->veteran=4+int((frame/period+k)%6);
+            if(auto* u=writableWorld().unit(unit.id))writableWorld().setVeteranLevel(*u,4+int((frame/period+k)%6));
         }
     }
 

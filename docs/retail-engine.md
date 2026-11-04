@@ -75,10 +75,17 @@ a site's 13), when the victim was finished (+0x108 == 0) and its owner (+0xfd)
 differs from the hitter's player (+0xfc) -- no alliance test. Nothing about
 the killer is tested: buildings gain experience, and noveteran units collect it
 but stay at level 0. A change of owner (ShareUnits, CRT transfer, charm, all
-via 514da0) makes a new object with +0xf0 = +0xf4 = 0, then the type's
-scenario level. Saves store the level, not the points (51f04c). Ours:
-`src/sim/retailveterancy.h`; `tools/re/check_veterancy.py` runs 512ce0's gate,
-519310/5193c0 and 519370 natively against `retail_script_test --veterancy`.
+via 514da0, and the mission `Capture` verb at 0x4d3c57 as well) makes a new
+object with +0xf0 = +0xf4 = 0, then the type's scenario level. Two deaths no
+attack causes credit nobody: deadly water hurts through 51a140 with no
+attacker and damage kind 13 (51e13f), which keeps the last hitter but becomes
+the death kind (+0x10f, 512610 at 51e36c); the mission `Kill` verb (0x4d36eb ->
+513130) sends kind 10. (Retail's `Kill` also ignores its arguments and takes
+every unit this machine runs, owner +0xea 1 or 2; ours still kills the one unit
+named, and no shipped mission uses it.) Saves store the level, not the points
+(51f04c). Ours: `src/sim/retailveterancy.h`; `tools/re/check_veterancy.py` runs
+512ce0's gate, 519310/5193c0 and 519370 natively against `retail_script_test
+--veterancy`, and the water, Kill and Capture paths natively.
 
 The multiplier scales the instance's **attack** and **armour** up and **divides**
 a reload/cooldown field (veterans hit harder, tank more, fire faster); max HP is

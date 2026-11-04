@@ -153,9 +153,29 @@ int main() try {
         check(w.unit(k)->xp==200 && w.unit(k)->veteran==10,"kills under v F did not add experience");
         w.setVeterancyOverride(k,0.0f);
         check(w.unit(k)->veteran==2,"cleared v F did not return the level from experience");
+        // A killer that died first gains nothing: its object is gone.
+        const int gone=w.spawn(&killerType,400,800,0,0);
+        w.unit(gone)->hp=Fixed();w.tick(1.f/30);
+        check(!w.unit(gone)->alive(),"synthetic killer did not die");
+        kill(gone,1,1);
+        check(w.unit(gone)->xp==0,"a dead killer gained experience");
         // A CRT transfer is a new object too (514da0 at 4cb0c4).
         check(w.scenarioTransfer(k,2) && w.unit(k)->xp==0 && w.unit(k)->veteran==0,
               "a transferred unit kept its experience");
+    }
+    {
+        // Deadly water hurts with no attacker and damage kind 13 (51e13f), the
+        // death kind 512610 then gets: the last hitter is kept but not credited.
+        auto killerType=fighter(),victim=fighter();
+        killerType.experiencePoints=10;killerType.maxWaterDepth=1000;
+        victim.id="victim";victim.weapon.damage=0;victim.weapons.clear();victim.maxHp=40;victim.experiencePoints=25;
+        World w;w.setPlayerCount(2);w.setTerrain(std::vector<uint8_t>(64*64,10),64,64,50);
+        w.setWaterDamage(1000);
+        const int k=w.spawn(&killerType,400,400,0,0),v=w.spawn(&victim,440,400,0,1);
+        w.unit(v)->lastHitBy=k;w.unit(v)->lastHitPlayer=0;
+        for(int i=0;i<60 && w.unit(v)->alive();++i)w.tick(1.f/30);
+        check(!w.unit(v)->alive() && w.unit(v)->deathType==13,"deadly water did not kill with kind 13");
+        check(w.unit(k)->alive() && w.unit(k)->xp==0,"a drowning credited its last attacker");
     }
     std::cout<<"PASS: authored combat percentages, neutral targeting/capture and state hashing\n";
     return 0;

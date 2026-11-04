@@ -2144,6 +2144,11 @@ public:
     int spawn(const UnitType* type, float x, float z, std::optional<float> heading = {}, int player = 0);
     // CRT ownership transfer: preserves HP/progress, clears the former owner's commands.
     bool scenarioTransfer(int unitId, int newPlayer);
+    // The same, telling `notify` (the running mission, or none) of the capture.
+    bool scenarioTransfer(int unitId, int newPlayer, MissionScript* notify);
+    // Dev harness and tools: give a unit an authored veteran level as placement
+    // does (setLevel 519370: experience for the level, then the level from it).
+    void setVeteranLevel(Unit& u, int level);
     int scenarioCreate(const UnitType* type,int player,int lx,int lz,int hx,int hz);
     void scenarioDestroy(int unitId,uint8_t deathType=0);
 #ifndef NDEBUG

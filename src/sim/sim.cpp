@@ -8853,6 +8853,10 @@ void World::scenarioAdjustHealth(int unitId,uint16_t amount,bool heal) {
 // Native CRT ownership uses 514da0, which preserves health rather than applying
 // charm's half-health floor. Keep stable engine IDs while removing owner commands.
 bool World::scenarioTransfer(int unitId, int newPlayer) {
+    return scenarioTransfer(unitId, newPlayer, mission_.get());
+}
+
+bool World::scenarioTransfer(int unitId, int newPlayer, MissionScript* notify) {
     Unit* u = unit(unitId);
     if (!u || !u->type || !u->alive() || u->hp <= Fixed() ||
         !validUnitOwner(newPlayer) || u->player == newPlayer || atUnitCap(newPlayer)) return false;
@@ -8871,7 +8875,7 @@ bool World::scenarioTransfer(int unitId, int newPlayer) {
     if (validUnitOwner(oldPlayer) && players_[size_t(oldPlayer)].unitCount > 0)
         --players_[size_t(oldPlayer)].unitCount;
     ++players_[size_t(newPlayer)].unitCount;
-    if (mission_) mission_->unitCaptured(*this, unitId);
+    if (notify) notify->unitCaptured(*this, unitId);
     transferEntitySlot(*u,newPlayer);
     u->player = newPlayer;
     startExperience(*u);
@@ -8931,6 +8935,13 @@ void World::startExperience(Unit& u) {
     if (u.type) if (auto it = scenarioTypeStats_.find(u.type->id); it != scenarioTypeStats_.end())
         u.xp = retailExperienceForLevel(u.xp, std::clamp(it->second[2], 0, 10), u.type->experiencePoints,
                                         u.type->noVeteran, u.vetOverride);
+    u.veteran = u.veteranLevel();
+}
+
+void World::setVeteranLevel(Unit& u, int level) {
+    if (!u.type) return;
+    u.xp = retailExperienceForLevel(u.xp, std::clamp(level, 0, 10), u.type->experiencePoints,
+                                    u.type->noVeteran, u.vetOverride);
     u.veteran = u.veteranLevel();
 }
 
@@ -19001,7 +19012,6 @@ void World::tick(float dt) {
             // no HP-pool change -- veterancy works through the attack/armor
             // multipliers, not a bigger health bar.
             if (u.lastHitBy && u.type) {
-                Unit* k = unit(u.lastHitBy);
                 // Credit the killer's player with an enemy kill (F4 overlay). Counts
                 // even if the killer is a structure or has since died -- what
                 // matters is who landed the fatal blow, not that it still lives.
@@ -19114,7 +19124,10 @@ void World::tick(float dt) {
             // Saturating: a retail site stays alive at or below zero hp.
             u.hp = Fixed::raw(int32_t(std::clamp<int64_t>(int64_t(u.hp.v) - Fixed::fromFloat(waterDamage_ * dt).v,
                                                           -int64_t(INT32_MAX), INT32_MAX)));
-            if (u.hp <= Fixed()) { u.overkill = fxMax(u.overkill, -u.hp); u.deathType = 1; }
+            // Retail hurts it through 51a140 with no attacker and damage kind 13
+            // (51e13f), which 51a348 keeps as the death kind (+0x10f -> 512610 at
+            // 51e36c): the last hitter stays, but kind 13 credits it nothing.
+            if (u.hp <= Fixed()) { u.overkill = fxMax(u.overkill, -u.hp); u.deathType = 13; }
         }
         // Self-repair (KINGDOMS.icd 0x51e152..0x51e1bc). healtime is the unit's own
         // WORKER TIME, not seconds per hit point: every eighth tick a finished unit
