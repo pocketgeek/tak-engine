@@ -109,6 +109,11 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
     // VTOL_StepOutStandby or VTOL_StepOutNoFormation (rows 0x5ebee0 / 0x5ebef9 /
     // 0x5ebf12: class 14, flags 0x1000000 / 0x5000000 / 0), not a move's 0x3000400.
     else if (o.stepOut) { m.cls = 14; m.flags = o.mission.flags; }
+    // SUPPRESS, fire at a point (row 0x5eb8b8: class 1, 0x1000410). Its stage-4
+    // approach is retail's controller on that mission, a leg ahead of it in ours.
+    else if (o.suppress || o.suppressApproach) {
+        m.cls = 1; m.flags = 0x1000410; m.goalX = o.attackPointX.v; m.goalZ = o.attackPointZ.v;
+    }
     else { m.cls = 14; m.flags = 0x3000400; }   // a move
     m.kind = m.cls == 14 ? moveKind(u.type->canFly) : m.cls == 7 ? kKindPatrol : otherKind(m.cls);
     // Only the World's auto-attacks (and the return move behind a leashed one):

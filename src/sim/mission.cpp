@@ -339,17 +339,14 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
         case 'a': {                                       // 5143b5
             ClauseScan point = scan;
             if (point.number(fx) && point.number(fz)) {
-                // 4de530 kind 3 with a point: SUPPRESS for a ranged ground unit,
-                // AIRSTRIKE / AIRTOGROUND for a flyer. Firing at bare ground is
-                // not ported: a mobile unit goes until the point is in its
-                // weapon's reach and fights from there; a building stays put.
-                if (u->type->weapons.empty() || u->type->isStructure()) break;
-                const size_t before = u->orders.size();
-                w.order(unitId, cellToWorld(fx), cellToWorld(fz), queue);
-                u = w.unit(unitId);
-                const int32_t reach = int32_t(u->type->maxRange());
-                if (u->orders.size() > before && !u->type->canFly && reach > 8)
-                    u->orders.back().missionRadius = uint32_t(reach - 8);
+                // 5143b5: " %f %f" -> the point X*16, Y*16 px (scenario +0xdc5 = 16,
+                // no half cell), 4de530 kind 3 -> 4d78a0 queued: the click's
+                // resolver (SUPPRESS for a ranged unit or tower, a flyer's point
+                // order, nothing for a toairweapon or a melee one off a blocker).
+                // No order given: the clause does nothing and the next one still
+                // reads. A kamikaze type's ATTACK_KAMIKAZE is not ported (no
+                // shipped use).
+                w.suppress(unitId, fx * 16.0f, fz * 16.0f, queue);
                 break;
             }
             if (!scan.name(nm, true)) break;
