@@ -93,6 +93,7 @@ static int runTest(int argc,char** argv) try {
 
 int main(int argc,char** argv) {
 #ifdef _WIN32
+    (void)argc; (void)argv;
     return tak::utf8Main(runTest);
 #else
     return runTest(argc,argv);
