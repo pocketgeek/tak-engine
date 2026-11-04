@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -17,6 +18,8 @@
 #include "client/guiart.h"
 #include "client/font.h"
 #include "client/menumusic.h"
+#include "client/menuclick.h"
+#include "client/menusfx.h"
 #include "client/settings.h"
 #include "gui/gui.h"
 
@@ -49,6 +52,8 @@ struct Geom {
     float headY = 40, pitch = 22;
     int maxRows = 8;
     std::string bgGaf, bgSeq, btnGaf;
+    // Each button's click, bound in its gui states like every retail menu button's.
+    std::string menuSound = "cancel.wav", proceedSound = "ok.wav";
 };
 
 // The per-faction victory plate, then the shared defeat plate.
@@ -92,6 +97,8 @@ Geom loadGeom(const hpi::Vfs& vfs, bool victory, int faction) {
         }
         if (const gui::Gadget* b = ui.find("Proceed"); b && !b->imgs.empty())
             g.btnGaf = b->imgs[0].gaf;
+        if (const gui::Gadget* b = ui.find("MainMenu")) g.menuSound = menuclick::soundOf(*b);
+        if (const gui::Gadget* b = ui.find("Proceed")) g.proceedSound = menuclick::soundOf(*b);
     } catch (...) {}
     if (g.bgGaf.empty()) {
         static const char* kPlate[5] = {"TAKVAramonScreen", "TAKVTarosScreen", "TAKVVerunaScreen",
@@ -177,13 +184,51 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
     const bool canProceed = hasNext || skirmishNext != ResultChoice::Menu ||
                             (!victory && !title.empty());
 
+    // A choice plays its button's click on the press, as the title menu's doors do,
+    // then the plate stays up until the click has sounded: leaving closes the device.
+    MenuSfx sfx(vfs);
+    sfx.settings = settings;
+    sfx.load(g.menuSound);
+    sfx.load(g.proceedSound);
+    std::optional<ResultChoice> chosen;
+    int leaving = 0;   // frames drawn since the choice; bounded well above the ~140ms clicks
+    // Debug: TAK_RESULT_PRESS=menu|proceed presses that button on the first frame (as
+    // a real left-button press event) and reports the click it played; with
+    // TAK_SHOT_RESULT and dummy video the screen then waits out the click before it
+    // returns (the result_click test).
+    const char* press = devEnv("TAK_RESULT_PRESS");
+    if (press && !*press) press = nullptr;
+    bool pressPending = press != nullptr;
+    auto choose = [&](ResultChoice c, const std::string& sound) {
+        if (chosen) return;
+        chosen = c;
+        sfx.play(sound);
+        if (press)
+            std::fprintf(stderr, "result click: choice=%d sound=%s queued=%d\n", int(c),
+                         sound.c_str(), int(sfx.busy()));
+    };
+
     for (;;) {
         if (termRequested()) { freeAll(); return ResultChoice::Menu; }
+        if (chosen && (!sfx.busy() || ++leaving > 30)) { freeAll(); return *chosen; }
         int w = 0, h = 0;
         SDL_GetRendererOutputSize(ren, &w, &h);
         GuiLayout lay(w, h);
         SDL_FRect okR = lay.rect(g.okBtn.x, g.okBtn.y, g.okBtn.w, g.okBtn.h);
         SDL_FRect cancelR = lay.rect(g.menuBtn.x, g.menuBtn.y, g.menuBtn.w, g.menuBtn.h);
+
+        if (pressPending) {
+            pressPending = false;
+            const SDL_FRect& r = std::strcmp(press, "menu") == 0 ? cancelR : okR;
+            const float perPoint = float(hidpi::toPixels(ren, 1000)) / 1000.0f;   // event coords are points
+            SDL_Event ev{};
+            ev.type = SDL_MOUSEBUTTONDOWN;
+            ev.button.button = SDL_BUTTON_LEFT;
+            ev.button.state = SDL_PRESSED;
+            ev.button.x = int((r.x + r.w / 2) / perPoint);
+            ev.button.y = int((r.y + r.h / 2) / perPoint);
+            SDL_PushEvent(&ev);
+        }
 
         int mx = 0, my = 0;
         hidpi::mousePixels(ren, mx, my);   // layout is in output pixels
@@ -192,19 +237,19 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
 
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) continue;
+            if (e.type == SDL_QUIT || chosen) continue;
             if (e.type == SDL_KEYDOWN) {
                 SDL_Keycode k = e.key.keysym.sym;
-                if (k == SDLK_ESCAPE) { freeAll(); return ResultChoice::Menu; }
-                if (k == SDLK_RETURN || k == SDLK_KP_ENTER) { freeAll(); return proceed; }
+                if (k == SDLK_ESCAPE) choose(ResultChoice::Menu, g.menuSound);
+                if (k == SDLK_RETURN || k == SDLK_KP_ENTER) choose(proceed, g.proceedSound);
                 // Replaying a mission you just won isn't on retail's plate; the key is
                 // here because the campaign screen is the only other way back in.
-                if (k == SDLK_r) { freeAll(); return ResultChoice::Retry; }
+                if (k == SDLK_r) choose(ResultChoice::Retry, g.proceedSound);
             }
             if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                 float bx = float(hidpi::toPixels(ren, e.button.x)), by = float(hidpi::toPixels(ren, e.button.y));
-                if (canProceed && inRect(okR, bx, by)) { freeAll(); return proceed; }
-                if (inRect(cancelR, bx, by)) { freeAll(); return ResultChoice::Menu; }
+                if (canProceed && inRect(okR, bx, by)) choose(proceed, g.proceedSound);
+                else if (inRect(cancelR, bx, by)) choose(ResultChoice::Menu, g.menuSound);
             }
         }
         if (music) music->poll();
@@ -344,7 +389,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
                 cursors.draw(ren, CursorId::Normal, mx, my, sc);
             }
         }
-        if (const char* sp = devEnv("TAK_SHOT_RESULT")) {
+        if (const char* sp = devEnv("TAK_SHOT_RESULT"); sp && !chosen) {
             std::vector<uint8_t> px(size_t(w) * size_t(h) * 4);
             if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_ABGR8888, px.data(), w * 4) == 0)
                 png::write(sp, w, h, px);
@@ -352,7 +397,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
             return ResultChoice::Menu;
         }
         // Headless (dummy video): no input, so end at the result rather than spin.
-        if (const char* drv = SDL_GetCurrentVideoDriver(); drv && !std::strcmp(drv, "dummy")) {
+        if (const char* drv = SDL_GetCurrentVideoDriver(); drv && !std::strcmp(drv, "dummy") && !chosen) {
             freeAll();
             return ResultChoice::Menu;
         }

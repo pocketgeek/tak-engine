@@ -73,7 +73,16 @@ their validation reports; both live in [`docs/`](docs/).
   ground: 110 pixels on a map whose ground is high, such as INDUSTRIAL Zone, enough to
   draw units on a road beside lava in the lava itself. Now everything is drawn at its
   own height, as in the original game, on every map. Ships and wading units ride at
-  the water surface over deep water, and the camera centres on where a unit is drawn.
+  the water surface over deep water, with their health bars and markers on them, and
+  an order clicked on water sends a ship to where you clicked. The camera centres on
+  where a unit is drawn.
+- **The result screen's buttons click.** The two buttons on the victory and defeat
+  screen now play their clicks when pressed, as in the original game (the left one
+  its cancel click, the right one its OK click), like the title menu's buttons. The
+  SETTINGS, LOAD REPLAY, BENCHMARK and server pages click too, with the clicks the
+  original game gives the same kinds of button. Menu clicks now also follow the
+  Options MASTER and SOUND EFFECTS volumes; at the default full volumes they sound as
+  before.
 - **Investigated, no change needed:**
   - A computer's Sea Dragon on Hold Position with an enemy just outside Tsunami's range
     keeps switching weapons and never fires: the original game does exactly the same.
