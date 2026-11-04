@@ -114,6 +114,49 @@ int main() try {
         check(gave && allies.unit(c)->xp==0 && allies.unit(c)->veteran==0,
               "a given unit kept its experience");
     }
+    {
+        // The credit gate of 512ae0, through a scripted death of a chosen kind:
+        // credit for kinds 1,2,3,7,8,14,15 only, a finished victim, and a victim
+        // owner other than the last hitter's player.
+        auto killerType=fighter(),cheap=fighter(),proud=fighter();
+        killerType.experiencePoints=100;cheap.id="cheap";cheap.experiencePoints=25;
+        proud.id="proud";proud.experiencePoints=100;proud.noVeteran=true;
+        World w;w.setPlayerCount(3);w.setTerrain(std::vector<uint8_t>(64*64,50),64,64,0);
+        const int k=w.spawn(&killerType,400,400,0,0),nv=w.spawn(&proud,400,600,0,0);
+        auto kill=[&](int killer,int victimPlayer,uint8_t kind,bool unfinished=false) {
+            const int v=w.spawn(&cheap,1200,1200,0,victimPlayer);
+            w.unit(v)->underConstruction=unfinished;
+            w.unit(v)->lastHitBy=killer;w.unit(v)->lastHitPlayer=w.unit(killer)->player;
+            w.scenarioDestroy(v,kind);
+        };
+        // A valuable unit killing cheap ones: 25 a kill, a level every 100.
+        for (int i=0;i<3;++i) kill(k,1,1);
+        check(w.unit(k)->xp==75 && w.unit(k)->veteran==0,"cheap kills did not add a fraction of a level");
+        kill(k,1,3);
+        check(w.unit(k)->xp==100 && w.unit(k)->veteran==1,"four cheap kills did not reach level 1");
+        kill(k,1,5);kill(k,1,4);kill(k,1,0);kill(k,1,13);
+        check(w.unit(k)->xp==100,"self-destruct, paralyzer, scripted or site death credited experience");
+        kill(k,1,14);kill(k,2,15);
+        check(w.unit(k)->xp==150,"stone or freeze kill did not credit experience");
+        kill(k,1,1,true);
+        check(w.unit(k)->xp==150,"an unfinished victim credited experience");
+        kill(k,0,1);
+        check(w.unit(k)->xp==150,"killing the owner's own unit credited experience");
+        // noveteran collects experience but stays at level 0 (getLevel 519310).
+        for (int i=0;i<8;++i) kill(nv,1,1);
+        check(w.unit(nv)->xp==200 && w.unit(nv)->veteran==0 && w.unit(nv)->vetMul()==1.0f,
+              "a noveteran killer was not held at level 0");
+        // `v F`: level 10 while set, kills still add, cleared the level is xp's.
+        w.setVeterancyOverride(k,1.5f);
+        check(w.unit(k)->veteran==10 && w.unit(k)->vetMul()==1.5f,"v F did not hold level 10");
+        for (int i=0;i<2;++i) kill(k,1,1);
+        check(w.unit(k)->xp==200 && w.unit(k)->veteran==10,"kills under v F did not add experience");
+        w.setVeterancyOverride(k,0.0f);
+        check(w.unit(k)->veteran==2,"cleared v F did not return the level from experience");
+        // A CRT transfer is a new object too (514da0 at 4cb0c4).
+        check(w.scenarioTransfer(k,2) && w.unit(k)->xp==0 && w.unit(k)->veteran==0,
+              "a transferred unit kept its experience");
+    }
     std::cout<<"PASS: authored combat percentages, neutral targeting/capture and state hashing\n";
     return 0;
 } catch(const std::exception& e) {std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}

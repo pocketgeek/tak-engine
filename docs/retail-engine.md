@@ -59,9 +59,26 @@ area-shaped move goals.
 `.data`/`.rdata`:
 
 ```
-level = min(kills, 10)                 // one level per kill, cap 10
-mult  = 1.0 + 0.10 * level             // base 1.0, +10%/level → up to 2.0×
+on a kill (512ae0 -> 512ce0):  killer.xp += victimType.experiencepoints   // 32-bit wrap
+level = noveteran ? 0 : vF != 0 ? 10 : min(xp / ownType.experiencepoints, 10)   // idiv
+mult  = noveteran ? 1.0 : vF != 0 ? vF : 1.0 + 0.10 * level   // up to 2.0x
+authored level L (setLevel 519370): xp = trunc((L + 0.5) * ownType.experiencepoints)
 ```
+
+Experience (+0xf0) is a sum of the victims' `experiencepoints` (default 666),
+not a kill count, and the level is worked out from it on every read: a cheap
+unit that kills a valuable one can jump several levels, a valuable one needs
+several cheap kills for one. The credit goes to the victim's last hitter
+(+0xf8, set by 51a240 only while the hitter lives) for death kinds 1, 2, 3, 7,
+8, 14 and 15 (switch 512b71; not self-destruct 5, paralyzer 4, a scripted 0 or
+a site's 13), when the victim was finished (+0x108 == 0) and its owner (+0xfd)
+differs from the hitter's player (+0xfc) -- no alliance test. Nothing about
+the killer is tested: buildings gain experience, and noveteran units collect it
+but stay at level 0. A change of owner (ShareUnits, CRT transfer, charm, all
+via 514da0) makes a new object with +0xf0 = +0xf4 = 0, then the type's
+scenario level. Saves store the level, not the points (51f04c). Ours:
+`src/sim/retailveterancy.h`; `tools/re/check_veterancy.py` runs 512ce0's gate,
+519310/5193c0 and 519370 natively against `retail_script_test --veterancy`.
 
 The multiplier scales the instance's **attack** and **armour** up and **divides**
 a reload/cooldown field (veterans hit harder, tank more, fire faster); max HP is
@@ -2430,10 +2447,11 @@ slot sweep and hit response; `captureUnit` raised HP to half and kept
 veterancy; nothing refused an unfinished target. Now the Harpy is an
 ordinary mind-control caster, `captureUnit` keeps HP and resets `xp` /
 `veteran` to a fresh unit's (the scenario's rank for the type, as `spawn`),
-and `canCaptureTarget` and the roll refuse `underConstruction`. Deviations
+and `canCaptureTarget` and the roll refuse `underConstruction`. Deviation
 kept: the unit keeps its id (and its mana, status timers and cloak) rather
-than becoming a new object; and `scenarioTransfer`, which also goes through
-`0x514da0`, still keeps veterancy. A mind-control slot does not select an
+than becoming a new object. (`scenarioTransfer` and `giveUnit`, which also go
+through `0x514da0`, kept veterancy until the veterancy fix; they now restart
+it the same way.) A mind-control slot does not select an
 unfinished unit (`retailSelectTarget`, `sweepKeepsTarget`); this was listed
 as a deviation, but retail's picker skips one too (`4128ca..4128db`, see
 below). Probes:

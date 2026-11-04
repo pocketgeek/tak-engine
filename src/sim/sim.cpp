@@ -5531,8 +5531,8 @@ void World::setVeterancyOverride(int unitId, float multiplier) {
     if (!u || !u->alive() || !u->type) return;
     u->vetOverride = multiplier;
     // getLevel (0x519310) answers 10 while it is set, so the rank shown, the
-    // veteran model and every rank test read full rank; kills still count
-    // (xp) but cannot move it. Cleared, the rank comes from the kills again.
+    // veteran model and every rank test read full rank; kills still add
+    // experience (xp) but cannot move it. Cleared, the rank comes from xp again.
     u->veteran = u->veteranLevel();
 }
 
