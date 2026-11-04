@@ -1128,10 +1128,20 @@ int main(int argc, char** argv) {
             sim::setupMatch(w, reg, cfg);
             int gun = w.spawn(pult, 600, 900, 0, 0);
             int mark = w.spawn(vic, 900, 900, 0, 1);
-            int bystander = w.spawn(vic, 916, 900, 0, 1);   // beside the aim point
-            int friendly = w.spawn(vic, 900, 916, 0, 0);    // retail blast also hits allies
-            float by0 = w.unit(bystander)->hp.toFloat();
-            float friendly0 = w.unit(friendly)->hp.toFloat();
+            // A body apart from the mark (a footprint is 32px): bodies spawned
+            // inside each other share the body plane's cells, and the splash
+            // reads one occupant per cell. This shell lands at about (911,873),
+            // so the friendly stands on that side of the aim point.
+            int bystander = w.spawn(vic, 932, 900, 0, 1);   // beside the aim point
+            int friendly = w.spawn(vic, 900, 868, 0, 0);    // retail blast also hits allies
+            // The splashed swordsmen see each other: on Fire At Will they
+            // fight, and their own blows draw at the same site. Passive, they
+            // hold fire, so every draw here is the shell's.
+            for (int id : {mark, bystander, friendly}) w.setStance(id, 2);
+            // A unit killed outright may be gone from the table.
+            auto hpOf = [&](int id) { const sim::Unit* u = w.unit(id); return u ? u->hp.toFloat() : -1.0e9f; };
+            float by0 = hpOf(bystander);
+            float friendly0 = hpOf(friendly);
             int damageSpreadDraws = 0;
             bool perRecipientDrawsMatch = true;
             int spreadDamageTicks = 0;
@@ -1140,7 +1150,7 @@ int main(int argc, char** argv) {
             });
             w.attack(gun, mark, false);
             bool flew = false, moved = false;
-            float previousTargetHp[3]{w.unit(mark)->hp.toFloat(), by0, friendly0};
+            float previousTargetHp[3]{hpOf(mark), by0, friendly0};
             for (int i = 0; i < 30 * 20; ++i) {
                 const int drawsBefore = damageSpreadDraws;
                 w.tick(1.0f / 30.0f);
@@ -1148,7 +1158,7 @@ int main(int argc, char** argv) {
                 int damagedRecipients = 0;
                 const int targetIds[3]{mark, bystander, friendly};
                 for (size_t j = 0; j < 3; ++j) {
-                    const float hp = w.unit(targetIds[j])->hp.toFloat();
+                    const float hp = hpOf(targetIds[j]);
                     if (hp < previousTargetHp[j]) ++damagedRecipients;
                     previousTargetHp[j] = hp;
                 }
@@ -1165,8 +1175,8 @@ int main(int argc, char** argv) {
                 }
             }
             check(flew, "the catapult actually fired");
-            float by1 = w.unit(bystander)->hp.toFloat();
-            float friendly1 = w.unit(friendly)->hp.toFloat();
+            float by1 = hpOf(bystander);
+            float friendly1 = hpOf(friendly);
             check(by1 < by0, "the shell still lands and splashes the aim point",
                   std::to_string(int(by0)) + " -> " + std::to_string(int(by1)));
             check(friendly1 < friendly0,
@@ -1603,10 +1613,15 @@ int main(int argc, char** argv) {
             for (int i = 0; i < 8; ++i)
                 w.spawn(prey, 950.0f + float(i % 4) * 36, 2760.0f + float(i / 4) * 36, 0, 1);
             for (int i = 0; i < 10; ++i) w.tick(1.0f / 30.0f);
+            // A leashed swordsman's pick is an attack order; a hold-position
+            // archer gets none (4d7de0: auto on Hold Position issues nothing)
+            // and its pick is the fire-at-will sweep's slot target.
             std::map<int, int> tally;
             for (const auto& u : w.units()) {
-                if (!u.alive() || u.player != 0 || u.orders.empty()) continue;
-                if (int t = u.orders.front().targetId) tally[t]++;
+                if (!u.alive() || u.player != 0) continue;
+                int t = u.orders.empty() ? 0 : u.orders.front().targetId;
+                for (int s = 0; s < 3 && !t; ++s) t = u.slotTarget[size_t(s)];
+                if (t) tally[t]++;
             }
             distinct = int(tally.size());
             for (auto& [t, n] : tally) maxOnOne = std::max(maxOnOne, n);
@@ -1691,9 +1706,12 @@ int main(int argc, char** argv) {
                   "moved " + std::to_string(au ? au->x.toFloat() - startX : 0.0f) + "px");
 
             // A leashed unit advances on something inside its leash...
+            // The mission scan takes only an enemy the owner sees (4d8370 reads
+            // the visible-enemy list), so the enemy stands inside the
+            // swordsman's 135 px sight as well as its leash.
             sim::World w2; freshWorld(w2);
             int a2 = w2.spawn(sword, 1000, 2600, 0, 0);   // arasword: move 1, leash 500
-            w2.spawn(sword, 1300, 2600, 0, 1);            // 300px: inside the leash
+            w2.spawn(sword, 1120, 2600, 0, 1);            // 120px: seen, inside the leash
             check(w2.unit(a2)->moveState == 1, "the swordsman is leashed");
             float sx2 = w2.unit(a2)->x.toFloat();
             for (int i = 0; i < 30 * 8; ++i) w2.tick(1.0f / 30.0f);

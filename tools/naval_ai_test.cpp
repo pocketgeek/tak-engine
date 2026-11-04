@@ -34,10 +34,13 @@ int main(int argc,char** argv) {
             const int yard=world.spawn(registry.find("crenavy"),2000,2000,0,0);
             world.tick(1.f/30.f);
             sim::Fixed x,y,z;world.productionPosition(yard,ship,x,y,z);
-            const int blocker=world.spawn(registry.find("arawar"),x.toFloat(),z.toFloat(),0,0);
+            // An ally's ship: the yard's door clearing moves only its owner's
+            // idle ships (World::clearYardDoor), so this one stays put.
+            world.setTeam(1,0);
+            const int blocker=world.spawn(registry.find("arawar"),x.toFloat(),z.toFloat(),0,1);
             world.train(yard,ship,1);
             for (int tick=0;tick<300;++tick) {world.player(0).mana=100000;world.tick(1.f/30.f);}
-            check(world.unit(yard)->productionSiteId==0,"another ship occupying the open pad still blocks production");
+            check(world.unit(yard)->productionSiteId==0,"another player's ship occupying the open pad still blocks production");
             world.order(blocker,2000,2600,false);
             for (int tick=0;tick<9000 && !world.unit(yard)->buildQueue.empty();++tick) {
                 world.player(0).mana=100000;world.tick(1.f/30.f);
@@ -45,6 +48,25 @@ int main(int argc,char** argv) {
             check(world.unit(yard)->buildQueue.empty() && std::any_of(world.units().begin(),world.units().end(),[&](const auto& u) {
                 return u.alive() && u.type==ship && !u.underConstruction;
             }),"shipyard resumes and completes its ship after the pad is cleared");
+        }
+        {
+            // The owner's own idle ship on the pad is moved aside and the
+            // yard builds (an engine deviation: retail moves no idle body).
+            sim::World world;
+            world.setTerrain(std::vector<uint8_t>(256*256,0),256,256,32);
+            world.buildNavClasses(registry);world.setPathService(true);
+            const auto* ship=registry.find("cresubm");
+            const int yard=world.spawn(registry.find("crenavy"),2000,2000,0,0);
+            world.tick(1.f/30.f);
+            sim::Fixed x,y,z;world.productionPosition(yard,ship,x,y,z);
+            world.spawn(registry.find("arawar"),x.toFloat(),z.toFloat(),0,0);
+            world.train(yard,ship,1);
+            for (int tick=0;tick<9000 && !world.unit(yard)->buildQueue.empty();++tick) {
+                world.player(0).mana=100000;world.tick(1.f/30.f);
+            }
+            check(world.unit(yard)->buildQueue.empty() && std::any_of(world.units().begin(),world.units().end(),[&](const auto& u) {
+                return u.alive() && u.type==ship && !u.underConstruction;
+            }),"the owner's idle ship on the pad makes way and the yard completes its ship");
         }
         // Every AI-enabled water unit and its actual producer. This includes
         // the mobile Aramon/Zhon chains, not just Veruna's conventional yard.

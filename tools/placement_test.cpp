@@ -187,7 +187,16 @@ void stagedStressCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, int ben
         return n;
     }();
     planned -= benchEarly;
+    // Both armies hold fire, so they stand where they were placed. A God's
+    // mission scan on its melee slot reaches its 2500 px sight (4d8370), so
+    // with fire at will a God of the immediate fill walks off after an enemy
+    // the staged fill has not placed yet.
+    auto holdFire = [](sim::World& w) {
+        for (const auto& u : w.units())
+            if (sim::Unit* m = w.unit(u.id); m && m->alive()) m->fireState = 0;
+    };
     for (int i = 0; i <= sim::kStressStageTicks; ++i) {
+        holdFire(now); holdFire(staged);
         now.tick(1.f / 30.f);
         staged.tick(1.f / 30.f);
     }

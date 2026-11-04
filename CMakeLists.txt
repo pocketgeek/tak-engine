@@ -2944,8 +2944,11 @@ if(TAK_BUILD_CLIENT)
       # army falls back, and extended pages return only after the cooldown (400 ms /
       # 16 frames with these windows: at least 24 frames after the shed). _full is a
       # smaller army that the four base pages hold only just: the four-page atlas
-      # repacks it when a tile outgrows its cell; with extended pages it adds one
-      # page instead and keeps its cells (no fallback, no page released). _off is the
+      # repacks it when a tile outgrows its cell; with extended pages it adds a
+      # page or two instead and keeps its cells (no fallback, no page released).
+      # Its size is tuned to the scene: 52 fitted before units were drawn at
+      # retail's absolute z - (y >> 1) lift (335eb065), after which 52 released an
+      # extended page and repacked twice; 58 holds on both lifts. _off is the
       # _extended army with unit shadows switched off at frame 60 (Options SHADOWS):
       # no frame maintains the atlas then, so its extended pages go at once.
       foreach(_variant IN ITEMS "" "_zoom" "_band" "_extended" "_yield" "_full" "_off")
@@ -2965,7 +2968,7 @@ if(TAK_BUILD_CLIENT)
               TAK_SHADOW_PAGES_MAX=16)
           set(_expect "page_releases=[1-9][0-9]* shrinks=[0-9]+ validated=[1-9][0-9]* page_allocs=[0-9]+ alloc_failures=0 extended_frames=[1-9][0-9]* max_pages=([5-9]|1[0-6]) sheds=0 fallbacks=0 regrow_gap=0 extended_releases=[1-9]")
         elseif(_variant STREQUAL "_full")
-          set(_scene TAK_SHADOW_BENCH=52 TAK_RENDER_FRAMES=100 TAK_RENDER_RESET=0 TAK_SHADOW_PAGES_MAX=16)
+          set(_scene TAK_SHADOW_BENCH=58 TAK_RENDER_FRAMES=100 TAK_RENDER_RESET=0 TAK_SHADOW_PAGES_MAX=16)
           set(_expect "compactions=[0-1] .* page_releases=0 .* alloc_failures=0 extended_frames=[1-9][0-9]* max_pages=[5-6] sheds=0 fallbacks=0")
         elseif(_variant STREQUAL "_off")
           set(_scene TAK_RENDER_FRAMES=80 TAK_RENDER_RESET=0 TAK_SHADOW_PAGES_MAX=16
