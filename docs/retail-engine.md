@@ -4952,8 +4952,9 @@ issues only when the cursor is an order cursor (`0x527dd0`, `0x525ce0`).
   own or allied unit, MOVE elsewhere; its cursor shows Revive over a body while
   the click moves.
 - Mode 3 (armed ATTACK, `0x4de65f..0x4de7cc`): ground or a friendly unit is a
-  fire-at-point (SUPPRESS for a ranged ground unit -- I, from its name --
-  AIRSTRIKE / AIRTOGROUND for a flyer, nothing for melee and anti-air units).
+  fire-at-point (SUPPRESS for a ranged ground unit, AIRSTRIKE / AIRTOGROUND
+  for a flyer, nothing for anti-air units, nothing for melee units unless a
+  clearable feature stands there; see "Fire at a point: SUPPRESS").
 - Mode 5 (armed GUARD): the cursor needs `canguard` and (the unit flies or the
   target does not); the resolver (`0x4dec78`) has no flyer rule, so a mixed
   selection with one flyer guards a flyer with every unit.
@@ -5628,6 +5629,89 @@ of 141 in the emulator's own geometry; where the circle accepts depends on
 the cell alignment, so the two grids are not the same cases. Matching retail
 here means a retail-faithful fight-move acquisition (visible enemies, the
 selected slot's reach), not this mission alone.
+
+## Fire at a point: SUPPRESS (icd static, 2026-11-03; not ported)
+
+Armed ATTACK on ground or on a friendly unit, and a campaign `a X Y`, is
+`4de530` kind 3 with a point and no target unit (`4de65f..4de7cc`). The
+resolver reads the selected slot's weapon (`519ac0`, slot record `+0xc`):
+
+- `toairweapon` (WeaponType `+0xc8` 0x4000): no order, flyer or not.
+- A flyer (type `+0x260` 0x800): AIRSTRIKE with a `dropped` weapon (`+0xc8`
+  0x20), AIRTOGROUNDHOVER with `hoverattack` (`+0x260` 0x8000000), else
+  AIRTOGROUND, each at the point with no target.
+- A ground unit or a structure whose weapon is not melee (handler vtable
+  `+0x14` false): SUPPRESS.
+- A melee weapon: SUPPRESS only when the point's cell (`50e660`, a tail cell
+  `0xfffe` followed back to its anchor) holds a feature that is blocking
+  (feature `+0x13c` 0x20) and clearable (0x20000, see pathfinding-port.md);
+  else no order.
+
+SUPPRESS is registry row `0x5eb8b8` (`UNITMISSIONCODE_SUPPRESS`, handler
+`0x404d70`, jump table `0x405548`, five stages). Mission fields: point
+`+0x22`, slot `+0x4e`, reach left `+0x52`, feature target `+0x56`. Result
+codes are the dispatcher's (`sim/retailmission.h`).
+
+- **Head.** For a weapon switcher the slot is the selected one (`519ac0`).
+  Event 0x40000 ends the order (5). The group check (`51d1e0(unit,1,4)`)
+  puts Move_Ground_Formation (`0x604d70`) in front, its flag 0x8000000
+  re-rolled with `rand(3)` / `rand(15)`, as in the other ground missions.
+- **Stage 0.** A flyer: 8 (the order goes). Else reach left = the slot's
+  range minus its minimum range (`52aba0` - `52abd0`).
+- **Stage 1.** Melee: no clearable blocking feature at the point, 5. Else
+  the feature's anchor and footprint (`4930d0`) give the rectangle approach
+  (`4d4e80`, as RECLAIM's), feature target = 1, wait 0x740. Ranged: a
+  clearable blocking feature at the point sets feature target = 1; one that
+  was there and has gone ends the order (5); else on.
+- **Stage 2** (melee only; ranged goes straight on). On arrival (0x100) the
+  point is walked toward the unit 8 px at a time (heading `51b340`, sine and
+  cosine `5360bf`/`5360f3`) until the slot reaches it (vtable `+0x10`
+  through `52ad20`), at most 100 steps, else 8. Event 0x40: a tick's sleep,
+  stage 0. Anything else (the approach failed): 9.
+- **Stage 3.** Every slot manual (`519b70(3)`); the selected slot aimed at
+  the point (`51a770`); a non-switcher also aims each other slot it has, a
+  melee one only when the selected weapon is melee. Wait 0x150040.
+- **Stage 4.**
+  - 0x10000, the selected (or first) slot's shot (`530140`, as its reload
+    starts): with a feature target still there and clearable, stage 3 after
+    a tick, else 5; without a feature target, stage 3 and result 6: the
+    order goes to the BACK of the queue. Alone it fires again; Shift-queued
+    points take turns, one shot each.
+  - A `commandfire` weapon's shot raises 0x40000 instead (`5301a1`), so the
+    order ends after that one shot.
+  - 0x40 (a weapon switch, `51a8b0`): a tick's sleep, stage 0.
+  - 0x100000, the aim start's refusal (`52ffd3`: the point inside the
+    minimum range or out of reach): every slot automatic (`519b10(3)`). No
+    mover (a structure): 9, so a tower keeps a lone order and looks again
+    after `rand(30)+15` ticks. While reach left is more than
+    (range - minimum) % 3 (sic, the remainder): with a minimum range, the
+    ring `4d4e10(point, left + min, rand(span/6) + min)` and left -= span/3;
+    without, the circle `4d4da0(point, left)` and left -= rand(range/3).
+    Wait 0x700, stage 3. No reach left: 9.
+
+The weapon side, for a point target (slot record `+6` not 0x8000; `+4/+6`
+the point in pixels):
+
+- The aim point (`51aa50`): the point, with y the terrain height there or the
+  sea level (`+0x19ef8`), whichever is greater.
+- Reach (vtable `+0x10`): the base `530500` is `530580`'s 2D centre test
+  against the point (range 0: always); BallisticWeapon `52bbb0` first solves
+  the arc from the unit's origin to the point (`52bd10`, `0x8000` = out of
+  reach); DroppedBallistic `532270` is the base; MeleeWeapon `52b8a0` tests
+  the point's cell against the unit's footprint box. The minimum range for a
+  point is `530630` (strictly inside).
+- A shot carries no target unit (`51a9a0` gives 0) and flies to the aim
+  point.
+
+The order lasts until another order replaces it, its feature target is gone,
+the approach runs out of reach, or a `commandfire` shot. Not emulated yet.
+
+Ours: armed ATTACK on ground or a friendly attack-moves (cursor Attack); a
+campaign `a X Y` walks into reach and fights (`mission.cpp`). A port needs a
+point target through the whole weapon path (`queryWeaponAim`,
+`tickScriptWeapon`, every class in `fire`, the range and minimum-range
+tests, the facing request), and AirToGround / AirStrike / AirToGroundHover
+without a target unit.
 
 ## Mission order strings (icd 0x513fb0, 2026-10-30)
 
