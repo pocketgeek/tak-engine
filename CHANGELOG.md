@@ -196,6 +196,10 @@ their validation reports; both live in [`docs/`](docs/).
     keeps switching weapons and never fires: the original game does exactly the same.
   - A Prismatic Mirror holding a target without firing (0.9.3) was a Mirror still being
     built; this was fixed in 0.9.12, and the original game does the same as now.
+  - An armed Attack clicked on the ground with a factory, or a Zhon builder repeating
+    production, selected sends its new units there fighting on the way, and the
+    builder keeps producing (the original game gives a factory nothing there). A
+    click on the factory itself still gives it nothing, as in the original game.
 
 ## 0.9.19
 *2026-11-03 · protocol 311 · replay format 15 · does not play with 0.9.18 or earlier, nor their replays*

@@ -2166,6 +2166,55 @@ queue never inherits a plan the player can no longer see. Tests: `production_tes
 plans, attack-then-move, replace/Stop/hash) and `conjure_test` (the shipped
 Zhon builders through the command path).
 
+**Armed ATTACK at a point on a producer (checked 2026-11-04, static only).**
+Retail has no Attack rally, and a factory gets no order at all there:
+
+* S: at type load `canattack` (UnitDef `+0x264` bit 0x20) is set from the
+  first weapon slot (`+0x1aa != 0`, `4c1672..4c1698`), not from the FBI's
+  `canattack`. `+0x260` bit 0x10000 is set when a `WEAPON%i` section loads
+  (`4c15b2..4c1609`), and `4c18d7..4c18ff` then clears `canattack` for a type
+  with a weapon, `bmcode` 0 (`+0x24a`, a building) and a canbuild menu
+  (`+0x12e > 0`); the reload path `4c1f6c..4c1f7c` does the same, and
+  `canguard` (bit 0x40) is cleared alike (`4c1905..4c1925`). So no
+  unit-producing structure has `canattack`, armed or not (the Barracks'
+  `canattack=1` has no effect), and no shipped structure with a canbuild list
+  has a `[WEAPON1]` block (merged units and unitscb).
+* S: the ATTACK button is enabled only when a selected unit has `canattack`
+  (`4b0429..4b0438` sets the summary's `+0x1d`, `4b0597..4b05b6` picks state 0
+  or 2), so with only factories selected it is disabled (I: it cannot be
+  armed). The cursor selector returns Normal without `canattack`
+  (`4dd8ac..4dd8b6 -> 4de4e0`, 0x13), and an armed click under Normal issues
+  nothing and stays armed (`527dd0`); neither the aggregator (`521cd0`) nor the
+  selector tests repeat production.
+* S: the mode-3 resolver (`4de623`) returns no mission without `canattack`
+  (`4de62d -> 4de6ed`); its point branch (`4de65f..4de7e3`) has no structure,
+  producer or queued kind (mode 2 gives QMOVE to a unit with no mover,
+  `4df0cb..4df0e9`, and mode 9 QPATROL, `4deb8a..4deba8`; mode 3 has nothing
+  alike), and GetBuilt copies only QMove and QPatrol (above). An Attack at a
+  point never becomes a retail rally leg.
+* S: for an armed repeating mobile builder (Beast Lord: ballistic; Shaman:
+  line of sight; Beast Handler: melee) the resolver ignores the repeat:
+  SUPPRESS, for melee only over a clearable blocking feature. A plain click
+  calls `4d6a50(unit, 0)` (`4d79b9`; I: that clears the mission list, so the
+  repeating MobileBuild and its repeat end and the builder fires). An order with
+  0x4 set and 0x8 clear is skipped for a builder whose MobileBuild quantity is
+  at least 10,000,000 (`52162d..5216c5`, the `cmp [edi+0x52], 0x989680`; I: a
+  Shift order is dropped, a Ctrl order goes ahead of the build). An unarmed
+  repeating builder (Beast Tamer) has no `canattack`: Normal, nothing.
+
+Ours keeps the rally rule (owner, C9): a factory's Attack-at-a-point rally is
+ours (retail gives nothing), and for a repeating mobile builder retail's
+SUPPRESS is overridden on purpose: armed or not, a factory or a repeating
+builder shows the Attack cursor and gets one `Cmd::AttackMove`, which puts a
+fight leg on its rally (`World::setRally`, `markFightLeg`) and leaves it
+producing; `applyCommand` refuses `Cmd::AttackGround` while `repeatType` is
+set, plain, Shift or Ctrl. In a mixed selection the other units fire at the
+point. A click inside the factory's own footprint hovers the factory, which is
+left out as in retail, so it gets nothing. Tests: `click_input` (C1 rally
+holders: factory alone, factory + archer, repeating Beast Lord and Beast
+Tamer, the footprint click; applied to the sim) and `conjure_test`
+(AttackGround refused, hash and `repeatType` unchanged).
+
 ### Legion: a spot of its own (ours, not retail, protocol 295)
 
 Retail's ground PARK steers to the ring's mid-radius along the unit's own
