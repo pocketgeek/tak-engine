@@ -75,6 +75,16 @@ int main() {
                 [&]{calls+="move,";},[&]{calls+="scan,";return false;},[&](int){calls+="rand,";return draw;});
             if (s.waitMask&1) calls+="sleep"+std::to_string(s.deadline-1000)+",";
             std::printf("%d %d %d %d %s\n",result,int(s.stage),gx,gz,calls.empty()?"-":calls.c_str());
+        } else if (op=="suppresshead") {
+            // SUPPRESS's group check (404e12..404f1b): retailAttackGroupCheck
+            // at level 4, leave on rand(3), clear on rand(15).
+            bool m;auto r=readRecord(std::cin,m);auto u=readMember(std::cin);uint32_t flags,next;int draw;
+            std::cin>>flags>>next>>draw;
+            std::string calls;
+            const int result=retailAttackGroupCheck(flags,retailGroupOutOfSlot(r,u,true,4,(flags&0x4000000u)!=0),next,3,15,
+                [&](int n){calls+="rand"+std::to_string(n)+",";return draw;},
+                [&]{calls+="leave,";retailGroupLeave(r,u);},[&]{calls+="formation,";return true;});
+            std::printf("%d %u %s\n",result,flags,calls.empty()?"-":calls.c_str());writeRecord(r);
         } else if (op=="vtolformation") {
             bool m;auto r=readRecord(std::cin,m);auto u=readMember(std::cin);
             int stage,level,canFly,draw;uint32_t flags;

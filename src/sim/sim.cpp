@@ -1919,8 +1919,10 @@ bool World::removeQueuedMatch(int unitId, bool rally, const QueuedMatch& m) {
     if (it == list.end()) return false;
     if (rally) { list.erase(it); return true; }
     OrdersNote note{*this, unitId};
-    // A SUPPRESS order goes with the approach it put ahead of itself.
-    if (it->suppress && it != list.begin() && std::prev(it)->suppressApproach) {
+    // A SUPPRESS order goes with the approach it put ahead of itself, an
+    // attack with the formation its group check put ahead of it.
+    if (it != list.begin() && ((it->suppress && std::prev(it)->suppressApproach) ||
+                               formationAttack(list) == &*it)) {
         const size_t a = size_t(it - list.begin()) - 1;
         if (a != currentLeg(list)) { list.erase(list.begin() + long(a), list.begin() + long(a) + 2); return true; }
         dropLeg(*u);   // the approach is the current leg; the order is now
@@ -2339,7 +2341,14 @@ void World::tickFlightPatrol(Unit& u) {
         bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
         void idle() {}
         uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
-        void remove(RetailMissionState&) { u.orders.erase(u.orders.begin()); }
+        void remove(RetailMissionState&) {
+            // A flyer attack's formation retires (4d6da0): 519b10(3), every
+            // slot automatic and its aim dropped (51a7f0); the attack runs
+            // from stage 0 (tickCombat, this tick).
+            const bool attack=formationAttack(u.orders)!=nullptr;
+            u.orders.erase(u.orders.begin());
+            if (attack) w.setSlotsAuto(u);
+        }
         void rotate(RetailMissionState&) {
             const auto order=u.orders.front();
             u.orders.erase(u.orders.begin()); u.orders.push_back(order);
@@ -2977,13 +2986,80 @@ const RetailGroupRecord* World::retailGroupOf(const Unit& u) const {
     return &retailGroups_[size_t(u.player)][size_t(group)];
 }
 
+uint32_t World::retailOrderFlags(const Unit& u,const Order& o) const {
+    // SUPPRESS's row 0x1000410. A flyer's attack at a point has no target, so
+    // the ctor (4d6d66) clears the row's target bit 0x200: AirStrike 0x1000600
+    // gives 0x1000400, AirToGround and AirToGroundHover 0x1000200 give 0x1000000.
+    if (o.suppress) return o.mission.flags|0x1000410u;
+    if (o.airPoint) return o.mission.flags|(o.airPoint==Order::kAirStrike ? 0x1000400u : 0x1000000u);
+    // A flyer's attack on a unit that cannot fly (tickCombat's choice):
+    // AirStrike on a selected `dropped` weapon, else AirToGround or the hover.
+    if (u.type && u.type->canFly && !u.type->isStructure() && o.targetId && !o.guard && !o.load) {
+        const Unit* t=unit(o.targetId);
+        if (t && t->type && !t->type->canFly) {
+            const int n=int(u.type->weapons.size());
+            const bool strike=n && u.type->weapons[size_t(std::clamp(u.weaponSlot,0,n-1))].cursorAirstrike;
+            return o.mission.flags|(strike ? 0x1000600u : 0x1000200u);
+        }
+    }
+    return o.mission.flags;
+}
+
+uint32_t World::retailNextMissionFlags(const Unit& u,size_t index) const {
+    return index+1<u.orders.size() ? retailOrderFlags(u,u.orders[index+1]) : 0;
+}
+
+bool World::retailAttackOutOfSlot(const Unit& u,int level) const {
+    const RetailGroupRecord* group=retailGroupOf(u);
+    return group && retailGroupOutOfSlot(*group,retailGroupMember(u),true,level,false);
+}
+
+const Order* World::formationAttack(const std::vector<Order>& orders) {
+    if (orders.empty()) return nullptr;
+    const size_t leg=currentLeg(orders);
+    if (!orders[leg].formationLevel || leg+1>=orders.size()) return nullptr;
+    // A Move's formation goes ahead of the move; only an attack's head puts
+    // one ahead of an attack.
+    const Order& next=orders[leg+1];
+    return next.suppress || next.airPoint || (next.targetId && !next.guard && !next.load) ? &next : nullptr;
+}
+
+// 41db51 / 41c1f1 / 41b7f6: VTOL_Move_Formation (row 5ebca1), level -4
+// (+0x56): the moving members' centre until back within level 4; the attack
+// starts again at stage 0 when it retires.
+void World::AirAttackGroup::push() {
+    if (!formationTo) return;
+    Order formation;
+    formation.x=u.x;formation.z=u.z;formation.goal=formation.flightMoveMission=true;
+    formation.formationLevel=-4;formation.mission.flags=0x1000000u;
+    formation.issuedTick=w.tickCounter_;
+    u.orders.insert(u.orders.begin(),formation);
+    w.noteOrders(u.id);
+}
+
 // Flags of the unit's current mission (+0x5a), for the missions this host
-// models: landing, ground missions and standby. Other orders report none.
+// models: landing, ground missions, SUPPRESS, the flyer attacks on the
+// ground and standby. Other orders report none.
 uint32_t World::retailMissionFlags(Unit& u) {
     if (stepOutFront(u)) return u.orders.front().mission.flags;   // the step-out leads
     if (u.landing) return u.landing->mission.flags;
     // VTOL_Move, VTOL_Move_Formation and VTOL_Patrol all carry 0x1000000.
     if (plainFlightPatrol(u)) return u.orders.front().mission.flags;
+    if (!u.orders.empty()) {
+        // SUPPRESS's approach is its own controller (4d4e10 / 4d4da0): the
+        // mission is SUPPRESS's while it walks.
+        const size_t leg=currentLeg(u.orders);
+        if (u.orders[leg].suppress) return retailOrderFlags(u,u.orders[leg]);
+        if (u.orders[leg].suppressApproach && leg+1<u.orders.size() && u.orders[leg+1].suppress)
+            return retailOrderFlags(u,u.orders[leg+1]);
+        if (u.type->canFly && !u.type->isStructure()) {
+            // AirToGround, AirStrike and AirToGroundHover; AirToAir's flags
+            // are not modelled.
+            const Order& front=u.orders.front();
+            const Unit* t=front.targetId && !front.guard && !front.load ? unit(front.targetId) : nullptr;
+            if (front.airPoint || (t && t->type && !t->type->canFly)) return retailOrderFlags(u,front);
+        }
+    }
     if (auto* o=groundMissionOrder(u,true))
         return o->transportUnloadApproach ? o->transportMission.flags : o->mission.flags;
     if (u.orders.empty() && u.standbyActive) return u.standbyState.flags;
@@ -3528,7 +3604,7 @@ void World::beginStandby(Unit& u) {
     u.standbyActive = true;
 }
 
-void World::tickGroundMission(Unit& u) {
+void World::tickGroundMission(Unit& u,bool attackWalk) {
     // Other mission kinds continue through their existing handlers. A
     // step-out pushed ahead of the standby or the landing leaves them under it.
     if (!u.orders.empty() && !u.orders.front().landing && !u.orders.front().stepOut) {
@@ -3544,9 +3620,13 @@ void World::tickGroundMission(Unit& u) {
         OrderIdentity patrolReturnIdentity;                  // ... with the outbound leg's convoy and order
         bool enabled() const { return u.alive() && !u.underConstruction && !u.embarked(); }
         bool canStandby() const { return w.standbyEligible(u); }
+        bool attackWalk=false;
         RetailMissionState* head() {
             if (stepOutTo || stepOutFront(u)) return nullptr;
             if (u.landing) return &u.landing->mission;
+            // SUPPRESS's walk back to its group runs after the weapons
+            // (tickCombat), as retail's dispatch follows 52ae90.
+            if (attackWalk!=(formationAttack(u.orders)!=nullptr)) return nullptr;
             if (auto* o = groundMissionOrder(u,true)) {
                 if (o->transportUnloadApproach) {
                     if (completeUnloadApproach || abortUnloadApproach ||
@@ -3568,7 +3648,13 @@ void World::tickGroundMission(Unit& u) {
             }
             else if (auto* o=groundMissionOrder(u); o && o->transportUnloadApproach &&
                     &m==&o->transportMission) abortUnloadApproach=true;
-            else w.dropLeg(u);
+            else if (formationAttack(u.orders)) {
+                // SUPPRESS's formation retires (4d6da0): 519b10(3), every slot
+                // automatic and its point dropped with TargetCleared (51a7f0);
+                // SUPPRESS then runs from stage 0 (tickCombat, this tick).
+                w.dropLeg(u);
+                w.setSlotsAuto(u);
+            } else w.dropLeg(u);
         }
         void rotate(RetailMissionState&) {
             Order goal = u.orders[currentLeg(u.orders)];
@@ -3920,6 +4006,7 @@ void World::tickGroundMission(Unit& u) {
             order.flightGoal=goal; order.landing=true; u.orders.insert(u.orders.begin(),order);
         }
     } host{*this,u};
+    host.attackWalk=attackWalk;
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (host.stepOutTo) { pushStepOut(u,host.stepOutKind,host.stepOutTo); return; }
     if(host.patrolReturn) patrolTo(u.id,host.patrolReturn->first.toFloat(),host.patrolReturn->second.toFloat(),true,
@@ -6826,15 +6913,23 @@ void World::setSlotsManual(Unit& u,uint8_t cause) {
 // the in-reach work call); an attack order and a status are recognised here.
 void World::syncSlotMode(Unit& u) {
     const bool status=u.incapacitated() || u.embarked() || u.underConstruction;
+    // A formation an attack's group check put ahead of it (SUPPRESS's
+    // Move_Ground_Formation, a flyer attack's VTOL_Move_Formation) leaves the
+    // attack's slots as they are -- 4d7750 touches none, and 52ae90 reads no
+    // mission, so a slot on a point fires on the way -- until it retires
+    // (4d6da0's 519b10(3), the hosts' remove).
+    const Order* behind=formationAttack(u.orders);
+    const Order* front=behind ? behind : u.orders.empty() ? nullptr : &u.orders.front();
     // A point target belongs to the SUPPRESS leg, or the flyer's attack at
     // a point at the front, that aimed it; the mission's end (4d6da0's
     // 519b10(3)) drops it with TargetCleared.
-    const bool airPoint=!u.orders.empty() && u.orders.front().airPoint;
-    const bool suppressing=u.slotPoint && !u.orders.empty() && (u.orders[currentLeg(u.orders)].suppress || airPoint);
+    const bool airPoint=front && front->airPoint;
+    const bool suppressing=u.slotPoint && front &&
+        ((behind ? behind->suppress : u.orders[currentLeg(u.orders)].suppress) || airPoint);
     if (u.slotPoint && !suppressing)
         for (int s=0;s<3;++s) dropSlotPoint(u,s);
-    const bool attack=!u.orders.empty() && ((u.orders.front().targetId!=0 &&
-        !u.orders.front().guard && !u.orders.front().load) || (suppressing && u.slotPoint) || airPoint);
+    const bool attack=front && ((front->targetId!=0 && !front->guard && !front->load) ||
+        (suppressing && u.slotPoint) || airPoint);
     const bool work=u.buildSiteId || u.repairId || u.reclaimId || u.reviveTarget || u.workScriptWorking;
     // A resurrect channel starts only in reach (and from the threaded ability
     // pass, which must not start scripts), so it is recognised here too.
@@ -6842,7 +6937,7 @@ void World::syncSlotMode(Unit& u) {
         (u.reviveTarget || (u.slotManual==kSlotsWork && work)) ? kSlotsWork : kSlotsAuto;
     // AirToGround's and AirToAir's mixed slots last only while their order
     // is at the front; any other attack's own stages make every slot manual.
-    const bool mixed=attack && want==kSlotsAttack && u.orders.front().mixedSlots;
+    const bool mixed=attack && want==kSlotsAttack && front->mixedSlots;
     if (want==u.slotManual && (mixed || want!=kSlotsAttack || !u.slotAuto)) return;
     if (want==kSlotsAuto) setSlotsAuto(u);
     else setSlotsManual(u,want);
@@ -7931,6 +8026,13 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     // a structure fires through the sweep alone.
     const int activeTarget=!u.orders.empty() && !u.orders.front().guard ? u.orders.front().targetId : 0;
     if(u.scriptAimTarget && u.scriptAimTarget!=activeTarget)clearScriptWeaponTarget(u);
+    // SUPPRESS's walk back to its group (Move_Ground_Formation, its group
+    // check) runs here, after the weapons; once it retires SUPPRESS runs on
+    // from stage 0 in this tick.
+    if (const Order* a=formationAttack(u.orders); a && a->suppress) {
+        tickGroundMission(u,true);
+        if (formationAttack(u.orders)) return;
+    }
     // SUPPRESS owns the body while its leg is current (bar a melee walk);
     // when it goes, the next order runs from here in the same tick.
     if (!u.orders.empty() && u.orders[currentLeg(u.orders)].suppress) {
@@ -8574,6 +8676,25 @@ void World::pushSuppressApproach(Unit& u,Fixed x,Fixed z,int32_t outer,int32_t i
     resetGroundSegment(u,u.orders.front());
 }
 
+// 404e69..404ed3: Move_Ground_Formation (handler 402880), level -3, response
+// mode 0 (no target scan), ahead of the order: the moving members' centre
+// until back within level 3 (tickGroundMission, called from tickCombat).
+// The order's own walk (a melee rectangle and its route) goes; stage 0 makes
+// it again. Its slots are left as they are (syncSlotMode).
+void World::pushSuppressFormation(Unit& u) {
+    const size_t leg=currentLeg(u.orders);
+    Order& o=u.orders[leg];
+    o.buildRectangle.reset();o.controller=0;o.hasSegment=false;
+    o.navigationExhausted=o.navigationConsumed=false;
+    cancelPath(u);
+    if (leg) u.orders.erase(u.orders.begin(),u.orders.begin()+long(leg));
+    Order formation;
+    formation.x=u.x;formation.z=u.z;formation.goal=formation.groundMission=true;
+    formation.formationLevel=-3;formation.mission.flags=0x11000000u;
+    formation.issuedTick=tickCounter_;
+    u.orders.insert(u.orders.begin(),formation);
+}
+
 int World::suppressStage(Unit& u,Order& o,RetailMissionState& m,uint32_t events) {
     const int n=int(std::min<size_t>(3,u.type->weapons.size()));
     if (!n) return 5;
@@ -8583,9 +8704,22 @@ int World::suppressStage(Unit& u,Order& o,RetailMissionState& m,uint32_t events)
     const Weapon& w=u.type->weapons[size_t(slot)];
     const bool melee=w.melee;
     if (events&0x40000u) return 5;
-    // Not ported: the group check 51d1e0(unit,1,4) and the
-    // Move_Ground_Formation it puts in front (as in AirToGround), so its
-    // flag 0x8000000 is never set and its rand(3) / rand(15) never drawn.
+    // 404e12..404f1b, on every call: the group check (retailAttackGroupCheck,
+    // level 4). A member out of its slot walks back to the group ahead of the
+    // order and the order starts again at stage 0 when it is back; a flagged
+    // one may leave instead (8).
+    bool formation=false;
+    const int head=retailAttackGroupCheck(m.flags,retailAttackOutOfSlot(u,4),
+        retailNextMissionFlags(u,currentLeg(u.orders)),3,15,[&](int n) { return int(gameRand(n)); },
+        [&] { leaveRetailGroupCentre(u); },[&] { return formation=true; });
+    if (formation) {
+        // Inserting invalidates o and m: the stage first, and the dispatcher
+        // touches m no more on 4 (its 0).
+        m.stage=0;
+        pushSuppressFormation(u);
+        return 4;
+    }
+    if (head>=0) return head;
     switch (m.stage) {
     case 0:
         if (u.type->canFly) return 8;
@@ -8729,6 +8863,9 @@ bool World::tickSuppress(Unit& u,bool& groundMovementHandled) {
     } host{*this,u};
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     noteOrders(u.id);
+    // A formation pushed ahead (the group check) runs at once, as retail's
+    // dispatcher goes on to its new head; the mover walks it.
+    if (const Order* a=formationAttack(u.orders); a && a->suppress) { tickGroundMission(u,true); return false; }
     if (u.orders.empty()) return false;
     const size_t leg=currentLeg(u.orders);
     if (!u.orders[leg].suppress) return false;
@@ -12985,11 +13122,10 @@ void World::tickAirToGroundHover(Unit& u,const Unit* target,const Weapon* select
                        : u.type->weapons.empty() ? nullptr : &u.type->weapons.front();
     const int distance=weapon && weapon->hoverAttackDistance ? weapon->hoverAttackDistance : u.type->hoverAttackDistance;
     const int altitude=weapon && weapon->hoverAttackAltitude ? weapon->hoverAttackAltitude : u.type->hoverAttackAltitude;
-    struct Host {
-        World& w; Unit& u; const Unit* target; const Weapon* weapon; int altitude;
+    struct Host : AirAttackGroup {
+        const Unit* target; const Weapon* weapon; int altitude;
         int retargetTo=0;            // 4d7de0's new attack, put ahead once the dispatch is done
         int32_t stepOutTo=0;         // a step-out's D, pushed ahead once the dispatch is done
-        bool formationTo=false;      // VTOL_Move_Formation, pushed ahead once the dispatch is done
         bool ringInstalled=false;    // stage 3 drew a ring point this dispatch
         bool seekTo=false;           // a point's lost-target exit: VTOL_SEEKATTACK once it has gone
         RetailFlightVector led;      // the last led SweetSpot (51aa50)
@@ -13019,18 +13155,6 @@ void World::tickAirToGroundHover(Unit& u,const Unit* target,const Weapon* select
             if (!target) seekTo=u.orders.size()==1 && !u.orders.front().aheadOfDefault && u.fireState!=0;
             return 5;
         }
-        bool outOfSlot() {
-            // 51d1e0(unit, 1, 5): the attack's own flags lack 0x4000000.
-            const RetailGroupRecord* group=w.retailGroupOf(u);
-            return group && retailGroupOutOfSlot(*group,w.retailGroupMember(u),true,5,false);
-        }
-        void leave() {
-            // 41db23: 50c480 unless the next mission moves with the group
-            // (+0x5a 0x1000000 without 0x4000000).
-            const uint32_t next=u.orders.size()>1 ? u.orders[1].mission.flags : 0;
-            if (!(next&0x1000000u) || (next&0x4000000u)) w.leaveRetailGroupCentre(u);
-        }
-        bool formation() { formationTo=true;return true; }
         void beginFlight() {
             // 416c50, as AirToGround's stage 0 (tickAirToGround).
             if (auto script=w.unitScripts_.find(u.id);script!=w.unitScripts_.end() && !script->second.activated) {
@@ -13136,7 +13260,7 @@ void World::tickAirToGroundHover(Unit& u,const Unit* target,const Weapon* select
             }
             return result;
         }
-    } host{*this,u,target,weapon,altitude};
+    } host{{*this,u},target,weapon,altitude};
     const Fixed pointX=u.orders.front().attackPointX,pointZ=u.orders.front().attackPointZ;
     // A new attack goes in ahead of the hover and takes its next mission, as
     // AirToAir's retarget does.
@@ -13152,17 +13276,7 @@ void World::tickAirToGroundHover(Unit& u,const Unit* target,const Weapon* select
     }
     if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
         u.orders.front().aheadOfDefault=aheadOfDefault;
-    if (host.formationTo) {
-        // 41db51: VTOL_Move_Formation (row 5ebca1), level -4 (+0x56): the
-        // moving members' centre until back within level 4; the hover starts
-        // again at stage 0 when it retires.
-        Order formation;
-        formation.x=u.x;formation.z=u.z;formation.goal=formation.flightMoveMission=true;
-        formation.formationLevel=-4;formation.mission.flags=0x1000000u;
-        formation.issuedTick=tickCounter_;
-        u.orders.insert(u.orders.begin(),formation);
-        noteOrders(u.id);
-    }
+    host.push();
     if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
     if (host.seekTo) { seekLostPoint(u,pointX,pointZ);return; }
     if (stepOutFront(u)) { flyMissionGoal(u,u.orders.front());return; }
@@ -13212,8 +13326,8 @@ void World::tickAirToGround(Unit& u,const Unit* target,const Weapon* selected) {
     // 519ac0: a switcher's selected slot, otherwise the first slot.
     const Weapon* weapon=u.type->weaponSwitching ? selected
                        : u.type->weapons.empty() ? nullptr : &u.type->weapons.front();
-    struct Host {
-        World& w; Unit& u; const Unit* target; const Weapon* weapon;
+    struct Host : AirAttackGroup {
+        const Unit* target; const Weapon* weapon;
         int retargetTo=0;     // 4d7de0's new attack, put ahead once the dispatch is done
         int32_t stepOutTo=0;  // a step-out's D, pushed ahead once the dispatch is done
         bool seekTo=false;    // a point's lost-target exit: VTOL_SEEKATTACK once it has gone
@@ -13223,7 +13337,7 @@ void World::tickAirToGround(Unit& u,const Unit* target,const Weapon* selected) {
         }
         bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
         RetailMissionState* head() {
-            return !stepOutTo && !retargetTo && !u.orders.empty() && owns(u.orders.front())
+            return !stepOutTo && !retargetTo && !formationTo && !u.orders.empty() && owns(u.orders.front())
                 ? &u.orders.front().mission : nullptr;
         }
         bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
@@ -13314,7 +13428,7 @@ void World::tickAirToGround(Unit& u,const Unit* target,const Weapon* selected) {
             run.width=w.hW_*16-32;run.height=w.hH_*16-128;
             return retailAirToGround(m,order.airRunCount,w.tickCounter_,events,run,*this);
         }
-    } host{*this,u,target,weapon};
+    } host{{*this,u},target,weapon};
     // The new attack goes in ahead of AirToGround and takes its next mission,
     // as AirToAir's retarget does.
     const bool aheadOfDefault=u.orders.front().aheadOfDefault;
@@ -13322,6 +13436,7 @@ void World::tickAirToGround(Unit& u,const Unit* target,const Weapon* selected) {
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
         u.orders.front().aheadOfDefault=aheadOfDefault;
+    host.push();
     if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
     if (host.seekTo) { seekLostPoint(u,pointX,pointZ);return; }
     if (stepOutFront(u) || (!u.orders.empty() && host.owns(u.orders.front()))) {
@@ -13343,8 +13458,8 @@ void World::tickAirToGround(Unit& u,const Unit* target,const Weapon* selected) {
 // high word of its destination's z step (flightNavigation.velocity), as retail
 // does.
 void World::tickAirStrike(Unit& u,const Unit* target) {
-    struct Host {
-        World& w; Unit& u; const Unit* target;
+    struct Host : AirAttackGroup {
+        const Unit* target;
         int retargetTo=0;     // 4d7de0's new attack, put ahead once the dispatch is done
         int32_t stepOutTo=0;  // a step-out's D, pushed ahead once the dispatch is done
         bool seekTo=false;    // a point's lost-target exit: VTOL_SEEKATTACK once it has gone
@@ -13354,7 +13469,7 @@ void World::tickAirStrike(Unit& u,const Unit* target) {
         }
         bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
         RetailMissionState* head() {
-            return !stepOutTo && !retargetTo && !u.orders.empty() && owns(u.orders.front())
+            return !stepOutTo && !retargetTo && !formationTo && !u.orders.empty() && owns(u.orders.front())
                 ? &u.orders.front().mission : nullptr;
         }
         bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
@@ -13445,12 +13560,13 @@ void World::tickAirStrike(Unit& u,const Unit* target) {
             order.attackPointX=Fixed::raw(point.x);order.attackPointZ=Fixed::raw(point.z);
             return result;
         }
-    } host{*this,u,target};
+    } host{{*this,u},target};
     const bool aheadOfDefault=u.orders.front().aheadOfDefault;
     const Fixed pointX=u.orders.front().attackPointX,pointZ=u.orders.front().attackPointZ;
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
         u.orders.front().aheadOfDefault=aheadOfDefault;
+    host.push();
     if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
     if (host.seekTo) { seekLostPoint(u,pointX,pointZ);return; }
     if (stepOutFront(u) || (!u.orders.empty() && host.owns(u.orders.front()))) {

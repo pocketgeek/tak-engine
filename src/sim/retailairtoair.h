@@ -38,8 +38,9 @@ namespace tak::sim {
 //
 // Every draw is 535cc0, the shared game random number generator. The host has
 // made the head's checks (the unit may attack, a live target, the leash at
-// mission +0x56). Not ported, as in AirToGround: the group check 51d1e0 and
-// the VTOL_Move_Formation it pushes (so flag 0x8000000 is never set here).
+// mission +0x56). Not ported (AirToGround's is: retailAirGroupCheck): the
+// group check 51d1e0 and the VTOL_Move_Formation it pushes (so flag
+// 0x8000000 is never set here).
 // Stage 2's air-traffic check (41ce48): with unit +0x12a at 5 or more, an auto
 // attack first rescans on rand(2) == 0 (4d8370, 4d7de0) and ends if it put a
 // new attack ahead; then VTOL_StepOut goes ahead with D = (rand(15) + the

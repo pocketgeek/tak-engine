@@ -9,7 +9,10 @@ the abort (0x2a) and restart (0x40) events and every random draw (535cc0,
 native, state at 0x64186c). Controller allocation, construction, the radius
 setter and installation are host stubs that record their arguments; the
 installation stub clears the pending controller events as 4d4d40 does. The
-group check (51d1e0) answers no group: it is not ported. Stage 4's air-traffic
+group check (51d1e0) answers in or out of the slot at random, on a mission
+flagged 0x8000000 or not, with the next mission (+0x66) none, a group mover
+or not: 50c480 is recorded, and the VTOL_Move_Formation push (4eb9e0,
+4d4bf0, 4d6c40, 4d7750) counted by its row name. Stage 4's air-traffic
 step-out runs with the counter (unit +0x12a) below, at and above 5: the auto
 rescan (4d8370, then 4d7de0) and the VTOL_StepOut push (4d4bf0, 4d6c40,
 4d7750) are stubs that answer as the fixture says and record D.
@@ -97,7 +100,14 @@ def main():
             raise AssertionError('unexpected 4d7de0 arguments')
         return 6, 1 if answer['attack'] else 0
 
-    p.hooks[0x51d1e0] = lambda uc, a: (3, 0)                       # no group
+    def group(uc, args):           # 51d1e0(unit, 1, 5)
+        if (get(args), get(args + 4), get(args + 8)) != (unit, 1, 5):
+            raise AssertionError('unexpected 51d1e0 arguments')
+        record('group')
+        return 3, 1 if answer['out'] else 0
+
+    p.hooks[0x51d1e0] = group
+    p.hooks[0x50c480] = lambda uc, a: (record('leave', get(a)), (1, 0))[1]
     p.hooks[0x4eb9e0] = allocate_any
     p.hooks[0x4d4bf0] = lookup
     p.hooks[0x4d6c40] = build
@@ -111,7 +121,7 @@ def main():
     p.hooks[0x519b10] = lambda uc, a: (record('auto', get(a)), (1, 0))[1]
     p.hooks[0x519b70] = lambda uc, a: (record('manual', get(a)), (1, 0))[1]
     p.hooks[0x51a700] = lambda uc, a: (record('aim', (get(a), get(a + 4), get(a + 8))), (3, 0))[1]
-    for address, name in [(0x51a770, 'ground aim'), (0x4d77b0, 'insert'), (0x50c480, 'group leave')]:
+    for address, name in [(0x51a770, 'ground aim'), (0x4d77b0, 'insert')]:
         p.hooks[address] = unexpected(name)
     p.freeze_hooks()
     draws = [0]
@@ -137,7 +147,9 @@ def main():
     put(target_kind + 0x260, 'I', 0)
 
     rng = random.Random(0x41bf80)
+    following = HEAP + 0x32000     # the next mission, when +0x66 has one
     fixtures, expected = [], []
+    outcomes = {}
     s32 = lambda v: (v + 2**31) % 2**32 - 2**31
     for i in range(6000):
         stage = rng.choice((0, 1, 2, 3, 4, 4, 5, 5, 5, 5, 6, 6, 6, 7, 7, 7, 7, 8))
@@ -169,7 +181,8 @@ def main():
         traffic = rng.choice((0, 0, 3, 4, 5, 6, 12, 17))
         foot = rng.choice((1, 2, 3, 4, 6))
         automatic = rng.random() < 0.5
-        answer.update(scan=rng.random() < 0.5, attack=rng.random() < 0.5)
+        answer.update(scan=rng.random() < 0.5, attack=rng.random() < 0.5, out=rng.random() < 0.3)
+        nxt = rng.choice((None, None, 0x3000400, 0x1000400, 0x5012000, 0x15000400, 0))
 
         put(game + 0x19f44, 'I', tick)
         put(game + 0x19e90, 'I', width)
@@ -190,7 +203,8 @@ def main():
         put(mission + 0x52, 'I', 1 if automatic else 0)
         put(mission + 0x56, 'I', 0)
         put(mission + 0x5a, 'I', flags)
-        put(mission + 0x66, 'I', 0)
+        put(mission + 0x66, 'I', following if nxt is not None else 0)
+        put(following + 0x5a, 'I', nxt or 0)
         put(mission + 0x6a, 'I', pending)
         put(controller + 0x26, 'iii', 0, 0, 0)
         put(controller + 0xa, 'h', 0)
@@ -209,18 +223,33 @@ def main():
         if log.get('aim') and log['aim'][0] != (unit, target, 0):
             raise AssertionError((i, 'aim', log['aim']))
         point = struct.unpack('<3i', p.uc.mem_read(controller + 0x26, 12)) if installs else (0, 0, 0)
+        if log.get('leave') and log['leave'] != [unit]:
+            raise AssertionError((i, 'leave', log['leave']))
+        built = [(name, d) for name, d in log.get('mission', [])]
+        steps = [d for name, d in built if name != 'VTOL_Move_Formation']
+        formations = sum(1 for name, d in built if name == 'VTOL_Move_Formation')
+        if len(log.get('push', [])) != len(built):
+            raise AssertionError((i, 'pushes', log))
         expected.append((result, get(mission + 5, 'B'), get(mission + 6), get(mission + 0xa),
                          get(mission + 0x6a), get(mission + 0x5a), get(mission + 0x4e, 'i'), installs,
                          *point, get(controller + 0xa, 'h') if installs else 0,
                          len(log.get('begin', [])), len(log.get('auto', [])), len(log.get('aim', [])),
-                         get(RNG), draws[0], len(log.get('scan', [])), len(log.get('push', [])),
-                         log['mission'][-1][1] if log.get('mission') else 0))
+                         get(RNG), draws[0], len(log.get('scan', [])), len(steps),
+                         steps[-1] if steps else 0, len(log.get('group', [])), len(log.get('leave', [])),
+                         formations))
+        if log.get('group'):
+            key = ('formation' if formations else 'leave+50c480' if log.get('leave') else 'leave') \
+                if answer['out'] else 'in slot'
+            if answer['out'] and not formations and result != 8:
+                raise AssertionError((i, 'out of slot without leave or formation', result))
+            outcomes[key] = outcomes.get(key, 0) + 1
         # The port's retarget() is the scan and the attack together.
         fixtures.append(' '.join(map(str, (stage, events, tick, deadline, pending, flags, count,
                                            s32(x), s32(y), s32(z), s32(tx), s32(ty), s32(tz), heading,
                                            weapon_range, run_length, int(on_map), width, height, seed,
                                            traffic, foot, int(automatic), 1,
-                                           int(answer['scan'] and answer['attack'])))))
+                                           int(answer['scan'] and answer['attack']), int(answer['out']),
+                                           nxt or 0))))
     output = subprocess.run([binary, '--air-run'], input='\n'.join(fixtures) + '\n',
                             text=True, capture_output=True, check=True)
     actual = [tuple(map(int, line.split())) for line in output.stdout.splitlines()]
@@ -233,9 +262,10 @@ def main():
     for fixture, row in zip(fixtures, expected):
         stages[int(fixture.split()[0])] = stages.get(int(fixture.split()[0]), 0) + 1
     installed = sum(1 for row in expected if row[7])
-    print('PASS: %d AirToGround calls (stages %s), %d controllers, %d step-outs, every state, point, radius and draw'
+    print('PASS: %d AirToGround calls (stages %s), %d controllers, %d step-outs, group check %s, every state, '
+          'point, radius and draw'
           % (len(expected), ' '.join('%d:%d' % kv for kv in sorted(stages.items())), installed,
-             sum(1 for row in expected if row[18])))
+             sum(1 for row in expected if row[18]), ', '.join('%s %d' % kv for kv in sorted(outcomes.items()))))
 
 
 if __name__ == '__main__':

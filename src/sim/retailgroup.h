@@ -289,6 +289,33 @@ int retailGroundGroupCheck(const RetailGroupRecord& g,const RetailGroupMember& u
     return retailGroupOutOfSlot(g,u,false,4,false) ? 4 : 0;
 }
 
+// The group check at the head of the attacks: SUPPRESS (404e12..404f1b:
+// 51d1e0(unit, 1, 4), leave on rand(3), clear on rand(15),
+// Move_Ground_Formation level -3) and the flyer attacks AirToGround
+// (41c19a), AirStrike (41b7a4) and AirToGroundHover (41dafa) (51d1e0(unit,
+// 1, 5), rand(2), rand(25), VTOL_Move_Formation level -4). outOfSlot is
+// 51d1e0's answer, taken before any draw. Out of slot on a mission already
+// flagged 0x8000000, rand(leave) == 0 lets the member go: 50c480 unless the
+// next mission (+0x66, `next` its flags, 0 for none) moves with the group
+// (0x1000000 without 0x4000000), and 8. Otherwise out of slot flags the
+// mission and pushes the formation ahead (4d7750): 0, so the attack starts
+// again at stage 0 when the formation retires, or 7 when it could not be
+// built. In slot, rand(clear) == 0 clears the flag. -1: run the stages.
+template<class Random,class Leave,class Formation>
+int retailAttackGroupCheck(uint32_t& flags,bool outOfSlot,uint32_t next,int leave,int clear,
+                           Random random,Leave leaveGroup,Formation formation) {
+    if (outOfSlot) {
+        if ((flags&0x8000000u) && random(leave)==0) {
+            if (!(next&0x1000000u) || (next&0x4000000u)) leaveGroup();
+            return 8;
+        }
+        flags|=0x8000000u;
+        return formation() ? 0 : 7;
+    }
+    if ((flags&0x8000000u) && random(clear)==0) flags&=~0x8000000u;
+    return -1;
+}
+
 // 4d95f0 (4d976a..4d9a2a): the maximum for a paced member. own is the
 // terrain-scaled unit maximum (unit+0x12b), typeMaximum the terrain-scaled
 // type maximum (type+0x162), modeTypeMaximum that value after the speed-mode

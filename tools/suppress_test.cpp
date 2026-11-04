@@ -47,6 +47,7 @@
 #include "sim/sim.h"
 #include "tnt/tnt.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -286,6 +287,9 @@ Run flyCopy(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim::UnitTy
     return r;
 }
 
+void flyerGroups(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim::UnitType& runner,
+                 const sim::UnitType& hover);
+
 void flyers(const hpi::Vfs& vfs, const sim::TypeRegistry& reg) {
     using sim::Order;
     const auto armed = [](const sim::UnitType& t) {
@@ -298,6 +302,7 @@ void flyers(const hpi::Vfs& vfs, const sim::TypeRegistry& reg) {
     std::printf("  flyers: attack runs %s, hover %s\n", runner ? runner->id.c_str() : "-",
                 hover ? hover->id.c_str() : "-");
     if (!runner || !hover) { check(false, "the shipped data has a flyer of each kind"); return; }
+    flyerGroups(vfs, reg, *runner, *hover);
 
     // AIRTOGROUND: attack runs over the point.
     {
@@ -374,6 +379,226 @@ void flyers(const hpi::Vfs& vfs, const sim::TypeRegistry& reg) {
         s.w.tick(kTick);
         attackGround(s.w, reg, u, 500, 768);
         check(s.w.unit(u)->orders.empty(), "a flyer's anti-air weapon gets no order");
+    }
+}
+
+// A Ctrl group (squad 1) in Retail: the outlier is given SUPPRESS on a point
+// beside the group's line of march while it stands in its slot; the rest of
+// the group then walks off. SUPPRESS's group check (404e12, level 4) finds
+// the outlier out of its slot at a wake and puts Move_Ground_Formation
+// (level -3) ahead of the order: it walks back to the group with its slot
+// still aimed at the point, and fires on the way if its weapon does not need
+// the body's facing (52ae90 reads no mission). Back in its slot the
+// formation retires, every slot goes automatic, and SUPPRESS starts again at
+// stage 0 and fires from there. Legion has no group record: nothing of this.
+struct GroupRun {
+    int formations = 0;          // formation legs SUPPRESS put ahead of itself
+    int walkTicks = 0;           // ticks one led
+    int walkShots = 0;           // ... with a shot released on the move (standing, before its
+                                 // route comes, it still faces the point)
+    int walkHeld = 0;            // ... with the slot still holding the point
+    int afterShots = 0;          // shots once the last formation had retired
+    int dropped = -1;            // tick the SUPPRESS order went (the leave, 8)
+    int shotsSince = 0;          // shots since the first formation retired
+    bool retired = false;        // a formation retired with SUPPRESS behind it
+    bool orderAtEnd = false;     // the outlier's SUPPRESS order is still queued
+    bool otherLegs = false;      // a formation leg with anything else behind it
+    float hitDist = -1;          // mean impact distance from the point
+    int hits = 0;
+    uint64_t hash = 0;
+};
+
+GroupRun groupFire(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim::UnitType& outlier,
+                   const sim::UnitType& member, int ticks, float march = 0.9f,
+                   const std::function<void(Scene&, int, float, float)>& onWalk = {}) {
+    Scene s;
+    build(s, vfs, reg);
+    GroupRun r;
+    const float range = float(outlier.weapons[0].range);
+    std::vector<int> group;
+    for (int i = 0; i < 4; ++i)
+        group.push_back(s.w.spawn(&member, 600 + float(i % 2) * 48 - 24, 640 + float(i / 2) * 48, 3.1415926f, 0));
+    const int id = s.w.spawn(&outlier, 600, 800, 3.1415926f, 0);   // facing -z, the group's way
+    for (int g : group) { s.w.setSquad(g, 1); s.w.unit(g)->fireState = 0; }
+    s.w.setSquad(id, 1);
+    s.w.unit(id)->fireState = 0;
+    for (int i = 0; i < 30; ++i) s.w.tick(kTick);
+    const float px = 600 + range * 0.3f, pz = 800 - range * 0.5f;
+    attackGround(s.w, reg, id, px, pz);
+    for (int i = 0; i < 60; ++i) s.w.tick(kTick);
+    for (int g : group) {
+        const float gx = s.w.unit(g)->x.toFloat(), gz = s.w.unit(g)->z.toFloat();
+        // march < 0: a patrol across the map and back, so the group keeps
+        // leaving the outlier behind.
+        if (march < 0) s.w.patrol(g, gx + 800, gz);
+        else s.w.order(g, gx, gz - range * march, false);
+    }
+    bool walking = false;
+    double hitSum = 0;
+    for (int i = 0; i < ticks; ++i) {
+        s.w.tick(kTick);
+        const sim::Unit* u = s.w.unit(id);
+        if (!u || !u->alive()) break;
+        const auto& o = u->orders;
+        if (r.dropped < 0 && std::none_of(o.begin(), o.end(), [](const sim::Order& q) { return q.suppress; }))
+            r.dropped = i;
+        const size_t leg = sim::World::currentLeg(o);
+        const bool lead = !o.empty() && o[leg].formationLevel && leg + 1 < o.size() && o[leg + 1].suppress;
+        if (!o.empty() && o[leg].formationLevel && !lead) r.otherLegs = true;
+        const bool pushed = lead && !walking;
+        if (pushed) ++r.formations;
+        if (pushed && onWalk) { onWalk(s, id, px, pz); return r; }
+        if (!lead && walking && !o.empty() && o[leg].suppress) { r.retired = true; r.afterShots = 0; }
+        walking = lead;
+        if (lead) {
+            ++r.walkTicks;
+            if (u->firedWeapons && !pushed && u->speed > sim::Fixed()) ++r.walkShots;
+            if (u->slotPoint) ++r.walkHeld;
+        } else if (r.retired && u->firedWeapons) ++r.afterShots;
+        for (const auto& h : s.w.hits()) { hitSum += std::hypot(h.x - px, h.z - pz); ++r.hits; }
+    }
+    if (r.hits) r.hitDist = float(hitSum / r.hits);
+    if (const sim::Unit* u = s.w.unit(id))
+        for (const auto& o : u->orders) r.orderAtEnd = r.orderAtEnd || o.suppress;
+    r.hash = s.w.stateHash();
+    return r;
+}
+
+std::string describe(const GroupRun& r) {
+    char b[300];
+    std::snprintf(b, sizeof b, "%d formations, %d walk ticks (%d shots, %d holding the point), retired %d, "
+                  "%d shots after, order %d (gone at %d), %d hits %.1f px off", r.formations, r.walkTicks,
+                  r.walkShots, r.walkHeld, r.retired, r.afterShots, r.orderAtEnd, r.dropped, r.hits, r.hitDist);
+    return b;
+}
+
+// An all-flyer Ctrl group at a point: the outlier starts far from the rest.
+// The flyer attacks' group check (51d1e0(unit, 1, 5): AirToGround 41c19a,
+// AirStrike 41b7a4, AirToGroundHover 41dafa) puts VTOL_Move_Formation (level
+// -4) ahead of its attack; once back it attacks again from stage 0.
+GroupRun flyGroup(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim::UnitType& t, int ticks) {
+    Scene s;
+    build(s, vfs, reg);
+    GroupRun r;
+    std::vector<int> ids;
+    for (int i = 0; i < 3; ++i) ids.push_back(s.w.spawn(&t, 160, 160 + float(i) * 96, 1.5707963f, 0));
+    const int id = s.w.spawn(&t, 1400, 1400, 1.5707963f, 0);
+    ids.push_back(id);
+    for (int g : ids) { s.w.setSquad(g, 1); s.w.unit(g)->fireState = 0; s.w.unit(g)->mana = t.maxMana; }
+    for (int i = 0; i < 30; ++i) s.w.tick(kTick);
+    for (int g : ids) attackGround(s.w, reg, g, 900, 700);
+    bool walking = false;
+    for (int i = 0; i < ticks; ++i) {
+        s.w.tick(kTick);
+        const sim::Unit* u = s.w.unit(id);
+        if (!u || !u->alive()) break;
+        const auto& o = u->orders;
+        const bool lead = o.size() > 1 && o[0].formationLevel && o[1].airPoint;
+        if (!o.empty() && o[0].formationLevel && !lead) r.otherLegs = true;
+        if (lead && !walking) ++r.formations;
+        if (!lead && walking && !o.empty() && o[0].airPoint) { r.retired = true; r.afterShots = 0; }
+        walking = lead;
+        if (lead) { ++r.walkTicks; if (u->slotPoint) ++r.walkHeld; }
+        else if (r.retired && u->firedWeapons) ++r.afterShots;
+        if (r.retired && u->firedWeapons) ++r.shotsSince;
+    }
+    if (const sim::Unit* u = s.w.unit(id))
+        for (const auto& o : u->orders) r.orderAtEnd = r.orderAtEnd || o.airPoint;
+    r.hash = s.w.stateHash();
+    return r;
+}
+
+void flyerGroups(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim::UnitType& runner,
+                 const sim::UnitType& hover) {
+    sim::UnitType striker = runner;
+    striker.weapons[0].cursorAirstrike = true;
+    const std::pair<const char*, const sim::UnitType*> kinds[] = {
+        {"AIRTOGROUND", &runner}, {"AIRTOGROUNDHOVER", &hover}, {"AIRSTRIKE", &striker}};
+    for (const auto& [name, t] : kinds) {
+        const GroupRun r = flyGroup(vfs, reg, *t, 2400);
+        std::printf("  %s outlier of an all-flyer group: %s\n", name, describe(r).c_str());
+        // A strike's passes reach far: it may be sent back again before its
+        // next release, so its shots are counted from the first return.
+        if (mode == sim::PathfindingMode::Retail)
+            check(r.formations >= 1 && !r.otherLegs && r.retired && r.orderAtEnd && r.shotsSince >= 1,
+                  std::string(name) + ": out of its slot it flies back on VTOL_Move_Formation, then attacks again",
+                  describe(r) + ", " + std::to_string(r.shotsSince) + " shots since the first return");
+        else
+            check(r.formations == 0 && r.orderAtEnd, std::string(name) + ": Legion has no group check", describe(r));
+    }
+}
+
+void groups(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim::UnitType& archer) {
+    // A turret type (turninplacerate 0: no facing request) and one that has
+    // to face the point to fire (turninplacerate > 0, max(aimtol, 512)).
+    sim::UnitType turret = archer, facing = archer;
+    turret.turnInPlaceRate = 0;
+    facing.turnInPlaceRate = std::max(archer.turnInPlaceRate, 400);
+    {
+        const GroupRun r = groupFire(vfs, reg, turret, archer, 1500);
+        std::printf("  turret outlier of a Ctrl group: %s\n", describe(r).c_str());
+        if (mode == sim::PathfindingMode::Retail) {
+            check(r.formations >= 1 && !r.otherLegs, "out of its slot it walks back on a formation ahead of SUPPRESS",
+                  describe(r));
+            check(r.walkHeld == r.walkTicks && r.walkShots >= 1,
+                  "its slot keeps the point and fires on the way", describe(r));
+            check(r.retired && r.afterShots >= 1 && r.orderAtEnd,
+                  "back in its slot SUPPRESS starts again and fires", describe(r));
+        } else {
+            check(r.formations == 0 && r.orderAtEnd, "Legion: no group check, the order stands", describe(r));
+        }
+        check(r.hits >= 1 && r.hitDist < 48, "its shots land on the point", describe(r));
+        check(groupFire(vfs, reg, turret, archer, 1500).hash == r.hash, "the same run gives the same state hash");
+    }
+    {
+        const GroupRun r = groupFire(vfs, reg, facing, archer, 1500);
+        std::printf("  facing outlier of a Ctrl group: %s\n", describe(r).c_str());
+        if (mode == sim::PathfindingMode::Retail) {
+            check(r.formations >= 1 && r.walkHeld == r.walkTicks && r.walkShots == 0,
+                  "one that must face the point holds fire on the walk (it does not turn to it)", describe(r));
+            check(r.retired && r.afterShots >= 1 && r.orderAtEnd,
+                  "back in its slot it turns, and fires", describe(r));
+        } else {
+            check(r.formations == 0 && r.orderAtEnd, "Legion: no group check, the order stands", describe(r));
+        }
+    }
+    // Shift on the point while the formation leads: SUPPRESS goes, and the
+    // formation it put ahead of itself (not an issued leg) with it. Ctrl
+    // ahead of it: the formation goes, SUPPRESS waits behind the new order
+    // from stage 0.
+    if (mode == sim::PathfindingMode::Retail) {
+        bool shift = false, ctrl = false;
+        std::string seen;
+        groupFire(vfs, reg, turret, archer, 1500, 0.9f, [&](Scene& s, int id, float px, float pz) {
+            net::Command c;
+            c.kind = net::Cmd::AttackGround; c.player = 0; c.unitId = id; c.x = px; c.z = pz;
+            c.queue = net::kQueueAppend | net::kQueueToggle;
+            sim::applyCommand(s.w, reg, c);
+            shift = s.w.unit(id)->orders.empty();
+        });
+        groupFire(vfs, reg, turret, archer, 1500, 0.9f, [&](Scene& s, int id, float, float) {
+            net::Command c;
+            c.kind = net::Cmd::Move; c.player = 0; c.unitId = id; c.x = 300; c.z = 300;
+            c.queue = net::kQueueFront;
+            sim::applyCommand(s.w, reg, c);
+            const auto& o = s.w.unit(id)->orders;
+            for (const auto& q : o) seen += q.formationLevel ? 'F' : q.suppress ? 'S' : 'M';
+            ctrl = !o.empty() && o.back().suppress && o.back().mission.stage == 0 &&
+                   std::none_of(o.begin(), o.end(), [](const sim::Order& q) { return q.formationLevel != 0; });
+        });
+        check(shift, "Shift on the point takes SUPPRESS and its formation back");
+        check(ctrl, "Ctrl puts the new order ahead: the formation goes, SUPPRESS waits from stage 0", seen);
+    }
+    // The group patrols there and back: out of its slot again once flagged
+    // (0x8000000), the outlier leaves the order on rand(3) == 0 (8).
+    {
+        const GroupRun r = groupFire(vfs, reg, turret, archer, 6000, -1);
+        std::printf("  outlier of a Ctrl group on patrol: %s\n", describe(r).c_str());
+        if (mode == sim::PathfindingMode::Retail)
+            check(r.formations >= 2 && !r.orderAtEnd && r.dropped > 0,
+                  "out of its slot again, flagged, it leaves the order", describe(r));
+        else
+            check(r.formations == 0 && r.orderAtEnd, "Legion: the order stands", describe(r));
     }
 }
 
@@ -532,6 +757,8 @@ int main(int argc, char** argv) {
     }
 
     flyers(vfs, reg);
+
+    groups(vfs, reg, *archer);
 
     wire();
 

@@ -3259,6 +3259,7 @@ private:
     bool clearableBlockerAt(Fixed x,Fixed z,std::array<int,4>* footprint=nullptr) const;
     int suppressStage(Unit& u,Order& o,RetailMissionState& m,uint32_t events);
     void pushSuppressApproach(Unit& u,Fixed x,Fixed z,int32_t outer,int32_t inner);
+    void pushSuppressFormation(Unit& u);
     // The approach ring of a SUPPRESS approach leg (Order::suppressInner).
     std::optional<RetailRingGoal> suppressRing(const Unit& u,const Order& goal) const;
     void legionAimStall(Unit& u,int slot,bool available);
@@ -3727,7 +3728,9 @@ private:
     bool requestPath(Unit& u, float x, float z);   // true iff a search was queued
     static Order* groundMissionOrder(Unit& u, bool includeCombatMoves = false);
     static bool groundMissionAccepts(const Unit&,const Order&);
-    void tickGroundMission(Unit& u);
+    // attackWalk: the call tickCombat makes, after the weapons, for a
+    // formation leg SUPPRESS put ahead of itself (the main loop's skips it).
+    void tickGroundMission(Unit& u,bool attackWalk=false);
     // 4d856a: an empty mission list gets the FBI default mission (Standby /
     // VTOL_Standby), even while VTOL_UNLOAD's step-out controller still flies.
     bool standbyEligible(const Unit& u) const;
@@ -4315,6 +4318,29 @@ private:
     RetailGroupMember retailGroupMember(const Unit& u) const;
     const RetailGroupRecord* retailGroupOf(const Unit& u) const;
     uint32_t retailMissionFlags(Unit& u);
+    // The registry flags (+0x5a) of the mission an order runs: its
+    // Order::mission.flags, with the row's own flags for SUPPRESS and the
+    // flyer attacks, which World does not keep there.
+    uint32_t retailOrderFlags(const Unit& u,const Order& o) const;
+    // The next mission's flags (+0x66's +0x5a) behind orders[index]; 0 for none.
+    uint32_t retailNextMissionFlags(const Unit& u,size_t index) const;
+    // 51d1e0(unit, 1, level) for an attack's group check (its flags lack 0x4000000).
+    bool retailAttackOutOfSlot(const Unit& u,int level) const;
+    // The attack a formation leg its group check put ahead of it leads
+    // (SUPPRESS, a flyer's attack), or null: the push left its slots as they were.
+    static const Order* formationAttack(const std::vector<Order>& orders);
+    // The flyer attacks' group check (retailAirGroupCheck), shared by the
+    // AirToGround, AirStrike and AirToGroundHover hosts: VTOL_Move_Formation
+    // (level -4) goes ahead once the dispatch is done (push).
+    struct AirAttackGroup {
+        World& w; Unit& u;
+        bool formationTo=false;
+        bool outOfSlot() const { return w.retailAttackOutOfSlot(u,5); }
+        uint32_t nextFlags() const { return w.retailNextMissionFlags(u,0); }
+        void leave() const { w.leaveRetailGroupCentre(u); }
+        bool formation() { formationTo=true;return true; }
+        void push();
+    };
     void tickRetailGroups();
     void planLegionFlightStations();
     // Legion: a standing ground unit's aim its script has not accepted for
