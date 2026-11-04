@@ -406,12 +406,17 @@ namespace {
         std::vector<int> ordered, clearers;
         // Step L: the transport fetches each passenger in turn. Every Load but the
         // first keeps the carrier's pickup list (World::loadInto appends while a
-        // pickup leads it), so all go with the click's own queue flag.
+        // pickup leads it), so all go with the click's own queue flag. Ctrl puts
+        // each pickup at the head of the carrier's list (and the passenger's), so
+        // they go in reverse, the first passenger ending up in front.
+        const bool frontBox = (queue & tak::net::kQueuePlace) == tak::net::kQueueFront;
         for (size_t i = 0; i < plan.units.size(); ++i) {
             if (plan.orders[i] != ClickOrder::Pickup) continue;
-            for (int p : plan.passengers) {
+            for (size_t k = 0; k < plan.passengers.size(); ++k) {
                 tak::net::Command c;
-                c.kind = tak::net::Cmd::Load; c.unitId = p; c.targetId = plan.units[i]; c.queue = queue;
+                c.kind = tak::net::Cmd::Load;
+                c.unitId = plan.passengers[frontBox ? plan.passengers.size() - 1 - k : k];
+                c.targetId = plan.units[i]; c.queue = queue;
                 issue(c);
             }
             if (!plan.passengers.empty()) ordered.push_back(plan.units[i]);
@@ -421,9 +426,8 @@ namespace {
         // the head (clickrules.h), so they go farthest first, the nearest ending up
         // in front.
         std::vector<char> started(plan.units.size(), 0);
-        const bool front = (queue & tak::net::kQueuePlace) == tak::net::kQueueFront;
         for (size_t k = 0; k < plan.enemies.size(); ++k) {
-            const int enemyId = plan.enemies[front ? plan.enemies.size() - 1 - k : k];
+            const int enemyId = plan.enemies[frontBox ? plan.enemies.size() - 1 - k : k];
             const UnitR* e = frameUnitP(enemyId);
             if (!e || !e->type) continue;
             for (size_t i = 0; i < plan.units.size(); ++i) {
