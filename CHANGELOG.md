@@ -55,8 +55,8 @@ their validation reports; both live in [`docs/`](docs/).
     hit, and fire at enemies that pass within range.
   - Units on Hold Position break off a patrol for an enemy and come back, as in the
     original game; idle units on Hold Position never chase.
-  - A moving unit answers the last unit that hit it, even a cloaked one, as the
-    original game does.
+  - A unit hit by an enemy it cannot see still fights back, as in the original
+    game. A moving unit answers the last unit that hit it, even a cloaked one.
   - Wandering monsters attack enemies they see while they roam.
 - **Attack-move stops, fights and comes back.** A unit on an attack-move stops for an
   enemy it sees in range, fights it, returns to where it stopped and carries on to its

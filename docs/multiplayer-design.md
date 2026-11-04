@@ -1236,7 +1236,7 @@ covers same-team humans only; the owner widened it to every ally). New hashed st
 the order's `airRunCount`) and, in Legion only, `Unit::aimWait` (`World::legionAimStall`:
 a standing ground unit whose started aim its script has not accepted for 90 ticks hears
 TargetCleared once; folded in only when non-zero, always 0 in Retail mode). Legion's
-`passAhead` also no longer counts an enemy body as oncoming traffic. The RNG streams change
+`passAhead` also no longer counts an enemy's fight-leg body as oncoming traffic to a fight leg. The RNG streams change
 (`fireRand` per scan, mission wake draws), so every hash changes. Nothing on the wire
 changes and it needed no further bump: it rides on 312 because 312 was not yet released.
 

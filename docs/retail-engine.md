@@ -5784,6 +5784,7 @@ comes from):
 |---|---|---|---|---|
 | Fire-at-will sweep | `40f330` -> `412620` | ported before this work; paralyzer immunity added | E | `check_fire_sweep_picker` |
 | Mission scan | `4d8370`, `519ac0` | ported (`retailMissionScan`, `retailScanSlot`); radius uses `sightDistance` (our doubleSight) | E | `check_mission_scan` |
+| Scan gather | `411ae0` over the 7-tick list (`411700`/`4121c0`) | ported: `retailSelectTarget` walks the owner's visible-enemy list (same candidates and order as the grid gather it replaced); the `istargetingupgrade` fallback over list +0x25 is not (no shipped FBI sets it) | S | `target_search_test` hashes unchanged |
 | Attack gate | `4d7de0` | ported before; no point argument needed | E | `check_issue_gate` |
 | Standby | `407839` | ported | E (host) | `check_standby`, `mission_ports` |
 | Standby_Wander | `40797e` | scan ported; the stroll is World's | S | `mission_ports` |
@@ -5797,13 +5798,18 @@ comes from):
 | Attack_Chase retarget | `404075` | not ported: needs the approach sub-states; never fires at mode 100 | E (`probe_attack_chase_mode`) | -- |
 | Guard_NoMove | `401bb0` -> `401a90` | ported; no pick (D3) | E | `check_guard_nomove` |
 | Fight-move | `4b0e40` / `5214b0` mode -1 | ported as the attack-move (D1 = AM-1) | S | `attack_move`, `vermage_fight` |
+| Attack_Chase stage 1 manual slot | `404476..404483` -> `519b70` | not ported: World's `setSlotsManual` always retires the slot's target (a TargetCleared retail sends only when the slot's target differs from the mission's); porting it makes Kirenna fire less (owner call) | S | `vermage_fight` |
+| Stalled aim | none in retail | Legion only: `legionAimStall` sends TargetCleared once after 90 ticks of an unaccepted aim while standing (`Unit::aimWait`) | -- | `legion_vermage_fight` |
+| Legion `passAhead` oncoming traffic | none in retail (no `passAhead`) | Legion only: two enemies' fight legs are never oncoming traffic to each other (a plain move still makes way for an enemy) | -- | `legion_scenario_battle-field-2x60`, `aware-*` baselines |
 | Shared sight and exploration | `4f6770`, `4c66b0`, `4c6800` | ported, widened to every ally, human or computer (owner's D2 override; retail: same-team humans) | E, S | `shared_sight` |
 | ShareMapAndLOS toggle | `4b6b60`, `4f59c0` | not ported (no Diplomacy box) | S | -- |
 | Line-of-fire test in the picker | none in retail | kept as an engine extension (D4) | E (`probe_weapon_gate_loss`) | `blocked_shot` |
 | Hit response, guard alarms, AttackUType | `409a50`, `407f90`/`418860`, `401580` | unchanged (no vision, as retail) | E, S | -- |
 | Stride scan, `findTarget`, `acquireTarget` | none in retail | removed (D3) | -- | `idle_coverage` |
 
-Known consequence (Legion, open): a Legion fight leg ends at its formation
+Known consequence (Legion, accepted by the owner 2026-11-03 as the retail
+rule: attackers convert at weapon range, not range + 90; `legion_fightring`
+retaken on that reason): a Legion fight leg ends at its formation
 slot round the goal, so on `attackring-fight-60` a third or more of the
 attackers can stop 110-180 px from the target, past their 96 px gun, where
 Standby (in range only, as retail) never picks; Retail's mover keeps pressing
