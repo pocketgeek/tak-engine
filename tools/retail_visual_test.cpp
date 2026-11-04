@@ -1394,8 +1394,8 @@ int main(int argc,char** argv) {
             // Later sim updates cannot alter the pinned render snapshot.
             unit.flightY=tak::sim::Fixed::fromInt(511);
             for (float datum : {0.0f,100.0f,215.0f}) {
-                const auto [ground,altitude]=frame.flightRenderHeight(datum,40);
-                if (ground<0 || altitude<0 || (ground+altitude)*0.5f!=(height-40)*0.5f ||
+                const auto [ground,altitude]=frame.flightRenderHeight(datum);
+                if (ground<0 || altitude<0 || (ground+altitude)*0.5f!=height*0.5f ||
                     frame.flightGroundMode!=mode) return 1;
             }
         }

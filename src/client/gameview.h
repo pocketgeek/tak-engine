@@ -152,6 +152,7 @@
 #include "client/fogupload.h"
 #include "client/shadowmask.h"
 #include "client/appglobals.h"   // kProjY/kProjZ, kSortZ/kSortY
+#include "client/terrainlift.h"  // the retail height lift (h / 2)
 #include "client/hudcorner.h"    // the top-left overlays' shared column
 
 class GameView {
@@ -2726,9 +2727,12 @@ private:
 
     // Height-aware 2.5D: the world-pixel lift for a point, from the terrain height
     // under it, so a unit (and its shadow/health bar/selection/effects) sits on
-    // the elevation the tile art shows instead of the flat grid cell. Zero at the
-    // map's ground level; water and flat ground are unaffected.
-    int heightRef_ = -1;                          // map ground level (modal height)
+    // the elevation the tile art shows instead of the flat grid cell. The lift is
+    // the ABSOLUTE height / 2, as retail's (client/terrainlift.h). It used to be
+    // taken above the map's modal height, which drew every unit modal/2 px south
+    // of where retail does -- 110px on a map whose ground is at 220.
+    bool liftReady_ = false;                      // debug scales read (heightAbove)
+    int modalHeight_ = 0;                         // F7 overlay only: the commonest height
     // Screen-Y lift per terrain height unit (also used by occlusion + picking).
     // RETAIL'S VALUE IS 0.5, and it is not a guess: 0x511140 returns byte +4 of
     // a cell record -- the terrain height -- and its caller at 0x426820 forms
@@ -2738,23 +2742,26 @@ private:
     // 1.1 here, which is 2.2x too much: at height 120 that is 132px of lift
     // against retail's 60, so a unit on raised ground was drawn most of four
     // tiles too far up-screen and appeared to stand on terrain beside it.
-    float kHeightScale_ = 0.5f;
+    float kHeightScale_ = tak::client::lift::kScaleY;
     // Screen-X lift per height unit. Zero, and retail agrees: its screen X is
     // (x << 4) - cameraX with no height term (0x426820). Tunable via TAK_HSCALEX
     // for experiments only.
     float kHeightScaleX_ = 0.0f;
     int kOccScan_ = 12;                            // cells to scan south for a wall
-    // Height above ground at a world point, bilinearly sampled so lifts ramp
-    // smoothly across a slope. Lazily initialises the modal ground reference and
-    // reads the tunable scales / debug flag from the environment.
+    // Absolute terrain height at a world point with retail's corner-anchored,
+    // truncating bilinear sampler (client/terrainlift.h). Lazily reads the
+    // tunable scales / debug flag from the environment.
     float heightAbove(float wx, float wz);
-    float rawHeight(float wx, float wz);   // unclamped bilinear height (waterline sink)
-    // Screen-Y sink for a wading (canhover) or floating (floater) unit standing in
-    // water, from FBI `waterline`. Zero on land and for every other unit.
+    float rawHeight(float wx, float wz);   // the same sample, without the lazy setup
+    // Screen-Y offset (down positive) of a wading (canhover) or floating (floater)
+    // unit from the terrain lift: retail stands it at the sea minus its FBI
+    // `waterline` (client/terrainlift.h bodyHeight), so over deep water it rises
+    // above the seabed and a floater on a shoal sinks into it. Zero on land.
     float waterSink(const tak::sim::UnitType* t, float wx, float wz);
     // Screen-space displacement of a world point's surface from its flat grid cell,
     // baked into the tile art by the tilted 2.5D view: up (Y) AND sideways (X).
-    float terrainLift(float wx, float wz) { return heightAbove(wx, wz) * kHeightScale_; }
+    // Retail's z - (y >> 1): whole pixels, odd heights rounding down.
+    float terrainLift(float wx, float wz) { return std::floor(heightAbove(wx, wz) * kHeightScale_); }
     // ---- the datum a FLYER holds its altitude above --------------------------
     // Retail does not fly over the per-pixel heightmap. It precomputes, at map
     // load, one byte per 128x128-world-unit sector holding the MAXIMUM terrain
@@ -2774,7 +2781,7 @@ private:
     int flyGroundW_ = 0, flyGroundH_ = 0;    // sectors
     const void* flyGroundMap_ = nullptr;     // which map it was built for
     float terrainLiftX(float wx, float wz) {
-        if(heightRef_>=0 && kHeightScaleX_==0)return kHeightScaleX_;
+        if(liftReady_ && kHeightScaleX_==0)return kHeightScaleX_;
         return heightAbove(wx, wz) * kHeightScaleX_;
     }
     // The terrain-relief lift is for MOBILE units standing on painted slopes. A
@@ -3008,7 +3015,7 @@ private:
     // surface of the tallest wall BETWEEN this unit and the camera (i.e. to its
     // south, larger z). Units are then clipped to above that line and the hidden
     // part re-drawn as a faint silhouette. Returns a huge value when nothing
-    // occludes the unit. kHeightScale_/heightRef_ are lazily set by terrainLift.
+    // occludes the unit. kHeightScale_ is lazily set by terrainLift.
     float wallOcclusionY(float wx, float wz);
     uint32_t netTick_ = 0;
     uint32_t netStopTick_ = UINT32_MAX;   // see setNetStopTick
@@ -3566,7 +3573,7 @@ private:
     std::vector<uint32_t> unitQuery_;
     std::vector<uint32_t> unitAll_;       // 0, 1, 2, ... (whole-list answers)
     struct LiftBoundsKey { const void* map = nullptr; const void* heights = nullptr; size_t size = 0;
-                           int ref = -2; float scale = 0, scaleX = 0; };
+                           float scale = 0, scaleX = 0; };
     LiftBoundsKey unitLiftKey_;
     tak::render::LiftBounds unitLift_;
     bool unitFullScan_ = false;           // read once per frame
