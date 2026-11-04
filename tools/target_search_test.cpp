@@ -48,9 +48,14 @@
 //                   sharing (takeover_keeps_sharing); leaving and rejoining the
 //                   team moves even a frozen footprint (alliance_change); an
 //                   ally's dying scout's revealer stays in both planes for its
-//                   60 ticks (death_revealer_shared). A passive neutral
+//                   60 ticks (death_revealer_shared), a computer ally's too
+//                   (death_revealer_ai_ally, death_revealer_ai_ai), 20 per
+//                   owner, the 21st gone at once (death_revealer_cap_per_owner);
+//                   an unallied computer keeps none, as retail
+//                   (death_revealer_lone_ai_none). A passive neutral
 //                   (villagers, wildlife) shares nothing with anyone, allied
-//                   or not: in a skirmish (skirmish_passive_no_share) and, as
+//                   or not, nor keeps a revealer: in a skirmish
+//                   (skirmish_passive_no_share, death_revealer_passive_none) and, as
 //                   retail's 4f6770 leaves a mission computer out, in a
 //                   shipped campaign mission (campaign_passive_*). Throughout, the counts
 //                   equal the sum of the footprints over their planes and the
@@ -487,6 +492,7 @@ struct Share {
     bool sees1Other = false, explored1Other = false;   // player 1 and player 0's far scout
     bool afterSees0 = false, afterSees1 = false, rejoinSees0 = false;
     bool revealerHeld = false, revealerGone = false;
+    int lost1After = -1;   // ticks after the death until player 1 stops seeing the foe
 };
 Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, After after = After::None,
                   bool passive1 = false) {
@@ -567,6 +573,7 @@ Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, Af
             if (deadAt < 0 && (!s || !s->alive())) deadAt = i;
             const sim::Unit* f = w.unit(foe);
             if (!f || deadAt < 0) continue;
+            if (out.lost1After < 0 && !w.playerSees(1, *f)) out.lost1After = i - deadAt;
             if (i == deadAt + 30) out.revealerHeld = w.playerSees(0, *f) && w.playerSees(1, *f);
             if (i == deadAt + 70) {
                 out.revealerGone = !w.playerSees(0, *f) && !w.playerSees(1, *f);
@@ -575,6 +582,62 @@ Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, Af
             }
         }
     }
+    return out;
+}
+
+// 21 scouts of a human (player 0) and 21 of its computer ally (player 1),
+// each group stacked on one spot, all die on one tick. The revealer list
+// holds 20 per owner (4c6750's cap of 0x62da20 counts one machine's own
+// player, 512ae0): each owner's 21st footprint goes at once, its 20 others
+// 60 ticks later. Returns the peak count on each spot in plane 0 (both groups
+// are shared into it) and plane 1: alive, on the tick of the deaths, and 61
+// ticks after them.
+struct Cap { int alive0 = 0, alive1 = 0, dead0 = 0, dead1 = 0, later0 = 0, later1 = 0; bool died = false; };
+Cap deathCapPerOwner(const sim::UnitType& archer) {
+    Flat flat;
+    sim::World w;
+    const WorldHash hashed{w};
+    flat.into(w);
+    w.setPlayerCount(2);
+    w.setTeam(1, 0);
+    w.player(1).automaticGates = true;
+    static sim::UnitType scout;
+    scout = archer; scout.id = "scout"; scout.weapons.clear(); scout.weapon = {}; scout.sight = 100;
+    std::vector<int> ids;
+    for (int p = 0; p < 2; ++p)
+        for (int i = 0; i < 21; ++i) {
+            const int id = w.spawn(&scout, p ? 700.f : 250.f, p ? 700.f : 250.f, 0.f, p);
+            w.unit(id)->moveState = 0;
+            ids.push_back(id);
+        }
+    // The peak count of plane `plane` on the half of the map holding `group`.
+    auto peak = [&](int plane, int group) {
+        const int width = w.viewPlaneW(), height = w.viewPlaneH();
+        int best = 0;
+        for (int z = 0; z < height; ++z)
+            for (int x = 0; x < width; ++x)
+                if ((x + z >= width) == (group == 1)) best = std::max(best, int(w.viewCount(plane, x, z)));
+        return best;
+    };
+    for (int i = 0; i < 4; ++i) w.tick(kTick);
+    Cap out;
+    out.alive0 = std::min(peak(0, 0), peak(1, 0));
+    out.alive1 = std::min(peak(0, 1), peak(1, 1));
+    for (int id : ids) w.destroy(id);
+    auto alive = [&](int id) { const sim::Unit* u = w.unit(id); return u && u->alive(); };
+    for (int i = 0; i < 300 && !out.died; ++i) {
+        w.tick(kTick);
+        const auto living = std::count_if(ids.begin(), ids.end(), alive);
+        if (living && living < std::ptrdiff_t(ids.size())) break;   // not one tick
+        out.died = living == 0;
+    }
+    out.dead0 = std::max(peak(0, 0), peak(1, 0));
+    out.dead1 = std::max(peak(0, 1), peak(1, 1));
+    if (std::min(peak(0, 0), peak(1, 0)) != out.dead0 || std::min(peak(0, 1), peak(1, 1)) != out.dead1)
+        out.dead0 = out.dead1 = -1;   // the planes disagree
+    for (int i = 0; i < 61; ++i) w.tick(kTick);
+    out.later0 = std::max(peak(0, 0), peak(1, 0));
+    out.later1 = std::max(peak(0, 1), peak(1, 1));
     return out;
 }
 
@@ -681,6 +744,38 @@ void sharedSights(const sim::TypeRegistry& reg, const hpi::Vfs& vfs) {
           "death_revealer_shared: the dying scout's revealer holds in both planes, then goes after 60 ticks",
           "held " + std::to_string(dies.revealerHeld) + " gone " + std::to_string(dies.revealerGone) +
               " consistent " + std::to_string(dies.consistent));
+    // D2 reaches death sight too: a computer ally's dying unit keeps its
+    // revealer in every plane its live sight was shared into (retail keeps one
+    // only for the machine's own player's units, 512ae0 vs game+0x306f).
+    auto revealer = [](const Share& s) {
+        return "held " + std::to_string(s.revealerHeld) + " gone " + std::to_string(s.revealerGone) + " consistent " +
+               std::to_string(s.consistent) + " display " + std::to_string(s.display);
+    };
+    const Share aiDies = sharedSight(*archer, 0, false, true, After::Revealer);
+    check(aiDies.revealerHeld && aiDies.revealerGone && aiDies.consistent && aiDies.display,
+          "death_revealer_ai_ally: a computer ally's dying scout's revealer holds in both planes, then goes after "
+          "60 ticks", revealer(aiDies));
+    const Share aiAiDies = sharedSight(*archer, 0, true, true, After::Revealer);
+    check(aiAiDies.revealerHeld && aiAiDies.revealerGone && aiAiDies.consistent && aiAiDies.display,
+          "death_revealer_ai_ai: so does one of two allied computers", revealer(aiAiDies));
+    // A computer with no ally shares into no other plane: as retail, none. A
+    // human on its own keeps its own (the control).
+    const Share loneAi = sharedSight(*archer, 1, false, true, After::Revealer);
+    const Share loneHuman = sharedSight(*archer, 1, false, false, After::Revealer);
+    check(loneAi.lost1After >= 0 && loneAi.lost1After <= 1 && loneHuman.lost1After > 55 && loneAi.consistent &&
+              loneAi.display,
+          "death_revealer_lone_ai_none: an unallied computer's dying scout leaves its plane at once; a lone "
+          "human's stays its 60 ticks",
+          "ai lost after " + std::to_string(loneAi.lost1After) + " human lost after " +
+              std::to_string(loneHuman.lost1After));
+    const Cap cap = deathCapPerOwner(*archer);
+    check(cap.died && cap.alive0 == 21 && cap.alive1 == 21 && cap.dead0 == 20 && cap.dead1 == 20 && cap.later0 == 0 &&
+              cap.later1 == 0,
+          "death_revealer_cap_per_owner: 21 deaths each of a human and its computer ally on one tick keep 20 "
+          "revealers per owner in both planes; each 21st goes at once, the rest after 60 ticks",
+          "died " + std::to_string(cap.died) + " alive " + std::to_string(cap.alive0) + "/" +
+              std::to_string(cap.alive1) + " dead " + std::to_string(cap.dead0) + "/" + std::to_string(cap.dead1) +
+              " later " + std::to_string(cap.later0) + "/" + std::to_string(cap.later1));
     // Outside campaigns (owner decision 2026-11-03): a passive neutral shares
     // nothing even when allied -- not its sight with the human, not the
     // human's with it, no explored cells. The human pair is the control: there
@@ -693,6 +788,10 @@ void sharedSights(const sim::TypeRegistry& reg, const hpi::Vfs& vfs) {
           describe(passive) + " sees1Other " + std::to_string(passive.sees1Other) + " explored1Other " +
               std::to_string(passive.explored1Other) + " (control " + std::to_string(humans.sees1Other) +
               std::to_string(humans.explored1Other) + ")");
+    const Share passiveDies = sharedSight(*archer, 0, false, false, After::Revealer, true);
+    check(passiveDies.lost1After >= 0 && passiveDies.lost1After <= 1 && passiveDies.consistent && passiveDies.display,
+          "death_revealer_passive_none: a passive neutral's dying scout keeps no revealer, allied or not",
+          "lost after " + std::to_string(passiveDies.lost1After));
     campaignPassive(reg, vfs);
 }
 }  // namespace
