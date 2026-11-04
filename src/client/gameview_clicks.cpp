@@ -116,7 +116,7 @@ namespace {
                 if (f.attacker && target.kind == HoverKind::Enemy && (mode == 0 || mode == 'a'))
                     f.canHit = cursorCanAttackEnemy(t, u.weaponSlot, u.worldPosition, *hovered->type,
                                                     hovered->worldPosition, hovered->flightGroundMode);
-                if (friendlyTarget && (mode == 0 || mode == 'm' || mode == 'r')) {
+                if (friendlyTarget && (mode == 0 || mode == 'm' || mode == 'f' || mode == 'r')) {
                     f.assist = canAssistSite(u, *hovered);
                     f.board = canLoadPassenger(u, *hovered);
                     f.pickup = f.transport && !f.attacker && transports == 1 && canLoadPassenger(*hovered, u);
@@ -242,7 +242,9 @@ namespace {
                 default: break;
             }
         }
-        const char* event = attacked || mode == 'a' || mode == 'f' ? "attack"
+        // Retail voices the order a unit resolved to (0x5217a5), so a fight-move
+        // that resolves to a repair or a guard does not voice an attack.
+        const char* event = attacked || mode == 'a' ? "attack"
                           : mode == 'p' ? "patrol" : mode == 'g' ? "guard" : "move";
         voice(ackUnit(all), event);
     }

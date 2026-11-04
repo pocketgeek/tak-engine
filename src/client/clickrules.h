@@ -175,8 +175,20 @@ inline UnitClick armedClick(char cmd, const ClickTarget& t, const ClickUnit& u, 
                                : u.mobile || u.rallyHolder ? ClickOrder::Move : ClickOrder::None;
             return {o, friendlyCursor(o)};
         }
-        case 'f':   // ours: fight-move; retail's MOVE + 0x400 draws the Move cursor
-            return u.mobile || u.rallyHolder ? UnitClick{ClickOrder::AttackMove, CursorId::Move} : UnitClick{};
+        case 'f': {
+            // Fight-move: retail's `UnitCommand MoveFight` (0x4b0e40 S) presses
+            // MOVE and sets game+0x17633 |= 0x400. The resolver and the selector
+            // never read that bit, so this is armed MOVE target for target (the
+            // friendly resolver, else Move; the same cursors); the order code
+            // (0x521bf4..0x521c5b) then gives only a resolved Move_Ground /
+            // VTOL_Move / QMove response mode -1 -- our AttackMove. HelpBuild,
+            // Repair, a pickup and Follow go as they are.
+            ClickOrder o = friendly ? friendlyClick(u)
+                         : u.mobile || u.rallyHolder ? ClickOrder::Move : ClickOrder::None;
+            const CursorId c = friendlyCursor(o);
+            if (o == ClickOrder::Move) o = ClickOrder::AttackMove;
+            return {o, c};
+        }
         case 'p':
             return u.canPatrol || u.rallyHolder ? UnitClick{ClickOrder::Patrol, CursorId::Patrol} : UnitClick{};
         case 'g':

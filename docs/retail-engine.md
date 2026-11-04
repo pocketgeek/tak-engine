@@ -4910,17 +4910,20 @@ not selectable -- under construction, the site the selected builder is building
 included (emulated), or carried; Green over ground holding a body a selected
 unit can resurrect/animate or a feature a selected reclaimer can reclaim;
 Normal elsewhere. Attack, TooFar, Repair, Load, Unload, Revive, Reclaim and
-Move appear only with a command armed. Fight-move is MOVE plus a flag the
-selector never reads, so it shows Move.
+Move appear only with a command armed. Fight-move (`UnitCommand MoveFight`)
+is armed MOVE plus the bit `game+0x17633` 0x400, which the selector never
+reads, so it shows armed MOVE's cursors: Repair, Load, Defend over friendly
+units, Revive over a body, Move elsewhere (see "What a click orders").
 
 Ours (`src/client/cursorrules.h`, test `cursor_rules`): those rules for hover
 and placement, the interface/minimap split, armed ATTACK per unit with the
 lowest slot (a mobile attacker over a friendly unit is TooFar), armed CLEAR
-showing Reclaim over a reclaimable feature, and fight-move as an untinted Move.
+showing Reclaim over a reclaimable feature, armed MOVE and fight-move showing
+Repair/Load/Defend over friendly units (their clicks do those), and fight-move
+otherwise as an untinted Move.
 Kept ours: the watcher's Select over units, the right-drag box's Reclaim (our
-box only reclaims), a rally holder's Attack, armed MOVE showing Move over
-friendly units (retail's mode 2 shows Repair/Load/Defend there because its
-MOVE button does those; ours only moves), armed GUARD not testing the flyer
+box only reclaims), a rally holder's Attack, armed MOVE and fight-move showing
+Move over a body (the click moves), armed GUARD not testing the flyer
 rule (ours guards a flyer from the ground), CLEAR's Revive over a body that is
 not a reclaimable feature, and Normal for placement over the minimap (our
 minimap click moves the camera; retail's selector gives FindSite there). The
@@ -4951,6 +4954,30 @@ issues only when the cursor is an order cursor (`0x527dd0`, `0x525ce0`).
 - Mode 2 (armed MOVE, `0x4df0b9..0x4df1d2`): the ally branch as above over an
   own or allied unit, MOVE elsewhere; its cursor shows Revive over a body while
   the click moves.
+- Fight-move (`UnitCommand MoveFight`, the name dispatcher `0x4b0e40`) is
+  mode 2 plus a bit: it presses the MOVE button (`0x4b0df0` sends the "MOVE"
+  control a 0x201/0x202 click, which arms mode 2 through `0x429950`, clearing
+  `game+0x17633` 0x400 and 0x8) and then sets `game+0x17633 |= 0x400`
+  (`0x4b0f4a..0x4b0f53`). That word is the pending command's flags, the same
+  word that holds the placement bit 0x80 and the Shift-keeps-armed bit 0x40.
+  Neither the resolver `0x4de530` nor the selector `0x4dd780` reads it (its
+  only readers in the order path are the order code's two tests), so every
+  target resolves and shows as under armed MOVE: HELPBUILD, REPAIR, pickup or
+  FOLLOW over a friendly unit, MOVE over an enemy, a body or ground (Revive
+  cursor over a body, the click moves). After the resolver, `0x5214b0` gives
+  the resolved mission response mode -1 only when the bit is set, the mode
+  byte `game+0x1762c` is 2 and the mission is Move_Ground, VTOL_Move or QMove
+  (`0x521bf4..0x521c5b`; on the flyer group-spread path VTOL_Move alone,
+  `0x521867..0x521892`); every other mission goes as it was resolved. It is
+  one-shot like any armed command: after the click `0x526620` keeps the mode
+  (and so the bit) armed while Shift is down (`0x40`) and otherwise
+  `0x5265d0` writes mode 1 directly, which leaves the 0x400 bit stale but
+  inert (only mode 2 reads it, and mode 2 is armed only through `0x429950`,
+  which clears it). The minimap's armed press runs the same `0x527dd0` ->
+  `0x5214b0` path on the nearest dot, so it behaves the same there; an armed
+  MOVE box (`0x527d00` -> `0x4dd6a0` mode 2: 0) selects, fight or not; Shift
+  and Ctrl queue and toggle as for any order (`0x4d7a30`, the bit is not read
+  there).
 - Mode 3 (armed ATTACK, `0x4de65f..0x4de7cc`): ground or a friendly unit is a
   fire-at-point (SUPPRESS for a ranged ground unit, AIRSTRIKE / AIRTOGROUND
   for a flyer, nothing for anti-air units, nothing for melee units unless a
@@ -4988,6 +5015,18 @@ always clears; minimap placement is checked at the minimap point and falls
 back to our clear-then-build; a left-click on an enemy or ally with nothing of
 ours selected selects it for inspection (with a selection it deselects, as
 retail); Ctrl removes from the selection and the box keeps our army filter.
+Fight-move ('F', our attack-move, which is retail's MoveFight Move with
+response mode -1) resolves exactly as armed MOVE and turns only a resulting
+Move into a fight-move: over a friendly unit it helps build, repairs, boards,
+picks up or guards it with armed MOVE's cursors; over ground, an enemy or a
+body, and over a friendly unit it can do none of those for, it fight-moves to
+the point under the Move cursor; a rally holder's rally step fights (QMove);
+its box selects. (The 2026-11-03 click pass left F a plain fight-move over
+friendly units, reading the 0x400 tests as something other than the pending
+command; corrected the same day.) Our client builds F in and does not read
+`Keys.TDF`'s `UnitCommand` bindings (the owner's file binds `LOWER_F` /
+`UPPER_F` to `UnitCommand MoveFight`; the shipped one binds no key to it):
+reading them would let such a file rebind it, not done here.
 Where retail's cursor and click disagree (armed MOVE over a body, armed CLEAR
 over a raisable reclaimable body, Airstrike over an enemy it cannot hurt, Attack
 over an empty right-drag box) ours shows what the click does.

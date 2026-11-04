@@ -42,6 +42,9 @@ their validation reports; both live in [`docs/`](docs/).
     a flyer (unless a flyer is selected too), Attack over your own units or the
     ground attack-moves with an Attack cursor, Move over a friendly unit helps,
     repairs, loads or guards it, and Clear shows Revive where it will raise a body.
+    Fight-move (F) is the original game's move-fight: over a friendly unit it does
+    what Move does there (helps, repairs, loads or guards it, with the same cursor),
+    and everywhere else it moves to the point, fighting on the way.
   - On the minimap, a right-click attacks, helps or repairs the unit under the
     pointer, armed orders aim at it, and a building can be placed by clicking the
     minimap (with the found-site cursor where it would be accepted).

@@ -140,8 +140,37 @@ void armedRows() {
     c = armed('m', HoverKind::OwnSelectable, self);
     expect(c.order, ClickOrder::None, "2.3 armed M over itself, alone: nothing");
     expectCursor(c.cursor, CursorId::Normal, "2.3 armed M over itself: Normal, stays armed");
+    // Fight-move: retail's MoveFight is armed MOVE plus the 0x400 bit, which
+    // turns only a resolved Move into a fight-move (0x521bf4..0x521c5b).
     expectCursor(armed('f', HoverKind::None, soldier()).cursor, CursorId::Move, "fight-move draws Move");
     expect(armed('f', HoverKind::None, soldier()).order, ClickOrder::AttackMove, "fight-move attack-moves");
+    c = armed('f', HoverKind::Enemy, soldier());
+    expect(c.order, ClickOrder::AttackMove, "fight-move over an enemy: a fight-move to the point");
+    expectCursor(c.cursor, CursorId::Move, "fight-move over an enemy: Move");
+    c = armed('f', HoverKind::Friendly, repair);
+    expect(c.order, ClickOrder::Repair, "fight-move over a damaged ally: a builder repairs");
+    expectCursor(c.cursor, CursorId::Repair, "fight-move over a damaged ally: Repair");
+    c = armed('f', HoverKind::Friendly, soldier());
+    expect(c.order, ClickOrder::Guard, "fight-move over an ally: a soldier guards (Follow)");
+    expectCursor(c.cursor, CursorId::Defend, "fight-move over an ally: Defend");
+    expect(armed('f', HoverKind::Friendly, site).order, ClickOrder::Assist, "fight-move over a site: Assist");
+    ClickUnit lifter = transportUnit(); lifter.pickup = true;
+    c = armed('f', HoverKind::OwnSelectable, lifter);
+    expect(c.order, ClickOrder::Pickup, "fight-move over a passenger: the transport picks it up");
+    expectCursor(c.cursor, CursorId::Load, "fight-move over a passenger: Load");
+    c = armed('f', HoverKind::Friendly, scout());
+    expect(c.order, ClickOrder::AttackMove, "fight-move over an ally it cannot guard: the Move fights");
+    expectCursor(c.cursor, CursorId::Move, "fight-move over an ally it cannot guard: Move");
+    expect(armed('f', HoverKind::None, factory()).order, ClickOrder::AttackMove,
+           "fight-move: a rally holder's rally fights (QMove)");
+    expect(armed('f', HoverKind::OwnSelectable, self).order, ClickOrder::None, "fight-move over itself, alone: nothing");
+    for (HoverKind k : {HoverKind::None, HoverKind::OwnSelectable, HoverKind::Friendly, HoverKind::Enemy})
+        for (const ClickUnit& u : {soldier(), builder(), scout(), tower(), factory(), transportUnit(), repair, site, lifter}) {
+            const UnitClick m = armed('m', k, u), fm = armed('f', k, u);
+            expect(fm.order, m.order == ClickOrder::Move ? ClickOrder::AttackMove : m.order,
+                   "fight-move is armed M with its Move fighting");
+            expectCursor(fm.cursor, m.cursor, "fight-move draws armed M's cursor");
+        }
     expect(armed('p', HoverKind::None, soldier()).order, ClickOrder::Patrol, "armed P: Patrol");
     expect(armed('p', HoverKind::None, scout()).order, ClickOrder::None, "armed P: no canpatrol, nothing");
 
