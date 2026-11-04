@@ -5286,6 +5286,7 @@ void World::guard(int unitId, int targetId, bool queue) {
         u->routeStamp = -1;
         u->guardHelpTick = 0;   // a fresh guard looks for work at once
         u->guardHeard = t->attackedTick;   // nor hears an alarm older than itself
+        u->doorYieldFactory = 0;u->doorYieldSerial = 0;   // nor owes a door a past step aside
     }
     Order o;
     o.targetId = targetId;
@@ -14931,7 +14932,8 @@ void World::clearProductionRoom(Unit& producer,const UnitType* type,Fixed x,Fixe
 // after the 0.9.19 known limit: a dozen guards at a Legion Academy's door held
 // all six outputs in), as clearBuildSite moves them: the move goes ahead of the
 // guard, which resumes when it ends, and a guard steps aside once per output
-// (Unit::doorYieldFor), so walking back into its ring does not start it again.
+// or refusal of this factory (Unit::doorSerial, doorYieldFactory/Serial), so
+// walking back into its ring does not start it again.
 // A guard fighting (an attack or a job ahead of its guard, its ward's alarm
 // still to answer, a weapon slot on a target) stays (doorGuard). Units with any
 // other order, with production of their own, other players' units (allies
@@ -14968,13 +14970,10 @@ void World::clearYardDoor(const Unit& factory) {
     // crowds; moving its parked outputs there put them back in the lane
     // (legion_park, measured 2026-11-03).
     const Unit* leaving=nullptr;
-    int newest=0;   // the factory's newest finished output near it
     std::vector<std::array<int,4>> held;   // World px: left, right, top, bottom.
     forEachNear(float(cx),float(cz),reach,[&](int index) {
         const Unit& k=units_[size_t(index)];
-        if (!body(k) || k.builtBy!=factory.id) return;
-        newest=std::max(newest,k.id);
-        if (k.orders.empty()) return;
+        if (!body(k) || k.builtBy!=factory.id || k.orders.empty()) return;
         // On its way out: on its PARK round this factory, still on the pad, or
         // on a plain move (its rally). An older output guarding, building,
         // patrolling or attacking near its factory is not leaving the door: it
@@ -15029,10 +15028,8 @@ void World::clearYardDoor(const Unit& factory) {
     } else if (refused) {zl=pl;zr=pr;zt=pt;zb=pb;}
     struct Mover {int id,heldBy;};   // heldBy: index into held, or -1 for the zone.
     std::vector<Mover> movers;
-    // A guard steps aside once per output: 2 x the newest one out with one
-    // leaving or held up, 2 x that + 1 for the next one's refused site. Ids
-    // only grow, so a newer output outranks both.
-    const int forOutput=leaving || !held.empty() ? 2*newest : 2*newest+1;
+    // A guard steps aside once per this factory's doorSerial: once per finished
+    // output and once per refusal episode of the next one's site.
     forEachNear(float(cx),float(cz),reach,[&](int index) {
         const Unit& k=units_[size_t(index)];
         if (!body(k) || (k.type->domain==UnitType::Domain::Water)!=water ||
@@ -15046,7 +15043,7 @@ void World::clearYardDoor(const Unit& factory) {
         // A guard (its own output or not) steps aside for each output once.
         const bool guarding=!k.orders.empty();
         const bool zone=overlaps(k,zl,zr,zt,zb) && (guarding || k.builtBy!=factory.id || overlaps(k,pl,pr,pt,pb));
-        if (guarding && (zone || at>=0) && k.doorYieldFor>=forOutput) return;
+        if (guarding && (zone || at>=0) && k.doorYieldFactory==factory.id && k.doorYieldSerial==factory.doorSerial) return;
         if (zone) movers.push_back({k.id,-1});
         else if (at>=0) movers.push_back({k.id,at});
     });
@@ -15094,7 +15091,7 @@ void World::clearYardDoor(const Unit& factory) {
         // A guard: the move goes ahead of its guard, which resumes when it
         // ends (clearBuildSite's step aside).
         OrdersNote note{*this,id};
-        k.doorYieldFor=forOutput;
+        k.doorYieldFactory=factory.id;k.doorYieldSerial=factory.doorSerial;
         guardStandAside(k);
         std::vector<Order> rest;rest.swap(k.orders);
         cancelPath(k);k.routeStamp=0;
@@ -16365,6 +16362,7 @@ void World::tickProduction(Unit& u, float dt) {
     Unit* site=u.productionSiteId ? unit(u.productionSiteId) : nullptr;
     if (u.productionSiteId && (!site || !site->alive() || (site->hp<=Fixed() && !site->retailSite) || site->player!=player)) {
         u.productionSiteId=0; u.buildProgress=0; u.buildFraction=0;
+        if (u.doorSerial&1u) ++u.doorSerial;   // a refusal for the next site is a new episode
         return;
     }
     if (!site) {
@@ -16378,6 +16376,7 @@ void World::tickProduction(Unit& u, float dt) {
         if (!productionPosition(producerId,t,spawnX,spawnY,spawnZ)) {
             if (u.type->productionScript) {
                 u.productionRetryTick=tickCounter_+7+gameRand(15);
+                if (u.type->isStructure() && !(u.doorSerial&1u)) ++u.doorSerial;   // a new refusal episode
                 u.refusedSiteX=spawnX.floorInt();u.refusedSiteZ=spawnZ.floorInt();
             }
             if (!u.type->isStructure() && !u.rally.empty()) clearProductionRoom(u,t,spawnX,spawnZ);
@@ -16545,7 +16544,7 @@ void World::finishProduction(int producerId,Unit& finished) {
     site->underConstruction=false;
     site->productionOwner=0;
     // A building's output remembers its factory (clearYardDoor).
-    if (producer->type->isStructure()) site->builtBy=producerId;
+    if (producer->type->isStructure()) { site->builtBy=producerId;producer->doorSerial=(producer->doorSerial|1u)+1u; }
     producer->productionSiteId=0;
     producer->buildProgress=0;producer->buildFraction=0;
     noteScriptedProduction(*producer,t);
@@ -19579,7 +19578,8 @@ uint64_t World::stateHash() const {
         if (u.cloakBlockedUntil) { mix(0x434c4f4bu); mix(u.cloakBlockedUntil); }
         if (u.guardHelpTick) { mix(0x47554152u); mix(u.guardHelpTick); }
         if (u.guardHeard) { mix(0x47484541u); mix(u.guardHeard); }
-        if (u.doorYieldFor) { mix(0x444f4f52u); mix(uint32_t(u.doorYieldFor)); }
+        if (u.doorYieldFactory) { mix(0x444f4f52u); mix(uint32_t(u.doorYieldFactory)); mix(u.doorYieldSerial); }
+        if (u.doorSerial) { mix(0x44534552u); mix(u.doorSerial); }
         if (u.reviveTarget) {
             mix(0x52455649u);mix(uint32_t(u.reviveTarget));mix(uint32_t(u.reviveWork));mix(uint8_t(u.reviveMode));
         }

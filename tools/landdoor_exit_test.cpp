@@ -11,7 +11,16 @@
 // a dozen idle units of the owner parked 8 px apart just off the door, with
 // one idle unit on the pad, with the dozen guarding one of them, with the dozen
 // guarding the factory, and with one guard of the factory fighting an enemy at
-// its door. Last, an output guarding its idle factory must move nobody.
+// its door. Then three for the guard's once-per-output key (review of
+// 39f8cfe6: it was the newest output id near whichever factory, so a key earned
+// at another factory, or at an output since gone, skipped every later step
+// aside): the guarding dozen with the factory rallied far east (each output
+// walks out of the door's search radius before the next one's site is
+// refused), a dozen guarding a twin factory south of the door that builds its
+// six first, and the guarding dozen with a key already set from another
+// factory's step aside (Stale: the two layouts before did not trip the old key
+// here, this one does when the key is not kept per factory). Last, an output
+// guarding its idle factory must move nobody.
 //
 // Retail moves no idle body (BUGGER_OFF is stored, never acted on: 0x50d50e;
 // BUILD stage 2's footprint test 0x401deb holds the next site; the mover only
@@ -27,8 +36,8 @@
 // Legion a dozen guards at a Creon Academy's door let 0 of 6 out; Retail
 // Barracks Catapults took 1455 ticks for six against 1227 with the door clear).
 // Each guard must end back on its guard near its ward, step aside at most once
-// for each output (counted per output finished, the next one's refused site
-// apart), and a guard fighting must not be moved.
+// for each output (counted per output finished, a refusal of the next one's
+// site since then apart), and a guard fighting must not be moved.
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include <algorithm>
@@ -56,11 +65,16 @@ constexpr int kCells=256,kDoorCells=4,kOutputs=6;
 // Guard: the dozen guard one of themselves. Ward: the dozen guard the factory
 // (they stand in its guard ring, the door's side included). Fight: one guard of
 // the factory at the door with an attack on an enemy put ahead of its guard.
-enum class Crowd {None,Door,Pad,Guard,Ward,Fight};
+// Rally: Guard with the factory rallied far east. Twin: the dozen guard a twin
+// factory south of this one's door (their ring's north side is this door),
+// which builds its six first. Stale: Guard with each guard's step-aside key
+// set from a far factory's door at a serial this one never reaches first.
+enum class Crowd {None,Door,Pad,Guard,Ward,Fight,Rally,Twin,Stale};
 const char* crowdName(Crowd c) {
     return c==Crowd::None?"none":c==Crowd::Door?"door":c==Crowd::Pad?"pad":c==Crowd::Guard?"guard":
-           c==Crowd::Ward?"ward":"fight";
+           c==Crowd::Ward?"ward":c==Crowd::Fight?"fight":c==Crowd::Rally?"rally":c==Crowd::Twin?"twin":"stale";
 }
+bool guardCrowd(Crowd c) {return c==Crowd::Guard || c==Crowd::Rally || c==Crowd::Stale;}
 // The sim's door area (clearYardDoor's kDoorCells) for telling which output a
 // move aside was for.
 constexpr int kSimDoorCells=8;
@@ -70,7 +84,7 @@ struct Result {
     // Ward: guards back on their guard of the factory and near it at the end,
     // the farthest one's distance from the factory's centre (px), and moves
     // aside of one unit while the same output was the first one leaving.
-    int guarding=0,farthest=0,twice=0,asides=0;
+    int guarding=0,farthest=0,twice=0,asides=0,kept=0;
     std::vector<int> clear,door;
     static int median(std::vector<int> v) {
         if(v.empty())return -1;
@@ -98,12 +112,21 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,const cha
     // Two rows of six, 8 px between bodies, the first row 24 px off the door.
     const float gap=float(crowdType->footX*16+8);
     std::vector<int> idle;
-    if(crowd==Crowd::Door || crowd==Crowd::Guard || crowd==Crowd::Ward)
+    // The twin: one more of the factory south of it, three cells between them.
+    const int twin=crowd==Crowd::Twin ? w.spawn(&factory,fx,fz+float((factory.footZ+3)*16),
+        float(int16_t(factory.orientation))*6.28318530718f/65536.f,0) : 0;
+    if(crowd==Crowd::Door || guardCrowd(crowd) || crowd==Crowd::Ward || crowd==Crowd::Twin)
         for(int i=0;i<12;++i)
             idle.push_back(w.spawn(crowdType,fx-2.5f*gap+float(i%6)*gap,doorZ+24+float(i/6)*gap,0,0));
     if(crowd==Crowd::Pad)idle.push_back(w.spawn(crowdType,fx,doorZ-24,0,0));
-    if(crowd==Crowd::Guard)for(size_t i=1;i<idle.size();++i)w.guard(idle[i],idle[0],false);
+    if(guardCrowd(crowd))for(size_t i=1;i<idle.size();++i)w.guard(idle[i],idle[0],false);
+    if(crowd==Crowd::Rally)w.order(id,fx+1200,fz,false);
+    if(crowd==Crowd::Stale) {
+        const int far=w.spawn(&factory,fx-1200,fz,float(int16_t(factory.orientation))*6.28318530718f/65536.f,0);
+        for(size_t i=1;i<idle.size();++i) {auto* u=w.unit(idle[i]);u->doorYieldFactory=far;u->doorYieldSerial=1;}
+    }
     if(crowd==Crowd::Ward)for(int k:idle)w.guard(k,id,false);
+    if(crowd==Crowd::Twin)for(int k:idle)w.guard(k,twin,false);
     // An enemy east of the door, kept alive, and a guard of the factory beside
     // it attacking it, its guard queued under the attack.
     int enemy=0;
@@ -117,7 +140,20 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,const cha
         if(!enemy)return;
         for(int k:{enemy,idle[0]})if(auto* u=w.unit(k);u && u->alive())u->hp=sim::Fixed::fromInt(u->maximumHp());
     };
-    for(int t=0;t<(crowd==Crowd::Ward ? 300 : 30);++t) {w.tick(1.f/30);keepAlive();}
+    for(int t=0;t<(crowd==Crowd::Ward || crowd==Crowd::Twin ? 300 : 30);++t) {w.tick(1.f/30);keepAlive();}
+    // The twin's six first, until each is off its yard (or 20000 ticks).
+    if(twin) {
+        w.player(0).mana=1000000;w.train(twin,output,kOutputs);
+        const Rect twinYard=footprint(*w.unit(twin));
+        for(int t=0;t<20000;++t) {
+            w.player(0).mana=1000000;w.tick(1.f/30);
+            int out=0;
+            for(const auto& u:w.units())
+                out+=u.alive() && u.type==output && !u.underConstruction && u.builtBy==twin && !intersects(footprint(u),twinYard);
+            if(out==kOutputs)break;
+        }
+        for(int t=0;t<300;++t)w.tick(1.f/30);
+    }
     std::vector<std::pair<float,float>> crowdAt;
     for(int k:idle)crowdAt.emplace_back(w.unit(k)->x.toFloat(),w.unit(k)->z.toFloat());
     w.player(0).mana=1000000;w.train(id,output,kOutputs);
@@ -129,6 +165,7 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,const cha
     // the first output leaving at each new one.
     std::vector<std::optional<std::pair<sim::Fixed,sim::Fixed>>> lastAside(idle.size());
     std::vector<std::vector<int>> asideFor(idle.size());
+    int finished=0;bool refusedSince=false;
     for(;tick<20000;++tick) {
         w.player(0).mana=1000000;w.tick(1.f/30);keepAlive();
         // The first output leaving the door: the oldest of the factory's
@@ -140,30 +177,33 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,const cha
         // The guards (all but the first, their ward) never get the door's move.
         // The fighter only while its attack lasts (the enemy can still die
         // to the outputs: its guard then may step aside like any other).
-        for(size_t i=crowd==Crowd::Guard ? 1 : 0;i<idle.size();++i)if(const auto* u=w.unit(idle[i]);u && u->alive()) {
+        for(size_t i=guardCrowd(crowd) ? 1 : 0;i<idle.size();++i)if(const auto* u=w.unit(idle[i]);u && u->alive()) {
             const bool fighting=std::any_of(u->orders.begin(),u->orders.end(),
                 [](const sim::Order& o){return o.targetId && !o.guard;});
             if(crowd!=Crowd::Fight || fighting)for(const auto& o:u->orders)exitOrder|=bool(o.productionExit);
+        }
+        {   // A refusal episode: the next site refused since the last output finished.
+            const auto* f=w.unit(id);
+            const int now=int(std::count_if(w.units().begin(),w.units().end(),
+                [&](const sim::Unit& o){return o.builtBy==id && !o.underConstruction;}));
+            if(now!=finished) {finished=now;refusedSince=false;}
+            refusedSince|=!f->productionSiteId && !f->buildQueue.empty() && w.tickCount()<f->productionRetryTick;
         }
         for(size_t i=0;i<idle.size();++i)if(const auto* u=w.unit(idle[i]);u && u->alive()) {
             std::optional<std::pair<sim::Fixed,sim::Fixed>> aside;
             for(const auto& o:u->orders)if(o.productionExit)aside=o.productionExit;
             if(aside && aside!=lastAside[i]) {
                 ++r.asides;
-                // What it made way for: the factory's next output while that
-                // one's site is refused, else its newest finished one.
-                const auto* f=w.unit(id);
-                const bool refused=!f->productionSiteId && !f->buildQueue.empty() && w.tickCount()<f->productionRetryTick;
-                const int finished=int(std::count_if(w.units().begin(),w.units().end(),
-                    [&](const sim::Unit& o){return o.builtBy==id && !o.underConstruction;}));
-                leaving=finished*2+(refused ? 1 : 0)+1;
+                // What it made way for: the factory's outputs finished so far,
+                // and whether its next one's site has been refused since.
+                leaving=finished*2+(refusedSince ? 1 : 0)+1;
                 if(leaving && std::find(asideFor[i].begin(),asideFor[i].end(),leaving)!=asideFor[i].end())++r.twice;
                 asideFor[i].push_back(leaving);
             }
             lastAside[i]=aside;
         }
         for(const auto& u:w.units()) {
-            if(!u.alive() || u.type!=output || u.underConstruction || u.id==id)continue;
+            if(!u.alive() || u.type!=output || u.underConstruction || u.id==id || u.builtBy!=id)continue;
             if(std::find(idle.begin(),idle.end(),u.id)!=idle.end())continue;
             auto at=std::find_if(outs.begin(),outs.end(),[&](const Out& o){return o.id==u.id;});
             if(at==outs.end()) {outs.push_back({u.id,tick});at=outs.end()-1;r.lastDone=tick;}
@@ -178,8 +218,8 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,const cha
     r.produced=int(outs.size());
     // The guards: the dozen guarding the factory, or all but the first,
     // guarding it.
-    const int wardId=crowd==Crowd::Ward ? id : crowd==Crowd::Guard ? idle[0] : 0;
-    if(wardId)for(size_t i=crowd==Crowd::Guard ? 1 : 0;i<idle.size();++i)
+    const int wardId=crowd==Crowd::Ward ? id : crowd==Crowd::Twin ? twin : guardCrowd(crowd) ? idle[0] : 0;
+    if(wardId)for(size_t i=guardCrowd(crowd) ? 1 : 0;i<idle.size();++i)
         if(const auto* u=w.unit(idle[i]),*g=w.unit(wardId);u && u->alive() && g && g->alive()) {
         const int k=idle[i];
         const auto& o=u->orders;
@@ -193,6 +233,8 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,const cha
         const bool ok=!o.empty() && o[sim::World::currentLeg(o)].guard && o[sim::World::currentLeg(o)].targetId==wardId &&
             !aside && d<=outer;
         r.guarding+=ok;
+        // Its guard still in its orders (current, or queued behind a move aside).
+        r.kept+=std::any_of(o.begin(),o.end(),[&](const sim::Order& q){return q.guard && q.targetId==wardId;});
         if(!ok)std::printf("  guard %d at %d,%d (ward %d,%d): orders=%zu guard=%d aside=%d d=%d outer=%d\n",k,
             u->x.floorInt(),u->z.floorInt(),g->x.floorInt(),g->z.floorInt(),o.size(),
             int(!o.empty() && o[sim::World::currentLeg(o)].guard),int(aside),d,outer);
@@ -294,6 +336,26 @@ int main(int argc,char** argv) {
                       std::to_string(guard.guarding)+" of 11, farthest "+std::to_string(guard.farthest)+" px)");
                 check(guard.twice==0,label+"no guard of one of them moves aside twice for one output ("+
                       std::to_string(guard.twice)+")");
+                const Result rally=run(registry,mode,c.factory,output,c.crowd,Crowd::Rally);
+                check(rally.produced==kOutputs && int(rally.clear.size())==kOutputs,
+                      label+"with the factory rallied far off, the guards still let all six out ("+
+                      std::to_string(rally.produced)+")");
+                check(rally.twice==0,label+"rallied, no guard moves aside twice for one output ("+
+                      std::to_string(rally.twice)+")");
+                const Result twin=run(registry,mode,c.factory,output,c.crowd,Crowd::Twin);
+                check(twin.produced==kOutputs && int(twin.clear.size())==kOutputs,
+                      label+"guards that made way at a twin factory's door still let all six out here ("+
+                      std::to_string(twin.produced)+")");
+                // Kept, not back on it: under Legion two Creon guards end still
+                // pressing on their move aside in the lane between the two
+                // Academies (as at 39f8cfe6, the key apart).
+                check(twin.kept==12,label+"after both, each guard keeps its guard ("+
+                      std::to_string(twin.kept)+" of 12, "+std::to_string(twin.guarding)+" back on it)");
+                const Result stale=run(registry,mode,c.factory,output,c.crowd,Crowd::Stale);
+                check(stale.produced==kOutputs && int(stale.clear.size())==kOutputs && stale.stuck==0 &&
+                      stale.lastDone<=clear.lastDone+clear.lastDone*15/100,
+                      label+"guards that stepped aside at another factory's door still let all six out here ("+
+                      std::to_string(stale.produced)+", "+std::to_string(stale.lastDone)+" ticks)");
                 const Result ward=run(registry,mode,c.factory,output,c.crowd,Crowd::Ward);
                 check(ward.produced==kOutputs && int(ward.clear.size())==kOutputs && ward.stuck==0,
                       label+"a dozen guarding the factory at its door let all six out ("+std::to_string(ward.produced)+")");

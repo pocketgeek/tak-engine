@@ -1472,12 +1472,18 @@ struct alignas(64) Unit {
     // off the pad or off a later output it holds up. Set once, from hashed state
     // (the completion), and read only there, so not hashed.
     int builtBy = 0;
-    // On a guard: what it last stepped out of a factory's door for
-    // (World::clearYardDoor): 2 x that factory's newest output then, + 1 when it
-    // was the next one's refused site. Ids only grow, so it steps aside again
-    // only for a newer output, not each time its guard walks it back in.
+    // On a guard: the factory whose door it last stepped out of
+    // (World::clearYardDoor) and that factory's doorSerial then. It steps aside
+    // there again only once the serial has moved on (a newer output or a new
+    // refusal), not each time its guard walks it back in. Cleared by a fresh
+    // guard order. Hashed with a tag when set.
+    int doorYieldFactory = 0;
+    uint32_t doorYieldSerial = 0;
+    // On a factory: grows by one for each refusal episode of its next output's
+    // site (odd) and to the next even number for each finished output, so a
+    // guard's step aside is keyed on this factory alone and never goes back.
     // Hashed with a tag when set.
-    int doorYieldFor = 0;
+    uint32_t doorSerial = 0;
     // A factory's refused output site (BUILD stage 2's point, world px), while
     // productionRetryTick lies ahead: clearYardDoor clears it with the pad (a
     // pad point on the yard's edge puts part of the site outside the yard).

@@ -106,6 +106,7 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,Layout la
     const Rect simDoor{yard.x-kSimDoorCells,yard.z-kSimDoorCells,yard.w+2*kSimDoorCells,yard.h+2*kSimDoorCells};
     std::vector<std::optional<std::pair<sim::Fixed,sim::Fixed>>> lastAside(idle.size());
     std::vector<std::vector<int>> asideFor(idle.size());
+    int finished=0;bool refusedSince=false;
     w.player(0).mana=1000000;w.train(id,ship,count);
     struct Out {int id,done,clear=-1,door=-1;Rect birth;bool rested=false;};
     std::vector<Out> outs;Result r;uint32_t lastRetry=0;int tick=0;
@@ -118,18 +119,21 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,Layout la
         for(const auto& u:w.units())
             if(u.alive() && u.type==ship && !u.underConstruction && u.builtBy==id && !u.orders.empty() &&
                intersects(footprint(u),simDoor) && (!leaving || u.id<leaving))leaving=u.id;
+        {   // A refusal episode: the next site refused since the last output finished.
+            const auto* f=w.unit(id);
+            const int now=int(std::count_if(w.units().begin(),w.units().end(),
+                [&](const sim::Unit& o){return o.builtBy==id && !o.underConstruction;}));
+            if(now!=finished) {finished=now;refusedSince=false;}
+            refusedSince|=!f->productionSiteId && !f->buildQueue.empty() && w.tickCount()<f->productionRetryTick;
+        }
         for(size_t i=0;i<idle.size();++i)if(const auto* u=w.unit(idle[i]);u && u->alive()) {
             std::optional<std::pair<sim::Fixed,sim::Fixed>> aside;
             for(const auto& o:u->orders)if(o.productionExit)aside=o.productionExit;
             if(aside && aside!=lastAside[i]) {
                 ++r.asides;
-                // What it made way for: the factory's next output while that
-                // one's site is refused, else its newest finished one.
-                const auto* f=w.unit(id);
-                const bool refused=!f->productionSiteId && !f->buildQueue.empty() && w.tickCount()<f->productionRetryTick;
-                const int finished=int(std::count_if(w.units().begin(),w.units().end(),
-                    [&](const sim::Unit& o){return o.builtBy==id && !o.underConstruction;}));
-                leaving=finished*2+(refused ? 1 : 0)+1;
+                // What it made way for: the factory's outputs finished so far,
+                // and whether its next one's site has been refused since.
+                leaving=finished*2+(refusedSince ? 1 : 0)+1;
                 if(leaving && std::find(asideFor[i].begin(),asideFor[i].end(),leaving)!=asideFor[i].end())++r.twice;
                 asideFor[i].push_back(leaving);
             }
