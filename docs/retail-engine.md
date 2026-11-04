@@ -6421,11 +6421,33 @@ puts a type's footprint corner at the cell, ((X*2 + footprintx) << 19, then
 `5085c0`, S). Ours used the cell centre (X*16+8) for `m`/`ma`/`p`/`u` through
 0.9.19; `MissionScript::orderPoint` is retail's for them and `b`, the scale
 from the header's `[Map Data]` (`mission_orders_test` points,
-`tools/re/check_mission_points.py`). `a X Y`, the placed units' `XPos`/`ZPos`,
-`Create` and `SetTrigger`'s regions (stored as given, `4d2b00` / `4d2ae0`, not
-followed further) still use the cell centre. The shipped strings hold 1160 `m`,
-248 `ma`, 3480 `p` and 81 `u` points in 69 missions, all whole numbers, so
-there the change is the half-cell shift alone.
+`tools/re/check_mission_points.py`). `a X Y` still uses the cell centre. The
+shipped strings hold 1160 `m`, 248 `ma`, 3480 `p` and 81 `u` points in 69
+missions, all whole numbers, so there the change is the half-cell shift alone.
+
+**Placed units (2026-11-04; E = emulated, S = static).** `4c8ce1..4c8d64` reads
+a `[units]` record's `XPos`/`ZPos` with `atoi` (`543190` -> `5d47af`, S) and
+stores x = X*16, z = Z*16 (E): no half cell. y is `YPos << 16`, unscaled, and
+effectively unused: `51b2a0` recomputes a mobile's y (hover / floater `51b220`
+/ ground fit `51ad20`, S). Angle is stored as the word `(A << 16) / 360`
+chopped toward zero (180 -> 0x8000, 359 -> 0xff49, E). `514b40` finds the type
+(`5159f0`), runs `5085c0(type, &pos)`, then `512060(Player-1, typeid, pos,
+1,1,0,0,1)` and writes the Angle word over the birth heading `+0x7e`
+(`514d02`), all E. `5085c0` snaps a type whose bmcode is 0 (`4c1768` turns any
+bmcode but 0 or 1 into 0): origin cell o = `(p - (f << 19) + 0x80000) >> 20`,
+position `(2o + f) << 19`, y the terrain (`507990`) at the origin cell. So a
+building stands at X*16 + 8*(f & 1), XPos its centre cell; a mobile (bmcode 1)
+stays at X*16, and a 2x2 one at X=10 has origin cell 9 (E, footprints 1..5,
+2x3, 1x4). `511990` keeps the position as given and stores the origin cell in
+`+0x74/+0x76` (E); `512060` neither moves the unit nor searches for room nor
+checks occupancy (S), `5066f0` only stamps the footprint, and every unit starts
+in move mode 1, so a flyer starts on the ground (`511b18`, S). Ours used X*16+8
+for every unit through 0.9.19 (mobiles off by 8,8, even footprints by 8 on that
+axis) and turned Angle into a port heading directly, a half turn from retail's
+(our port heading 0 is retail 0x8000, Angle 180; 5418 of the 7341 placed units
+use 180). `MissionScript::placedPoint` / `placedHeading` and `footprintSnap`
+port it (`mission_orders_test`, `tools/re/check_mission_regions.py`). Skirmish
+start positions are unaffected: this path only reads a mission's `.ota`.
 
 When the parser has pushed a mission it clears the unit's selectable bit 0x20,
 and unless the last of them was a patrol, an attack on the ground, `s` or `d`

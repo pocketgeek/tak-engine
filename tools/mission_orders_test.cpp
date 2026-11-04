@@ -15,6 +15,10 @@
 //   s / d     no owner change / a self-destruct queued in its place
 //   m/ma/p/u  the point X*16,Y*16 (16.16, X*65536 chopped first), no half cell
 //
+// And where units come into a mission:
+//   [units]   XPos*16 with no half cell; a building snapped by 5085c0 so XPos is
+//             its centre cell; Angle the raw retail heading word (514b40)
+//
 // Synthetic types from a scratch FBI tree, on a flat map. With a retail install
 // (`mission_orders_test --data <dir>`) it checks shipped missions instead: takx04's
 // Flying Builder builds its shipyard when the lodestone JIM is attacked rather than
@@ -560,6 +564,42 @@ static void tableCompacts(Fixture& f) {
           "and the 70000th order still arrives", std::to_string(b->orders.size()) + " order(s)");
 }
 
+// ---- 13. where placed units stand ------------------------------------------------------
+// Emulated values: retail 514b40 / 5085c0 for an .ota record.
+
+static sim::UnitType sized(int fx, int fz, int bmcode) {
+    sim::UnitType t;
+    t.footX = fx; t.footZ = fz; t.buildMovementCode = uint8_t(bmcode);
+    return t;
+}
+
+static void placement() {
+    std::printf("placed units:\n");
+    auto px = [](int fx, int fz, int bm, int x, int z) {
+        const auto p = sim::MissionScript::placedPoint(sized(fx, fz, bm), x, z);
+        return std::to_string(p.x.v / 65536.0) + "," + std::to_string(p.z.v / 65536.0);
+    };
+    auto placedAt = [](int fx, int fz, int bm, int x, int z, int ex, int ez) {
+        const auto p = sim::MissionScript::placedPoint(sized(fx, fz, bm), x, z);
+        return p.x == Fixed::fromInt(ex) && p.z == Fixed::fromInt(ez);
+    };
+    check(placedAt(2, 2, 0, 10, 10, 160, 160), "a 2x2 building at XPos 10 stands at 160 (it was 168)", px(2, 2, 0, 10, 10));
+    check(placedAt(3, 3, 0, 10, 10, 168, 168), "a 3x3 building at XPos 10 at 168", px(3, 3, 0, 10, 10));
+    check(placedAt(4, 4, 0, 1, 1, 16, 16), "a 4x4 building at XPos 1 at 16", px(4, 4, 0, 1, 1));
+    check(placedAt(5, 5, 0, 0, 0, 8, 8), "a 5x5 building at XPos 0 at 8", px(5, 5, 0, 0, 0));
+    check(placedAt(1, 4, 0, 3, 20, 56, 320), "a 1x4 building at ZPos 20 at 320", px(1, 4, 0, 3, 20));
+    check(placedAt(2, 3, 2, 10, 10, 160, 168), "a bmcode 2 is a building too", px(2, 3, 2, 10, 10));
+    bool mobiles = true;
+    for (int n = 1; n <= 5; ++n) for (int x : {0, 1, 7, 10, 20}) mobiles = mobiles && placedAt(n, n, 1, x, x, x * 16, x * 16);
+    check(mobiles, "a mobile (bmcode 1) of any size stands at XPos*16 (it was +8)");
+    check(sim::MissionScript::placedHeading(180) == 0x8000 && sim::MissionScript::placedHeading(0) == 0 &&
+          sim::MissionScript::placedHeading(359) == 0xff49 && sim::MissionScript::placedHeading(90) == 0x4000 &&
+          sim::MissionScript::placedHeading(-90) == 0xc000,
+          "Angle is the raw heading word (A<<16)/360: 180 -> 0x8000, 359 -> 0xff49");
+    check(sim::retailHeadingToPort(sim::MissionScript::placedHeading(180)).v == 0,
+          "so Angle 180 faces the way an unturned unit does (it faced the other way)");
+}
+
 // ---- shipped missions -----------------------------------------------------------------------------
 
 static void shipped(const char* data) {
@@ -578,12 +618,22 @@ static void shipped(const char* data) {
         std::vector<int> towers;
         for (const auto& u : w.units()) {
             if (u.type == arafly) flyer = u.id;
-            if (u.type == aralode && u.x.toFloat() == cell(231) && u.z.toFloat() == cell(222)) jim = u.id;
+            if (u.type == aralode && u.x.toFloat() == 231 * 16 && u.z.toFloat() == 222 * 16) jim = u.id;
             if (u.type == arakeep) keep = u.id;
             if (u.type == araat) towers.push_back(u.id);
         }
         check(flyer && jim && keep && towers.size() >= 2, "finds the flyer, the lodestone JIM, the keep and the towers");
         if (!flyer || !jim || !keep) return;
+        // [units] records: unit71 arafly 14,60 (2x2 mobile), unit109 aralode JIM
+        // 231,222 (2x2 building), unit110 arassh JOE 176,243 (4x4), all Angle 180.
+        auto standsAt = [&](const sim::UnitType* t, int x, int z) {
+            for (const auto& u : w.units())
+                if (u.type == t && u.x == Fixed::fromInt(x) && u.z == Fixed::fromInt(z)) return u.heading.v == 0;
+            return false;
+        };
+        check(standsAt(arafly, 14 * 16, 60 * 16), "a placed Flying Builder (mobile) stands at XPos*16, facing Angle 180");
+        check(standsAt(aralode, 231 * 16, 222 * 16), "the 2x2 lodestone JIM at 231*16 (it was +8)");
+        check(standsAt(arassh, 176 * 16, 243 * 16), "the 4x4 shipyard JOE at 176*16");
         const Unit* fl = w.unit(flyer);
         const ScriptedOrder* wa = fl->orders.empty() ? nullptr : w.scriptedOrder(fl->orders.front());
         check(wa && wa->kind == ScriptedOrder::Kind::WaitAttack && wa->watched == jim,
@@ -666,6 +716,7 @@ int main(int argc, char** argv) {
         holds(f);
         setMission(f);
         tableCompacts(f);
+        placement();
     }
     std::printf(g_fail ? "mission_orders_test: %d FAILED\n" : "mission_orders_test: all passed\n", g_fail);
     return g_fail ? 1 : 0;

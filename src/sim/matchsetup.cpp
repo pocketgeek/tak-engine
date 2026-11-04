@@ -1529,15 +1529,20 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
                 placements.push_back({u.valueOr("ident", ""), name, 0});
                 const UnitType* t = reg.find(name);
                 if (!t) continue;
-                float x = float(u.numberOr("xpos", 0)) * 16 + 8;
-                float z = float(u.numberOr("zpos", 0)) * 16 + 8;
+                // XPos/ZPos/Angle are read with atoi (4c8ce1); see placedPoint.
+                auto integer = [&](const char* key) { return std::atoi(u.valueOr(key, "0").c_str()); };
+                const MissionScript::Point at = MissionScript::placedPoint(*t, integer("xpos"), integer("zpos"));
                 int player = mapPlayer(int(u.numberOr("player", 1)));
-                float ang = float(u.numberOr("angle", 0)) * (3.14159265f / 180.0f);
-                int id = world.spawn(t, x, z, ang, player);
+                const uint16_t angle = MissionScript::placedHeading(integer("angle"));
+                int id = world.spawn(t, at.x.toFloat(), at.z.toFloat(), std::nullopt, player);
                 if (id >= 0) {
                     ++spawned;
                     placements.back().unitId = id;
                     if (auto* su = world.unit(id)) {
+                        // 514d02 overwrites the birth heading (+0x7e) with the record's.
+                        su->heading = retailHeadingToPort(angle);
+                        su->tickStartHeadingBam = uint16_t(su->heading.v);
+                        if (t->canFly) su->flightNavigation.heading = angle;
                         su->hp = Fixed::fromFloat(su->type->maxHp * float(u.numberOr("healthpercentage", 100)) / 100.0f);
                         // ManaPercentage: enemy casters open a mission with the mana
                         // the designer gave them (usually 0 -- they must recharge

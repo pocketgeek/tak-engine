@@ -193,6 +193,9 @@ their validation reports; both live in [`docs/`](docs/).
   moves, fight-moves, patrols and unloads went to the middle of the named map square;
   as in the original game they now go to its corner, half a square up and left, and
   a point with a fraction keeps it.
+- **Campaign units start where the original put them.** The units a mission starts
+  with stand on the same squares as in the original, and face the same way: they
+  stood half a square off, and most of them faced the other way.
 - **Fedora 45 packages.** Fedora 45 now has its own x86-64 and ARM64 RPMs, beside
   Fedora 44's.
 - **Investigated, no change needed:**

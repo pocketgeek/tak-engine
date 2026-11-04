@@ -10,6 +10,7 @@
 // docs/campaign-design.md for the reverse-engineered scripting/win-lose model.
 
 #include "cob/cob.h"
+#include "sim/fixed.h"
 #include "sim/retailcampaignconditions.h"
 #include "cob/vm.h"
 #include "tdf/tdf.h"
@@ -62,6 +63,16 @@ public:
     // scenario's +0xdc5, 16 when the .ota has [Map Data] (every shipped mission),
     // else 1 -- a 16.16 pixel value with no half cell, exact in a float on any map.
     static float orderPoint(float cell, int32_t scale);
+
+    // Where retail puts a unit, as a 16.16 pixel point.
+    struct Point { Fixed x, z; };
+    // An .ota [units] record (4c8ce1, 514b40): the pixel XPos*16,ZPos*16 with no
+    // half cell; a building (bmcode other than 1) is then snapped by 5085c0
+    // (footprintSnap), so XPos is its centre cell. A mobile stays at X*16.
+    static Point placedPoint(const UnitType& type, int xpos, int zpos);
+    // The record's Angle as the raw retail heading word, (A<<16)/360 chopped
+    // toward zero (4c8d2b); 514d02 stores it over the birth heading.
+    static uint16_t placedHeading(int angle) { return uint16_t(int32_t(uint32_t(angle) << 16) / 360); }
 
     void start(World& w);              // run the "Start" script once (initial spawns/triggers)
     void step(World& w, float dt);     // tick the VM, sweep triggers, evaluate conditions

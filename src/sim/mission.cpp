@@ -318,6 +318,13 @@ float MissionScript::orderPoint(float cell, int32_t scale) {
     return float(double(raw) / 65536.0);
 }
 
+MissionScript::Point MissionScript::placedPoint(const UnitType& t, int xpos, int zpos) {
+    Point p{Fixed::fromInt(xpos * 16), Fixed::fromInt(zpos * 16)};
+    // 4c1768 reads any bmcode other than 0 or 1 as 0, and 5085c0 snaps those.
+    if (t.buildMovementCode != 1) { p.x = footprintSnap(p.x, t.footX); p.z = footprintSnap(p.z, t.footZ); }
+    return p;
+}
+
 void MissionScript::applyOrders(World& w, int unitId, const std::string& orders, bool initial) {
     if (!w.unit(unitId)) return;
     const bool queue = true;   // retail appends; it never clears the unit's orders
