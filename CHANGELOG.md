@@ -48,7 +48,9 @@ their validation reports; both live in [`docs/`](docs/).
   factory cannot start its next unit, units standing where that unit would appear,
   just outside the factory's pad, step aside as well. A factory's own new units, parked
   round it, now move again only when they stand on its pad or hold up the next one out;
-  at a Navy Yard too.
+  at a Navy Yard too, and with Legion pathfinding as well (there, at a Navy Yard whose
+  door faces a shore with guards at it, the yard's own parked Iron Clads used to hold
+  the sixth one in the yard).
   A factory whose rally point is on its own pad no longer stalls: its new unit steps
   off the pad. A unit guarding or building beside its own factory moves nobody.
 - **Reclaimed trees and rocks fade out.** As in the original game, a reclaimed tree or
