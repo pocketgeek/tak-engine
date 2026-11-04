@@ -5064,8 +5064,15 @@ the AI and scripts send 0/1 only, so their queued routes are never toggled
 (`World::insertOrderFront`, `World::removeQueuedMatch`, `queue_modifiers` test).
 The interrupted leg is rewound to its queued state (its route and what its run
 pushed ahead of it go; its mission restarts at stage 0 on a fresh controller);
-a builder at work on a placed site comes back to it as a HelpBuild (I: retail
-resumes the MobileBuild mission itself). A Ctrl Load front-inserts on the
+a builder whose site is down keeps its build leg, which remembers the site
+(`Order::resumeSite`; retail resumes the MobileBuild mission itself). When the
+leg runs again (`World::resumeBuild`) it becomes a HelpBuild on the site while
+that stands unfinished, ends if the site was finished meanwhile, and otherwise
+places the site again: our matches run the legacy construction path, where an
+unattended site loses hp at its build rate and goes at zero, and Ctrl takes back
+an unstarted site (`cancelBuilds`), so a HelpBuild in the leg's place used to
+lose the build (I: what retail's resumed mission does once its site has gone is
+not established). A Ctrl Load front-inserts on the
 carrier as well as the passenger (its pickup is the carrier's mission), a tower
 takes Ctrl on its own list, and Ctrl on an empty list is the plain order. A
 Shift/Ctrl Patrol on a patrol point takes back only that leg: retail's patrol

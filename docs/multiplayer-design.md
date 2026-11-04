@@ -1269,7 +1269,9 @@ layout; a strict replay read refuses it before 312); its order state
 `kQueueFront` (Ctrl: the order goes in at the head without clearing the queue, retail
 4d7a09 -> 4d7750) and the `kQueueToggle` bit (a player's own Shift or Ctrl click takes
 back a queued order of the same kind on its target or within 16 px of its point, retail
-4d7a30); a producer's rally list takes both. The RNG streams change (`fireRand` per
+4d7a30); a producer's rally list takes both. A build leg Ctrl interrupts after its site
+went down keeps that site (`Order::resumeSite`, hashed when set) and helps it, or places
+it again, when it runs again. The RNG streams change (`fireRand` per
 scan, mission wake draws), so every hash changes. Replay format 15 is unchanged; 311
 replays are refused (a 311 peer would desync, and a 311 replay would play differently).
 It follows 0.9.19 and is in no release yet.

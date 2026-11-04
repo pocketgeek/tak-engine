@@ -359,11 +359,20 @@ void frontPatrolIdle() {
     }
 }
 
+// The hut sites of player 0 that stand at (x, z): finished or not.
+std::vector<int> hutsAt(const World& w, const UnitType* hut, float x, float z) {
+    std::vector<int> out;
+    for (const Unit& u : w.units())
+        if (u.alive() && u.type == hut && std::abs(u.x.toFloat() - x) < 16 && std::abs(u.z.toFloat() - z) < 16)
+            out.push_back(u.id);
+    return out;
+}
+
 // A builder at work on a site, interrupted by Ctrl: the work stops and the
-// build waits behind the new order as a HelpBuild on the same site. (This
-// synthetic world runs the legacy construction path, whose site goes as soon
-// as no builder works it, so the resumed job finds nothing; a match's GetBuilt
-// site waits.)
+// build waits behind the new order, holding its site. The detour is long
+// enough for the site to decay away (the legacy construction path every match
+// runs: an unattended site loses hp at the rate it was built and goes at
+// zero), so the resumed build places it again and the hut still gets built.
 void frontInterruptsBuild() {
     Types t; Rig r;
     const int id = r.w.spawn(&t.builder, 600, 1000, 0, 0);
@@ -381,18 +390,60 @@ void frontInterruptsBuild() {
         const auto& o = b.orders;
         check(b.buildSiteId == 0 && !b.retailBuild, "Ctrl move stops the work on the site");
         check(goals(o).size() == 3 && o.front().groundMission && World::queuedKind(o.front()) == World::QueuedKind::Move &&
-                  o[World::currentLeg(o) + 1].helpSite == site && o.back().clickX == Fixed::fromInt(1400),
-              "the interrupted build waits behind the move as a HelpBuild on its site, the queued move behind it");
+                  o[World::currentLeg(o) + 1].buildType == &t.hut && o[World::currentLeg(o) + 1].resumeSite == site &&
+                  o.back().clickX == Fixed::fromInt(1400),
+              "the interrupted build waits behind the move holding its site, the queued move behind it");
     }
-    bool detour = false;
+    bool detour = false, gone = false;
     for (int i = 0; i < 12000 && !r.w.unit(id)->orders.empty(); ++i) {
         r.ticks(1);
         const Unit& b = *r.w.unit(id);
         detour |= std::abs(b.x.toFloat() - 600) < 40 && std::abs(b.z.toFloat() - 1300) < 40;
+        gone |= !r.w.unit(site) || !r.w.unit(site)->alive();
     }
     const Unit& b = *r.w.unit(id);
+    check(gone, "the unattended site decays away during the detour");
     check(detour && b.orders.empty() && std::abs(b.x.toFloat() - 1400) < 60 && std::abs(b.z.toFloat() - 1400) < 60,
           "the builder walks the detour first and works through the rest of its queue");
+    const auto huts = hutsAt(r.w, &t.hut, 800, 1000);
+    check(huts.size() == 1 && !r.w.unit(huts[0])->underConstruction,
+          "the decayed site is placed again and the hut is finished");
+}
+
+// A short Ctrl detour: the site still stands when the builder comes back, so
+// the resumed build helps that same site to completion (no second site).
+void frontResumesStandingSite() {
+    Types t; Rig r;
+    const int id = r.w.spawn(&t.builder, 600, 1000, 0, 0);
+    r.w.queueBuild(id, &t.hut, 800, 1000, false);
+    int site = 0;
+    for (int i = 0; i < 900 && !site; ++i) { r.ticks(1); site = r.w.unit(id)->buildSiteId; }
+    for (int i = 0; i < 900 && site && !r.w.unit(site)->buildBegun; ++i) r.ticks(1);
+    r.ticks(450);
+    check(site && r.w.unit(site)->underConstruction && r.w.unit(site)->hp > Fixed::fromInt(600),
+          "standing: the builder is well into the site");
+    const float bx = r.w.unit(id)->x.toFloat(), bz = r.w.unit(id)->z.toFloat();
+    r.send(net::Cmd::Move, id, bx, bz + 64, kCtrl);
+    for (int i = 0; i < 6000 && !r.w.unit(id)->orders.empty(); ++i) r.ticks(1);
+    const Unit* s = r.w.unit(site);
+    check(s && s->alive() && !s->underConstruction && hutsAt(r.w, &t.hut, 800, 1000) == std::vector<int>{site},
+          "standing: the builder comes back to the same site and finishes it");
+}
+
+// Ctrl in the same tick the site goes down, before any work: the unstarted
+// site is taken away (cancelBuilds), and the resumed build puts it back.
+void frontBeforeWorkKeepsBuild() {
+    Types t; Rig r;
+    const int id = r.w.spawn(&t.builder, 600, 1000, 0, 0);
+    r.w.queueBuild(id, &t.hut, 800, 1000, false);
+    int site = 0;
+    for (int i = 0; i < 900 && !site; ++i) { r.ticks(1); site = r.w.unit(id)->buildSiteId; }
+    check(site && !r.w.unit(site)->buildBegun, "unstarted: the site is placed, no work yet");
+    r.send(net::Cmd::Move, id, 600, 1300, kCtrl);
+    check(!r.w.unit(site) || !r.w.unit(site)->alive(), "unstarted: Ctrl takes the unstarted site away");
+    for (int i = 0; i < 12000 && !r.w.unit(id)->orders.empty(); ++i) r.ticks(1);
+    const auto huts = hutsAt(r.w, &t.hut, 800, 1000);
+    check(huts.size() == 1 && !r.w.unit(huts[0])->underConstruction, "unstarted: the build still happens after the detour");
 }
 
 // Builds in the unit's own queue: Ctrl placement goes first; Shift on a queued
@@ -509,6 +560,8 @@ int main(int argc, char** argv) {
     attackGround();
     attackGroundApproach();
     frontInterruptsBuild();
+    frontResumesStandingSite();
+    frontBeforeWorkKeepsBuild();
     buildQueue();
     factoryRally();
     conjurerRally();

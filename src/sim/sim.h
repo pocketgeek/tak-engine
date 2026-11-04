@@ -1022,6 +1022,12 @@ struct alignas(64) Order {
     // Hashed with a tag when set.
     static constexpr uint8_t kAirStrike = 1, kAirHover = 2, kAirRun = 3;
     uint8_t airPoint = 0;
+
+    // A build leg Ctrl interrupted after its site went down (insertOrderFront):
+    // that site. When the leg runs again it helps the site if it still stands
+    // unfinished, and places it again if it has gone (World::resumeBuild).
+    // Cold: read once, when the leg comes back. Hashed with a tag when set.
+    int resumeSite = 0;
 };
 // Which line each field sits on (WE D2). Moving a field across a line, or
 // growing line 0/1 past 64 bytes, is a compile error here. (offsetof on a type
@@ -1055,7 +1061,7 @@ TAK_ORDER_LINE(orderSerial, 4);
 static_assert(offsetof(Order, mission) == 128, "line 1 ends at byte 127; line 2 starts with mission");
 TAK_ORDER_LINE(suppress, 5); TAK_ORDER_LINE(suppressFeature, 5); TAK_ORDER_LINE(suppressSlot, 5);
 TAK_ORDER_LINE(suppressReach, 5); TAK_ORDER_LINE(suppressApproach, 5); TAK_ORDER_LINE(suppressInner, 5);
-TAK_ORDER_LINE(airPoint, 5);
+TAK_ORDER_LINE(airPoint, 5); TAK_ORDER_LINE(resumeSite, 5);
 static_assert(offsetof(Order, suppress) == 320, "lines 0-4 are full; line 5 starts with SUPPRESS");
 static_assert(sizeof(Order) == 384, "Order is six cache lines (line 5 has room left); a new field names its line above");
 #undef TAK_ORDER_LINE
@@ -3358,6 +3364,7 @@ private:
     std::vector<LegionBodyWindow> legionBodyWindow_;
     void notifyFlightOccupancy(Unit& u);
     bool prepareBuildApproach(Unit& u);
+    bool resumeBuild(Unit& u);   // a Ctrl-interrupted build leg back on its site (Order::resumeSite)
     Order makeBuildOrder(const Unit& builder,const UnitType* type,Fixed x,Fixed z) const;
     // Orphaned conjure (no builder worked it this tick): bleed HP at its build
     // rate, then vanish with no corpse.

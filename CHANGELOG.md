@@ -54,7 +54,9 @@ their validation reports; both live in [`docs/`](docs/).
   - A random unit of the selection acknowledges an order, as in the original game.
   - **Ctrl+click puts an order at the front** of a unit's queue without clearing it,
     as in the original game: the unit does it first, then carries on with what it
-    was doing. Shift- or Ctrl-clicking the same order again (on the same target, or
+    was doing. A builder you Ctrl-click away from a building it has started goes back
+    to finish it, and puts the site down again if it fell apart while the builder was
+    away. Shift- or Ctrl-clicking the same order again (on the same target, or
     within 16 pixels of a queued point) takes that queued order back. For a factory,
     or a Zhon builder repeating production, both work on its rally orders.
 - **A unit no longer ignores an enemy for good after its shots hit a rock.** A unit

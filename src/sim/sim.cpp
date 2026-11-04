@@ -1791,6 +1791,7 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
             o.repairTarget = tmpl.repairTarget;
             o.repairLooks = tmpl.repairLooks;
             o.helpSite = tmpl.helpSite;
+            o.resumeSite = tmpl.resumeSite;
             o.patrolRepair = tmpl.patrolRepair;
             o.guardRepair = tmpl.guardRepair;
             o.patrolOpen = tmpl.patrolOpen;
@@ -1942,8 +1943,11 @@ bool World::removeQueuedMatch(int unitId, bool rally, const QueuedMatch& m) {
 // is issued as an append onto an emptied queue (so every verb's own code
 // applies), and the old queue goes back behind it, its current leg rewound
 // to how it stood when queued: what its run pushed ahead of it and its route
-// go, its mission starts at stage 0 on a fresh controller. A builder already
-// at work on a site comes back to it as a HelpBuild on that site.
+// go, its mission starts at stage 0 on a fresh controller. A builder whose
+// site is down keeps its build leg, which remembers the site (resumeBuild):
+// retail resumes the MobileBuild mission itself. (A HelpBuild in its place
+// lost the build when the unattended site decayed away during the detour, or
+// when the site was an unstarted one cancelBuilds takes back.)
 void World::insertOrderFront(int unitId, bool rally, const std::function<void()>& issue) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type) return;
@@ -1982,10 +1986,15 @@ void World::insertOrderFront(int unitId, bool rally, const std::function<void()>
     if (first < u->orders.size())
         rest.assign(std::make_move_iterator(u->orders.begin() + long(first)), std::make_move_iterator(u->orders.end()));
     u->orders.clear();
-    int site = 0;
     if (!rest.empty() && rest.front().buildType && u->buildSiteId) {
-        site = u->buildSiteId;   // placed: the build leg's work is now the site's
-        rest.erase(rest.begin());
+        // Placed: the leg starts again as the build it was, on the same spot.
+        const Order& was = rest.front();
+        Order again = makeBuildOrder(*u, was.buildType, was.buildX, was.buildZ);
+        again.issuedTick = was.issuedTick;
+        again.setIdentity(was.identity());
+        again.clickX = was.clickX; again.clickZ = was.clickZ;
+        again.resumeSite = u->buildSiteId;
+        rest.front() = std::move(again);
     }
     if (!rest.empty()) {
         Order& o = rest.front();
@@ -2021,10 +2030,37 @@ void World::insertOrderFront(int unitId, bool rally, const std::function<void()>
     // not an order and goes on.
     if (!u->repeatType && !u->type->isStructure()) cancelBuilds(unitId);
     issue();
-    if (site)
-        if (const Unit* s = unit(site); s && s->alive() && s->underConstruction) assist(unitId, site, true);
     u = unit(unitId);
     u->orders.insert(u->orders.end(), std::make_move_iterator(rest.begin()), std::make_move_iterator(rest.end()));
+}
+
+// The build leg insertOrderFront put back runs again (its stage 0). While its
+// site stands unfinished the leg becomes a HelpBuild on it, as a click on the
+// site gives; a site finished meanwhile ends the leg. Otherwise -- the
+// unattended site decayed away during the detour, Ctrl took back an unstarted
+// one, or the builder may not help it -- the leg goes on as the build it is
+// and places the site again (I: retail's resumed MobileBuild keeps its site;
+// what it does once that site has gone is not established). True when the
+// queue changed; the caller then stops for this tick.
+bool World::resumeBuild(Unit& u) {
+    const size_t leg = currentLeg(u.orders);
+    const int siteId = std::exchange(u.orders[leg].resumeSite, 0);
+    const Unit* site = unit(siteId);
+    if (!site || !site->alive() || site->type != u.orders[leg].buildType || site->player != u.player) return false;
+    const int id = u.id;
+    OrdersNote note{*this, id};
+    if (!site->underConstruction) {   // finished by someone else
+        u.orders.erase(u.orders.begin() + long(leg));
+        return true;
+    }
+    if (!canHelpBuild(u, *site)) return false;
+    std::vector<Order> rest(std::make_move_iterator(u.orders.begin() + long(leg) + 1),
+                            std::make_move_iterator(u.orders.end()));
+    u.orders.erase(u.orders.begin() + long(leg), u.orders.end());
+    assist(id, siteId, true);
+    Unit* b = unit(id);
+    b->orders.insert(b->orders.end(), std::make_move_iterator(rest.begin()), std::make_move_iterator(rest.end()));
+    return true;
 }
 
 static void resetGroundSegment(const Unit& u,Order& goal) {
@@ -10760,6 +10796,7 @@ bool World::prepareBuildApproach(Unit& u) {
     auto& goal=u.orders[currentLeg(u.orders)];
     // A reclaim leg's rectangle belongs to tickReclaim.
     if (!goal.buildType) return false;
+    if (goal.resumeSite && goal.mission.stage==0 && resumeBuild(u)) return false;
     if (goal.buildRectangle && goal.mission.stage==0) {
         // VTOL_MobileBuild's first wake (stage 0) runs its air-traffic check
         // first (41f0a6): a flyer in a stack steps out before it sets off.
@@ -20278,6 +20315,7 @@ uint64_t World::stateHash() const {
             }
             if (order.reclaimAreaApproach) mix(0x52434c4d41505052ull);
             if (order.helpSite) { mix(0x48454c50u); mix(uint32_t(order.helpSite)); }
+            if (order.resumeSite) { mix(0x52534d45u); mix(uint32_t(order.resumeSite)); }
             if (order.guardRepair) { mix(0x47524550u); mix(uint32_t(order.repairTarget)); }
             // A mission order's own state (ScriptedOrder) and its mission stage.
             if (order.scripted) {
