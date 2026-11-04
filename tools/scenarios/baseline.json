@@ -149413,10 +149413,10 @@
     },
     "parked_no_progress": {
      "dir": "lower",
-     "reason": "W4 C1 land, B2 stripe phase (lead rulings W4 (k)/(p)): bound moved 346 -> 396. C1's phase-0 draw is 396 (gate offsets core-five median); over 10 stripe phases (Windows, TAK_X_STILL_PHASE experiment) C1's median is 245 [201..396], below the base's 263.5 [170..309]. Was: W3 exit (task-w3-b2 final head): bound moved 177 -> 346. W3 A2/B (one formation per click, one settle rule): incidental (was: W0: offset spread 4.21 exceeds band 1.20 and the key passes the Retail floor, so no median5 exception: one-sided bound at median 176 x1.20)",
+     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-04; docs/retail-engine.md \"Mission target scan\"), looked into at the owner's request: bound moved 396 -> 1234 (core-five median 1028 x1.20, the W0 rule; offsets 0,1,-1,2,-2: 1034, 849, 1028, 936, 1059; all eleven gate offsets 470..1176, 2f04e112 143..654). Every parked_no_progress unit-tick on the core five (4906 of 4906) is a unit that fired within the last 40 ticks (reload 18-30): on offsets 0 and -1 (47 and 53 units) all range-160 roster bodies at the three wall gates (x 2363..2656 px) on an automatic attack (Move_Ground's in-place AM-1 attack, or the fight leg between two of them), the target 58..160 px away, standing and shooting. They are World's in-range attacks, not Legion members (unitState 0), so the observer's held test (Legion state >= 2) does not count them as held, where the base's range + 90 stride scan chased on Legion reach rings (Engaged, held). Not an arrival or quality regression: medians parked_held 259463 -> 81943 with parked_no_progress, all parked unit-ticks 259.7k -> 83.0k, dead 918 -> 1080, Retail's parked_no_progress 1242393. Was 396: W4 C1 land, B2 stripe phase (lead rulings W4 (k)/(p)): bound moved 346 -> 396. C1's phase-0 draw is 396 (gate offsets core-five median); over 10 stripe phases (Windows, TAK_X_STILL_PHASE experiment) C1's median is 245 [201..396], below the base's 263.5 [170..309]. Was: W3 exit (task-w3-b2 final head): bound moved 177 -> 346. W3 A2/B (one formation per click, one settle rule): incidental (was: W0: offset spread 4.21 exceeds band 1.20 and the key passes the Retail floor, so no median5 exception: one-sided bound at median 176 x1.20)",
      "rule": "bound",
-     "since": "W4 C1 land",
-     "value": 396
+     "since": "TS312",
+     "value": 1234
     },
     "reversals": {
      "band": 1.2,
