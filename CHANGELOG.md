@@ -40,7 +40,7 @@ their validation reports; both live in [`docs/`](docs/).
   - An armed button acts only where its cursor shows an order; elsewhere the click
     does nothing and the button stays armed. Guard no longer lets ground units guard
     a flyer (unless a flyer is selected too), Attack over your own units or the
-    ground attack-moves with an Attack cursor, Move over a friendly unit helps,
+    ground fires at that spot (see Fire at a point below), Move over a friendly unit helps,
     repairs, loads or guards it, and Clear shows Revive where it will raise a body.
     Fight-move (F) is the original game's move-fight: over a friendly unit it does
     what Move does there (helps, repairs, loads or guards it, with the same cursor),
@@ -143,7 +143,8 @@ their validation reports; both live in [`docs/`](docs/).
   - Wandering monsters attack enemies they see while they roam.
 - **Attack-move stops, fights and comes back.** A unit on an attack-move stops for an
   enemy it sees in range, fights it, returns to where it stopped and carries on to its
-  destination. This is the original game's own fight-move (it had no key for it).
+  destination. This is the original game's own move-fight, which it had no key for;
+  here Fight-move (F) gives it too.
   Kirenna on an attack-move now fires at the enemy in front of her (a known limit since
   0.9.3), and so does any unit whose longest weapon outranges the one it has selected.
   With Legion pathfinding she keeps firing. With Retail pathfinding she still often
@@ -170,7 +171,7 @@ their validation reports; both live in [`docs/`](docs/).
   weapon. An armed Attack (A) clicked on the ground or on a friendly unit, in the
   view or on the minimap, now gives it to each selected unit that can, under an
   Attack cursor; Shift queues it, Ctrl puts it first, and Shift or Ctrl on a
-  queued point takes it back. Fight-move (F) still attack-moves.
+  queued point takes it back.
 - **Holding Shift shows a cloaked unit's decloak range.** While Shift is held, each
   of your selected units, and your unit under the pointer, that is cloaked now shows a
   white circle at its decloak distance, as in the original game. A `kamikaze` unit
@@ -180,6 +181,12 @@ their validation reports; both live in [`docs/`](docs/).
   ordered your units to attack are gone (the original never marked it; hold Shift and
   the target shows the Attack pointer). Area reclaim and area mana-building boxes are
   drawn in the original's yellow instead of gold and cyan.
+- **Sound and music at full quality.** Every sound and the in-game music used to be
+  turned into 11 kHz mono. The game now mixes at 44.1 kHz: the original's music plays in
+  stereo at its own rate, a mod's 44.1 kHz or surround sounds and music keep their
+  quality, and the original's 11 kHz unit sounds keep their pitch and length with a
+  cleaner top end. On 6.1 speakers the surrounds of 5.1 music now play at full level.
+  Video streams carry the same 44.1 kHz sound.
 - **Investigated, no change needed:**
   - A computer's Sea Dragon on Hold Position with an enemy just outside Tsunami's range
     keeps switching weapons and never fires: the original game does exactly the same.

@@ -1211,7 +1211,8 @@ changes; replay format 15 is unchanged; 310 replays are refused (a 310 peer woul
 in a Legion game, and a 310 replay would play differently). 0.9.19 ships protocol 311;
 it plays with neither 0.9.18 nor any earlier version, nor their replays.
 
-Protocol 312 changes the simulation in both pathfinding modes, hashed: a unit's
+Protocol 312 changes the simulation in both pathfinding modes, hashed, and adds one
+command. A unit's
 write-off of an enemy it found blocked (`blockedShots`, docs/retail-engine.md "Blocked
 shots") now covers the line between the shooter's spot and the target's, and lapses when
 either moves more than 16 px (the target's spot is new hashed unit state); and a Navy
@@ -1233,37 +1234,45 @@ remembered on the guard as `doorYieldFactory`/`doorYieldSerial` (cleared by a fr
 guard order); all three are hashed when set. A refused site's own footprint, which can
 lie just outside the pad, is cleared with the pad (`Unit::refusedSiteX/Z`, set at each
 refusal from hashed state and read only while it lasts, not hashed). A factory whose
-rally point is on its own pad no longer stalls: its output steps off the pad. An idle flyer on Hold Position
-takes no automatic attack (`World::acquireTarget` returns first, so it also makes no
-`findTarget` draws), as retail's VTOL standby refuses it at 4d7de0; it fires from its
-post through the fire-at-will sweep. A sprite feature destroyed by damage plays its
+rally point is on its own pad no longer stalls: its output steps off the pad. A sprite
+feature destroyed by damage plays its
 `seqnamedie` before `featuredead` replaces it: `Feature::dieLeft` counts the ticks down
 and is hashed, and each type's death length (`FeatType::dieTicks`) joins the
 gameplay-data hash; while it dies, and while it burns, it takes no weapon damage, and a
 dying feature cannot ignite or be reclaimed; fire spread skips burning, fading and dying
-cells before its roll (docs/retail-engine.md "The death playback"). Nothing on the wire
-changes; replay format 15 is unchanged; 311 replays are refused (a 311 peer would
-desync, and a 311 replay would play differently). It follows 0.9.19 and is in no
-release yet.
-
-Protocol 312 also carries the retail target search (fx-tsearch, docs/retail-engine.md
-"Mission target scan"), hashed in both pathfinding modes. Every automatic pick goes
-through retail's mission scan (`4d8370` -> `412620`) over the owner's 7-tick
+cells before its roll (docs/retail-engine.md "The death playback").
+Every automatic target pick now goes through retail's mission scan (docs/retail-engine.md
+"Mission target scan"; `4d8370` -> `412620`) over the owner's 7-tick
 visible-enemy list, from the mission that runs it (Standby, Standby_Wander,
 VTOL_Standby, Patrol, VTOL_Patrol, Move/VTOL_Move and their formation forms, the air
 retargets, Attack_Melee); the per-stride `findTarget` scan, `acquireTarget` and
-`acqStride_` are gone, and Guard_NoMove only releases slots (`401a90`). Attack-move legs
+`acqStride_` are gone, and Guard_NoMove only releases slots (`401a90`). An idle flyer
+on Hold Position takes no automatic attack: the scan's issue
+(`World::retailIssueAutoAttackAllowed`) refuses it, as retail's VTOL standby does at
+4d7de0, and it fires from its post through the fire-at-will sweep. Attack-move legs
 are retail's MoveFight: Move_Ground/VTOL_Move with response mode -1. Each player's sight
 plane (`viewCounts_`) and explored bits now also take the footprints of every allied
 player, human or computer (`World::viewShareMask`: retail's game-start sharing `4f6770`
-covers same-team humans only; the owner widened it to every ally). New hashed state:
+covers same-team humans only; the owner widened it to every ally), except a passive
+neutral player's (`Player::passiveNeutral`, hashed with the player's flags). New hashed state:
 `Unit::viewPlanes`, `RetailDeathSight::planes`, the Attack_Melee retarget wake tick (in
 the order's `airRunCount`) and, in Legion only, `Unit::aimWait` (`World::legionAimStall`:
 a standing ground unit whose started aim its script has not accepted for 90 ticks hears
 TargetCleared once; folded in only when non-zero, always 0 in Retail mode). Legion's
-`passAhead` also no longer counts an enemy's fight-leg body as oncoming traffic to a fight leg. The RNG streams change
-(`fireRand` per scan, mission wake draws), so every hash changes. Nothing on the wire
-changes and it needed no further bump: it rides on 312 because 312 was not yet released.
+`passAhead` also no longer counts an enemy's fight-leg body as oncoming traffic to a
+fight leg. Retail's fire at a point (SUPPRESS, and AIRSTRIKE, AIRTOGROUNDHOVER and
+AIRTOGROUND for flyers; docs/retail-engine.md "Fire at a point: SUPPRESS" and "SUPPRESS
+port") arrives as the new order verb `Cmd::AttackGround` (`kAttackGroundProtocol`, base
+layout; a strict replay read refuses it before 312); its order state
+(`Order::suppress*`, `Order::airPoint`) and a slot's point target (`Unit::slotPoint`,
+`slotPointAt`) are hashed when set. An order verb's `queue` byte now also carries
+`kQueueFront` (Ctrl: the order goes in at the head without clearing the queue, retail
+4d7a09 -> 4d7750) and the `kQueueToggle` bit (a player's own Shift or Ctrl click takes
+back a queued order of the same kind on its target or within 16 px of its point, retail
+4d7a30); a producer's rally list takes both. The RNG streams change (`fireRand` per
+scan, mission wake draws), so every hash changes. Replay format 15 is unchanged; 311
+replays are refused (a 311 peer would desync, and a 311 replay would play differently).
+It follows 0.9.19 and is in no release yet.
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
@@ -1554,6 +1563,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Protocol 312 (blocked shots, factory doors, flyers on Hold Position, feature deaths, 2026-11-03) follows 0.9.19 and is in no release yet; version 0.9.19 (peers and server) requires protocol 311 (310, Legion steering of 2026-11-02, was never released on its own); versions 0.9.18, 0.9.17 and 0.9.16 (peers and server) require protocol 309; 0.9.15 and 0.9.14 required 308; 0.9.13 required 307; 0.9.12 required 305 (306 was never released); 0.9.11 required 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Protocol 312 (blocked shots, factory doors, flyers on Hold Position, feature deaths, the retail target search, allied sight, fire at a point, Ctrl and toggle queueing, 2026-11-03) follows 0.9.19 and is in no release yet; version 0.9.19 (peers and server) requires protocol 311 (310, Legion steering of 2026-11-02, was never released on its own); versions 0.9.18, 0.9.17 and 0.9.16 (peers and server) require protocol 309; 0.9.15 and 0.9.14 required 308; 0.9.13 required 307; 0.9.12 required 305 (306 was never released); 0.9.11 required 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions remain fixed to Retail.

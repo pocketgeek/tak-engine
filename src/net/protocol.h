@@ -19,8 +19,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 312;      // 312: a blocked-shot write-off lapses when the target leaves its spot; idle ships make
-                                           //      way at a Navy Yard's door (both hashed, 2026-11-03)
+constexpr uint32_t kNetVersion = 312;      // 312: a blocked-shot write-off lapses when the target leaves its spot; idle units and
+                                           //      guards make way at a factory's door; Hold Position flyers stay put; features
+                                           //      play their death; retail target search and allied sight; fire at a point
+                                           //      (Cmd::AttackGround); Ctrl front and toggle queueing (all hashed, 2026-11-03)
                                            // 311: Legion allies blocking each other head on swap places (round 2, 2026-11-03)
                                            // 310: Legion's blocked bodies keep speed, flow ahead, and press on (2026-11-02)
                                            // 309: a mobile producer's output starts its rally straight away, with no exit step in front

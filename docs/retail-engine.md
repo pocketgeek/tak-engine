@@ -497,6 +497,12 @@ retail leaves the target to the sweep. Both stand and shoot what is in reach;
 the target choice (nearest vs the sweep's sampled score) and the order state
 differ. Left for the target-search port.
 
+Since the target-search port ("Mission target scan"), `findTarget` and
+`acquireTarget` are gone: VTOL_Standby and ground Standby run the mission scan
+and issue through `retailIssueAutoAttackAllowed(unit, found, 0)`, which refuses
+on Hold Position as `4d7de0` does, so the Hold Position return above now lives
+there. `hold_flyer_test` and `flyer_combat_test` still check it.
+
 ## Blocked shots: retail fires on, the engine walks to a clear shot (2026-10-19)
 
 Retail has no line-of-fire test and no reposition. The common weapon update
