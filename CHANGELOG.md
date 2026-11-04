@@ -174,6 +174,9 @@ their validation reports; both live in [`docs/`](docs/).
   view or on the minimap, now gives it to each selected unit that can, under an
   Attack cursor; Shift queues it, Ctrl puts it first, and Shift or Ctrl on a
   queued point takes it back.
+- **Campaign siege units and towers scripted to bombard a spot now fire at it**, as in
+  the original game, instead of only walking toward it (or, for a tower, doing
+  nothing).
 - **Holding Shift shows a cloaked unit's decloak range.** While Shift is held, each
   of your selected units, and your unit under the pointer, that is cloaked now shows a
   white circle at its decloak distance, as in the original game. A `kamikaze` unit

@@ -6353,7 +6353,7 @@ the order -- where retail shows TooFar for a tower out of reach and for any
 unit over a friendly one -- and TooFar for an attacker given nothing -- where
 retail shows Attack for an anti-air mover over ground. A rally holder keeps
 our attack-move rally. Fight-move (F) stays our attack-move. A campaign
-`a X Y` still walks into reach and fights (`mission.cpp`).
+`a X Y` goes through the same `World::suppress` (see "Mission order strings").
 
 ## Mission order strings (icd 0x513fb0, 2026-10-30)
 
@@ -6423,9 +6423,17 @@ resolve only in an `InitialMission`. Ours registered a unit under the name an
   (`409a50`), 0x08 its unit's listeners let go (`519a60`). No watched unit:
   done at once. Ours released when any enemy came within sight and ignored
   NAME.
-- `a` (`5143b5`): `" %f %f"` is `4de530` kind 3 with a point (SUPPRESS for a
-  ranged ground unit, AIRSTRIKE / AIRTOGROUNDHOVER / AIRTOGROUND for a flyer;
-  a melee unit only with a feature there). Else `" %[a-zA-Z0-9_.]"`: a unit
+- `a` (`5143b5`): `" %f %f"` is `4de530(out, 3, unit, 0, &point, 0)`, the
+  click's kind 3 with a point (SUPPRESS for a ranged ground unit or a tower,
+  AIRSTRIKE / AIRTOGROUNDHOVER / AIRTOGROUND for a flyer, nothing for a
+  `toairweapon`; a melee unit only with a feature there), pushed by `4d78a0`
+  with the queue flag 1. E (`tools/re/check_mission_attack_point.py`): the
+  point is (`ftol(X*65536)` * s, 0, `ftol(Y*65536)` * s) with s the scenario's
+  `+0xdc5` (`513fd6`), which is 16 for an `.ota` with a `[Map Data]` section
+  (`4c86eb`; 1 without, `4c8748`; S) and all 74 shipped missions have one, so
+  X*16, Y*16 px with no half cell; `m X Y` scales the same way. When the
+  resolver gives no order the clause pushes nothing and the next clause
+  still reads (E). Else `" %[a-zA-Z0-9_.]"`: a unit
   type (`0x515ac0`) pushes ATTACKUTYPE, else the named unit gets kind 3.
   AttackUType (`401580`): stage 0 fails without a first weapon (UnitDef +0x264
   & 0x20, set from weapon slot 0 at `0x4c1672`), else sleeps `rand(90)+1`;
@@ -6452,8 +6460,10 @@ resolve only in an `InitialMission`. Ours registered a unit under the name an
   `r` (`514910`, resurrect; no shipped uses).
 
 When the parser has pushed a mission it clears the unit's selectable bit 0x20,
-and unless the last of them was a patrol, an attack on the ground, `s` or `d`
-it appends MAKESELECTABLE (`514a7d`): a player's unit under a script cannot be
+and unless any of them was a patrol, an attack on the ground that got an order,
+`s` or `d` it appends MAKESELECTABLE (`514a7d`; `[ebp-0x20]`, set by those
+clauses at `5143ad` / `51443f`, is never cleared during the parse; E for `a X Y`
+and `m X Y`; `a NAME` and `a TYPE` do not set it): a player's unit under a script cannot be
 selected until its script is done.
 
 **Ours (0.9.12).** `MissionScript::applyOrders` reads clauses as above, with
@@ -6472,8 +6482,11 @@ holds `v`, and `World::embarkInto`, `scriptStandingOrder` and
 as retail's (class 0x13, its descriptor flags, never 0x2000), so it counts the
 unit busy. `mission_orders_test` (fixtures, and `--data` on takx04 and takx07)
 and `ambush_test` cover it; a 30-second run of all 74 shipped missions loads and
-runs every one. Not ported: firing at the ground (`a X Y` walks the unit until
-the point is in its weapon's reach), the patrol's time, the selectable bit,
+runs every one. `a X Y` (since 0.9.20) is `World::suppress` at X*16, Y*16 with
+the queue flag, the click's order; the Retail AI reads a head SUPPRESS as
+row `0x5eb8b8` (class 1, 0x1000410). A kamikaze type's ATTACK_KAMIKAZE from
+the resolver is not ported (no shipped use). `m`, `p` and `u` still take the
+cell centre (X*16+8), half a cell off retail's X*16. Not ported: the patrol's time, the selectable bit,
 BuildWeapon and resurrect; SetMission's owner test (`0x4d37be`: a player of
 kind 1 or 2 only) is not applied.
 
@@ -6551,7 +6564,7 @@ Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
   ported (as in AirToGround).
 - I: a Guided shot at a point flies without homing (its update steers only at
   a live target).
-- Campaign `a X Y` still walks into reach and fights (`mission.cpp`).
+- Campaign `a X Y` gives this order too (`mission.cpp`, `mission_orders_test`).
 
 `suppress_test` checks it in both pathfinding modes.
 
