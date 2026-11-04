@@ -1472,6 +1472,24 @@ struct alignas(64) Unit {
     // off the pad or off a later output it holds up. Set once, from hashed state
     // (the completion), and read only there, so not hashed.
     int builtBy = 0;
+    // On a guard: the factory whose door it last stepped out of
+    // (World::clearYardDoor) and that factory's doorSerial then. It steps aside
+    // there again only once the serial has moved on (a newer output or a new
+    // refusal), not each time its guard walks it back in. Cleared by a fresh
+    // guard order. Hashed with a tag when set.
+    int doorYieldFactory = 0;
+    uint32_t doorYieldSerial = 0;
+    // On a factory: grows by one for each refusal episode of its next output's
+    // site (odd) and to the next even number for each finished output, so a
+    // guard's step aside is keyed on this factory alone and never goes back.
+    // Hashed with a tag when set.
+    uint32_t doorSerial = 0;
+    // A factory's refused output site (BUILD stage 2's point, world px), while
+    // productionRetryTick lies ahead: clearYardDoor clears it with the pad (a
+    // pad point on the yard's edge puts part of the site outside the yard).
+    // Set at each refusal from hashed state (the script's point) and read only
+    // while that refusal lasts, so not hashed (as builtBy).
+    int32_t refusedSiteX = 0, refusedSiteZ = 0;
     // A campaign mission's fixed veterancy multiplier (SetMission/InitialMission
     // `v F`, unit +0xf4, set by icd 0x5148e1). Not 0: getMult (0x5193c0) answers
     // it instead of 1 + level/10 and getLevel (0x519310) answers 10, so the unit
@@ -3078,6 +3096,7 @@ private:
     // output's plane, move aside, out of the door's way (engine deviation,
     // user-requested; retail moves no idle body, see clearYardDoor).
     void clearYardDoor(const Unit& factory);
+    bool doorGuard(const Unit& k) const;
     bool pointOutside(const Unit& k, int left, int right, int top, int bottom, int rx, int rz,
                       const std::array<bool,4>& avoid, const std::vector<std::array<int,4>>& taken,
                       int& x, int& z) const;
