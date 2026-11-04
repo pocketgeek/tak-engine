@@ -50,7 +50,8 @@ their validation reports; both live in [`docs/`](docs/).
   round it, now move again only when they stand on its pad or hold up the next one out;
   at a Navy Yard too, and with Legion pathfinding as well (there, at a Navy Yard whose
   door faces a shore with guards at it, the yard's own parked Iron Clads used to hold
-  the sixth one in the yard).
+  the sixth one in the yard). With Legion pathfinding, a factory's own new unit told
+  to step aside that is boxed in where it stood gives up the step and stays there.
   A factory whose rally point is on its own pad no longer stalls: its new unit steps
   off the pad. A unit guarding or building beside its own factory moves nobody.
 - **Reclaimed trees and rocks fade out.** As in the original game, a reclaimed tree or
