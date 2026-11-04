@@ -37,6 +37,17 @@
 //                   (fight_move_unseen_walked_past); after the kill the leg
 //                   goes on to its goal (fight_move_continues).
 //
+//   shared_sight    Retail's default shared sight (4f6770 / 4c66b0, D2): a
+//                   human's plane holds a same-team human ally's units' sight,
+//                   so an idle archer takes an enemy only its ally's scout
+//                   sees (allied_human_spots); a computer ally, a computer
+//                   player and an enemy-team player share nothing
+//                   (computer_never_shares, other_team_no_share); an AI
+//                   takeover stops the sharing (takeover_stops_sharing); an
+//                   ally's dying scout's revealer stays in both planes for its
+//                   60 ticks (death_revealer_shared); and the counts always
+//                   equal the sum of the footprints over their planes.
+//
 // The other scenarios of the plan join as their steps land.
 //
 // A dev harness; not shipped in a game.
@@ -391,6 +402,129 @@ void attackMoves(const sim::TypeRegistry& reg) {
     check(kill.picked >= 0 && kill.killed && kill.endFromGoal < 64.f,
           "fight_move_continues: after the kill the leg goes on to its goal", describe(kill));
 }
+// The view counters equal a from-scratch sum of every active footprint over
+// the planes it is counted in. A death revealer's cells are not in it, so it
+// is checked only while none is pending.
+bool countsMatchFootprints(const sim::World& w) {
+    const int width = w.viewPlaneW(), height = w.viewPlaneH();
+    const size_t cells = size_t(width) * height;
+    static const auto heights = sim::retailExplorationHeights(64, 64, 0, [](int, int) { return 70; });
+    if (heights.size() != cells) return false;
+    std::vector<uint16_t> expect(w.viewCounts().size(), 0);
+    for (const auto& u : w.units()) {
+        if (!u.viewSight.active) continue;
+        if (!u.viewPlanes) return false;
+        sim::RetailSightFootprint sight = u.viewSight;
+        sight.active = false;
+        sim::retailSightFootprint(sight, true, false, width, height, uint8_t(u.viewPlayer),
+                                  [&](int x, int z) { return heights[size_t(z) * width + x]; },
+                                  [&](int x, int z, int d, uint16_t) {
+                                      for (int p = 0; p < 16; ++p)
+                                          if (u.viewPlanes >> p & 1) expect[size_t(p) * cells + size_t(z) * width + x] += uint16_t(d);
+                                  });
+    }
+    return expect == w.viewCounts();
+}
+
+// Players 0 and 1 on `team1` (0 = allied with 0), player 2 the enemy. Player
+// 0's archer (sight 40) at (250, 400) on Fire At Will, with a passive second
+// unit far off; player 1's scout (sight 200) beside player 2's Archer, which
+// stands in the bow's range. ai0/ai1: that player is a computer.
+struct Share {
+    bool sees0 = false, sees1 = false, engaged = false, consistent = true;
+    bool takeoverSees = true, revealerHeld = false, revealerGone = false;
+};
+Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, bool takeover, bool revealer) {
+    Flat flat;
+    sim::World w;
+    flat.into(w);
+    w.setPlayerCount(3);
+    w.setTeam(1, team1);
+    w.player(0).automaticGates = ai0;
+    w.player(1).automaticGates = ai1;
+    static sim::UnitType blind, scout;
+    blind = archer; blind.id = "blind"; blind.sight = 40;
+    scout = archer; scout.id = "scout"; scout.weapons.clear(); scout.weapon = {}; scout.sight = 200;
+    const float sx = 250, sz = 400, d = 0.7f * float(archer.weapons[0].range);
+    const int me = w.spawn(&blind, sx, sz, 1.5707963f, 0);
+    w.unit(me)->fireState = 2;
+    w.unit(me)->moveState = 0;
+    const int other = w.spawn(&scout, 900, 900, 0.f, 0);
+    w.unit(other)->moveState = 0;
+    const int spot = w.spawn(&scout, sx + d, sz + 64, 0.f, 1);
+    w.unit(spot)->moveState = 0;
+    const int foe = w.spawn(&archer, sx + d, sz, -1.5707963f, 2);
+    w.unit(foe)->fireState = 0;
+    w.unit(foe)->moveState = 0;
+    w.unit(foe)->hp = sim::Fixed::fromInt(30000);
+    Share out;
+    for (int i = 0; i < 60; ++i) {
+        w.tick(kTick);
+        out.consistent = out.consistent && countsMatchFootprints(w);
+        const sim::Unit* a = w.unit(me);
+        if (!a || !w.unit(foe)) break;
+        out.engaged = out.engaged ||
+                      std::find(a->slotTarget.begin(), a->slotTarget.end(), foe) != a->slotTarget.end() ||
+                      (!a->orders.empty() && a->orders.front().targetId == foe);
+    }
+    if (const sim::Unit* f = w.unit(foe)) {
+        out.sees0 = w.playerSees(0, *f);
+        out.sees1 = w.playerSees(1, *f);
+    }
+    if (takeover) {
+        w.player(1).automaticGates = true;
+        w.tick(kTick);
+        out.consistent = out.consistent && countsMatchFootprints(w);
+        out.takeoverSees = w.unit(foe) && w.playerSees(0, *w.unit(foe));
+    }
+    if (revealer) {
+        w.unit(me)->fireState = 0;
+        w.destroy(spot);
+        int deadAt = -1;
+        for (int i = 0; i < 300; ++i) {
+            w.tick(kTick);
+            const sim::Unit* s = w.unit(spot);
+            if (deadAt < 0 && (!s || !s->alive())) deadAt = i;
+            const sim::Unit* f = w.unit(foe);
+            if (!f || deadAt < 0) continue;
+            if (i == deadAt + 30) out.revealerHeld = w.playerSees(0, *f) && w.playerSees(1, *f);
+            if (i == deadAt + 70) {
+                out.revealerGone = !w.playerSees(0, *f) && !w.playerSees(1, *f);
+                out.consistent = out.consistent && countsMatchFootprints(w);
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+void sharedSights(const sim::TypeRegistry& reg) {
+    const sim::UnitType* archer = reg.find("araarch");
+    if (!archer || archer->weapons.empty()) { check(false, "shipped araarch loads"); return; }
+    auto describe = [](const Share& s) {
+        return "sees0 " + std::to_string(s.sees0) + " sees1 " + std::to_string(s.sees1) + " engaged " +
+               std::to_string(s.engaged) + " consistent " + std::to_string(s.consistent);
+    };
+    const Share human = sharedSight(*archer, 0, false, false, true, false);
+    check(human.sees0 && human.sees1 && human.engaged && human.consistent,
+          "allied_human_spots: a same-team human ally's scout puts the enemy in player 0's plane; the archer takes it",
+          describe(human));
+    check(!human.takeoverSees, "takeover_stops_sharing: once the ally is a computer its sight leaves player 0's plane");
+    const Share aiAlly = sharedSight(*archer, 0, false, true, false, false);
+    check(!aiAlly.sees0 && aiAlly.sees1 && !aiAlly.engaged && aiAlly.consistent,
+          "computer_never_shares: a computer ally's sight stays its own", describe(aiAlly));
+    const Share aiMe = sharedSight(*archer, 0, true, false, false, false);
+    check(!aiMe.sees0 && aiMe.sees1 && !aiMe.engaged && aiMe.consistent,
+          "computer_never_shares: a computer player gets no human ally's sight", describe(aiMe));
+    const Share enemy = sharedSight(*archer, 1, false, false, false, false);
+    check(!enemy.sees0 && enemy.sees1 && !enemy.engaged && enemy.consistent,
+          "other_team_no_share: a player on another team shares nothing", describe(enemy));
+    const Share dies = sharedSight(*archer, 0, false, false, false, true);
+    check(dies.revealerHeld && dies.revealerGone && dies.consistent,
+          "death_revealer_shared: the dying scout's revealer holds in both planes, then goes after 60 ticks",
+          "held " + std::to_string(dies.revealerHeld) + " gone " + std::to_string(dies.revealerGone) +
+              " consistent " + std::to_string(dies.consistent));
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -408,6 +542,7 @@ int main(int argc, char** argv) {
     if (part == "idle_coverage") idleCoverage(reg);
     else if (part == "mission_ports") missionPorts(reg);
     else if (part == "attack_move") attackMoves(reg);
+    else if (part == "shared_sight") sharedSights(reg);
     else { std::fprintf(stderr, "unknown part %s\n", part.c_str()); return 2; }
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;

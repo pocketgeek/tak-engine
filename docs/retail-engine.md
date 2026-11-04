@@ -5522,6 +5522,23 @@ ShareMapAndLOS box (`0x4b6b60`, disabled for a computer row) sets the local
 handler `0x4f59c0` sets the receiver's `+0xf7[sender]` and re-points the
 sender's units' sight objects.
 
+**Ported** (fx-tsearch step 8, D2): `World::updateViewCounts` counts each
+unit's footprint in every plane of `World::viewShareMask(owner)`: the owner's,
+plus, when the owner is human, each human player on its team. A computer's
+units count in its own plane alone and no ally's count in its plane. Each
+footprint records its planes (`Unit::viewPlanes`, hashed), so an AI takeover
+(`automaticGates` set mid-game) moves the sight out of the team's planes on
+the next pass, and a dying unit's 60-tick revealer (`4c6750`) stays in the
+planes it was counted in. Retail stamps an ally's units into the *local*
+plane on each machine; our every-plane-on-every-peer sim gives each human the
+same union. Not ported: the in-game ShareMapAndLOS toggle (no Diplomacy
+checkbox here), and the "fewer than 20" revealer cap is still counted by the
+dying unit's owner, not per receiving plane (I). Exploration
+(`updateExplorationPlane`) is unchanged and still marks every allied
+player's explored bit, computer allies included -- wider than retail (I: the
+same sight object explores).
+Guard: `target_search_test shared_sight`.
+
 **Double sight is ours** (S). Retail has no such option: `def+0x226` is
 written only by the FBI loader (`0x4bfa50`, `sightdistance`, default 0) and
 two whole-definition copies (`0x4c37f0`, `0x4c51c0`); the sight object copies

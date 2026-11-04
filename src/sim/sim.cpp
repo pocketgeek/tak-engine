@@ -1382,7 +1382,7 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
     navigationExplored_.assign(explorationHeights_.size(),0);
     explorationBlocks_.clear();   // rebuilt for the new plane by the next exploration pass
     restoredNavigationViewer_=-1;
-    for (auto& u:units_) { u.sightFootprint={};u.viewSight={};u.viewPlayer=-1; }
+    for (auto& u:units_) { u.sightFootprint={};u.viewSight={};u.viewPlayer=-1;u.viewPlanes=0; }
     viewCounts_.clear();deathSights_.clear();
     // Road cells: the retail map format marks them as 0xFFFB in the feature
     // plane (verified against Two Castles -- the mask traces the road network).
@@ -14561,12 +14561,26 @@ void World::updateExplorationPlane() {
 
 // The per-player current-view counters (player +0x88). One pass per tick
 // after the tick, like exploration (retail runs it once per frame, 52654e ->
-// 4f6ae0). Retail removes a changed footprint and adds it again; a footprint
+// 4f6ae0). A unit counts in its owner's plane and in each plane its owner
+// shares sight with (viewShareMask: same-team humans, retail's default
+// ShareMapAndLOS); retail's machines each stamp a sharing ally's units into
+// the local plane (4c66b0), and every plane here is every machine's. Retail removes a changed footprint and adds it again; a footprint
 // that stays counted on the same plane instead changes only the cells whose
 // admission differs (retailSightMove), which leaves the same counts. The plane
 // always equals the sum of the active footprints plus the death revealers.
 // Count deltas commute, so chunks add atomically (relaxed) in any order to the
 // same result.
+uint16_t World::viewShareMask(int owner) const {
+    const size_t planes=players_.size();
+    if (owner<0 || size_t(owner)>=planes || owner>=16 || isNeutralPlayer(owner)) return 0;
+    uint16_t mask=uint16_t(1u<<owner);
+    if (computerOwned(owner)) return mask;
+    for (size_t j=0;j<planes && j<16;++j)
+        if (int(j)!=owner && !computerOwned(int(j)) && players_[j].team==players_[size_t(owner)].team)
+            mask|=uint16_t(1u<<j);
+    return mask;
+}
+
 void World::updateViewCounts() {
     if (explorationHeights_.empty()) return;
     const int width=hW_/2,height=hH_/2;
@@ -14578,20 +14592,28 @@ void World::updateViewCounts() {
         viewCounts_.assign(planes*cells,0);
         markViewDirtyAll();
         deathSights_.clear();
-        for (auto& u:units_) { u.viewSight={};u.viewPlayer=-1; }
+        for (auto& u:units_) { u.viewSight={};u.viewPlayer=-1;u.viewPlanes=0; }
     }
     if (!planes) return;
+    // Each owner's share set, once per pass (team and computer ownership are
+    // hashed; an AI takeover takes the player out of its team's sharing).
+    std::array<uint16_t,16> shareMask{};
+    for (size_t p=0;p<planes && p<16;++p) shareMask[p]=viewShareMask(int(p));
     auto heightAt=[&](int x,int z){return explorationHeights_[size_t(z)*width+x];};
-    auto change=[&](RetailSightFootprint& sight,int player,bool add,auto shared) {
+    // One footprint cell's delta into every plane of `mask`.
+    auto addTo=[&](uint16_t mask,int x,int z,int delta,auto shared) {
         constexpr bool kShared=decltype(shared)::value;
+        const size_t at=size_t(z)*width+x;
+        for (uint32_t m=mask;m;m&=m-1) {
+            uint16_t& cell=viewCounts_[size_t(std::countr_zero(m))*cells+at];
+            if constexpr (kShared) __atomic_fetch_add(&cell,uint16_t(delta),__ATOMIC_RELAXED);
+            else cell=uint16_t(cell+delta);
+        }
+    };
+    auto change=[&](RetailSightFootprint& sight,uint16_t mask,int player,bool add,auto shared) {
         if (sight.active!=add) markViewDirty(sight);
-        uint16_t* plane=viewCounts_.data()+size_t(player)*cells;
         retailSightFootprint(sight,add,false,width,height,uint8_t(player),heightAt,
-            [&](int x,int z,int delta,uint16_t) {
-                uint16_t& cell=plane[size_t(z)*width+x];
-                if constexpr (kShared) __atomic_fetch_add(&cell,uint16_t(delta),__ATOMIC_RELAXED);
-                else cell=uint16_t(cell+delta);
-            });
+            [&](int x,int z,int delta,uint16_t) { addTo(mask,x,z,delta,shared); });
     };
     // Deaths first, serially: a dying human-owned unit hands its footprint to
     // the revealer list (4c6750: LosOn, fewer than 20 for that player), any
@@ -14602,40 +14624,37 @@ void World::updateViewCounts() {
         const bool human=size_t(p)<planes && !players_[size_t(p)].automaticGates && !isNeutralPlayer(p);
         if (human && std::count_if(deathSights_.begin(),deathSights_.end(),
                 [&](const RetailDeathSight& d){return d.player==p;})<20) {
-            deathSights_.push_back({u.viewSight,int8_t(p),tickCounter_+60});
+            deathSights_.push_back({u.viewSight,int8_t(p),tickCounter_+60,u.viewPlanes});
             u.viewSight.active=false;
-        } else if (size_t(p)<planes) change(u.viewSight,p,false,std::false_type{});
+        } else if (size_t(p)<planes) change(u.viewSight,u.viewPlanes,p,false,std::false_type{});
         else u.viewSight.active=false;
-        u.viewPlayer=-1;
+        u.viewPlayer=-1;u.viewPlanes=0;
     }
     auto pass=[&](size_t begin,size_t end,auto shared) {
         for (size_t index=begin;index<end;++index) {
             auto& u=units_[index];
             if (!u.alive() || !u.type || u.underConstruction) continue;
-            // 4c67d0 + 4f5a35: an ownership change moves the footprint.
-            if (u.viewSight.active && u.viewPlayer!=u.player) {
-                if (size_t(u.viewPlayer)<planes) change(u.viewSight,u.viewPlayer,false,shared);
-                u.viewSight.active=false;u.viewSight.x=-1;u.viewPlayer=-1;
+            const uint16_t mask=size_t(u.player)<planes && u.player<16 ? shareMask[size_t(u.player)] : 0;
+            // 4c67d0 + 4f5a35: an ownership change moves the footprint; so
+            // does a change of the planes it is shared into (4f59c0 re-points
+            // the sight objects).
+            if (u.viewSight.active && (u.viewPlayer!=u.player || u.viewPlanes!=mask)) {
+                if (size_t(u.viewPlayer)<planes) change(u.viewSight,u.viewPlanes,u.viewPlayer,false,shared);
+                u.viewSight.active=false;u.viewSight.x=-1;u.viewPlayer=-1;u.viewPlanes=0;
             }
             const int16_t distance=int16_t(sightDistance(*u.type));
             if (u.viewSight.distance!=distance || u.viewSight.sightHeight!=u.type->sightHeight) {
-                if (u.viewSight.active && size_t(u.viewPlayer)<planes) change(u.viewSight,u.viewPlayer,false,shared);
+                if (u.viewSight.active && size_t(u.viewPlayer)<planes) change(u.viewSight,u.viewPlanes,u.viewPlayer,false,shared);
                 u.viewSight={};u.viewSight.distance=distance;u.viewSight.sightHeight=u.type->sightHeight;
-                u.viewPlayer=-1;
+                u.viewPlayer=-1;u.viewPlanes=0;
             }
-            if (u.player<0 || size_t(u.player)>=planes || isNeutralPlayer(u.player)) continue;
+            if (u.player<0 || size_t(u.player)>=planes || isNeutralPlayer(u.player) || !mask) continue;
             // 4f6a40 skips a status-locked unit (+0x108: stone, freeze): its
             // footprint is frozen where it stands, not removed.
             if (u.stonedFor>0 || u.frozenFor>0) continue;
             const Fixed y=u.type->canFly?u.flightY:u.groundY;
-            uint16_t* plane=viewCounts_.data()+size_t(u.player)*cells;
-            constexpr bool kShared=decltype(shared)::value;
             const RetailSightFootprint before=u.viewSight;
-            auto count=[&](int x,int z,int delta,uint16_t) {
-                uint16_t& cell=plane[size_t(z)*width+x];
-                if constexpr (kShared) __atomic_fetch_add(&cell,uint16_t(delta),__ATOMIC_RELAXED);
-                else cell=uint16_t(cell+delta);
-            };
+            auto count=[&](int x,int z,int delta,uint16_t) { addTo(mask,x,z,delta,shared); };
             if (viewCountsByRebuild_)
                 retailUpdateSight(u.viewSight,u.x,y,u.z,uint8_t(seaLevel_),false,width,height,uint8_t(u.player),heightAt,count);
             else
@@ -14646,6 +14665,7 @@ void World::updateViewCounts() {
                 if (u.viewSight.active) markViewDirty(u.viewSight);
             }
             u.viewPlayer=u.viewSight.active ? int8_t(u.player) : int8_t(-1);
+            u.viewPlanes=u.viewSight.active ? mask : uint16_t(0);
         }
     };
     SimPool& pool=simPool();
@@ -14657,7 +14677,7 @@ void World::updateViewCounts() {
     // 4c6b30: revealers whose expiry is earlier than now are removed.
     std::erase_if(deathSights_,[&](RetailDeathSight& d) {
         if (d.expiry>=tickCounter_) return false;
-        if (size_t(d.player)<planes) change(d.sight,d.player,false,std::false_type{});
+        if (size_t(d.player)<planes) change(d.sight,d.planes,d.player,false,std::false_type{});
         return true;
     });
 }
@@ -19101,7 +19121,7 @@ uint64_t World::stateHash() const {
     for (const auto& d:deathSights_) {
         mix(uint16_t(d.sight.x));mix(uint16_t(d.sight.z));mix(uint32_t(d.sight.eyeHeight));
         mix(uint16_t(d.sight.distance));mix(d.sight.sightHeight);mix(d.sight.active);
-        mix(uint8_t(d.player));mix(d.expiry);
+        mix(uint8_t(d.player));mix(d.expiry);mix(d.planes);
     }
     checkpoint("vision");
     // Each script folds on its own and the digests in id order, so up to four
@@ -19452,7 +19472,7 @@ uint64_t World::stateHash() const {
         mix(u.sightFootprint.sightHeight);mix(u.sightFootprint.active);
         mix(uint16_t(u.viewSight.x));mix(uint16_t(u.viewSight.z));
         mix(uint32_t(u.viewSight.eyeHeight));mix(uint16_t(u.viewSight.distance));
-        mix(u.viewSight.sightHeight);mix(u.viewSight.active);mix(uint8_t(u.viewPlayer));
+        mix(u.viewSight.sightHeight);mix(u.viewSight.active);mix(uint8_t(u.viewPlayer));mix(u.viewPlanes);
         mix(u.groundGradeTick);
         mix(uint64_t(u.veteran));
         if (u.vetOverride != 0.0f) { mix(0x5645544f56524445ull); mixf(u.vetOverride); }

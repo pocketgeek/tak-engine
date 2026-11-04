@@ -1394,6 +1394,10 @@ struct alignas(64) Unit {
     // changes self-correcting. Hashed.
     RetailSightFootprint viewSight;
     int8_t viewPlayer = -1;
+    // The planes viewSight is counted in (bit per player): the owner's, plus
+    // each same-team human ally's when the owner is human (retail's default
+    // ShareMapAndLOS, 4f6770; World::viewShareMask). 0 = none. Hashed.
+    uint16_t viewPlanes = 0;
     // An upgrade consumes its old building when the new site is admitted. Keep
     // its presentation independent of retired/reused unit slots.
     struct LodestoneReplacement {
@@ -2256,6 +2260,14 @@ public:
     // 4f6a40/4c6a70/4c6800 for the per-player current-view counters: one pass
     // after each tick, beside updateNavigationExploration.
     void updateViewCounts();
+    // The players whose current-view plane a unit of `owner` counts in: the
+    // owner, and when the owner is human every human on its team. Retail's
+    // game start (4f6770) sets ShareMapAndLOS (+0xf7[]/+0x101[]) both ways
+    // for each pair of players on one lobby team unless either is a computer,
+    // and a unit's sight object (4c66b0) then stamps into the sharing
+    // player's plane. A computer shares with nobody, allied computers
+    // included. Bit per player; 0 for a neutral or out-of-range owner.
+    uint16_t viewShareMask(int owner) const;
     // Test reference: move counted footprints by retail's full removal and
     // re-add instead of retailSightMove (the counts and hashes must not differ).
     void setViewCountsByRebuildForTest(bool on) { viewCountsByRebuild_=on; }
@@ -3810,8 +3822,9 @@ private:
     // retail below that. Hashed.
     std::vector<uint16_t> viewCounts_;
     // 4c6750/4c6b30: a dying human-owned unit's footprint stays counted for
-    // 60 ticks (at most 20 per player). Hashed, in order.
-    struct RetailDeathSight { RetailSightFootprint sight; int8_t player=-1; uint32_t expiry=0; };
+    // 60 ticks (at most 20 per player), in the planes it was counted in.
+    // Hashed, in order.
+    struct RetailDeathSight { RetailSightFootprint sight; int8_t player=-1; uint32_t expiry=0; uint16_t planes=0; };
     std::vector<RetailDeathSight> deathSights_;
     bool viewCountsByRebuild_ = false;   // setViewCountsByRebuildForTest; not hashed
     std::vector<uint8_t> viewDirty_;   // viewDirty(); display bookkeeping, not hashed

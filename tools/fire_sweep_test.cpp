@@ -57,7 +57,10 @@ bool countsMatchRebuild(const sim::World& w) {
         auto sight=u.viewSight;sight.active=false;
         sim::retailSightFootprint(sight,true,false,width,height,uint8_t(u.viewPlayer),
             [&](int x,int z){return heights[size_t(z)*width+x];},
-            [&](int x,int z,int d,uint16_t){expect[size_t(u.viewPlayer)*cells+size_t(z)*width+x]+=uint16_t(d);});
+            [&](int x,int z,int d,uint16_t){
+                for (int p=0;p<16;++p)
+                    if (u.viewPlanes>>p & 1) expect[size_t(p)*cells+size_t(z)*width+x]+=uint16_t(d);
+            });
     }
     return expect==w.viewCounts();
 }
