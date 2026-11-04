@@ -6970,28 +6970,28 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
     // keeps up with its doubled sight.
     const int64_t radius=sweep ? int64_t(w.range) : std::max<int64_t>(sightDistance(*u.type),w.range);
     // 411ae0 over the owner's enemy list +5 (hostile units it saw at the last
-    // 7-tick rebuild, in unit order): live, by live centre distance. Retail
-    // re-checks nothing else; a unit carried or converted since the rebuild
-    // is dropped here too.
-    // The list is id-sorted (see rebuildVisibleLists), so the spatial grid
-    // gathers the near units and membership is a binary search; the result
-    // is the list's own order. The candidates live in a reused scratch
-    // vector: the mission scans call this far more often than the sweep.
+    // 7-tick rebuild, in unit order): live (+0x130 & 0x1000000) and not dying
+    // (& 0x1000), by live centre distance (411b2c..411b95). Retail re-checks
+    // nothing else; a unit carried or converted since the rebuild is dropped
+    // here too. The candidates are read straight off the list, as retail
+    // does, rather than gathered from the spatial grid over the radius: the
+    // list is the 7-tick result every scan of the player shares, so a scan
+    // costs the list's length and no grid cells. The list is id-sorted (see
+    // rebuildVisibleLists), the order the grid gather used to sort into.
+    // 411ae0's fallback to list +0x25 when nothing is found and the owner has
+    // a live, switched-on istargetingupgrade unit (411bb4..411bd4, 413290,
+    // 4118de..4118f7) is not ported: no shipped FBI sets istargetingupgrade.
+    // The candidates live in a reused scratch vector: the mission scans call
+    // this far more often than the sweep.
     std::vector<int>& candidates=pickCandidates_;
     candidates.clear();
-    const auto listed=visibleEnemies(u.player);
-    if (listed.empty()) return 0;
-    uint64_t enemies=~uint64_t(0);
-    for (int player=0;player<numPlayers() && player<64;++player)
-        if (allied(player,u.player)) enemies&=~(uint64_t(1)<<player);
-    forEachNear(u.x.toFloat(),u.z.toFloat(),float(radius)+1.0f,[&](int idx) {
-        const Unit& e=units_[size_t(idx)];
-        if (!e.alive() || e.hp<=Fixed() || !e.type || e.embarked() || allied(e.player,u.player)) return;
-        if (retailCentreDist2(u,e)>radius*radius) return;
-        if (!std::binary_search(listed.begin(),listed.end(),e.id)) return;
-        candidates.push_back(e.id);
-    },enemies);
-    std::sort(candidates.begin(),candidates.end());
+    const int64_t radius2=radius*radius;
+    for (const int id:visibleEnemies(u.player)) {
+        const Unit* e=unit(id);
+        if (!e || !e->alive() || e->hp<=Fixed() || !e->type || e->embarked() || allied(e->player,u.player)) continue;
+        if (retailCentreDist2(u,*e)>radius2) continue;
+        candidates.push_back(id);
+    }
     int32_t best=INT32_MAX,bestBad=INT32_MAX;
     int pick=0,pickBad=0;
     const bool mobile=!u.type->isStructure();

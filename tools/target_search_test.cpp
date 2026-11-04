@@ -77,6 +77,19 @@ int failures = 0;
 sim::PathfindingMode mode = sim::PathfindingMode::Retail;
 constexpr float kTick = 1.f / 30;
 
+// Every world a part runs folds its final stateHash in here, and the part
+// prints the result: a change that should not move behaviour (a cheaper
+// candidate source, say) is checked by comparing that line before and after.
+uint64_t combinedHash = 0;
+int hashedWorlds = 0;
+struct WorldHash {
+    const sim::World& w;
+    ~WorldHash() {
+        combinedHash = (combinedHash ^ w.stateHash()) * 1099511628211ull;
+        ++hashedWorlds;
+    }
+};
+
 void check(bool ok, const std::string& what, const std::string& detail = "") {
     std::printf("  [%s] %s%s%s\n", ok ? "PASS" : "FAIL", what.c_str(), detail.empty() ? "" : " -- ", detail.c_str());
     if (!ok) ++failures;
@@ -133,6 +146,7 @@ struct Engagement {
 Engagement idleEngage(const sim::UnitType& type, const sim::UnitType& foeType, const sim::UnitType& spare, int ticks) {
     Flat flat;
     sim::World w;
+    const WorldHash hashed{w};
     flat.into(w);
     const float sx = 250, sz = 400;
     const int me = w.spawn(&type, sx, sz, 1.5707963f, 0);
@@ -236,6 +250,7 @@ Idle idleNear(const sim::UnitType& type, const sim::UnitType& foeType, float d, 
               bool patrol, int ticks) {
     Flat flat;
     sim::World w;
+    const WorldHash hashed{w};
     flat.into(w);
     const float sx = 250, sz = 400;
     const int me = w.spawn(&type, sx, sz, 1.5707963f, 0);
@@ -338,6 +353,7 @@ Fight fightMove(const sim::UnitType& type, const sim::UnitType& foeType, float o
                 bool killable, int ticks) {
     Flat flat;
     sim::World w;
+    const WorldHash hashed{w};
     flat.into(w);
     Fight r;
     const int me = w.spawn(&type, 150, 300, 1.5707963f, 0);
@@ -470,6 +486,7 @@ struct Share {
 Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, After after = After::None) {
     Flat flat;
     sim::World w;
+    const WorldHash hashed{w};
     flat.into(w);
     w.setPlayerCount(3);
     w.setTeam(1, team1);
@@ -609,6 +626,7 @@ int main(int argc, char** argv) {
     else if (part == "attack_move") attackMoves(reg);
     else if (part == "shared_sight") sharedSights(reg);
     else { std::fprintf(stderr, "unknown part %s\n", part.c_str()); return 2; }
+    std::printf("state hash: %d worlds, combined %016llx\n", hashedWorlds, (unsigned long long)combinedHash);
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

@@ -5380,6 +5380,19 @@ is) (E, `probe_mission_scan_vision.py`, 10 observations):
   It takes the scanning slot (`519ac0`: a switcher's selected slot, else the
   first present slot of 0..2) and gathers within max(sightdistance
   `def+0x226`, the slot's range).
+- The gather is `411ae0` (S, `411b2c..411b95`): it walks list +5 from
+  front to back and keeps each unit that is alive (`+0x130 & 0x1000000`),
+  not dying (`& 0x1000`) and within the radius by live centre distance. So a
+  scan costs the length of a list that is rebuilt only every 7 ticks.
+  World's `retailSelectTarget` reads the same list. It used to gather the
+  spatial grid over the radius and keep the listed units, which gave the
+  same candidates in the same order. Only when nothing is found does
+  `411ae0` look further: if the owner has a live, finished, switched-on
+  unit whose type has `istargetingupgrade` (`def+0x260` bit 10; build
+  manager `+0x79`, set at `4118de..4118f7`, read by `413290`), it runs the
+  same test over list +0x25. 411700 fills that list with enemy units that
+  have `+0x130 & 0x100`, seen or not (`411825..411841`). No shipped FBI
+  sets `istargetingupgrade`, so World leaves this fallback out.
 - The picker then tests every candidate with `52ad60` (in range) unless the
   slot is melee (weapon class vtable `+0x14`) or the unit has
   `def+0x260 & 0x10000000` (kamikaze, I) (`412783..4127b8`). **So a ranged unit only ever
