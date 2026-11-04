@@ -183,8 +183,8 @@ their validation reports; both live in [`docs/`](docs/).
   ordered your units to attack are gone (the original never marked it; hold Shift and
   the target shows the Attack pointer). Area reclaim and area mana-building boxes are
   drawn in the original's yellow instead of gold and cyan.
-- **Sound and music at full quality.** Every sound and the in-game music used to be
-  turned into 11 kHz mono. The game now mixes at 44.1 kHz: the original's music plays in
+- **Sound and music at full quality.** In-game music used to be turned into 11 kHz
+  mono. The game now mixes at 44.1 kHz: the original's music plays in
   stereo at its own rate, a mod's 44.1 kHz or surround sounds and music keep their
   quality, and the original's 11 kHz unit sounds keep their pitch and length with a
   cleaner top end. On 6.1 speakers the surrounds of 5.1 music now play at full level.
