@@ -3362,7 +3362,8 @@ if(TAK_BUILD_CLIENT)
               --script-binary "$<TARGET_FILE:retail_script_test>"
               --model-binary "$<TARGET_FILE:model_transform_test>"
               --icd "${TAK_TEST_DATA}/KINGDOMS.icd")
-          set_tests_properties(native_lifbird_ambient_pose PROPERTIES TIMEOUT 60)
+          set_tests_properties(native_lifbird_ambient_pose PROPERTIES TIMEOUT 60
+            ENVIRONMENT "TAK_TEST_EXTRACTED=${TAK_TEST_EXTRACTED}")
         endif()
       endif()
     endif()
@@ -3384,7 +3385,8 @@ if(TAK_BUILD_CLIENT)
               --script-binary "$<TARGET_FILE:retail_script_test>"
               --model-binary "$<TARGET_FILE:model_transform_test>"
               --icd "${TAK_TEST_DATA}/KINGDOMS.icd")
-          set_tests_properties(native_air_transport_animation_pose PROPERTIES TIMEOUT 60)
+          set_tests_properties(native_air_transport_animation_pose PROPERTIES TIMEOUT 60
+            ENVIRONMENT "TAK_TEST_EXTRACTED=${TAK_TEST_EXTRACTED}")
         endif()
       endif()
     endif()
@@ -3406,7 +3408,8 @@ if(TAK_BUILD_CLIENT)
               --script-binary "$<TARGET_FILE:retail_script_test>"
               --model-binary "$<TARGET_FILE:model_transform_test>"
               --icd "${TAK_TEST_DATA}/KINGDOMS.icd")
-          set_tests_properties(native_zonroc_landing_pose PROPERTIES TIMEOUT 60)
+          set_tests_properties(native_zonroc_landing_pose PROPERTIES TIMEOUT 60
+            ENVIRONMENT "TAK_TEST_EXTRACTED=${TAK_TEST_EXTRACTED}")
         endif()
       endif()
     endif()
@@ -3426,7 +3429,8 @@ if(TAK_BUILD_CLIENT)
               "${CMAKE_SOURCE_DIR}/tools/re/check_native_creaeri_landing_pose.py"
               --script-binary "$<TARGET_FILE:retail_script_test>"
               --model-binary "$<TARGET_FILE:model_transform_test>")
-          set_tests_properties(native_creaeri_landing_pose PROPERTIES TIMEOUT 60)
+          set_tests_properties(native_creaeri_landing_pose PROPERTIES TIMEOUT 60
+            ENVIRONMENT "TAK_TEST_EXTRACTED=${TAK_TEST_EXTRACTED}")
         endif()
       endif()
     endif()

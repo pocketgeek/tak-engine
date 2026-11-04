@@ -14,6 +14,7 @@ the shipped COB declarations are also verified, but absent script methods are
 not executed by this probe.
 """
 import argparse
+import os
 import re
 import struct
 import subprocess
@@ -24,8 +25,11 @@ from unicorn.x86_const import UC_X86_REG_FPCW
 
 
 ROOT = Path(__file__).resolve().parents[2]
-UNIT_ROOT = ROOT / 'assets/extracted/all/units'
-SCRIPT_ROOT = ROOT / 'assets/extracted/all/scripts'
+# The extracted retail files: TAK_TEST_EXTRACTED when ctest sets it (a worktree has
+# no assets/ of its own), else the source tree's.
+EXTRACTED_ROOT = Path(os.environ.get('TAK_TEST_EXTRACTED') or ROOT / 'assets/extracted/all')
+UNIT_ROOT = EXTRACTED_ROOT / 'units'
+SCRIPT_ROOT = EXTRACTED_ROOT / 'scripts'
 CALLBACKS = ('TurnDirection', 'MoveRate', 'setSFXoccupy')
 
 

@@ -17,12 +17,12 @@ from check_native_mover_cob_join import (
     local_cob_trace,
     native_cob_trace,
 )
-from check_movement_callback_order import SCRIPT_ROOT
+from check_movement_callback_order import EXTRACTED_ROOT, SCRIPT_ROOT
 
 
 ROOT = Path(__file__).resolve().parents[2]
 COB = SCRIPT_ROOT / "lifbird.cob"
-MODEL = ROOT / "assets/extracted/all/objects3d/lifbird.3do"
+MODEL = EXTRACTED_ROOT / "objects3d/lifbird.3do"
 TICKS = 500
 GEOMETRY_TICKS = {
     "idle": (1, 3, 10, 60, TICKS),

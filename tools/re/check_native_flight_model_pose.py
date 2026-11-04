@@ -18,13 +18,13 @@ from pathlib import Path
 
 from emu import HEAP, Icd
 from check_movement_callback_order import (
-    CALLBACKS, SCRIPT_ROOT, UNIT_ROOT, cob_methods, fbi_info,
+    CALLBACKS, EXTRACTED_ROOT, SCRIPT_ROOT, UNIT_ROOT, cob_methods, fbi_info,
 )
 from probe_native_mover_cob_transitions import local_trace, native_transition_trace
 
 
 ROOT = Path(__file__).resolve().parents[2]
-MODEL_ROOT = ROOT / "assets/extracted/all/objects3d"
+MODEL_ROOT = EXTRACTED_ROOT / "objects3d"
 SAMPLE_TICK = 5
 
 
