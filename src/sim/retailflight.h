@@ -12,6 +12,11 @@ namespace tak::sim {
 
 struct RetailFlightVector { int32_t x = 0, y = 0, z = 0; };
 
+// Retail subtracts in 32-bit registers: far-apart raw values wrap.
+inline int32_t retailWrappedSub(int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) - uint32_t(b));
+}
+
 // 417188..4172ff: candidate selection after the current point failed landing.
 // Each draw includes both endpoints; candidates snap to the rectangular body.
 // The final orbit is anchored to the mission origin, not the current position.
@@ -193,9 +198,11 @@ inline RetailFlightNavigation retailFlightNavigation(RetailFlightVector position
         uint16_t previousHeading, int32_t cruiseHeight, bool cruisingController,
         bool hasHeading, uint16_t controllerHeading) {
     RetailFlightNavigation result{destination,
-        {destination.x - previousDestination.x, destination.y - previousDestination.y,
-         destination.z - previousDestination.z}, previousHeading};
-    const int32_t dx = position.x - destination.x, dz = position.z - destination.z;
+        {retailWrappedSub(destination.x, previousDestination.x),
+         retailWrappedSub(destination.y, previousDestination.y),
+         retailWrappedSub(destination.z, previousDestination.z)}, previousHeading};
+    const int32_t dx = retailWrappedSub(position.x, destination.x);
+    const int32_t dz = retailWrappedSub(position.z, destination.z);
     const int32_t distance = truncSat32(std::sqrt(double(dx) * dx + double(dz) * dz));
     if (distance > 160 * 65536 || cruisingController) result.destination.y = cruiseHeight;
     if (distance <= 320 * 65536 && hasHeading) result.heading = controllerHeading;
@@ -230,10 +237,11 @@ inline RetailFlightVector retailFlightVelocity(RetailFlightVector velocity,
         velocity.x = scale(velocity.x, ratio) - retailScaledSine(heading, excess);
         velocity.z = scale(velocity.z, ratio) - retailScaledCosine(heading, excess);
     }
-    const int32_t dx = position.x - destination.x, dy = position.y - destination.y;
-    const int32_t dz = position.z - destination.z;
-    const int32_t relativeX = velocity.x - destinationVelocity.x;
-    const int32_t relativeZ = velocity.z - destinationVelocity.z;
+    const int32_t dx = retailWrappedSub(position.x, destination.x);
+    const int32_t dy = retailWrappedSub(position.y, destination.y);
+    const int32_t dz = retailWrappedSub(position.z, destination.z);
+    const int32_t relativeX = retailWrappedSub(velocity.x, destinationVelocity.x);
+    const int32_t relativeZ = retailWrappedSub(velocity.z, destinationVelocity.z);
     if (!directControl) {
         int32_t verticalLimit = std::max(65536, previousSpeed >> 2);
         if (dy > 0 && std::abs(int64_t(dx)) < dy / 4 && std::abs(int64_t(dz)) < dy / 4)

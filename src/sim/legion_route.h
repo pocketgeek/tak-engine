@@ -127,7 +127,8 @@ struct RouteGrid {
         bind();
     }
     size_t cells() const { return size_t(fw) * size_t(fh); }   // the window's cells
-    size_t tileCells() const { return size_t(1) << (2 * shift); }
+    // shift is 2..8; the mask bounds the size for GCC 13/14's -Walloc-size-larger-than.
+    size_t tileCells() const { return size_t(1) << (2 * (shift & 15)); }
     bool inside(int x, int z) const {
         return x >= x0 && z >= z0 && x < x0 + fw && z < z0 + fh && (!allowP || allowP[tileOf(x, z)]);
     }
