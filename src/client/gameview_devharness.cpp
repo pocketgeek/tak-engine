@@ -448,6 +448,23 @@
                 if (hurt && su->type->maxMana>0) su->mana=double(su->type->maxMana)*(i%3==0?0.2:0.9);
                 if (sq) su->squad=int8_t(std::atoi(sq));
             }
+            // TAK_SELPORTRAITS_ORDERS: the order overlay's still life (shoot it with
+            // TAK_SHOT_SHIFT=1). Cloakers cloak on a full pool, the first unit that
+            // cannot cloak attacks an enemy Swordsman to the south-east, and a reclaimer is
+            // given an area clear round the tree to the north-east.
+            if (tak::devFlag("TAK_SELPORTRAITS_ORDERS")) {
+                const int enemy=spawn("versword",x0+100,z0+120,0,localPlayer_==0?1:0);
+                bool attacker=false,clearer=false;
+                for (int id:selection_) {
+                    auto* su=writableWorld().unit(id);
+                    if (!su || !su->type) continue;
+                    if (su->type->canCloak) {su->cloakOn=true;su->mana=double(su->type->maxMana);continue;}
+                    if (!attacker && enemy>=0) {writableWorld().attack(id,enemy,false);attacker=true;continue;}
+                    if (!clearer && su->type->canReclaim) {
+                        writableWorld().reclaimArea(id,x0-140,z0-180,x0+20,z0-20,false);clearer=true;
+                    }
+                }
+            }
             // TAK_SELPORTRAITS_CONJURE=type: the front unit (a builder) lays that site at
             // the first legal spot near it, a third built, so the bar shows a conjure target.
             if (const char* ct=tak::devEnv("TAK_SELPORTRAITS_CONJURE"); ct && !selection_.empty())

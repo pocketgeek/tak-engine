@@ -1522,6 +1522,11 @@ add_test(NAME terrainlift COMMAND terrainlift_test)
 add_executable(order_trail_test tools/order_trail_test.cpp src/client/ordertrail.cpp)
 target_link_libraries(order_trail_test PRIVATE tak-formats)
 add_test(NAME order_trail COMMAND order_trail_test)
+# Retail's Shift range circles and area-box colours (client/orderoverlay.h); --rows/--ring
+# feed tools/re/check_range_circles.py, which runs 0x4d6530/0x4d5c40 under emulation.
+add_executable(range_circles_test tools/range_circles_test.cpp)
+target_include_directories(range_circles_test PRIVATE src)
+add_test(NAME range_circles COMMAND range_circles_test)
 add_executable(reclaim_pick_test tools/reclaim_pick_test.cpp)
 target_link_libraries(reclaim_pick_test PRIVATE tak-formats)
 add_test(NAME reclaim_pick COMMAND reclaim_pick_test)

@@ -2853,6 +2853,12 @@ int main(int argc, char** argv) {
                     static bool clickShift = false;
                     static uint64_t clickWaitUntil = 0;
                     if (clickShift) { SDL_SetModState(KMOD_NONE); clickShift = false; }
+#ifndef NDEBUG
+                    // TAK_SHOT_SHIFT=1 holds Shift from here through the capture: the
+                    // order overlay (order lines, area boxes, range circles) is drawn
+                    // only while it is down.
+                    if (tak::devFlag("TAK_SHOT_SHIFT")) SDL_SetModState(KMOD_LSHIFT);
+#endif
                     bool clickSent = false;
                     if (const char* cl = tak::devEnv("TAK_SHOT_CLICKS")) {
                         std::vector<std::pair<int, int>> pts;

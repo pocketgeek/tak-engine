@@ -171,6 +171,15 @@ their validation reports; both live in [`docs/`](docs/).
   view or on the minimap, now gives it to each selected unit that can, under an
   Attack cursor; Shift queues it, Ctrl puts it first, and Shift or Ctrl on a
   queued point takes it back. Fight-move (F) still attack-moves.
+- **Holding Shift shows a cloaked unit's decloak range.** While Shift is held, each
+  of your selected units, and your unit under the pointer, that is cloaked now shows a
+  white circle at its decloak distance, as in the original game. A `kamikaze` unit
+  from a mod shows the original's two red circles: a pulse out to half its blast and
+  a ring at its trigger distance.
+- **Order display matches the original game.** The red corner brackets on a unit you
+  ordered your units to attack are gone (the original never marked it; hold Shift and
+  the target shows the Attack pointer). Area reclaim and area mana-building boxes are
+  drawn in the original's yellow instead of gold and cyan.
 - **Investigated, no change needed:**
   - A computer's Sea Dragon on Hold Position with an enemy just outside Tsunami's range
     keeps switching weapons and never fires: the original game does exactly the same.

@@ -6550,3 +6550,51 @@ point and hits it (24 shots, 4 px off); a Tarbeak hovers ~134 px off a point
 (distance 150) and hits it; a `dropped` stand-in strikes it; a weapon that
 turns `dropped` ends the order, with the seek at the point on Fire At Will
 and none on Hold Fire; a flyer's `toairweapon` gets no order.
+
+## Shift order overlay: area boxes and range circles (icd static + emulation, 2026-11-03)
+
+The order overlay runs only while Shift is down: `4fcc46` calls `544430(0x198)` (the
+key poll) and, when it reports the key held, `5210a0`. That routine walks the local
+player's own units (`[player+0x74]..[+0x78]`, stride `0x138`), skipping dead ones
+(`+0x130 & 0x1000000` clear) and `+0x130 & 0x1000`, and calls `4d6340(unit, mask, ...)`:
+
+- mask `0x3f` for a selected unit (`+0x130 & 0x10`) and for three special units: the
+  pointer at `g+0x14ea4`, the unit id from `4b3d40` (`62d734` while `62d730` is 1) and
+  the unit `527cb0` returns (id `g+0x17624`, written at `525da4` from `521260`, the
+  pick under the mouse: the hovered unit);
+- for every other own unit, `0x01` when one of the three special units' types has
+  `+0x132` set and `0x20` when one of them has `canreclaim` (`+0x264 & 0x800`, parsed
+  at `4c073a`); never `0x10`.
+
+`4d6340` walks the unit's mission list (`+0x60`, next `+0x66`) and, per mission, ANDs
+the mask with the kind's descriptor flags (`[0x62db84] + kind*25`, `+0xc`): `0x01`
+`4d4f40`, `0x20` `4d5180` (area box), `0x02` `4d5700` (order line), `0x04` `4d5f60`,
+`0x08` `4d5930` (end marker), and `0x10` `4d6530` once per unit. Every kind has `0x10`
+except park, load, unload, area reclaim (`0x22`) and the two facing kinds.
+
+**Area box (`4d5180`).** Colour white (`-1`), or yellow `0xffffff00` when the ordering
+unit is selected (`+0x130 & 0x10`).
+
+**Range circles (`4d6530`).** Up to three rings through `4d5c40`, none labelled:
+
+- `mincloakdistance` (UnitDef `+0x22a`, signed word, `4c01e9`) in white, when it is
+  not 0 and the unit is cloaked (`+0x114 & 4`).
+- For a `kamikaze` type (`+0x260 & 0x10000000`, `4c0856`) with an `[EXPLODEAS]` weapon
+  (`+0x1b6`, `4c16e3`), two red (`0xffff0000`) rings: a pulse of radius
+  `(tick % 60) * half * 2 / 60`, raised to 8 and capped at `half` = areaofeffect / 2
+  (weapon `+0x8a`, `530f48`; tick `g+0x19f44`), then `kamikazedistance` (`+0x236`,
+  unsigned, `4c0876`) for a unit with a mover (`+8`), or `sightdistance` (`+0x226`)
+  for one without. No shipped FBI sets `kamikaze` (the Kamikaze Rat does not), so only
+  the white ring is ever seen with the shipped data.
+
+**Ring (`4d5c40`).** `n = (int)(r * 2pi * 0.125)` line segments (D3D line list); point
+`k` at angle `k * (0x10000 / n)`, offset `+sin*r` in x and `+cos*r` in z through the
+512-entry table at `61a590` (`5360bf` / `5360f3`). Each point's height is the larger of
+the unit's own (`+0x6e`) and the ground under it (`511170`), drawn at screen
+`z - height/2`; a segment is drawn when either end is in the view (`540150`).
+
+`client/orderoverlay.h` is the port; `range_circles_test` checks it, and
+`tools/re/check_range_circles.py` runs `4d6530` (4000 random unit states) and `4d5c40`
+(15 radii) under emulation against it. Not ported: the `+0x130 & 0x1000` skip and the
+other two special units, whose meaning is not established; the `0x01`/`0x20` overlay
+for non-selected units.

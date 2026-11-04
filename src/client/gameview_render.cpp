@@ -9,6 +9,7 @@
 #include "client/cursortiming.h"
 #include "client/buildghost.h"
 #include "client/reclaimpick.h"
+#include "client/orderoverlay.h"
 #include "client/reclaimfade.h"
 #include "client/featuredie.h"
 #include "client/retaillightningquad.h"
@@ -3100,44 +3101,16 @@
             }
 #endif
 
-            // Attack-target indicator: RED brackets on any enemy a selected unit is
-            // ordered to attack, so you can see what you've told them to hit.
-            const SDL_Color red{245, 70, 60, 255};
-            auto& targets = targetSet_;   // member: reused across frames
-            targets.clear();
-            for (int sid : selection_)
-                if (const auto* su = frameUnitP(sid))
-                    for (const auto& o : su->displayedOrders())
-                        if (o.targetId > 0) targets.insert(o.targetId);
-            for (int tid : targets) {
-                const auto* t = frameUnitP(tid);
-                // Orders survive loss of sight, but must not reveal a hidden
-                // target's current location through the fog.
-                if (!t || !t->alive() || !t->type || !canPickUnit(*t)) continue;
-                SDL_FPoint p = unitScreen(frameUnit(tid));   // includes flyer altitude
-                float cx = p.x, cy = p.y + 12.0f * zms;   // undo unitScreen's body bias
-                if (cx < -40 || cx > mvw + 40 || cy < -40 || cy > winH + 40) continue;
-                // Match the green selection brackets: sized to the target's footprint.
-                float halfX = std::max(std::max(t->type->footX, 1) * 8.0f, 11.0f);
-                float halfZ = std::max(std::max(t->type->footZ, 1) * 8.0f, 8.0f);
-                float rx = halfX * zms, ry = halfZ * zms;
-                float Lx = std::max(3.0f, rx * 0.4f), Ly = std::max(3.0f, ry * 0.4f);
-                float th = std::max(1.0f, 1.2f * zms);
-                for (int sx = -1; sx <= 1; sx += 2)
-                    for (int sy = -1; sy <= 1; sy += 2) {
-                        float px = cx + sx * rx, py = cy + sy * ry;
-                        pushQuad(overlayBatch_, std::min(px, px - sx * Lx), py - th * 0.5f,
-                                 Lx, th, red);
-                        pushQuad(overlayBatch_, px - th * 0.5f,
-                                 std::min(py, py - sy * Ly), th, Ly, red);
-                    }
-            }
+            // No mark on an attack order's target: retail draws none (it only puts the
+            // Attack cursor on it, with Shift held -- drawOrderTrails). Red corner
+            // brackets drawn here were ours.
             if (!overlayBatch_.empty()) {
                 SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
                 SDL_RenderGeometry(ren_, nullptr, overlayBatch_.data(),
                                    int(overlayBatch_.size()), nullptr, 0);
             }
         }
+        drawRangeCircles(mvw, winH);
 
         // Workstream L: each per-unit overlay below examines only the units the grid
         // returns for its own screen band -- the band its exact test accepts for the
@@ -7821,8 +7794,10 @@
                 areas=true;
                 SDL_FRect box{(o.x.toFloat()-mapView_.offX())*zm,(o.z.toFloat()-mapView_.offY())*zm,
                     (o.buildX-o.x).toFloat()*zm,(o.buildZ-o.z).toFloat()*zm};
-                if(o.manaBuildArea)SDL_SetRenderDrawColor(ren_,130,230,255,180);
-                else SDL_SetRenderDrawColor(ren_,255,210,90,180);
+                // Retail's 0x4d5180: white, yellow when the ordering unit is
+                // selected -- and every unit drawn here is.
+                const uint32_t argb=tak::client::retailAreaOrderArgb(true);
+                SDL_SetRenderDrawColor(ren_,Uint8(argb>>16),Uint8(argb>>8),Uint8(argb),Uint8(argb>>24));
                 SDL_RenderDrawRectF(ren_,&box);
             }
             if(areas && beads) {
@@ -7941,6 +7916,76 @@
                 }
                 px = qx; pz = qz;                          // advance either way
             }
+        }
+    }
+
+    // ---- Shift range circles (retail 0x4d6530, client/orderoverlay.h) -----------
+    // With Shift held retail rings each selected own unit, and the own unit under
+    // the pointer (main view or minimap), with its mincloakdistance while it is
+    // cloaked (white), and a kamikaze type with a red blast pulse and a red
+    // trigger ring. Each ring point sits on the higher of the unit and the ground
+    // under the point.
+    void GameView::drawRangeCircles(int mvw, int winH) {
+        if (!(SDL_GetModState() & KMOD_SHIFT)) return;
+        const auto area = pointerArea();
+        const bool pointerPicks = area == tak::client::PointerArea::World || area == tak::client::PointerArea::Minimap;
+        if (selection_.empty() && !pointerPicks) return;
+        const float zm = mapView_.zoom();
+        const uint32_t tick = front().gameTick;
+        const float th = std::max(1.0f, zm);
+        overlayBatch_.clear();
+        const auto rings = [&](const UnitR& u) {
+            if (!u.alive() || !u.type || u.embarked() || u.player != hudPlayer()) return;
+            const auto& orders = u.orders;
+            if (!tak::client::missionsShowRangeCircles(orders.size(), [&](size_t i) {
+                    return orders[i].load || orders[i].unload || orders[i].reclaimArea; }))
+                return;
+            const auto& t = *u.type;
+            tak::client::RangeCircleInput in;
+            in.minCloakDistance = t.minCloakDist; in.cloaked = u.cloaked;
+            in.kamikaze = t.kamikaze; in.hasExplodeAs = t.hasExplodeAs; in.explodeAoe = t.explodeAs.aoe;
+            in.kamikazeDistance = t.kamikazeDist; in.sightDistance = t.sight;
+            in.mobile = !isStructure(&t);
+            const auto circles = tak::client::retailRangeCircles(in, tick);
+            if (circles.empty()) return;
+            float cx, cz, ch; interpPose(u, cx, cz, ch);
+            const float unitLift = uLiftY(u) + altLift(u);
+            const auto screen = [&](float wx, float wz) {
+                const float lift = std::max(unitLift, terrainLift(wx, wz));
+                return SDL_FPoint{(wx - mapView_.offX()) * zm - terrainLiftX(wx, wz) * zm,
+                                  (wz - mapView_.offY()) * zm - lift * zm};
+            };
+            const auto onScreen = [&](SDL_FPoint p) { return p.x >= 0 && p.x < float(mvw) && p.y >= 0 && p.y < float(winH); };
+            for (const auto& c : circles) {
+                const int n = tak::client::retailCircleSegments(c.radius);
+                if (n <= 0) continue;
+                // Whole ring off screen: skip it before sampling the relief.
+                const float reach = float(c.radius) * zm + 128.0f * zm;
+                const SDL_FPoint mid = screen(cx, cz);
+                if (mid.x + reach < 0 || mid.x - reach > float(mvw) || mid.y + reach < 0 || mid.y - reach > float(winH))
+                    continue;
+                const SDL_Color col{Uint8(c.argb >> 16), Uint8(c.argb >> 8), Uint8(c.argb), Uint8(c.argb >> 24)};
+                auto o = tak::client::retailCirclePoint(c.radius, n, 0);
+                SDL_FPoint prev = screen(cx + o.dx, cz + o.dz);
+                for (int k = 1; k <= n; ++k) {
+                    o = tak::client::retailCirclePoint(c.radius, n, k);
+                    const SDL_FPoint next = screen(cx + o.dx, cz + o.dz);
+                    if (onScreen(prev) || onScreen(next))
+                        pushSeg(overlayBatch_, prev.x, prev.y, next.x, next.y, th, col);
+                    prev = next;
+                }
+            }
+        };
+        for (int id : selection_)
+            if (const UnitR* up = frameUnitP(id)) rings(*up);
+        // 0x521260 picks the hovered unit in the main view or on the minimap.
+        if (pointerPicks)
+            if (const UnitR* hovered = hoveredUnit(area);
+                hovered && !selSet_.count(hovered->id))
+                rings(*hovered);
+        if (!overlayBatch_.empty()) {
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            SDL_RenderGeometry(ren_, nullptr, overlayBatch_.data(), int(overlayBatch_.size()), nullptr, 0);
         }
     }
 
