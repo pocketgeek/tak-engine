@@ -5616,6 +5616,39 @@ kept only for a human owner's dying unit and its "fewer than 20" cap counted
 by that owner, not per receiving plane, so a computer ally's dying scout
 leaves every plane at once.
 
+**Passive neutrals in campaigns** (S, 2026-11-04; owner decision of
+2026-11-03). A mission's villagers and wildlife (`Player%i=passive neutral`,
+put on the human's side) are computers to retail. The campaign start
+`0x4d2750` (called from the game start `0x5253a0` at `0x5258db`) makes player
+0 the local human with `0x4f6290(0, 1, ...)` (`0x4d290c`) and every other
+record, strategic or passive alike, with `0x4f6290(i, 2, ...)` (`0x4d298f`);
+`0x4f6290` passes the kind to `0x4f5940`, which stores it at `+0xea` and,
+for any kind but 3 (remote), at the lobby slot's `+0x84` (`0x4f5954`). The
+record's role byte only sets the alliance bytes `+0xac`/`+0xb7`
+(`0x4d29a1..0x4d2a08`: neutral marks it allied by everyone, ally pairs it
+with the human, opponent nothing), which no sight code reads. The same game
+start then calls `0x4f6770` unconditionally (`0x525a4a`), and its
+`+0x50`->`+0x84 == 2` tests (`0x4f67c7`, `0x4f6806`) leave every mission
+computer out both ways. The only other writers of `+0xf7[]`/`+0x101[]`
+(`game+0x24fb`/`+0x2505`) are `0x4f6290` (self), the Diplomacy box
+(`0x4b6bdd`, `0x4b6c55`: computer rows disabled) and the 0x15 handler
+(`0x4f5a84`, sent by humans only); no mission-script path. So in a retail
+campaign the human never sees through a passive neutral, it never sees
+through the human, and neither explores for the other (`0x4c6800` follows the
+same planes). Its dying units get no revealer: `0x512ae0` calls `0x4c6750`
+only when the owner's index equals `game+0x306f` (I: the local-player byte
+beside `0x4c66b0`'s `0x306e`). Ported: `setupMission` sets
+`Player::passiveNeutral` (hashed) for every record but the human without an
+effective `strategic` (the same test as the path-budget class);
+`viewShareMask` gives such a player its own bit only and leaves it out of
+every other mask, and `updateViewCounts` keeps no revealer for it. The
+strategic ally keeps the D2 rule (retail would leave it out too). Outside
+campaigns the owner's rule is the same -- a passive neutral shares nothing,
+allied or not -- so one rule serves both; no skirmish or multiplayer setup
+makes one today. The client's fog and unit display (`captureFog`,
+`UnitR::sightShared`) and the AI's `team_` read the same mask, so the
+wildlife shows only where the human's own side sees it.
+
 **Exploration follows the same planes** (S). `0x4c6800` takes the Mapping bit
 from the sight object's player (`[esi]`, `+0xeb` -> `1 << index`,
 `0x4c685f..0x4c6871`) and ORs it into `game+0x19ef4` at every admitted cell
@@ -5802,6 +5835,7 @@ comes from):
 | Stalled aim | none in retail | Legion only: `legionAimStall` sends TargetCleared once after 90 ticks of an unaccepted aim while standing (`Unit::aimWait`) | -- | `legion_vermage_fight` |
 | Legion `passAhead` oncoming traffic | none in retail (no `passAhead`) | Legion only: two enemies' fight legs are never oncoming traffic to each other (a plain move still makes way for an enemy) | -- | `legion_scenario_battle-field-2x60`, `aware-*` baselines |
 | Shared sight and exploration | `4f6770`, `4c66b0`, `4c6800` | ported, widened to every ally, human or computer (owner's D2 override; retail: same-team humans) | E, S | `shared_sight` |
+| Passive neutrals' sight (campaign computers) | `4d2750`, `4f5940`, `4f6770`, `512ae0` | ported: share nothing, allied or not, campaign or skirmish | S | `shared_sight` (`campaign_passive_*`, `skirmish_passive_no_share`) |
 | ShareMapAndLOS toggle | `4b6b60`, `4f59c0` | not ported (no Diplomacy box) | S | -- |
 | Line-of-fire test in the picker | none in retail | kept as an engine extension (D4) | E (`probe_weapon_gate_loss`) | `blocked_shot` |
 | Hit response, guard alarms, AttackUType | `409a50`, `407f90`/`418860`, `401580` | unchanged (no vision, as retail) | E, S | -- |

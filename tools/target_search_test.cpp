@@ -48,7 +48,11 @@
 //                   sharing (takeover_keeps_sharing); leaving and rejoining the
 //                   team moves even a frozen footprint (alliance_change); an
 //                   ally's dying scout's revealer stays in both planes for its
-//                   60 ticks (death_revealer_shared). Throughout, the counts
+//                   60 ticks (death_revealer_shared). A passive neutral
+//                   (villagers, wildlife) shares nothing with anyone, allied
+//                   or not: in a skirmish (skirmish_passive_no_share) and, as
+//                   retail's 4f6770 leaves a mission computer out, in a
+//                   shipped campaign mission (campaign_passive_*). Throughout, the counts
 //                   equal the sum of the footprints over their planes and the
 //                   client's display plane (client/retailfog.h) shows in view
 //                   exactly the cells the player's own plane counts.
@@ -449,7 +453,7 @@ bool countsMatchFootprints(const sim::World& w) {
 }
 
 // The local display (client/retailfog.h, as GameView::captureFog builds it:
-// the local player's Mapping bit, every allied player's plane) shows in view
+// the local player's Mapping bit, the planes of World::viewShareMask) shows in view
 // exactly where the player's own plane counts a footprint: the fog a player
 // sees is the plane its units pick from.
 bool displayMatchesPlane(const sim::World& w, int player) {
@@ -458,8 +462,7 @@ bool displayMatchesPlane(const sim::World& w, int player) {
     if (!cells || w.viewCounts().size() < size_t(w.numPlayers()) * cells) return false;
     retailfog::PlaneSource source;
     source.width = width; source.height = height; source.player = player;
-    for (int p = 0; p < w.numPlayers(); ++p)
-        if (w.allied(player, p)) source.viewers |= 1u << p;
+    source.viewers = w.viewShareMask(player);
     source.viewCounts = w.viewCounts();
     source.explored = w.navigationExploration();
     std::vector<uint8_t> display;
@@ -475,15 +478,18 @@ bool displayMatchesPlane(const sim::World& w, int player) {
 // Players 0 and 1 on `team1` (0 = allied with 0), player 2 the enemy. Player
 // 0's archer (sight 40) at (250, 400) on Fire At Will, with a passive second
 // unit far off; player 1's scout (sight 200) beside player 2's Archer, which
-// stands in the bow's range. ai0/ai1: that player is a computer.
+// stands in the bow's range. ai0/ai1: that player is a computer; passive1:
+// player 1 is a passive neutral (Player::passiveNeutral) in a skirmish.
 enum class After { None, Takeover, Realign, Revealer };
 struct Share {
     bool sees0 = false, sees1 = false, engaged = false, consistent = true, display = true;
     bool explored0 = false;
+    bool sees1Other = false, explored1Other = false;   // player 1 and player 0's far scout
     bool afterSees0 = false, afterSees1 = false, rejoinSees0 = false;
     bool revealerHeld = false, revealerGone = false;
 };
-Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, After after = After::None) {
+Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, After after = After::None,
+                  bool passive1 = false) {
     Flat flat;
     sim::World w;
     const WorldHash hashed{w};
@@ -492,6 +498,7 @@ Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, Af
     w.setTeam(1, team1);
     w.player(0).automaticGates = ai0;
     w.player(1).automaticGates = ai1;
+    w.player(1).passiveNeutral = passive1;
     static sim::UnitType blind, scout;
     blind = archer; blind.id = "blind"; blind.sight = 40;
     scout = archer; scout.id = "scout"; scout.weapons.clear(); scout.weapon = {}; scout.sight = 200;
@@ -526,6 +533,10 @@ Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, Af
         out.sees0 = w.playerSees(0, *f);
         out.sees1 = w.playerSees(1, *f);
         out.explored0 = w.exploredAt(0, f->x.toFloat(), f->z.toFloat());
+    }
+    if (const sim::Unit* o = w.unit(other)) {
+        out.sees1Other = w.playerSees(1, *o);
+        out.explored1Other = w.exploredAt(1, o->x.toFloat(), o->z.toFloat());
     }
     if (after == After::Takeover) {
         // A computer takes over the ally mid-game: still an ally, so its sight
@@ -567,7 +578,71 @@ Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, Af
     return out;
 }
 
-void sharedSights(const sim::TypeRegistry& reg) {
+// A shipped campaign mission with wildlife on the human's team:
+// takmission06_ph's Player10=passive neutral (a deer, a sabertooth, wolves)
+// and Player3=strategic ally. Retail makes both kind-2 computers, which 4f6770
+// pairs with nobody; ours keeps the strategic ally sharing (D2) and gives the
+// passive neutral retail's result: its units count in its own plane only, the
+// human's never in its, and neither explores for the other.
+void campaignPassive(const sim::TypeRegistry& reg, const hpi::Vfs& vfs) {
+    sim::World w;
+    const WorldHash hashed{w};
+    int human = 0;
+    sim::MissionSetup ms;
+    if (!sim::setupMission(w, reg, vfs, "takmission06_ph", human, &ms)) { check(false, "takmission06_ph loads"); return; }
+    int neutral = -1, ally = -1;
+    for (size_t p = 0; p < ms.playerDefs.size(); ++p) {
+        std::string def = ms.playerDefs[p];
+        std::transform(def.begin(), def.end(), def.begin(), ::tolower);
+        if (def.find("passive neutral") != std::string::npos) neutral = int(p);
+        if (def.find("strategic ally") != std::string::npos) ally = int(p);
+    }
+    if (neutral < 0 || ally < 0) { check(false, "takmission06_ph has a passive neutral and a strategic ally"); return; }
+    const auto bit = [](int p) { return uint16_t(1u << p); };
+    check(w.player(neutral).passiveNeutral && !w.player(ally).passiveNeutral && !w.player(human).passiveNeutral &&
+              w.allied(human, neutral),
+          "campaign_passive_flag: setupMission marks the passive neutral, on the human's team, and no one else");
+    check(!(w.viewShareMask(human) & bit(neutral)) && (w.viewShareMask(human) & bit(ally)) &&
+              w.viewShareMask(neutral) == bit(neutral),
+          "campaign_passive_masks: the human shares with the strategic ally, the passive neutral with nobody");
+    w.tick(kTick);
+    // After one pass the explored bits are exactly the cells in view.
+    const int width = w.viewPlaneW(), height = w.viewPlaneH();
+    const size_t cells = size_t(width) * height;
+    const auto& explored = w.navigationExploration();
+    int onlyNeutral = 0, onlyHuman = 0, leaked = 0;
+    for (int z = 0; z < height; ++z)
+        for (int x = 0; x < width; ++x) {
+            const size_t i = size_t(z) * width + x;
+            const bool n = w.viewCount(neutral, x, z) > 0, h = w.viewCount(human, x, z) > 0;
+            if (n && !h) { ++onlyNeutral; if (explored[i] >> human & 1) ++leaked; }
+            if (h && !n) { ++onlyHuman; if (explored[i] >> neutral & 1) ++leaked; }
+        }
+    check(cells && onlyNeutral > 0 && onlyHuman > 0 && leaked == 0,
+          "campaign_passive_explored: the wildlife's sight neither shows nor explores for the human, nor the "
+          "human's for it", "only neutral " + std::to_string(onlyNeutral) + " only human " +
+              std::to_string(onlyHuman) + " leaked " + std::to_string(leaked));
+    bool planes = true, display = true, unseenWildlife = false;
+    int wildlife = 0;
+    for (int i = 0; i < 90; ++i) {
+        w.tick(kTick);
+        display = display && displayMatchesPlane(w, human);
+        for (const auto& u : w.units()) {
+            if (!u.viewSight.active) continue;
+            if (u.player == neutral) planes = planes && u.viewPlanes == bit(neutral);
+            else if (u.viewPlanes & bit(neutral)) planes = false;
+        }
+    }
+    for (const auto& u : w.units())
+        if (u.alive() && u.player == neutral) { ++wildlife; unseenWildlife = unseenWildlife || !w.playerSees(human, u); }
+    check(planes && display && wildlife > 0 && unseenWildlife,
+          "campaign_passive_planes: every footprint keeps out of the other's plane for 90 ticks, the human's "
+          "fog is its own plane, and wildlife out of its sight stays unseen",
+          "planes " + std::to_string(planes) + " display " + std::to_string(display) + " wildlife " +
+              std::to_string(wildlife) + " unseen " + std::to_string(unseenWildlife));
+}
+
+void sharedSights(const sim::TypeRegistry& reg, const hpi::Vfs& vfs) {
     const sim::UnitType* archer = reg.find("araarch");
     if (!archer || archer->weapons.empty()) { check(false, "shipped araarch loads"); return; }
     auto describe = [](const Share& s) {
@@ -606,6 +681,19 @@ void sharedSights(const sim::TypeRegistry& reg) {
           "death_revealer_shared: the dying scout's revealer holds in both planes, then goes after 60 ticks",
           "held " + std::to_string(dies.revealerHeld) + " gone " + std::to_string(dies.revealerGone) +
               " consistent " + std::to_string(dies.consistent));
+    // Outside campaigns (owner decision 2026-11-03): a passive neutral shares
+    // nothing even when allied -- not its sight with the human, not the
+    // human's with it, no explored cells. The human pair is the control: there
+    // player 1 does see and explore at player 0's far scout.
+    const Share passive = sharedSight(*archer, 0, false, false, After::None, true);
+    check(humans.sees1Other && humans.explored1Other && !passive.sees0 && passive.sees1 && !passive.engaged &&
+              !passive.explored0 && !passive.sees1Other && !passive.explored1Other && passive.consistent &&
+              passive.display,
+          "skirmish_passive_no_share: a passive neutral allied to the human shares nothing either way",
+          describe(passive) + " sees1Other " + std::to_string(passive.sees1Other) + " explored1Other " +
+              std::to_string(passive.explored1Other) + " (control " + std::to_string(humans.sees1Other) +
+              std::to_string(humans.explored1Other) + ")");
+    campaignPassive(reg, vfs);
 }
 }  // namespace
 
@@ -624,7 +712,7 @@ int main(int argc, char** argv) {
     if (part == "idle_coverage") idleCoverage(reg);
     else if (part == "mission_ports") missionPorts(reg);
     else if (part == "attack_move") attackMoves(reg);
-    else if (part == "shared_sight") sharedSights(reg);
+    else if (part == "shared_sight") sharedSights(reg, vfs);
     else { std::fprintf(stderr, "unknown part %s\n", part.c_str()); return 2; }
     std::printf("state hash: %d worlds, combined %016llx\n", hashedWorlds, (unsigned long long)combinedHash);
     std::printf("%s\n", failures ? "FAILED" : "all passed");

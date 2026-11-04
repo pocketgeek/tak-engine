@@ -1387,7 +1387,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     std::vector<int> otaToWorld(17, -1);   // [.ota player 1..16] -> world slot
     std::vector<MatchSlot> slots;
     const int human = 0;
-    uint32_t budgetClasses = 0;
+    uint32_t budgetClasses = 0, passiveSlots = 0;
     const char* kingdoms[5] = {"aramon", "taros", "veruna", "zhon", "creon"};
     for (int n = 1; n <= 16 && int(slots.size()) < kMaxPlayers; ++n) {
         const std::string* v = gh->value("player" + std::to_string(n));
@@ -1410,6 +1410,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
         // villagers, wildlife, props -- and must stay inert.
         if (strategic && out) out->aiSlots.push_back(slot);
         if (strategic && def.find("passive") == std::string::npos) budgetClasses |= 1u << slot;
+        else passiveSlots |= 1u << slot;   // shares no sight (Player::passiveNeutral)
     }
     // Retail's 5x path-budget class: a mission's computer players carry it only
     // when "strategic" (0x4c83fb; a later "passive" match clears it again at
@@ -1429,6 +1430,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     cfg.unitCap = int(gh->numberOr("maxunits", 500));
     setupMatch(world, reg, cfg);       // terrain + features + player teams
     world.setPathBudgetClasses(budgetClasses);
+    for (int p = 0; p < int(slots.size()); ++p) world.player(p).passiveNeutral = (passiveSlots >> p & 1) != 0;
     if (gh->numberOr("waterdoesdamage", 0) != 0)
         world.setWaterDamage(float(gh->numberOr("waterdamage", 0)));
 

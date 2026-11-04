@@ -439,7 +439,8 @@ private:
     };
     std::map<int, Known> knowledge_;
     static constexpr uint32_t kMobileMemoryTicks = 25 * 30;
-    // The players whose sight this AI shares: itself and its allies.
+    // The players whose sight this AI shares: itself and its allies but a
+    // passive neutral (World::viewShareMask).
     std::vector<int> team_;
     bool teamSees(const tak::sim::World&, const tak::sim::Unit&) const;
     bool teamViews(const tak::sim::World&, int cx, int cz) const;

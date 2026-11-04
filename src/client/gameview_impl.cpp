@@ -1115,10 +1115,11 @@
         s.disco = u.alive() && world_.discoTarget(u.player, u.id);
         s.headbang = u.alive() && world_.headbangTarget(u.player, u.id);
         s.alliedToLocal = alliedToLocal(u.player);
+        s.sightShared = sharesSightToLocal(u.player);
         // The local view's sight of another side's unit, on the plane captureFog
         // just built (a dying or dead unit is tested where it lies).
         s.losSeen = s.mapSeen = false;
-        if (!noFog_ && !s.alliedToLocal && !fb.fog.empty()) {
+        if (!noFog_ && !s.sightShared && !fb.fog.empty()) {
             namespace rf = tak::retailfog;
             const bool hidden = u.cloaked || u.embarked();
             const int32_t y = (u.type->canFly ? u.flightY : u.groundY).v;
@@ -1411,8 +1412,9 @@
         source.width = w; source.height = h; source.player = localPlayer_;
         source.mapRevealed = world_.mapRevealedFor(localPlayer_);
         source.losOff = world_.roomLosOff() || world_.powerLosOff(localPlayer_);
-        for (int p = 0; p < world_.numPlayers() && p < 32; ++p)
-            if (alliedToLocal(p)) source.viewers |= 1u << p;
+        // The planes the local player shares (World::viewShareMask: every ally
+        // but a passive neutral), so the fog is the plane its units pick from.
+        source.viewers = world_.viewShareMask(localPlayer_);
         source.viewCounts = world_.viewCounts();
         source.explored = world_.navigationExploration();
         if (world_.viewCounts().empty()) {
@@ -1427,8 +1429,7 @@
             fogPreviewExplored_.assign(cells, 0);
             if (fogPreviewHeights_.size() == cells)
                 for (const auto& u : world_.units()) {
-                    if (!u.alive() || !u.type || u.underConstruction || !alliedToLocal(u.player) ||
-                        world_.isNeutralPlayer(u.player)) continue;
+                    if (!u.alive() || !u.type || u.underConstruction || !sharesSightToLocal(u.player)) continue;
                     tak::sim::RetailSightFootprint sight;
                     sight.distance = int16_t(world_.sightDistance(*u.type));
                     sight.sightHeight = u.type->sightHeight;

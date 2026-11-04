@@ -73,7 +73,10 @@ their validation reports; both live in [`docs/`](docs/).
 - **Allies share sight.** Every player on your team, human or computer, sees for
   you: your units now attack an enemy that only an ally's units can see, and computer
   allies act on what you and the rest of the team see. The original game shared sight
-  only between human teammates; here computer allies share too.
+  only between human teammates; here computer allies share too. Villagers, wildlife
+  and other passive players in a campaign mission share nothing, as in the original
+  game, even though missions put them on your team; outside campaigns a passive
+  player never shares sight either.
 - **Investigated, no change needed:**
   - A computer's Sea Dragon on Hold Position with an enemy just outside Tsunami's range
     keeps switching weapons and never fires: the original game does exactly the same.

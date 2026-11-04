@@ -14475,7 +14475,8 @@ void World::updateExplorationPlane() {
     // the Mapping bit of the sight object's player (4c685f..4c6871,
     // 4c6a11..4c6a1f), the same player whose +0x88 plane it counts in, so a
     // shared ally explores for every player it shares with (viewShareMask:
-    // all allies, human or computer). Neutral scenery keeps the allied rule.
+    // all allies, human or computer, but never a passive neutral). Neutral
+    // scenery keeps the allied rule.
     std::vector<uint16_t> playerViewers(players_.size(),0);
     for (size_t owner=0;owner<players_.size();++owner) {
         if (!isNeutralPlayer(int(owner))) { playerViewers[owner]=viewShareMask(int(owner));continue; }
@@ -14591,10 +14592,15 @@ uint16_t World::viewShareMask(int owner) const {
     const size_t planes=players_.size();
     if (owner<0 || size_t(owner)>=planes || owner>=16 || isNeutralPlayer(owner)) return 0;
     uint16_t mask=uint16_t(1u<<owner);
-    // Owner decision (D2, beyond retail): every allied player shares, human
-    // or computer. Retail's 4f6770 leaves a computer out both ways.
+    // A campaign's passive neutral is a computer (kind 2) to 4f6770, which
+    // pairs it with nobody, so it shares nothing either way; outside campaigns
+    // the owner's rule is the same.
+    if (players_[size_t(owner)].passiveNeutral) return mask;
+    // Owner decision (D2, beyond retail): every other allied player shares,
+    // human or computer. Retail's 4f6770 leaves a computer out both ways.
     for (size_t j=0;j<planes && j<16;++j)
-        if (int(j)!=owner && !isNeutralPlayer(int(j)) && allied(owner,int(j))) mask|=uint16_t(1u<<j);
+        if (int(j)!=owner && !isNeutralPlayer(int(j)) && !players_[j].passiveNeutral && allied(owner,int(j)))
+            mask|=uint16_t(1u<<j);
     return mask;
 }
 
@@ -14638,7 +14644,11 @@ void World::updateViewCounts() {
     for (auto& u:units_) {
         if (u.alive() || !u.viewSight.active) continue;
         const int p=u.viewPlayer;
-        const bool human=size_t(p)<planes && !players_[size_t(p)].automaticGates && !isNeutralPlayer(p);
+        // 512ae0 keeps it only when the owner's index equals game+0x306f, a
+        // local-player byte beside 4c66b0's 0x306e; a passive neutral is a
+        // mission computer, never that player.
+        const bool human=size_t(p)<planes && !players_[size_t(p)].automaticGates && !isNeutralPlayer(p) &&
+                         !players_[size_t(p)].passiveNeutral;
         if (human && std::count_if(deathSights_.begin(),deathSights_.end(),
                 [&](const RetailDeathSight& d){return d.player==p;})<20) {
             deathSights_.push_back({u.viewSight,int8_t(p),tickCounter_+60,u.viewPlanes});
@@ -19716,7 +19726,7 @@ uint64_t World::stateHash() const {
         mix(uint64_t(uint32_t(s.nextVary)));
     }
     for (const auto& t : players_) {
-        mix(uint32_t(t.automaticGates) | (uint32_t(t.defensiveAi)<<1));
+        mix(uint32_t(t.automaticGates) | (uint32_t(t.defensiveAi)<<1) | (uint32_t(t.passiveNeutral)<<2));
         if (t.manaShareMask != 0xff) { mix(0x53484152454d414eull); mix(t.manaShareMask); }
         { uint64_t b; std::memcpy(&b, &t.mana, 8); mix(b); }   // double: fold all 8 bytes
         if (t.constructionDemand != 0) { mix(0x434f4e5344454d44ull); mix(std::bit_cast<uint64_t>(t.constructionDemand)); }

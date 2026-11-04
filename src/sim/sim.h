@@ -1889,6 +1889,13 @@ struct Player {
     RetailResourceHistory displayResources;
     bool automaticGates=false; // normal AI capability; human gates remain manually controlled
     bool defensiveAi = false; // Passive AI defends in place from the moment units spawn
+    // A campaign mission's brainless Player%i (villagers, wildlife, props: the
+    // .ota's "passive" control word, or no "strategic"), whom missions put on the
+    // human's team. Shares no sight and no explored cells with anyone, even when
+    // allied (World::viewShareMask): retail makes every mission computer a kind-2
+    // owner (4d298f -> 4f6290 -> 4f5940 stores lobby +0x84 = 2), which 4f6770
+    // pairs with nobody; outside campaigns the owner's rule is the same. Hashed.
+    bool passiveNeutral = false;
     RetailPlayerCacheClock cacheClock;
     std::optional<RetailBuildCache> buildCache;
     std::optional<RetailConstructionResources> retailResources;
@@ -2270,7 +2277,9 @@ public:
     // (+0xf7[]/+0x101[]) both ways for each pair of players on one lobby team
     // unless either is a computer, and a unit's sight object (4c66b0) then
     // stamps into the sharing player's plane; World shares between computers
-    // too. Bit per player; 0 for a neutral or out-of-range owner.
+    // too. A passive neutral (Player::passiveNeutral) shares with nobody and
+    // nobody with it, allied or not: its mask is its own bit, and it is in no
+    // other player's. Bit per player; 0 for a neutral or out-of-range owner.
     uint16_t viewShareMask(int owner) const;
     // Test reference: move counted footprints by retail's full removal and
     // re-add instead of retailSightMove (the counts and hashes must not differ).

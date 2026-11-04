@@ -214,10 +214,11 @@ struct UnitR {
     int justBuilt = 0;                         // one-tick: unit id produced this tick, else 0
     bool disco = false, headbang = false;      // cached world_.disco/headbangTarget(player)
     bool alliedToLocal = false;                // cached alliedToLocal(player)
+    bool sightShared = false;                  // cached sharesSightToLocal(player)
     // The local display's sight of this unit (client/retailfog.h), for another
     // side's unit: losSeen is the main view's LosOn (0x4f7210) on the local plane,
     // mapSeen the minimap's dot rule (0x4f9970: radar or its centre cell in view).
-    // Spectators (noFog_) and allies ignore both.
+    // Spectators (noFog_) and sight-sharing allies ignore both.
     bool losSeen = false, mapSeen = false;
     std::string scenarioName;
     const std::string& displayName() const { return scenarioName.empty() ? type->name : scenarioName; }
