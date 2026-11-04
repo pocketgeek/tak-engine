@@ -95,15 +95,19 @@ Debug-only numeric interpreter was removed; `--mission` now aliases the same
 server-driven campaign launch used by the menu and `--campaign`.
 
 ### Engine-invoked entry points
-`Start` (once at load) · `TriggerHit(regionId, unitId, ownerByte)` (unit enters an
-armed region; `ownerByte==0` = the human) · `UnitCreated(unitId, 0)` (build finish)
-· `UnitDestroyed(unitId)` · `WindChange` (periodic).
+`Start` (once at load) · `TriggerHit(regionId, unitId, ownerByte)` (a unit's
+footprint-origin cell is in an armed region; once per unit per region; `ownerByte`
+is the `.ota` Player-1, 0 = the human) · `UnitCreated(unitId, ownerByte)` (once per
+unit, the first tick it is live and finished: placed, `Create`d and built units)
+· `UnitDestroyed(unitId)` · `WindChange` (periodic). Both come from retail's
+per-unit check `4d33a0`; see docs/retail-engine.md, Trigger regions.
 
 ### `MAP_COMMAND` verbs (retail dispatcher `0x4d35c0`)
 `Create <TYPE>` (spawn; **returns unit id**; `(x,y)` or `(player,x,y)`, the type's
 footprint corner at the cell) ·
 `SetMission <unitId>` + order-queue string (see below) · `SetTrigger <id> …`
-(arm region: `(id,x,y,r)` circle / `(id,x1,y1,x2,y2)` rect) · `RemoveTrigger <id>`
+(arm region, in cells: `(id,x,y,r)` circle / any other count a rect `(id,x1,y1,x2,y2)`;
+an armed slot is not re-armed) · `RemoveTrigger <id>`
 · `GetUtype <TYPE>` (**returns** type id) · `WriteValue <name>` / `ReadValue <name>`
 (persistent mission variables) · `SetAttribute <Health|Mana|Attack|Armor>Percentage
 <unitId> <pct>` · `Capture <unitId>[,player]` · `ScreenShake`. (`Kill`/`Attack`

@@ -118,10 +118,16 @@ void MissionScript::step(World& w, float dt) {
     if (outcome_ == 0) evalConditions(w, dt);
 }
 
-void MissionScript::unitBuilt(World& w, int id) {
-    if (!vm_ || cob_.scriptIndex("UnitCreated") < 0) return;
-    world_ = &w; getUnitContext_ = id;
-    vm_->start("UnitCreated", {id, 0});
+int32_t MissionScript::value(const std::string& name) const {
+    auto it = vars_.find(lower(name));
+    return it != vars_.end() ? it->second : 0;
+}
+
+int MissionScript::retailOwner(int player) const {
+    // The inverse of playerMap_: the .ota Player-1 the slot came from.
+    for (size_t ota = 1; ota < playerMap_.size(); ++ota)
+        if (playerMap_[ota] == player) return int(ota) - 1;
+    return player;
 }
 
 int MissionScript::conditionOwner(int player) const {
@@ -159,6 +165,7 @@ void MissionScript::unitDied(World& w, int id) {
             emitConditionSound(w,c);
         }
     }
+    triggerBits_.erase(id);
     if (!vm_ || cob_.scriptIndex("UnitDestroyed") < 0) return;
     world_ = &w; getUnitContext_ = id;
     vm_->start("UnitDestroyed", {id});
@@ -172,18 +179,29 @@ int32_t MissionScript::command(World& w, const std::string& name, const std::vec
     if (ieq(verb, "create"))        return doCreate(w, rest, a);
     if (ieq(verb, "setmission"))  { if (!a.empty()) applyOrders(w, a[0], rest, false); return 0; }
     if (ieq(verb, "settrigger")) {
-        if (!a.empty() && a[0] >= 0 && a[0] < 16) {
-            Region& r = regions_[size_t(a[0])];
-            r.armed = true;
-            if (a.size() >= 5) { r.rect = true;  r.x = cellToWorld(float(a[1])); r.z = cellToWorld(float(a[2]));
-                                                 r.x2 = cellToWorld(float(a[3])); r.z2 = cellToWorld(float(a[4])); }
-            else if (a.size() >= 4) { r.rect = false; r.x = cellToWorld(float(a[1])); r.z = cellToWorld(float(a[2]));
-                                                       r.r = float(a[3]) * 16.0f; }
-            inside_[size_t(a[0])].clear();
+        // 4d3a53: a slot already armed, or 16 armed, ignores the call. 4 args
+        // make a circle (4d2b00), any other count a rectangle (4d2ae0); the
+        // cells are kept as given.
+        const int armed = int(std::count_if(regions_.begin(), regions_.end(), [](const Region& r) { return r.armed; }));
+        if (a.empty() || a[0] < 0 || a[0] >= 16 || regions_[size_t(a[0])].armed || armed >= 16) return 0;
+        auto arg = [&](size_t i) { return i < a.size() ? a[i] : 0; };
+        Region& r = regions_[size_t(a[0])];
+        r = Region{};
+        r.armed = true;
+        r.rect = a.size() != 4;
+        r.x1 = int16_t(arg(1)); r.z1 = int16_t(arg(2));
+        if (r.rect) { r.x2 = int16_t(arg(3)); r.z2 = int16_t(arg(4)); }
+        else r.r = arg(3);
+        return a[0];
+    }
+    if (ieq(verb, "removetrigger")) {
+        // 4d3b22: frees an armed slot and clears its latch bit on every unit.
+        if (!a.empty() && a[0] >= 0 && a[0] < 16 && regions_[size_t(a[0])].armed) {
+            regions_[size_t(a[0])].armed = false;
+            for (auto& [id, bits] : triggerBits_) bits &= ~(1u << a[0]);
         }
         return 0;
     }
-    if (ieq(verb, "removetrigger")) { if (!a.empty() && a[0] >= 0 && a[0] < 16) regions_[size_t(a[0])].armed = false; return 0; }
     if (ieq(verb, "getutype"))      return typeHash(findType(rest));
     if (ieq(verb, "setattribute")) { if (a.size() >= 2) doSetAttribute(w, rest, a[0], a[1]); return 0; }
     if (ieq(verb, "writevalue"))   { if (!a.empty()) vars_[lower(rest)] = a[0]; return 0; }
@@ -546,27 +564,33 @@ void MissionScript::setUnitValue(int32_t valId, int32_t value) {
 // ---- triggers --------------------------------------------------------------
 
 void MissionScript::sweepTriggers(World& w) {
-    if (cob_.scriptIndex("TriggerHit") < 0) return;
-    for (size_t rid = 0; rid < regions_.size(); ++rid) {
-        const Region& r = regions_[rid];
-        if (!r.armed) continue;
-        auto& occ = inside_[rid];
-        std::unordered_set<int> now;
-        for (const auto& u : w.units()) {
-            if (!u.alive() || u.embarked()) continue;
-            const float ux = u.x.toFloat(), uz = u.z.toFloat();
-            bool in = r.rect ? (ux >= std::min(r.x, r.x2) && ux <= std::max(r.x, r.x2) &&
-                                uz >= std::min(r.z, r.z2) && uz <= std::max(r.z, r.z2))
-                             : ((ux - r.x) * (ux - r.x) + (uz - r.z) * (uz - r.z) <= r.r * r.r);
-            if (!in) continue;
-            now.insert(u.id);
-            if (!occ.count(u.id)) {   // edge: newly entered -> fire the script once
-                getUnitContext_ = u.id;
-                vm_->start("TriggerHit", {int32_t(rid), u.id, u.player});
-                if (outcome_ != 0) return;
-            }
+    // 4d33a0, unit by unit: a live, finished unit that is not dying first
+    // fires UnitCreated(unit, owner) once, then TriggerHit(region, unit, owner)
+    // once for each armed region 0..15 that holds its footprint-origin cell.
+    // Each fires once per unit (latch +0xd4); leaving and coming back does
+    // not fire again. Units aboard a transport skip the regions.
+    if (!vm_) return;
+    const bool created = cob_.scriptIndex("UnitCreated") >= 0, hit = cob_.scriptIndex("TriggerHit") >= 0;
+    for (const auto& u : w.units()) {
+        if (!u.alive() || u.hp <= Fixed() || !u.type || u.underConstruction) continue;
+        uint32_t& bits = triggerBits_[u.id];
+        const int owner = retailOwner(u.player);
+        if (!(bits & 0x80000000u)) {
+            bits |= 0x80000000u;
+            getUnitContext_ = u.id;
+            if (created) vm_->start("UnitCreated", {u.id, owner});
         }
-        occ = std::move(now);
+        if (u.embarked()) continue;
+        const int ox = footprintOrigin(u.x, u.type->footX), oz = footprintOrigin(u.z, u.type->footZ);
+        for (size_t rid = 0; rid < regions_.size(); ++rid) {
+            const Region& r = regions_[rid];
+            if (!r.armed || (bits >> rid & 1)) continue;
+            if (!(r.rect ? retailTriggerRect(ox, oz, r.x1, r.z1, r.x2, r.z2)
+                         : retailTriggerCircle(ox, oz, r.x1, r.z1, r.r))) continue;
+            bits |= 1u << rid;
+            getUnitContext_ = u.id;
+            if (hit) vm_->start("TriggerHit", {int32_t(rid), u.id, owner});
+        }
     }
 }
 
@@ -691,7 +715,13 @@ void MissionScript::evalConditions(World& w, float) {
 void MissionScript::foldHash(uint64_t& h) const {
     auto mix = [&](uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
     mix(uint64_t(int64_t(outcome_)));
-    for (const Region& r : regions_) mix(r.armed ? 1u : 0u);
+    for (const Region& r : regions_) {
+        mix(r.armed ? 1u : 0u); mix(r.rect ? 1u : 0u);
+        mix(uint16_t(r.x1)); mix(uint16_t(r.z1)); mix(uint16_t(r.x2)); mix(uint16_t(r.z2)); mix(uint32_t(r.r));
+    }
+    std::vector<std::pair<int, uint32_t>> latches(triggerBits_.begin(), triggerBits_.end());
+    std::sort(latches.begin(), latches.end());
+    for (const auto& [id, bits] : latches) { mix(uint32_t(id)); mix(bits); }
     mix(uint32_t(clock_));
     for(const UnitType* type:playerCommanders_) {
         if(type)for(unsigned char ch:type->id)mix(ch);

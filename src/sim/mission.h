@@ -79,19 +79,21 @@ public:
 
     void start(World& w);              // run the "Start" script once (initial spawns/triggers)
     void step(World& w, float dt);     // tick the VM, sweep triggers, evaluate conditions
-    void unitBuilt(World& w, int id);  // a unit finished building -> UnitCreated(id, 0)
     void unitCaptured(World& w, int id); // called before changing ownership
     void unitDied(World& w, int id);   // a unit died -> UnitDestroyed(id)
 
     int outcome() const { return outcome_; }   // 0 running / +1 victory / -1 defeat
     // Run one MAP_COMMAND by its name, as the script would (tests).
     int32_t command(World& w, const std::string& name, const std::vector<int32_t>& args);
+    // A WriteValue store, 0 if unset (tests).
+    int32_t value(const std::string& name) const;
     // Fold mission state into the sim's state hash (so mission progress is checksummed).
     void foldHash(uint64_t& h) const;
 
 private:
-    // A trigger region armed by SetTrigger (circle: r>=0; rect: x1/z1 the far corner).
-    struct Region { bool armed = false, rect = false; float x = 0, z = 0, x2 = 0, z2 = 0, r = 0; };
+    // A trigger region armed by SetTrigger, in cells as given (4d2ae0 / 4d2b00):
+    // a rectangle x1,z1..x2,z2 or a circle centred on x1,z1 with radius r.
+    struct Region { bool armed = false, rect = false; int16_t x1 = 0, z1 = 0, x2 = 0, z2 = 0; int32_t r = 0; };
 
     // A parsed `.ota` victory/defeat rule. `kind` names the retail *Condition_* class;
     // `type` (optional unit type) + up to 4 numeric args carry its parameters.
@@ -110,6 +112,7 @@ private:
     int32_t mapCommand(World& w, int nameIdx, const std::vector<int32_t>& args) {
         return command(w, cob_.name(uint32_t(nameIdx)), args);
     }
+    int retailOwner(int player) const;   // World slot -> retail player byte (+0xfd)
     int32_t getValue(World& w, int32_t valId, const std::vector<int32_t>& args);
     void setUnitValue(int32_t valId, int32_t value);
 
@@ -143,7 +146,9 @@ private:
     int32_t pointScale_ = 16;      // scenario +0xdc5 (orderPoint): 16 with [Map Data], else 1
 
     std::array<Region, 16> regions_{};
-    std::array<std::unordered_set<int>, 16> inside_{};   // edge-triggered: units currently in region
+    // Per unit id, 4d33a0's latch (+0xd4): bit N once region N fired for the
+    // unit, bit 31 once UnitCreated did. Only RemoveTrigger clears a region bit.
+    std::unordered_map<int, uint32_t> triggerBits_;
     std::unordered_map<std::string, int32_t> vars_;      // WriteValue / ReadValue store
     int getUnitContext_ = 0;                             // unit id for GET_UNIT_VALUE(7)
 

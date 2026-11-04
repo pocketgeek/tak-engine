@@ -6463,6 +6463,38 @@ X*16+8 and heading 0 through 0.9.19, right only for a 1x1; 154 of the shipped
 calls were off, an 8x18 building by 56 px in x and 136 in z.
 `MissionScript::createPoint` ports it.
 
+**Trigger regions and UnitCreated (2026-11-04; E = emulated, S = static,
+I = inferred).** `SetTrigger` (`4d3a53`) ignores the call and returns 0 when
+16 regions are armed (`+0xaa4`) or slot a0 already is; with 4 args it stores a
+circle, centre (int16 a1, int16 a2), radius a3 (`4d2b00`), with any other count
+a rectangle, int16 a1..a4 (`4d2ae0`), as given, and returns the id (E).
+`RemoveTrigger` (`4d3b22`) frees an armed slot, lowers the count and clears bit
+`1 << id` of `+0xd4` on every live unit; an empty slot does nothing (E). Every
+tick `51d3e0` -> `51de30` -> `[0x62da3c]` slot 7 (`4d43f0`) runs `4d33a0(unit)`
+for every live unit of players 0..9 in slot order (S). `4d33a0` (E) looks only
+at live (`0x1000000`), not dying (`0x1000`), finished (`+0x108 == 0.0`) units.
+It first fires `UnitCreated(unit id, owner byte +0xfd)` once (bit 31 of
+`+0xd4`), then for regions 0..15 `TriggerHit(id, unit id, owner byte)` once per
+region (bit `1 << id`, cleared only by `RemoveTrigger`; leaving and coming back
+does not fire again). A rectangle (`4d2b20`) holds the footprint-origin cell
+`+0x74/+0x76` when x1 <= x <= x2 and z1 <= z <= z2, inclusive with no swap, so
+an inverted one never fires (no shipped script has one); a circle when
+max(|dx|,|dz|) + (min >> 2) (`535e90`) <= r, in cells from the origin cell:
+(34,30), (26,27), (30,26) and (33,33) fire for centre (30,30) r 4, (35,30)
+does not. The carried bit (`+0x114` bit 4) is not tested; whether a carried
+unit's `+0x74` follows its transport is not established (I), so ours keeps
+skipping embarked units for regions. Ours through 0.9.19 compared the pixel
+position with [x1*16+8, x2*16+8] (min/max), used a Euclidean circle of r*16
+px, fired on every re-entry, looked at unfinished and dying units, re-armed an
+armed slot, and fired `UnitCreated` only when a build finished, with owner 0:
+mission 20's handler wants owner 1 and never ran, and takx05, takx22, takx23
+and mission 06 test for owner 0. `MissionScript::sweepTriggers` ports
+`4d33a0`, the owner byte being the `.ota` Player-1 the slot came from
+(`retailTriggerRect` / `retailTriggerCircle`; `mission_orders_test`,
+`tools/re/check_mission_regions.py`). Ours runs the sweep after the god
+script's VM tick, so a handler it starts runs on the next tick (S, ours).
+`MoveUnitToRadius` and `Unit/AnyUnitPasses{X,Z}` already used retail's cells.
+
 When the parser has pushed a mission it clears the unit's selectable bit 0x20,
 and unless the last of them was a patrol, an attack on the ground, `s` or `d`
 it appends MAKESELECTABLE (`514a7d`): a player's unit under a script cannot be
