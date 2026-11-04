@@ -6014,10 +6014,34 @@ Retail stamps an ally's units into the *local* plane on each machine; our
 every-plane-on-every-peer sim gives each ally the same union. The client's
 fog display ORs the local player's allies' planes (`captureFog`), which is
 now exactly the local plane. Not ported: the in-game ShareMapAndLOS toggle
-(no Diplomacy checkbox here). Inferred, not read (I): the revealer is still
-kept only for a human owner's dying unit and its "fewer than 20" cap counted
-by that owner, not per receiving plane, so a computer ally's dying scout
-leaves every plane at once.
+(no Diplomacy checkbox here).
+
+**Death sight** (E, `tools/re/check_death_sight.py`, 2026-11-04). The unit
+retire `0x512ae0` compares the owner's index (record `+0xeb`) with
+`game+0x306f`: equal, it calls `0x4c6750(unit, 0x3c)`; otherwise
+`0x4c6800(sight, 0, 0)` removes the footprint at once, whatever `0x306e`
+holds. `0x306e` is the local player and `0x306f` the viewed one (S): both are
+set to the local player at start (`0x527018`/`0x527024`,
+`0x4f6504..0x4f651d`, `0x4f7704`/`0x4f7717`), and only the watch-player path
+`0x4257d0` moves `0x306f` alone, to any present slot of kind 1, 2 or 3. So
+each machine keeps revealers only for its own human's dying units: a
+computer's never, and a human ally's not on the other ally's machine.
+`0x4c6750` runs only with LosOn on (`[[0x62d558]+8]+0x15`; off, it neither
+keeps nor removes). Its list is one global per machine (count `0x62da20`,
+32-byte slots at `0x62d7a0`): below 20 it copies the unit's sight object
+(`unit+0x84`, which keeps the plane `0x4c66b0` stamped it into), sets the
+slot's expiry (`+4`) to tick (`game+0x19f44`) + 60 and clears `unit+0xa3`;
+at 20 the footprint is removed at once, nothing evicted. `0x4c6b30`, once a
+tick (`0x526553`, S), removes every slot whose expiry is before now (expiry
+== now stays) and compacts the list in order. Since only the viewed player's
+units enter a machine's list, its 20 is one owner's. Ported in
+`World::updateViewCounts`: 20 per owner, past the cap at once, `tick + 60`
+kept while `expiry >= tick`, in the planes the footprint was counted in.
+Widened with D2: a human owner keeps one as retail, and so does a computer
+whose footprint was shared into another plane (it has a non-passive ally);
+a lone computer keeps none, as retail, and a passive neutral never.
+`shared_sight` (`death_revealer_*`) covers it. Not ported: LosOn off's
+no-op.
 
 **Passive neutrals in campaigns** (S, 2026-11-04; owner decision of
 2026-11-03). A mission's villagers and wildlife (`Player%i=passive neutral`,
@@ -6039,8 +6063,8 @@ computer out both ways. The only other writers of `+0xf7[]`/`+0x101[]`
 campaign the human never sees through a passive neutral, it never sees
 through the human, and neither explores for the other (`0x4c6800` follows the
 same planes). Its dying units get no revealer: `0x512ae0` calls `0x4c6750`
-only when the owner's index equals `game+0x306f` (I: the local-player byte
-beside `0x4c66b0`'s `0x306e`). Ported: `setupMission` sets
+only when the owner's index equals `game+0x306f` (S: the viewed player,
+the local one in play; see Death sight above). Ported: `setupMission` sets
 `Player::passiveNeutral` (hashed) for every record but the human without an
 effective `strategic` (the same test as the path-budget class);
 `viewShareMask` gives such a player its own bit only and leaves it out of

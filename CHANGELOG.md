@@ -163,6 +163,7 @@ their validation reports; both live in [`docs/`](docs/).
   and other passive players in a campaign mission share nothing, as in the original
   game, even though missions put them on your team; outside campaigns a passive
   player never shares sight either.
+  A computer ally's dying units now keep their sight for a moment, like your own.
 - **Fire at a point.** The game now has the original game's fire at
   a point (SUPPRESS), as the new Attack Ground command: a ground unit or tower fires
   at the spot itself, a walker steps into range (or out of its minimum range) first
