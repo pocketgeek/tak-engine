@@ -5657,6 +5657,18 @@ one it sees beyond it. `target_search_test attack_move` (and `--legion`)
 guards the leg: the attack and the mode -1 leg behind it on all three
 stances, an unseen enemy walked past, the goal reached after the kill.
 
+**No stride scan** (fx-tsearch step 7, D3). `findTarget`, `acquireTarget`
+and the per-tick stride scan (`acqStride_`) are gone, and with them the guard
+fronts' own hunting (plan item 15b): retail has no per-tick scan, and a guard answers
+only its ward's attacker (`407f90` / `418860`) while its weapons fire through
+the sweep. Every automatic pick now comes from a mission's `4d8370` or the
+sweep. `target_search_test idle_coverage` still engages all 126 armed mobile
+types, each first by the sweep (an idle unit beside a seen enemy in reach),
+then by its mission. A switcher scans with its selected slot alone: the
+Crusades Angel (Soul Stealer selected, no damage to Undead) leaves a zombie
+on a fight-move, as retail's does. The SIMSTATS fields `acq_scans` and
+`acq_gate_walks*` went with the scan; `mission_scans` counts the ported one.
+
 ## Mission order strings (icd 0x513fb0, 2026-10-30)
 
 A campaign mission gives its units orders in a one-letter language: a placed

@@ -2643,8 +2643,9 @@ bool World::legionLiftable(const Unit& f,int player) const {
 // a member is blocked by the flyer itself (it covers the member's next planned
 // cells); a capped episode then rests kLegionLiftCapRest ticks once landed.
 // While lifted the flyer polls for a target on the VTOL-standby call
-// (acquireTarget, as the landed standby does) every kLegionLiftPoll ticks,
-// staggered by id: lifted flyers fight instead of hovering through a battle.
+// (retailHostScan with VTOL_Standby's tail, as the landed standby does)
+// every kLegionLiftPoll ticks, staggered by id: lifted flyers fight instead
+// of hovering through a battle.
 bool World::requestLegionLift(Unit& f, bool blocked) {
     if (!f.legionLift) {
         f.legionLift=true; f.legionLiftX=f.x; f.legionLiftZ=f.z; f.legionLiftSince=tickCounter_;
@@ -6431,203 +6432,6 @@ bool World::canAttackTarget(const Unit& from,const Unit& target) const {
     return std::any_of(from.type->weapons.begin(),from.type->weapons.end(),usable);
 }
 
-int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chases) {
-    // VTOL landing also clears active. Only switchable units interpret it as
-    // power-off; ordinary landed flyers must still acquire and fire.
-    if (u.type->onOffable && !u.active) return false;
-    // Auto-acquire: idle armed units engage the nearest enemy in reach;
-    // attack-movers and patrollers interrupt their route to fight. A PASSIVE unit
-    // (stance 2, hold fire) never auto-acquires -- it only fights when ordered.
-    // A builder mid-job -- constructing a site, repairing, reclaiming, holding
-    // queued builds, or producing from a queue -- stays on task: it does NOT
-    // auto-acquire a nearby enemy and wander off to fight while it should build.
-    // Every gate below is a pure test and the scan runs only if all of them pass,
-    // so their order is free: the cheap ones go first and the order-queue walk
-    // (hasQueuedWork) last, because most armed units fail the stride gate on any
-    // given tick and would otherwise walk their whole queue for nothing.
-    // Auto-acquisition belongs to the FIRE order: only Fire At Will goes looking.
-    // Hold Fire and Return Fire both wait to be handed a target (an explicit attack
-    // order still works -- retail's hold-fire gate has a "forced" bypass for
-    // exactly that).
-    // Auto-acquisition is staggered across ticks by unit id: an idle armed unit
-    // rescans for a target every kAcqStride ticks (~0.13s at 30Hz), not every
-    // tick. That turns the dense-crowd O(n^2) neighbour scan into O(n^2/stride)
-    // -- the dominant sim cost when thousands of idle armed units pile together.
-    // Deterministic (id+tick, identical on every lockstep peer), so no desync. The
-    // stride widens with the crowd (acqStride_, set at tick start) so massive battles
-    // rescan less often -- the acquisition cost scales sub-linearly instead of O(n).
-    const bool acqTurn = missionPoll || (uint32_t(u.id) + tickCounter_) % acqStride_ == 0;
-    // A patrol (whose legs carry attackMove too) scans in its own mission
-    // (Patrol 403600, VTOL_Patrol 419db0), a fight-move leg in its move's
-    // response (mode -1, markFightLeg).
-    const bool acquireGate = u.fireState == 2 && acqTurn && !isNeutralPlayer(u.player) &&
-        u.type->weapon.damage > 0 &&
-        (groundResponse || u.orders.empty() || u.orders.front().guard) &&
-        u.buildSiteId == 0 && u.repairId == 0 && u.reclaimId == 0 &&
-        (u.type->isStructure() || (u.buildQueue.empty() && !u.repeatType));
-    TAK_PROBE(if (acquireGate) ++probe::tl.acqGateWalks;
-              if (u.buildSiteId == 0 && u.repairId == 0 && u.reclaimId == 0) ++probe::tl.acqGateWalksBefore);
-    const bool acquiring = acquireGate && !hasQueuedWork(u);
-#ifndef NDEBUG
-    // TAK_VERIFY_ACQ_GATE: the gates in their original order (busyBuilding first)
-    // must decide exactly as the reordered ones.
-    static const bool verifyGate = probe::envOn("TAK_VERIFY_ACQ_GATE");
-    if (verifyGate) {
-        const bool busyBuilding = u.buildSiteId != 0 || u.repairId != 0 || u.reclaimId != 0 ||
-                                  hasQueuedWork(u) ||
-                                  (!u.type->isStructure() && (!u.buildQueue.empty() || u.repeatType));
-        const bool acquiringBefore = !busyBuilding && u.fireState == 2 &&
-                                     (groundResponse || u.orders.empty() || u.orders.front().guard);
-        if ((acquiringBefore && !isNeutralPlayer(u.player) && u.type->weapon.damage > 0 && acqTurn) != acquiring)
-            throw std::runtime_error("findTarget: reordered acquisition gates disagree with the original order");
-    }
-#endif
-    // Retail's scan (4d8370) runs the picker (412620) for the slot 519ac0
-    // names, a switcher's selected one, else the first. For a melee slot the
-    // picker keeps grounded units only (+0x130 & 3 == 1, 412932..412945):
-    // a flyer in the air is never acquired, a landed one is.
-    const Weapon* scanWeapon = u.type->weapons.empty() ? nullptr :
-        &u.type->weapons[size_t(u.type->weaponSwitching ?
-            std::clamp(u.weaponSlot,0,int(u.type->weapons.size())-1) : 0)];
-    const bool groundOnly = scanWeapon && scanWeapon->melee;
-    auto canTarget = [&](const Unit& e) {
-        if (e.cloaked) return false;   // cloaked units are invisible to auto-acquire
-        if (groundOnly && e.flightGroundMode != 1) return false;
-        return canAttackTarget(u,e);
-    };
-    if (acquiring) {
-        // The +90 is approach margin: room to notice something and walk to it. A
-        // unit whose move order forbids leaving has no use for it -- it should
-        // acquire only what it can already shoot, or it would lock onto something
-        // it will never reach and then drop it again next tick.
-        float ar = u.type->maxRange() + (u.moveState == 0 ? 0.0f : 90.0f);
-        int best = 0;
-        // The rank of the best so far: its squared distance, ten times that for
-        // a target with construction left (below). The range test is its own.
-        float bestD = 1e30f;
-        // fireatwillrandom: spread fire across whatever is in range instead of
-        // every unit converging on the nearest body. Only while AUTO-acquiring --
-        // an explicit attack order still goes exactly where it was pointed, which
-        // is retail's gate too (its scorer is reached only from the fire-at-will
-        // path, and every shipped unit is fire-at-will by default since no FBI
-        // sets standingfireorder).
-        const bool scatter = u.type->fireAtWillRandom;
-        float bestScore = 1e30f;
-        // maneuverleashlength limits how far an IDLE defender will chase from its
-        // post. It must NOT apply while attack-moving/patrolling — those orders
-        // mean "advance and engage everything en route", so an army that has
-        // travelled far from its spawn still acquires (incl. just-conjured foes).
-        // An OFFENSIVE unit (stance 0) ignores its leash entirely and chases freely.
-        // ... while whether you may LEAVE to engage belongs to the move order:
-        //   0 = never (shoot what wanders into range, but hold the post),
-        //   1 = only within maneuverleashlength of where you were posted,
-        //   2 = no limit.
-        // The leash is measured from home, and an attack-move or patrol overrides
-        // it entirely -- those orders mean "advance and engage everything en route".
-        float leash2 = (u.moveState == 1 && u.orders.empty() && u.type->leash > 0)
-                           ? u.type->leash * u.type->leash : 1e30f;
-        // This scan stands in for retail's 4d8370 (Standby, Patrol, a move's
-        // attack response, the VTOL missions' retargets), which runs the picker
-        // 412620 over list +5. That list holds enemies with construction left
-        // (411700: a site still being conjured, a unit still being built at a
-        // factory door), and the picker takes one behind finished targets: its
-        // score is multiplied by 10 (412b52..412b77). Here the nearest-first
-        // rank is a site's squared distance x10, and the scatter score x10.
-        // Two scans take no site, as in retail: a guard's (Follow_Ground and
-        // VTOL_Follow run no scan; they answer the guarded unit's attacker,
-        // and a site never attacks), and one whose scanning slot (519ac0: a
-        // switcher's selected weapon, else the first) is a stone, freeze or
-        // charm class, which the picker never offers a site (4127eb..4128db).
-        const bool guarding = !groundResponse && !u.orders.empty() && u.orders.front().guard;
-        const bool takesSites = !guarding && !(scanWeapon &&
-            (scanWeapon->status==Weapon::Status::Stoned || scanWeapon->status==Weapon::Status::Frozen ||
-             scanWeapon->mindControl));
-        // A ranged unit only auto-acquires enemies it can actually see, so it
-        // doesn't charge a target hidden behind a wall (which caused pile-ups at
-        // corners). Melee/flyers acquire regardless.
-        // Whether that needs the 2D line is decided by the weapon the unit
-        // fights with (approachNeedsClearLine), as tickCombat decides it: a
-        // Ballistic shell flies its arc over the wall, as in retail.
-        uint64_t enemies=~uint64_t(0);
-        for (int player=0;player<numPlayers() && player<64;++player)
-            if (allied(player,u.player)) enemies&=~(uint64_t(1)<<player);
-        TAK_PROBE(++probe::tl.acqScans; probeNear(u.x.toFloat(), u.z.toFloat(), ar, enemies, true));
-        forEachNear(u.x.toFloat(), u.z.toFloat(), ar, [&](int idx) {
-            const Unit& e = units_[size_t(idx)];
-            if (!e.alive() || e.embarked() || isNeutralPlayer(e.player) || allied(e.player, u.player) || !e.type) return;
-            if (e.underConstruction && !takesSites) return;
-            float dx = (e.x - u.x).toFloat(), dz = (e.z - u.z).toFloat();
-            float d = dx * dx + dz * dz;
-            const float rank = e.underConstruction ? d * 10.0f : d;
-            // A scatter-firing unit still only considers what is in RANGE (retail
-            // gathers by radius the same way), but inside that set it no longer
-            // prefers the nearest -- so the early-out on distance is skipped.
-            if (!scatter && rank >= bestD) return;
-            if (d >= ar * ar) return;
-            float hx = (e.x - u.homeX).toFloat(), hz = (e.z - u.homeZ).toFloat();
-            if (hx * hx + hz * hz > leash2) return;   // outside the leash
-            // Range rejects most candidates. Damage/category lookup is pure,
-            // so defer it until these cheap geometric checks have passed.
-            if (!canTarget(e)) return;
-            if (shotBlockedHere(u,e)) return;   // written off from this spot (noteShotImpact)
-            // A unit that may not leave its post (tickCombat's !mayChase) drops
-            // an auto target out of its reach at once; never pick one up, or it
-            // is acquired and dropped again on every acquisition turn, and each
-            // acquisition (setSlotsManual) wipes the fire-at-will sweep's slot
-            // targets. The reach is tickCombat's own (combatReach): the arc for
-            // a ballistic weapon, else the selected weapon's range (the longest
-            // when all fire), centre to centre for a structure too. Melee keeps
-            // the old reach.
-            // A ground mission's attack response (chases: not an auto target)
-            // may chase, as tickCombat's mayChase says, so it is not held to it.
-            if (!(u.type->canMove && (u.moveState != 0 || chases))) {
-                const CombatReach cr=combatReach(u,e,std::sqrt(d));
-                if (cr.weapon && !cr.weapon->melee && !cr.in) return;
-            }
-            if (approachNeedsClearLine(u,e) && !combatLineOfSight(u,e))
-                return;                         // no clear shot: don't acquire it
-            if (scatter) {
-                // Retail's scorer, with the flag's substitution in place: n is
-                // INT_MAX/damage instead of dist^2/damage, and the winner is the
-                // lowest of rand(n)/2 + rand(n). Dividing by damage keeps the
-                // draw biased toward whatever this weapon hits hardest, which is
-                // the half of the original scoring the flag does NOT remove.
-                float dmg = 0;
-                for (const auto& wp : u.type->weapons)
-                    if (!(wp.noAir && e.flightGroundMode==2))
-                        dmg = std::max(dmg, wp.damageVs(e.type));
-                if (dmg <= 0) return;
-                uint32_t n = uint32_t(float(0x7FFFFFFF) / dmg);
-                const auto firstRoll = fireRand(n);
-                const auto secondRoll = fireRand(n);
-                float score = float(firstRoll) / 2.0f + float(secondRoll);
-                if (e.underConstruction) score *= 10.0f;
-                if (score >= bestScore) return;
-                bestScore = score; best = e.id;
-                return;
-            }
-            bestD = rank; best = e.id;
-        },enemies);
-        return best;
-    }
-    return false;
-}
-
-bool World::acquireTarget(Unit& u,bool missionPoll) {
-    const int target=findTarget(u,missionPoll);
-    if (!target) return false;
-    cancelPath(u); u.routeStamp=-1;
-    // The attack it starts owns the weapons (Attack_* calls 519b70(3)).
-    setSlotsManual(u,kSlotsAttack);
-    // An idle flyer's attack goes in ahead of its default mission.
-    const bool idleFlyer=u.orders.empty() && u.type->canFly && !u.type->isStructure();
-    u.orders.insert(u.orders.begin(),{Fixed(),Fixed(),target});
-    u.orders.front().autoTarget=true; u.orders.front().goal=true;
-    u.orders.front().aheadOfDefault=idleFlyer;
-    noteOrders(u.id);
-    return true;
-}
-
 // ---------------------------------------------------------------------------
 // Retail's weapon-slot layer: auto/manual slots, the fire-at-will sweep
 // (icd 40f330 + 40f2e0 + 412620), the auto-slot weapon update (52ae90 ->
@@ -6796,7 +6600,7 @@ bool World::slotInRange(const Unit& u,const Unit& t,int slot) const {
     return retailCentreDist2(u,t)<=r*r;
 }
 
-// Engine deviation shared with findTarget and the order-driven fire test: a
+// Engine deviation shared with the scans (412620) and the order-driven fire test: a
 // ranged ground weapon whose shot flies the line (Weapon::needsClearLine: not
 // a plain Ballistic shell) needs a clear 2D line to its target (retail has no
 // such test; without it a unit would empty its auto slots into a wall). Part
@@ -7561,8 +7365,8 @@ void World::tickSlotWeapons(Unit& u) {
 
 // 409a50 part (b): a unit that returns fire hands the attacker to every auto
 // slot that reaches it, unless the slot's current target is still a good
-// one. No RNG. The idle retaliation mission (part a, 4d7de0) is not ported;
-// findTarget and the ground-response path cover most of it.
+// one. No RNG. Part (a), the retaliation mission (4d7de0), is
+// retailHitResponse's, which calls this when it issues none.
 void World::slotHitResponse(Unit& victim,const Unit& attacker) {
     if (!victim.alive() || victim.hp<=Fixed() || !victim.type || victim.type->weapons.empty() ||
         victim.fireState==0 || victim.incapacitated() || isNeutralPlayer(victim.player) ||
@@ -7787,7 +7591,11 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     if (u.type->onOffable && !u.active) return;   // explicitly powered down
     if (stepOutFront(u)) { fireBehindStepOut(u); return; }
 
-    if (!u.standbyActive && !u.guardNoMoveActive) acquireTarget(u, false);
+    // No scan here: retail has no per-tick one. Every automatic pick comes
+    // from a mission's scan (4d8370: Standby, Standby_Wander, VTOL_Standby,
+    // Patrol, a Move's response, the air missions' retargets) or the
+    // fire-at-will sweep (40f330); a guard answers its ward's attacker and
+    // a structure fires through the sweep alone.
     const int activeTarget=!u.orders.empty() && !u.orders.front().guard ? u.orders.front().targetId : 0;
     if(u.scriptAimTarget && u.scriptAimTarget!=activeTarget)clearScriptWeaponTarget(u);
     if (!u.orders.empty() && u.orders.front().seekAttack) {
@@ -7948,8 +7756,7 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     //     AA/ground turret really does work both barrels at once.
     // (`fireatwillrandom` is unrelated to this -- it scatters auto-acquired TARGET
     // choice; see UnitType::fireAtWillRandom.)
-    // The reach it fights at (combatReach, which findTarget shares so a unit
-    // that may not chase never acquires what is dropped below): the selected
+    // The reach it fights at (combatReach): the selected
     // weapon's range for a switcher, the longest when they all fire, padded for
     // a structure target only for a melee weapon (Weapon::centreReach); the
     // arc for a ballistic weapon.
@@ -8020,8 +7827,9 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     // One that may not chase and has no clear line from here for the weapon
     // it fights with would hold an AUTO target for ever without a shot (a
     // tower behind a wall that went up; Hold Position behind a building), and
-    // nothing else would get shot at: it drops it, and findTarget, which
-    // applies the same test from the same spot, does not pick it again. An
+    // nothing else would get shot at: it drops it, and the scans, which
+    // apply the same test from the same spot (slotClearShot), do not pick it
+    // again. An
     // explicitly ordered attack is kept: the order says which target.
     if (!mayChase && inReach && approachNeedsLine && !los && u.orders.front().autoTarget) {
         if(u.scriptAimTarget)clearScriptWeaponTarget(u);
@@ -8035,7 +7843,7 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     // walks to a spot with a clear shot. So does a Hold Position unit whose
     // auto target interrupted a movement order (an attack-move, a patrol, a
     // move queued behind it): it is on its way anyway. If no spot is left in
-    // reach it drops the target and goes on with that movement (findTarget
+    // reach it drops the target and goes on with that movement (the scans
     // will not pick the target again from this spot). Hold Position with
     // nothing to go on with stays and fires on, as retail.
     if (!airRun && !hovering && sel && !sel->melee && inReach && u.type->canMove &&
@@ -8052,7 +7860,7 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     }
     // A unit that may not move (a building, Hold Position on an auto target)
     // whose aimed shell has no arc from here (noteNoArc wrote the target
-    // off) drops it; findTarget and the sweep do not pick it up again from
+    // off) drops it; the scans and the sweep do not pick it up again from
     // this spot.
     if (!mayChase && shotBlockedHere(u,*target) && arcShort()) {
         if(u.scriptAimTarget)clearScriptWeaponTarget(u);
@@ -17833,11 +17641,9 @@ void World::tick(float dt) {
     }
     std::erase_if(projectiles_, [](const Projectile& p) { return p.life <= 0; });
 
-    // The spatial hash for this tick (combat acquire + separation), and who is
-    // parked where: units are solid (see sim.h). Its walk also counts the live
-    // units for acqStride_ below.
-    const size_t unitsBeforeGates = units_.size();
-    uint32_t live = rebuildGridAndOccupancy();
+    // The spatial hash for this tick (the scans + separation), and who is
+    // parked where: units are solid (see sim.h).
+    rebuildGridAndOccupancy();
     tickAutomaticGates();
 
     // The periodic re-anchor sweep that lived here (every unit with a route,
@@ -17848,41 +17654,6 @@ void World::tick(float dt) {
     // re-anchoring IS the ladder: the plain branch chains a long haul route by
     // route, the traffic branches pace crowd re-asks, and a failed route with
     // no traffic evidence rests.
-    // Auto-acquire re-scan period, widened with the crowd: target acquisition is the
-    // dominant sim cost in a huge battle (each idle armed unit scans its neighbourhood
-    // every acqStride_ ticks), so as unit counts climb we rescan LESS often -- a 0.5s
-    // re-acquire delay is imperceptible in a 5000-unit melee but roughly halves the
-    // acquisition cost there. Deterministic: derived from the live-unit count, which is
-    // identical on every lockstep peer.
-    {
-        // The grid walk above counted them. Only tickAutomaticGates ran since:
-        // a unit's type is set only by spawn, and its scripts (Activate and
-        // Deactivate) can neither kill nor retire a unit -- alive() changes in
-        // the unit loop's death sweep and in the construction, reclaim and
-        // cancel paths, none reachable from a script. So the count still holds
-        // unless something was spawned.
-        auto countLive = [&] {
-            uint32_t n = 0;
-            TAK_PASS();
-            for (const auto& u : units_) if (u.alive() && u.type) ++n;
-            return n;
-        };
-        if (units_.size() != unitsBeforeGates) live = countLive();
-#ifndef NDEBUG
-        if (verifyLists() && live != countLive()) {
-            std::fprintf(stderr, "TAK_VERIFY_LISTS tick %u: live count %u differs from a full count %u\n",
-                         tickCounter_, live, countLive());
-            std::abort();
-        }
-#endif
-        acqStride_ = std::clamp<uint32_t>(4 + live / 700, 4, 16);
-        // (Goal quantization used to coarsen with the crowd here as well -- 2x2 cell
-        // blocks up to 8x8 -- so that fewer distinct goal blocks meant fewer full-map
-        // flow-field builds per tick, which was the dominant cost at 10k+ units. Both
-        // the quantization and the flow fields are gone; only acqStride_ above
-        // survives. Deterministic: it keys off the live count.)
-    }
-
 
     // Formations (Unit::squad < 0): each tick, compute the group's centre + slowest
     // member speed, then walk idle stragglers back toward the centre so they congregate.
@@ -19064,21 +18835,20 @@ void World::tick(float dt) {
         std::fprintf(stderr, "SIMSTATS tick=%u units=%d vm_ticks=%llu vm_skippable=%llu vm_empty=%llu vm_debt_flushes=%llu"
                      " near_scans=%llu near_cells=%llu near_cells_masked=%llu near_blocks_skipped=%llu"
                      " near_cells_block_skippable=%llu near_cells_outside_disk=%llu near_cells_tested=%llu"
-                     " near_cells_tested_outside_disk=%llu acq_scans=%llu mission_scans=%llu los_calls=%llu"
+                     " near_cells_tested_outside_disk=%llu mission_scans=%llu los_calls=%llu"
                      " refresh_rects=%llu refresh_grade_evals=%llu refresh_raw_grades=%llu refresh_cells_rated=%llu compact_moved=%llu passes=%llu"
-                     " acq_gate_walks=%llu acq_gate_walks_before=%llu body_rects=%llu body_rects_heap=%llu"
+                     " body_rects=%llu body_rects_heap=%llu"
                      "%s\n",
                      tickCounter_, alive, (unsigned long long)c.vmTicks, (unsigned long long)c.vmSkippable,
                      (unsigned long long)c.vmEmpty, (unsigned long long)c.vmDebtFlushes, (unsigned long long)c.nearScans,
                      (unsigned long long)c.nearCells, (unsigned long long)c.nearCellsMasked,
                      (unsigned long long)c.nearBlocksSkipped, (unsigned long long)c.nearCellsBlockSkippable,
                      (unsigned long long)c.nearCellsOutsideDisk, (unsigned long long)c.nearCellsTested,
-                     (unsigned long long)c.nearCellsTestedOutsideDisk, (unsigned long long)c.acqScans,
+                     (unsigned long long)c.nearCellsTestedOutsideDisk,
                      (unsigned long long)c.missionScans, (unsigned long long)c.losCalls, (unsigned long long)c.refreshRects,
                      (unsigned long long)c.refreshGradeEvals, (unsigned long long)c.refreshRawGrades,
                      (unsigned long long)c.refreshCellsRated,
                      (unsigned long long)c.compactMoved, (unsigned long long)c.passes,
-                     (unsigned long long)c.acqGateWalks, (unsigned long long)c.acqGateWalksBefore,
                      (unsigned long long)c.bodyRects, (unsigned long long)c.bodyRectsHeap,
                      probe::allocFields().c_str());
         probe::tl = {};   // work between ticks (commands, the state hash) counts toward the next line

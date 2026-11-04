@@ -9,10 +9,11 @@
 //                   to an enemy its player sees inside its scanning slot's
 //                   reach, engages it within 60 ticks: an attack order on it
 //                   (a mission's pick), a slot target on it (the sweep 40f330)
-//                   or a hit on it. Written against the World as it stands
-//                   before the stride scan (tickCombat's acquireTarget) is
-//                   removed, so that removal cannot leave a class of idle
-//                   unit deaf. It also prints the audit: each type's FBI
+//                   or a hit on it. Written before the stride scan
+//                   (tickCombat's acquireTarget) was removed, so that removal
+//                   could not leave a class of idle unit deaf; since then the
+//                   missions and the sweep alone engage. It also prints the
+//                   audit: each type's FBI
 //                   default mission, the World host that runs it, and how the
 //                   unit engaged.
 //
@@ -172,8 +173,8 @@ void idleCoverage(const sim::TypeRegistry& reg) {
     const sim::UnitType* spare = reg.find("araarch");
     if (foes.size() != 3 || !spare) { check(false, "shipped araarch, tararch and aracan load"); return; }
     // Types the World leaves without an engagement today, each with its
-    // reason. Empty while the stride scan stands; a type the mission hosts
-    // miss once it goes must be fixed there, not listed here.
+    // reason. Empty: a type the mission hosts miss must be fixed there, not
+    // listed here.
     const std::map<std::string, std::string> knownGaps = {};
     std::map<std::string, int> byHost;
     int armed = 0, engaged = 0, skipped = 0;

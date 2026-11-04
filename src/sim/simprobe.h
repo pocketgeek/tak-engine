@@ -9,16 +9,15 @@
 //                   to wake by itself, and skipped-tick debts paid by a touch from
 //                   outside the VM's own tick; World::UnitScript),
 //                   near_scans / near_cells / near_cells_masked / near_blocks_skipped /
-//                   near_cells_block_skippable / near_cells_outside_disk / acq_scans /
-//                   los_calls (forEachNear and findTarget, for A2),
+//                   near_cells_block_skippable / near_cells_outside_disk /
+//                   los_calls (forEachNear and combatLineOfSight, for A2),
 //                   near_cells_tested (cells forEachNear actually tests once A2b's block
 //                   skip has run; near_cells stays the plain square scan's count),
-//                   near_cells_tested_outside_disk (findTarget cells A2b leaves to test
+//                   near_cells_tested_outside_disk (disk scans' cells A2b leaves to test
 //                   whose box is wholly outside the search radius + 2 px: what A2c could
-//                   still remove),
-//                   acq_gate_walks / acq_gate_walks_before (findTarget's order-queue walk,
-//                   hasQueuedWork: how many it makes, and how many the original gate
-//                   order -- that walk first -- would have made; A2a),
+//                   still remove; the disk scan was findTarget's, removed with the
+//                   stride scan, so these two stay 0 until a disk caller returns),
+//                   mission_scans (retailMissionScan calls: 4d8370),
 //                   body_rects / body_rects_heap (searchBodyRect queries, and those too
 //                   large for BodyCells' inline buffer; A5),
 //                   refresh_rects / refresh_grade_evals / refresh_raw_grades (A3: search-plane
@@ -83,10 +82,10 @@ inline const bool kPmu = envOn("TAK_PMU");
 struct Counters {
     uint64_t vmTicks = 0, vmSkippable = 0, vmEmpty = 0, vmDebtFlushes = 0;
     uint64_t nearScans = 0, nearCells = 0, nearCellsMasked = 0, nearBlocksSkipped = 0;
-    uint64_t nearCellsBlockSkippable = 0, nearCellsOutsideDisk = 0, acqScans = 0, losCalls = 0;
+    uint64_t nearCellsBlockSkippable = 0, nearCellsOutsideDisk = 0, losCalls = 0;
     uint64_t nearCellsTested = 0, nearCellsTestedOutsideDisk = 0;
     uint64_t refreshRects = 0, refreshGradeEvals = 0, refreshRawGrades = 0, refreshCellsRated = 0;
-    uint64_t acqGateWalks = 0, acqGateWalksBefore = 0, bodyRects = 0, bodyRectsHeap = 0;
+    uint64_t bodyRects = 0, bodyRectsHeap = 0;
     uint64_t compactMoved = 0, passes = 0;
     uint64_t missionScans = 0;   // retailMissionScan calls (4d8370)
 };

@@ -707,7 +707,7 @@ struct ScriptedOrder {
 // after the struct: a new field must say which cache line it belongs on.
 //  - Line 0 (bytes 0-63) holds everything the per-tick order predicates read:
 //    groundMissionOrder's `plain`, currentLeg, hasQueuedWork/hasQueuedBuild,
-//    tickCombat's and findTarget's front-order tests. A queue scan then touches
+//    tickCombat's front-order tests. A queue scan then touches
 //    one line per Order. Add a field here only if such a predicate reads it.
 //  - Line 1 (64-127): the per-order mission state the movers read once they have
 //    the order (controller, the presence of park/buildRectangle/flightGoal,
@@ -2798,7 +2798,7 @@ public:
     void endOrder() { activeOrder_.reset(); }
     // A unit's orders changed (a leg gained or retired, a mission step, its
     // death): Legion drops the settled-arrival and parting records the unit
-    // no longer qualifies for. The order helpers, dropLeg, acquireTarget, the
+    // no longer qualifies for. The order helpers, dropLeg, retailIssueAutoAttack, the
     // ground/flight/construction mission dispatchers and the death edge call
     // it. Touches Legion state only (a no-op without Legion).
     void noteOrders(int unitId);
@@ -3581,16 +3581,12 @@ private:
         return f.flightGroundMode==1 || (f.landing && f.landing->mission.stage==3);
     }
     std::pair<int,int> cellHeightRange(size_t cell) const;
-    bool acquireTarget(Unit& u, bool missionPoll);
     // A fight-move leg: attackMove, and off a patrol Move response mode -1
     // with the leg's point as its goal (retail's MoveFight order, 5214b0).
     static void markFightLeg(Order& o);
     bool combatLineOfSight(const Unit& from, const Unit& to) const;
     bool canCaptureTarget(int player, const Unit& target) const;
     bool canAttackTarget(const Unit& from, const Unit& target) const;
-    // chases: the attack it installs is not an auto target (tickCombat's
-    // mayChase), so the hold-post reach filter does not apply.
-    int findTarget(Unit& u, bool missionPoll, bool groundResponse = false, bool chases = false);
     // --- retail weapon-slot layer (fire-at-will sweep, icd 40f330) ----------
     void setSlotsAuto(Unit& u);                    // 519b10(3)
     void setSlotsManual(Unit& u,uint8_t cause);    // 519b70(3)
@@ -4043,8 +4039,6 @@ private:
     std::vector<BenchStage> benchPlan_;   // benchmark staged spawns (executed in tick)
     size_t benchCursor_ = 0;              // next unexecuted stage
     uint32_t benchEndTick_ = 0;           // 0 = not a benchmark run
-    uint32_t acqStride_ = 4;     // auto-acquire re-scan period, widened with crowd size
-                                 // (deterministic: derived from the live-unit count)
     PathService paths_;          // retail's request queue + budget scheduler
     // Per-player entity pools for live matches (5121d8 placement, retirement
     // frees). Restored retail fixtures use retailEntityPools_ instead.

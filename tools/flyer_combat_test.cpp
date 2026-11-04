@@ -253,6 +253,15 @@ int main(int argc,char** argv) {
                 check(!fired,"automatic attack respects the authored maneuver leash");
                 continue;
             }
+            // A fight-move's pick is the move's own scan (4d8370), which runs
+            // the picker on the scanning slot alone (519ac0: a switcher's
+            // selected one): the Crusades Angel's Soul Stealer (slot 0) does
+            // nothing to Undead, so it leaves the zombie, as retail's would.
+            // The stride scan it used to rely on weighed every weapon.
+            if (order==1 && !type->weapons.empty() && type->weapons[0].damageVs(&victim)<=0) {
+                check(!attacked,"a fight-move leaves a target its scanning slot cannot hurt");
+                continue;
+            }
             check(fired,"landed flyer can acquire, Move Fight, and directly attack");
         }
         // Range alone is not the hover attack destination. Keep targets alive so
