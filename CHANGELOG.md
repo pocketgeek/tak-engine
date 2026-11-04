@@ -40,14 +40,15 @@ their validation reports; both live in [`docs/`](docs/).
   step aside while a new unit is leaving, and one on the factory's pad steps off it, so
   they no longer stop the factory: one idle unit on the pad used to stop it before its
   first unit, and a crowd at a Creon Academy's door let it finish one of six. Your
-  guards step aside too, keep their Guard order and go back to guarding afterwards,
-  once for each new unit (a dozen guards at a Legion Academy's door used to let none of
-  six out); a guard that is fighting stays where it is. Units with other orders of their
-  own and your allies' units stay put, as in the original game, which moves no idle
-  unit. When a factory cannot start its next unit, units standing where that unit
-  would appear, just outside the factory's pad, step aside as well. A factory's own new
-  units, parked round it, now move again
-  only when they stand on its pad or hold up the next one out; at a Navy Yard too.
+  guards step aside for the factory's new units too, at land factories and at a Navy
+  Yard, keep their Guard order and go back to guarding afterwards, once for each new
+  unit (a dozen guards at a Legion Academy's door used to let none of six out); a guard
+  that is fighting stays where it is. Units with other orders of their own and your
+  allies' units stay put, as in the original game, which moves no idle unit. When a
+  factory cannot start its next unit, units standing where that unit would appear,
+  just outside the factory's pad, step aside as well. A factory's own new units, parked
+  round it, now move again only when they stand on its pad or hold up the next one out;
+  at a Navy Yard too.
   A factory whose rally point is on its own pad no longer stalls: its new unit steps
   off the pad. A unit guarding or building beside its own factory moves nobody.
 - **Reclaimed trees and rocks fade out.** As in the original game, a reclaimed tree or

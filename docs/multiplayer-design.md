@@ -1223,7 +1223,17 @@ out (its PARK, its rally's plain move, or still on the pad), off the pad while i
 site is refused, and, under the Retail navigator, out of the cells round an output held
 up on its PARK; the factory's own parked outputs move only off the pad or off an output
 they hold up (`Unit::builtBy`, set once at completion from hashed state, not hashed
-itself; docs/retail-engine.md "A land factory's door"). An idle flyer on Hold Position
+itself; docs/retail-engine.md "A land factory's door"). At land factories and the Navy
+Yard the owner's guards step aside too, unless fighting (`World::doorGuard`: the guard is
+the current leg, its ward lives, no ward alarm to answer, no weapon slot on a target):
+the move goes ahead of the guard order, which resumes when it ends, and a guard steps
+aside once per factory event, keyed on the factory's own `Unit::doorSerial` (the next
+even number per finished output, odd for a refusal episode of its next site) and
+remembered on the guard as `doorYieldFactory`/`doorYieldSerial` (cleared by a fresh
+guard order); all three are hashed when set. A refused site's own footprint, which can
+lie just outside the pad, is cleared with the pad (`Unit::refusedSiteX/Z`, set at each
+refusal from hashed state and read only while it lasts, not hashed). A factory whose
+rally point is on its own pad no longer stalls: its output steps off the pad. An idle flyer on Hold Position
 takes no automatic attack (`World::acquireTarget` returns first, so it also makes no
 `findTarget` draws), as retail's VTOL standby refuses it at 4d7de0; it fires from its
 post through the fire-at-will sweep. A sprite feature destroyed by damage plays its

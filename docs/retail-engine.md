@@ -4159,11 +4159,18 @@ unit in the area each time the next one left: 87 re-orders of parked outputs ove
 `navyyard_exit_test`'s 36 runs and 127 over `landdoor_exit_test`'s 64; now 2 and
 26. Owner only, allies
 included: nothing in the sim orders another player's units, as `clearBuildSite` and
-`clearProductionRoom` move only the builder's own. Units with any order, guards,
+`clearProductionRoom` move only the builder's own. Units with any other order,
 units with production of their own (a Zhon builder), flyers and other players'
 units stay; a Zhon producer itself is mobile and keeps `clearProductionRoom`. A
-crowd of guards at the door still holds a factory (Legion: the Academy builds none of
-six); they keep their guard. With the change the crowd costs the factory at most 13%
+crowd of guards at the door held a factory (Legion: the Academy built none of six,
+its guards standing on the refused site just outside the pad), so by the owner's
+decision the owner's guards now step aside too, at land factories and the yard,
+unless fighting (`World::doorGuard`): the move goes ahead of the guard, which
+resumes after it, once per factory event (`Unit::doorSerial`: next even number per
+finished output, odd per refusal episode; the guard keeps the factory and serial it
+stepped aside for, so a key earned at one factory never skips it at another), and a
+refused site's own footprint is cleared with the pad (`Unit::refusedSiteX/Z`). With
+guards the Legion Academy lets all six out. With the change the crowd costs the factory at most 13%
 of its clear-door build time and the unit on the pad at most 14% (six outputs at four
 times the worker time, 576-1,306 ticks clear-door); medians to clear the factory with
 no crowd, Retail / Legion, small then large output: Barracks 57/61 and 92/124, Keep
