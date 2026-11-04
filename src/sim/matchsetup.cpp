@@ -116,7 +116,7 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
     // Retail's queue modifiers (net/lockstep.h kQueueFront, kQueueToggle): a
     // player's Shift/Ctrl order on a queued one of its kind takes it back, and
     // Ctrl puts the order at the head of the queue -- for a producer's rally
-    // verbs, of its rally list. A structure's own list is never interrupted.
+    // verbs, of its rally list; for everyone else, a tower included, of its own.
     {
         using tak::net::kQueueFront; using tak::net::kQueuePlace; using tak::net::kQueueToggle;
         const bool front = (c.queue & kQueuePlace) == kQueueFront;
@@ -149,10 +149,32 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
                 }
                 if (world.removeQueuedMatch(c.unitId, rally, m)) return;
             }
-            if (front && (rally || !producer->type->isStructure())) {
+            // A Load is the passenger's and the carrier's (World::loadInto queues
+            // the carrier's pickup), so Ctrl puts it at the head of both lists.
+            const auto* carrier = c.kind == Cmd::Load ? world.unit(c.targetId) : nullptr;
+            const bool idle = (rally ? producer->rally.empty() : producer->orders.empty()) &&
+                              (!carrier || carrier->orders.empty());
+            // Nothing can come ahead of a front unload to fill the hold: refused,
+            // as unloadAt refuses a plain one.
+            if (front && c.kind == Cmd::Unload && producer->cargo.empty()) return;
+            if (front && !idle) {
                 tak::net::Command append = c;
                 append.queue = tak::net::kQueueAppend;
-                world.insertOrderFront(c.unitId, rally, [&] { applyCommand(world, reg, append); });
+                const auto issue = [&] { applyCommand(world, reg, append); };
+                if (carrier) {
+                    const int passenger = c.unitId;
+                    world.insertOrderFront(c.targetId, false,
+                                           [&] { world.insertOrderFront(passenger, false, issue); });
+                } else
+                    world.insertOrderFront(c.unitId, rally, issue);
+                return;
+            }
+            // At the head of an empty list is the plain order, given as one (a
+            // Patrol then gets its two-leg loop, not an open leg).
+            if (front) {
+                tak::net::Command plain = c;
+                plain.queue = tak::net::kQueueReplace;
+                applyCommand(world, reg, plain);
                 return;
             }
         }

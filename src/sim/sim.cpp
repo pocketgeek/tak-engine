@@ -1997,7 +1997,9 @@ void World::insertOrderFront(int unitId, bool rally, const std::function<void()>
         o.guardOrbitAngle = 0;
     }
     cancelPath(*u);
-    if (!u->repeatType) cancelBuilds(unitId);   // the running job stops (the queue is empty)
+    // The running job stops (the queue is empty); a structure's production is
+    // not an order and goes on.
+    if (!u->repeatType && !u->type->isStructure()) cancelBuilds(unitId);
     issue();
     if (site)
         if (const Unit* s = unit(site); s && s->alive() && s->underConstruction) assist(unitId, site, true);

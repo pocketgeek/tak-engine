@@ -41,7 +41,7 @@ constexpr uint8_t kShift = net::kQueueAppend | net::kQueueToggle;
 constexpr uint8_t kCtrl = net::kQueueFront | net::kQueueToggle;
 
 struct Types {
-    UnitType sol, gun, builder, factory, conjurer, hut, foe;
+    UnitType sol, gun, builder, factory, conjurer, hut, foe, tower, boat, rider;
     Types() {
         sol.id = sol.name = "sol";
         sol.maxVel = Fixed::fromInt(2); sol.turnRate = sol.turnInPlaceRate = 10000;
@@ -67,6 +67,13 @@ struct Types {
         hut.buildTime = 3000; hut.buildCost = 10;
 
         foe = sol; foe.id = foe.name = "foe"; foe.maxVel = {}; foe.canMove = false; foe.maxHp = 100000;
+
+        tower = gun; tower.id = tower.name = "tower"; tower.maxVel = {}; tower.canMove = false;
+        tower.canPatrol = tower.canGuard = false; tower.weapon.range = 600; tower.weapons = {tower.weapon};
+
+        boat = sol; boat.id = boat.name = "boat"; boat.canTransport = true; boat.transportCap = 4;
+        boat.transportSizeCap = 16; boat.maxTransportSize = 4; boat.transportDist = 150;
+        rider = sol; rider.id = rider.name = "rider"; rider.transportSize = 1; rider.transportLandEligible = true; rider.modelTop = 40 << 16;
     }
 };
 
@@ -198,6 +205,76 @@ void attackAndGuard() {
     check(!o.empty() && o.front().goal && o.front().targetId == e1 && World::queuedKind(o.front()) == World::QueuedKind::Attack,
           "Ctrl Attack goes ahead of the running move");
     check(goals(o).size() == 3 && o.back().targetId == e2, "...and the move and the queued attack stay behind it");
+}
+
+// A tower is no producer: Ctrl puts its Attack at the head of its own list
+// (it was appended behind the target it was on).
+void towerFront() {
+    Types t; Rig r;
+    const int tw = r.w.spawn(&t.tower, 1000, 1000, 0, 0);
+    const int e1 = r.w.spawn(&t.foe, 1300, 1000, 0, 1), e2 = r.w.spawn(&t.foe, 1000, 1300, 0, 1);
+    r.send(net::Cmd::Attack, tw, 0, 0, 0, e1);
+    r.ticks(10);
+    r.send(net::Cmd::Attack, tw, 0, 0, kCtrl, e2);
+    std::vector<int> targets;
+    for (const auto& o : r.w.unit(tw)->orders) if (o.goal && o.targetId && !o.autoTarget) targets.push_back(o.targetId);
+    check(targets == std::vector<int>{e2, e1}, "tower: Ctrl Attack goes ahead of the target it is on");
+}
+
+// Ctrl pickup: the carrier's pickup goes to the head of the CARRIER's list too
+// (the command names the passenger), not behind its queued orders.
+void transportFront() {
+    Types t; Rig r;
+    const int boat = r.w.spawn(&t.boat, 1000, 1000, 0, 0), p = r.w.spawn(&t.rider, 1100, 1000, 0, 0);
+    r.send(net::Cmd::Move, boat, 1500, 1000, 0);
+    r.send(net::Cmd::Move, boat, 1500, 1500, kShift);
+    r.send(net::Cmd::Move, p, 700, 1000, 0);
+    r.ticks(5);
+    r.send(net::Cmd::Load, p, 0, 0, kCtrl, boat);
+    const auto& bo = r.w.unit(boat)->orders;
+    const auto& po = r.w.unit(p)->orders;
+    check(!bo.empty() && bo.front().transportPickup && bo.front().targetId == p && goals(bo).size() == 3,
+          "Ctrl pickup: the carrier fetches the passenger first, its two moves kept behind");
+    check(!po.empty() && po.front().load && po.front().targetId == boat && goals(po).size() == 2,
+          "Ctrl pickup: the passenger boards first, its move kept behind");
+}
+
+// Ctrl Unload on an empty transport is refused, as a plain one is: nothing can
+// come ahead of it to fill the hold.
+void emptyUnloadFront() {
+    Types t; Rig r;
+    const int boat = r.w.spawn(&t.boat, 1000, 1000, 0, 0);
+    r.send(net::Cmd::Move, boat, 1500, 1000, 0);
+    r.send(net::Cmd::Unload, boat, 1200, 1200, kCtrl);
+    bool unload = false;
+    for (const auto& o : r.w.unit(boat)->orders) unload |= o.unload;
+    check(!unload && goals(r.w.unit(boat)->orders).size() == 1, "Ctrl Unload on an empty transport adds nothing");
+    r.send(net::Cmd::Unload, boat, 1200, 1200, kShift);
+    for (const auto& o : r.w.unit(boat)->orders) unload |= o.unload;
+    check(unload, "...while Shift still queues it (a pickup may come first)");
+}
+
+// Ctrl Patrol on an idle unit and on an idle factory is the plain patrol.
+void frontPatrolIdle() {
+    Types t;
+    {
+        Rig a, b;
+        const int ia = a.w.spawn(&t.sol, 300, 1000, 0, 0), ib = b.w.spawn(&t.sol, 300, 1000, 0, 0);
+        a.send(net::Cmd::Patrol, ia, 900, 900, kCtrl);
+        b.send(net::Cmd::Patrol, ib, 900, 900, 0);
+        check(goals(a.w.unit(ia)->orders) == goals(b.w.unit(ib)->orders) && goals(a.w.unit(ia)->orders).size() == 2,
+              "Ctrl Patrol on an idle unit: the plain two-leg loop");
+        a.ticks(300); b.ticks(300);
+        check(a.w.stateHash() == b.w.stateHash(), "...same state hash as a plain patrol");
+    }
+    {
+        Rig a, b;
+        const int fa = a.w.spawn(&t.factory, 1000, 1000, 0, 0), fb = b.w.spawn(&t.factory, 1000, 1000, 0, 0);
+        a.send(net::Cmd::Patrol, fa, 1500, 1500, kCtrl);
+        b.send(net::Cmd::Patrol, fb, 1500, 1500, 0);
+        check(goals(a.w.unit(fa)->rally) == goals(b.w.unit(fb)->rally) && goals(a.w.unit(fa)->rally).size() == 2,
+              "Ctrl Patrol on a factory with no rally: the plain two-step patrol rally");
+    }
 }
 
 // A builder at work on a site, interrupted by Ctrl: the work stops and the
@@ -351,6 +428,10 @@ int main(int argc, char** argv) {
     buildQueue();
     factoryRally();
     conjurerRally();
+    towerFront();
+    transportFront();
+    emptyUnloadFront();
+    frontPatrolIdle();
     determinism();
     std::printf("%s (%d failures)\n", failures ? "FAILED" : "ALL PASS", failures);
     return failures ? 1 : 0;
