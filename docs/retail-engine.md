@@ -6500,8 +6500,16 @@ Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
   unit-target mission reads either.
 - I: the group check `51d1e0(unit,1,4)` and its Move_Ground_Formation are not
   ported (as in AirToGround).
-- I: a Guided shot at a point flies without homing (its update steers only at
-  a live target).
+- E, as retail (`tools/re/probe_guided_projectile.py`, 2026-11-04): a Guided
+  shot at a point flies straight. `52e030` steers only when `+0x78` holds a
+  target with 0x1000000 (alive) and without 0x1000 (dying); a point shot has
+  none. World passes the shot's own position for a point shot or a dead
+  target, so `retailGuidedTick` makes no turn either. A modelled shot
+  (`+0x93`; only the Tracking Arrow, `araarrow2`, has a model) still rebuilds
+  yaw and pitch from its velocity on every update (`52e23d`), with no target,
+  a dead or dying one, or a zero turn angle; World did so only after a turn
+  until 2026-11-04. The probe checks all four cases against the native
+  routine.
 - Campaign `a X Y` still walks into reach and fights (`mission.cpp`).
 
 `suppress_test` checks it in both pathfinding modes.

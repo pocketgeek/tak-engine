@@ -76,7 +76,6 @@ inline bool retailGuidedTick(RetailGuidedShot& shot,const std::array<int32_t,3>&
     }
     const float currentLength=detail::retailGuidedLength(current);
     const float desiredLength=detail::retailGuidedLength(desired);
-    bool steered=false;
     if(currentLength!=0.0f && desiredLength!=0.0f) {
         const float dot=(current[0]*desired[0]+current[1]*desired[1])+current[2]*desired[2];
         std::array<float,3> axis={current[1]*desired[2]-current[2]*desired[1],
@@ -114,18 +113,20 @@ inline bool retailGuidedTick(RetailGuidedShot& shot,const std::array<int32_t,3>&
                     }
                 }
             }
-            if(updateAngles) {
-                std::array<float,3> velocity{};
-                for(unsigned a=0;a<3;++a)velocity[a]=detail::retailGuidedFloat(shot.velocity[a]);
-                const float length=detail::retailGuidedLength(velocity);
-                shot.angles[0]=0; // 0x52e28f clears roll before the base substep spin.
-                shot.angles[1]=detail::retailGuidedYaw(velocity);
-                shot.angles[2]=detail::retailGuidedPitch(velocity,length);
-            }
-            steered=true;
         }
     }
-    (void)steered;
+    // 0x52e23d: a modelled shot (+0x93) rebuilds yaw/pitch from its velocity
+    // on EVERY update, not only after a turn: with no target, a dead or dying
+    // target, or a zero turn angle the steering above is skipped but the
+    // refresh still runs, so the spin never accumulates on yaw/pitch.
+    if(updateAngles) {
+        std::array<float,3> velocity{};
+        for(unsigned a=0;a<3;++a)velocity[a]=detail::retailGuidedFloat(shot.velocity[a]);
+        const float length=detail::retailGuidedLength(velocity);
+        shot.angles[0]=0; // 0x52e28f clears roll before the base substep spin.
+        shot.angles[1]=detail::retailGuidedYaw(velocity);
+        shot.angles[2]=detail::retailGuidedPitch(velocity,length);
+    }
 
     for(uint32_t step=0;step<substeps;++step) {
         for(unsigned axis=0;axis<3;++axis)shot.angles[axis]=uint16_t(shot.angles[axis]+spin[axis]);

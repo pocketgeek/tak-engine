@@ -189,6 +189,9 @@ their validation reports; both live in [`docs/`](docs/).
   quality, and the original's 11 kHz unit sounds keep their pitch and length with a
   cleaner top end. On 6.1 speakers the surrounds of 5.1 music now play at full level.
   Video streams carry the same 44.1 kHz sound.
+- **A homing shot with a model points along its flight every tick.** It used to do so
+  only on a tick it turned, so a mod's spinning homing shot kept spinning once its
+  target died. As in the original game, the model now faces the way it flies.
 - **Fedora 45 packages.** Fedora 45 now has its own x86-64 and ARM64 RPMs, beside
   Fedora 44's.
 - **Investigated, no change needed:**
