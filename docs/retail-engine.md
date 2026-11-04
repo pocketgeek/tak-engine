@@ -6471,7 +6471,7 @@ a rectangle, int16 a1..a4 (`4d2ae0`), as given, and returns the id (E).
 `RemoveTrigger` (`4d3b22`) frees an armed slot, lowers the count and clears bit
 `1 << id` of `+0xd4` on every live unit; an empty slot does nothing (E). Every
 tick `51d3e0` -> `51de30` -> `[0x62da3c]` slot 7 (`4d43f0`) runs `4d33a0(unit)`
-for every live unit of players 0..9 in slot order (S). `4d33a0` (E) looks only
+for every live unit of players 0..9 in pool order (S). `4d33a0` (E) looks only
 at live (`0x1000000`), not dying (`0x1000`), finished (`+0x108 == 0.0`) units.
 It first fires `UnitCreated(unit id, owner byte +0xfd)` once (bit 31 of
 `+0xd4`), then for regions 0..15 `TriggerHit(id, unit id, owner byte)` once per
@@ -6493,6 +6493,15 @@ and mission 06 test for owner 0. `MissionScript::sweepTriggers` ports
 (`retailTriggerRect` / `retailTriggerCircle`; `mission_orders_test`,
 `tools/re/check_mission_regions.py`). Ours runs the sweep after the god
 script's VM tick, so a handler it starts runs on the next tick (S, ours).
+`51d3e0`'s outer loop is the player rows 0..9 (`bl`, rows of 0x110 at
+`+0x2404`), each walking its own pool `+0x2478..+0x247c` and calling `51de30`
+for every live unit, carried ones too (S); `51de30` makes the call right after
+the unit's own COB tick (`56c870`). So the handlers start owner by owner; ours sorts the sweep by
+owner byte, and within an owner keeps spawn order (retail's pool slot is a
+random free one, `retailAllocateSlot`). A circle with radius 0 is a rectangle
+to `4d2b20` (it tests `+8 != 0`), whose far corner `4d2b00` never writes
+(uninitialised heap); ours keeps it a one-cell circle, and no shipped call
+passes r 0 (S, scan of the 153 constant `SetTrigger` calls).
 `MoveUnitToRadius` and `Unit/AnyUnitPasses{X,Z}` already used retail's cells.
 
 When the parser has pushed a mission it clears the unit's selectable bit 0x20,

@@ -568,13 +568,19 @@ void MissionScript::sweepTriggers(World& w) {
     // fires UnitCreated(unit, owner) once, then TriggerHit(region, unit, owner)
     // once for each armed region 0..15 that holds its footprint-origin cell.
     // Each fires once per unit (latch +0xd4); leaving and coming back does
-    // not fire again. Units aboard a transport skip the regions.
+    // not fire again. Units aboard a transport skip the regions. 51d3e0 walks
+    // the players' pools in owner-byte order, so the handlers start (and run)
+    // owner by owner; within a pool, in spawn order.
     if (!vm_) return;
     const bool created = cob_.scriptIndex("UnitCreated") >= 0, hit = cob_.scriptIndex("TriggerHit") >= 0;
-    for (const auto& u : w.units()) {
-        if (!u.alive() || u.hp <= Fixed() || !u.type || u.underConstruction) continue;
+    std::vector<std::pair<int, const Unit*>> order;
+    order.reserve(w.units().size());
+    for (const auto& u : w.units())
+        if (u.alive() && u.hp > Fixed() && u.type && !u.underConstruction) order.push_back({retailOwner(u.player), &u});
+    std::stable_sort(order.begin(), order.end(), [](const auto& l, const auto& r) { return l.first < r.first; });
+    for (const auto& [owner, unit] : order) {
+        const Unit& u = *unit;
         uint32_t& bits = triggerBits_[u.id];
-        const int owner = retailOwner(u.player);
         if (!(bits & 0x80000000u)) {
             bits |= 0x80000000u;
             getUnitContext_ = u.id;

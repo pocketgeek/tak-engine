@@ -743,6 +743,20 @@ static void regions(Fixture& f) {
     check(armed == 13 && m.command(*w, "SetTrigger", {16, 0, 0, 1, 1}) == 0,
           "16 regions at most (3, 5 and 6 were armed)", std::to_string(armed) + " more armed");
     (void)c;
+
+    // 51d3e0 checks owner 0's units before owner 1's, whatever the spawn
+    // order: slot 0 (owner byte 1) spawns first here, so its hit runs last.
+    auto v = makeWorld();
+    const int first = v->spawn(f.t("soldier"), at(11), at(21), 0.0f, 0);
+    const int second = v->spawn(f.t("soldier"), at(12), at(21), 0.0f, 1);
+    sim::MissionScript order(recorderCob(), tdf::Node{}, f.reg, 0, "order fixture", {-1, 1, 0});
+    order.start(*v);
+    order.command(*v, "SetTrigger", {3, 10, 20, 12, 22});
+    for (int i = 0; i < 2; ++i) order.step(*v, 1.0f / 30.0f);
+    check(order.value("hits") == 2 && order.value("unit") == first && order.value("owner") == 1,
+          "the sweep goes owner by owner: owner 0's hit runs before owner 1's (it went in spawn order)",
+          std::to_string(order.value("hits")) + " hits, last unit " + std::to_string(order.value("unit")) +
+          " (owner-1 unit " + std::to_string(first) + ", owner-0 unit " + std::to_string(second) + ")");
 }
 
 // ---- shipped missions -----------------------------------------------------------------------------
