@@ -30,7 +30,7 @@ namespace tak::client {
 // picking the target up, unitId the passenger.
 enum class ClickOrder : uint8_t {
     None, Move, Attack, AttackMove, Patrol, Assist, Repair, Board, Pickup, Guard,
-    Resurrect, Reclaim, ReclaimArea, Unload,
+    Resurrect, Reclaim, ReclaimArea, Unload, AttackGround,
 };
 
 // The hovered unit (P1, GameView::hoveredUnit), from the local player's side.
@@ -49,6 +49,10 @@ struct ClickUnit {
     bool attacker = false;      // canattack (isCursorAttacker)
     bool airstrike = false;     // its active weapon carries the Airstrike cursor
     bool canHit = false;        // cursorCanAttackEnemy against the hovered unit
+    // Armed ATTACK on ground or a friendly unit: the resolver gives it a fire at
+    // the point (World::suppressRule by its selected slot, a melee one only over
+    // a clearable blocking feature there; Cmd::AttackGround).
+    bool pointFire = false;
     bool canPatrol = false;
     bool canGuard = false;      // the type's canguard bit
     bool flies = false;
@@ -144,21 +148,22 @@ inline CursorId friendlyCursor(ClickOrder o) {
 //    target comes in). A mobile unit that cannot hurt the target gets nothing
 //    -- the per-unit TooFar retail shows for it, the one order cursor that may
 //    come with no command.
-//  - ground or a friendly unit: retail fires at the point (SUPPRESS /
-//    airstrike-at-point, 0x4de65f..0x4de7cc S). Staged (owner C1): until that
-//    is ported, a mobile attacker ATTACK-MOVES to the point and its cursor says
-//    Attack (Airstrike for an airstrike weapon) -- never TooFar, which would
-//    promise a fire-at-point the click does not give. An immobile attacker has
-//    nothing to do there yet: Normal.
+//  - ground or a friendly unit: a fire at the click point, no target unit
+//    (0x4de65f..0x4de7e3 S): SUPPRESS for a ground unit or a tower, AIRSTRIKE /
+//    AIRTOGROUNDHOVER / AIRTOGROUND for a flyer (World::suppress), when
+//    pointFire; nothing otherwise (an anti-air weapon, a melee one off a
+//    clearable blocker). The cursor is attackUnitCursor's. Ours: a rally holder
+//    sets an attack-move rally there.
 inline UnitClick armedAttack(const ClickTarget& t, const ClickUnit& u) {
     if (u.self) return {};
     AttackUnitFacts f;
     f.rallyHolder = u.rallyHolder; f.attacker = u.attacker; f.airstrike = u.airstrike;
-    f.mobile = u.mobile; f.canHit = u.canHit;
+    f.mobile = u.mobile; f.canHit = u.canHit; f.pointFire = u.pointFire;
     const CursorId c = attackUnitCursor(t.kind, f);
     if (t.kind == HoverKind::Enemy)
         return {u.rallyHolder || (u.attacker && (u.canHit || !u.mobile)) ? ClickOrder::Attack : ClickOrder::None, c};
-    return {u.rallyHolder || (u.attacker && u.mobile) ? ClickOrder::AttackMove : ClickOrder::None, c};
+    if (u.rallyHolder) return {ClickOrder::AttackMove, c};
+    return {u.attacker && u.pointFire ? ClickOrder::AttackGround : ClickOrder::None, c};
 }
 
 inline UnitClick armedClick(char cmd, const ClickTarget& t, const ClickUnit& u, const ArmedSelection& sel) {

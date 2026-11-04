@@ -132,15 +132,17 @@ their validation reports; both live in [`docs/`](docs/).
   you: your units now attack an enemy that only an ally's units can see, and computer
   allies act on what you and the rest of the team see. The original game shared sight
   only between human teammates; here computer allies share too.
-- **Fire at a point (sim side).** The simulation now has the original game's fire at
+- **Fire at a point.** The game now has the original game's fire at
   a point (SUPPRESS), as the new Attack Ground command: a ground unit or tower fires
   at the spot itself, a walker steps into range (or out of its minimum range) first
   and fires at will on the way, a tower out of range keeps the order and waits, and
   Shift-queued points take turns one shot each. A melee unit fells a tree or other
   clearable obstacle there; anti-air weapons get no order. A flyer flies attack runs
   over the spot, hovers off it if it has hover attack, or bombs it with a dropped
-  weapon. The click does not send it yet (an armed Attack on the ground still
-  attack-moves).
+  weapon. An armed Attack (A) clicked on the ground or on a friendly unit, in the
+  view or on the minimap, now gives it to each selected unit that can, under an
+  Attack cursor; Shift queues it, Ctrl puts it first, and Shift or Ctrl on a
+  queued point takes it back. Fight-move (F) still attack-moves.
 - **Investigated, no change needed:**
   - A computer's Sea Dragon on Hold Position with an enemy just outside Tsunami's range
     keeps switching weapons and never fires: the original game does exactly the same.

@@ -2099,14 +2099,86 @@
                 check(count(both,archer,tak::net::Cmd::Guard,flyerA)==1 && count(both,flyerB,tak::net::Cmd::Guard,flyerA)==1 &&
                       pendingCmd_==0,"C3 every unit guards the flyer, and G disarms");
             }
-            // C1 staged: armed ATTACK over an own unit attack-moves, under an Attack cursor.
+            // C1: armed ATTACK over an own unit or ground fires at the click point
+            // (Cmd::AttackGround) for each unit the resolver gives it; Attack cursor.
             selection_={archer};pendingCmd_='a';publish();
             {
                 const auto p=at(mason);
                 event(SDL_MOUSEMOTION,0,p.x,p.y);
-                check(desiredCursor(tint)==tak::CursorId::Attack,"C1 armed A over an own unit: Attack, not TooFar");
+                check(desiredCursor(tint)==tak::CursorId::Attack,"C1 armed A over an own unit: Attack");
                 const auto cmds=capture([&] {clickAt(p.x,p.y,SDL_BUTTON_LEFT);});
-                check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::AttackMove,"C1 armed A over an own unit attack-moves");
+                float wx=0,wz=0;pickWorld(p.x,p.y,wx,wz);
+                check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::AttackGround && cmds[0].unitId==archer &&
+                      cmds[0].targetId==0 && std::abs(cmds[0].x-wx)<2 && std::abs(cmds[0].z-wz)<2,
+                      "C1 armed A over an own unit: the archer fires at the click point, not at the unit");
+            }
+            {
+                // Ground with an archer and a swordsman: the archer fires there; the
+                // melee swordsman gets nothing (no clearable blocker at the point).
+                const float gx=float(W)/2+40,gy=float(H)/2+200;
+                float wx=0,wz=0;pickWorld(gx,gy,wx,wz);
+                check(!liveWorld()->clearableBlockerAtPoint(wx,wz),"fixture: bare ground at the point");
+                selection_={archer,sword};pendingCmd_='a';publish();
+                event(SDL_MOUSEMOTION,0,gx,gy);
+                check(desiredCursor(tint)==tak::CursorId::Attack,"C1 armed A on ground, archer + swordsman: Attack");
+                auto cmds=capture([&] {clickAt(gx,gy,SDL_BUTTON_LEFT);});
+                check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::AttackGround && cmds[0].unitId==archer &&
+                      cmds[0].queue==tak::net::kQueueReplace && pendingCmd_==0,
+                      "C1 armed A on ground: only the archer fires at the point, plain replaces, A disarms");
+                selection_={sword};pendingCmd_='a';publish();
+                event(SDL_MOUSEMOTION,0,gx,gy);
+                check(desiredCursor(tint)==tak::CursorId::TooFar,"C1 armed A on bare ground, a swordsman alone: TooFar");
+                cmds=capture([&] {clickAt(gx,gy,SDL_BUTTON_LEFT);});
+                check(cmds.empty(),"C1 armed A on bare ground: the swordsman gets nothing");
+                // Over a clearable blocking feature the swordsman fires (fells) there too.
+                float tx=-1,ty=-1;
+                for (float y=60;y<H-160 && tx<0;y+=6)
+                    for (float x=60;x<W-60 && tx<0;x+=6) {
+                        float fx=0,fz=0;pickWorld(x,y,fx,fz);
+                        if (!hoveredUnitAt(tak::client::PointerArea::World,x,y) && liveWorld()->clearableBlockerAtPoint(fx,fz)) {tx=x;ty=y;}
+                    }
+                if (tx>=0) {
+                    selection_={sword};pendingCmd_='a';publish();
+                    event(SDL_MOUSEMOTION,0,tx,ty);
+                    check(desiredCursor(tint)==tak::CursorId::Attack,"C1 armed A over a clearable blocker, a swordsman: Attack");
+                    cmds=capture([&] {clickAt(tx,ty,SDL_BUTTON_LEFT);});
+                    check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::AttackGround && cmds[0].unitId==sword,
+                          "C1 armed A over a clearable blocker: the swordsman fires at the point");
+                } else std::fprintf(stderr,"clicks: no clearable blocker in view; melee-over-feature row skipped\n");
+                // Shift appends with the toggle; Ctrl goes to the front with it.
+                selection_={archer};pendingCmd_='a';publish();
+                SDL_SetModState(KMOD_LSHIFT);
+                cmds=capture([&] {clickAt(gx,gy,SDL_BUTTON_LEFT);});
+                check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::AttackGround &&
+                      cmds[0].queue==(tak::net::kQueueAppend|tak::net::kQueueToggle) && pendingCmd_=='a',
+                      "C1 Shift armed A on ground: appended, toggling, A stays armed");
+                SDL_SetModState(KMOD_NONE);event(SDL_MOUSEMOTION,0,gx,gy);   // Shift let go: A disarms
+                pendingCmd_='a';SDL_SetModState(KMOD_LCTRL);
+                cmds=capture([&] {clickAt(gx,gy,SDL_BUTTON_LEFT);});
+                check(cmds.size()==1 && cmds[0].queue==(tak::net::kQueueFront|tak::net::kQueueToggle),
+                      "C1 Ctrl armed A on ground: at the front, toggling");
+                SDL_SetModState(KMOD_NONE);
+                // A Legion net game packs the click's run as one explicit order.
+                const tak::sim::UnitType* gunship=nullptr;
+                for (const auto& [id,t]:registry_.types())
+                    if (t.canFly && t.canMove && !t.isBuilder && t.hasPrimaryWeaponBlock &&
+                        tak::sim::World::suppressRule(t,0)==tak::sim::World::SuppressRule::Fire &&
+                        (!gunship || id<gunship->id)) gunship=&t;
+                check(gunship!=nullptr,"fixture: an armed flyer the resolver gives a point attack");
+                const int g1=spawn(gunship->id,cx-200,cz-200,0,localPlayer_),g2=spawn(gunship->id,cx-260,cz-200,0,localPlayer_);
+                selection_={archer,g1,g2};pendingCmd_='a';publish();
+                event(SDL_MOUSEMOTION,0,gx,gy);
+                check(desiredCursor(tint)==tak::CursorId::Attack,"C1 armed A on ground, archer + flyers: Attack");
+                cmds=capture([&] {clickAt(gx,gy,SDL_BUTTON_LEFT);});
+                uint32_t serial=1;
+                const auto packed=tak::net::packClick(cmds,{},serial);
+                check(cmds.size()==3 && count(cmds,g1,tak::net::Cmd::AttackGround)==1 &&
+                      packed.size()==1 && packed[0].kind==tak::net::Cmd::Order &&
+                      packed[0].order->members.size()==3 && packed[0].order->tmpl.kind==tak::net::Cmd::AttackGround,
+                      "C1 armed A on ground with an archer and two flyers: one AttackGround order over all three ("+
+                      gunship->id+")");
+                for (int id:{g1,g2}) writableWorld().destroy(id);
+                pendingCmd_=0;
             }
             // 2.9 the armed ATTACK box: the enemies in it, no clear.
             selection_={archer,mason};pendingCmd_='a';publish();
@@ -2151,6 +2223,11 @@
                 cmds=capture([&] {clickAt(mx,my,SDL_BUTTON_LEFT);});
                 check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::Attack && mapView_.offX()==ox,
                       "2.10 armed A on an enemy dot attacks it");
+                pendingCmd_='a';
+                float gx=0,gz=0;minimapToWorld(r.x+2,r.y+r.h-2,W,H,gx,gz);
+                cmds=capture([&] {clickAt(r.x+2,r.y+r.h-2,SDL_BUTTON_LEFT);});
+                check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::AttackGround && std::abs(cmds[0].x-gx)<2 && std::abs(cmds[0].z-gz)<2 &&
+                      mapView_.offX()==ox,"2.10 / C1 armed A on minimap ground fires at that point");
                 // C2b placement: the mason places a building at a valid minimap point.
                 const tak::sim::UnitType* site=nullptr;
                 for (const auto& id:registry_.buildable(masonType->id))

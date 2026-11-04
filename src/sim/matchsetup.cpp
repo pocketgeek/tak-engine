@@ -117,6 +117,9 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
     // player's Shift/Ctrl order on a queued one of its kind takes it back, and
     // Ctrl puts the order at the head of the queue -- for a producer's rally
     // verbs, of its rally list; for everyone else, a tower included, of its own.
+    // Armed ATTACK at a point: a unit the resolver gives nothing (4de530 kind
+    // 3) neither toggles nor front-inserts, and its work is left alone.
+    if (c.kind == Cmd::AttackGround && (!owns(c.unitId) || !world.suppressAccepts(c.unitId, c.x, c.z))) return;
     {
         using tak::net::kQueueFront; using tak::net::kQueuePlace; using tak::net::kQueueToggle;
         const bool front = (c.queue & kQueuePlace) == kQueueFront;
@@ -125,7 +128,8 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
                                c.kind == Cmd::Attack;
         const bool orderVerb = rallyVerb || c.kind == Cmd::Build || c.kind == Cmd::BuildManaArea ||
             c.kind == Cmd::Assist || c.kind == Cmd::Guard || c.kind == Cmd::Load || c.kind == Cmd::Unload ||
-            c.kind == Cmd::Reclaim || c.kind == Cmd::ReclaimArea || c.kind == Cmd::Resurrect || c.kind == Cmd::Repair;
+            c.kind == Cmd::Reclaim || c.kind == Cmd::ReclaimArea || c.kind == Cmd::Resurrect || c.kind == Cmd::Repair ||
+            c.kind == Cmd::AttackGround;
         if (orderVerb && (front || toggle) && owns(c.unitId) && producer->type) {
             const bool rally = rallyVerb && (producer->repeatType ||
                 (c.kind == Cmd::Attack ? producer->type->producesUnits() : producer->type->isStructure()));
@@ -145,6 +149,7 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
                     case Cmd::Reclaim:    m.kind = World::QueuedKind::Reclaim; break;
                     case Cmd::Repair:     m.kind = World::QueuedKind::Repair; break;
                     case Cmd::Assist:     m.kind = World::QueuedKind::Assist; break;
+                    case Cmd::AttackGround: m.kind = World::QueuedKind::AttackGround; break;
                     default: break;
                 }
                 if (world.removeQueuedMatch(c.unitId, rally, m)) return;
@@ -197,12 +202,10 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
             if (owns(c.unitId)) { redirect(); world.attackMove(c.unitId, c.x, c.z, c.queue); }
             break;
         case Cmd::AttackGround:
-            // A refused point (an anti-air weapon, a melee one off a
-            // clearable blocker, a flyer) leaves the unit's work alone.
-            if (owns(c.unitId) && world.suppressAccepts(c.unitId, c.x, c.z)) {
-                redirect();
-                world.suppress(c.unitId, c.x, c.z, c.queue);
-            }
+            // A refused point (an anti-air weapon, a melee one off a clearable
+            // blocker) returned above, leaving the unit's work alone.
+            redirect();
+            world.suppress(c.unitId, c.x, c.z, c.queue != 0);
             break;
         case Cmd::Patrol:
             // Shift-patrol ADDS a waypoint to the route. patrol() builds a fresh

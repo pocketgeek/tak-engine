@@ -301,6 +301,10 @@ public:
     };
     ClickPlan planClick(char mode, float wx, float wz, const UnitR* hovered, uint8_t queue, bool alt,
                         bool pointTargets);
+    // World::clearableBlockerAtPoint, for a melee unit's armed ATTACK at a point:
+    // read live when the worker is free, else last answer at that point.
+    bool pointBlocker(float wx, float wz);
+    struct PointBlocker { float x = 0, z = 0; uint32_t tick = ~0u; bool v = false; } pointBlocker_;
     void issueClickPlan(const ClickPlan& plan, char mode, uint8_t queue);
     // The selected units of ours an order can go to: alive, finished, not carried.
     std::vector<const UnitR*> ownClickUnits() const;

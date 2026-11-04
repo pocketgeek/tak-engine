@@ -68,6 +68,18 @@ namespace {
         return ids[size_t(ackRng_ >> 8) % ids.size()];
     }
 
+    bool GameView::pointBlocker(float wx, float wz) {
+        PointBlocker& b = pointBlocker_;
+        const uint32_t tick = front().gameTick;
+        const bool same = b.tick != ~0u && b.x == wx && b.z == wz;
+        if (same && b.tick == tick) return b.v;
+        if (const auto live = tryLiveWorld()) {
+            b = {wx, wz, tick, (*live)->clearableBlockerAtPoint(wx, wz)};
+            return b.v;
+        }
+        return same && b.v;
+    }
+
     GameView::ClickPlan GameView::planClick(char mode, float wx, float wz, const UnitR* hovered, uint8_t queue,
                                             bool alt, bool pointTargets) {
         using namespace tak::client;
@@ -112,6 +124,13 @@ namespace {
             f.transport = t.canTransport;
             f.loaded = t.canTransport && !u.cargo.empty();
             if (f.attacker) f.airstrike = unitHasAirstrikeCursor(t, u.weaponSlot);
+            // Armed ATTACK at a point (ground or a friendly unit): the sim's own
+            // resolver rule (World::suppressRule).
+            if (mode == 'a' && f.attacker && target.kind != HoverKind::Enemy) {
+                using Rule = tak::sim::World::SuppressRule;
+                const Rule r = tak::sim::World::suppressRule(t, u.weaponSlot);
+                f.pointFire = r == Rule::Fire || (r == Rule::OverBlocker && pointBlocker(wx, wz));
+            }
             if (hovered && hovered->type) {
                 if (f.attacker && target.kind == HoverKind::Enemy && (mode == 0 || mode == 'a'))
                     f.canHit = cursorCanAttackEnemy(t, u.weaponSlot, u.worldPosition, *hovered->type,
@@ -150,7 +169,7 @@ namespace {
         // One run per order kind, in selection order within it, so a Legion net game
         // packs each kind as one explicit order (net/orderpack.h).
         static constexpr ClickOrder kRuns[] = {
-            ClickOrder::Attack, ClickOrder::Assist, ClickOrder::Repair, ClickOrder::Board, ClickOrder::Pickup,
+            ClickOrder::Attack, ClickOrder::AttackGround, ClickOrder::Assist, ClickOrder::Repair, ClickOrder::Board, ClickOrder::Pickup,
             ClickOrder::Guard, ClickOrder::Resurrect, ClickOrder::Reclaim, ClickOrder::Unload,
             ClickOrder::AttackMove, ClickOrder::Patrol, ClickOrder::Move,
         };
@@ -163,7 +182,8 @@ namespace {
             all.insert(all.end(), ids.begin(), ids.end());
             // A fight-move's AttackMove is a resolved Move_Ground / VTOL_Move /
             // QMove, so it voices that mission's sound, as armed MOVE does.
-            attacked |= kind == ClickOrder::Attack || (kind == ClickOrder::AttackMove && mode != 'f');
+            attacked |= kind == ClickOrder::Attack || kind == ClickOrder::AttackGround ||
+                        (kind == ClickOrder::AttackMove && mode != 'f');
             const auto send = [&](tak::net::Cmd k, int unit, int targetId) {
                 tak::net::Command c;
                 c.kind = k; c.unitId = unit; c.targetId = targetId; c.queue = queue;
@@ -171,6 +191,16 @@ namespace {
             };
             switch (kind) {
                 case ClickOrder::Attack: for (int id : ids) send(tak::net::Cmd::Attack, id, plan.target); break;
+                // At the click point, over ground or a friendly unit alike (4de530
+                // kind 3 takes the pointer's point, not the unit's).
+                case ClickOrder::AttackGround:
+                    for (int id : ids) {
+                        tak::net::Command c;
+                        c.kind = tak::net::Cmd::AttackGround;
+                        c.unitId = id; c.x = plan.wx; c.z = plan.wz; c.queue = queue;
+                        issue(c);
+                    }
+                    break;
                 case ClickOrder::Assist: for (int id : ids) send(tak::net::Cmd::Assist, id, plan.target); break;
                 case ClickOrder::Repair: for (int id : ids) send(tak::net::Cmd::Repair, id, plan.target); break;
                 case ClickOrder::Guard:  for (int id : ids) send(tak::net::Cmd::Guard, id, plan.target); break;

@@ -144,12 +144,17 @@ inline CursorId cursorForHover(const HoverFacts& f) {
 }
 
 // One selected unit under an armed ATTACK (action mode 3, 0x4dd780). Over an
-// enemy, retail's selector exactly. Over ground or a friendly unit retail's click
-// fires at the point (SUPPRESS / airstrike-at-point) and its selector shows Attack
-// (TooFar over a friendly mobile unit). Until that order is ported (owner C1) our
-// click attack-moves a mobile attacker there, so the cursor says Attack (or
-// Airstrike) for it -- never TooFar -- and Normal for an immobile one, which has
-// nothing to do there yet (clickrules.h armedAttack).
+// enemy, retail's selector exactly. Over ground or a friendly unit the click
+// fires at the point (clickrules.h armedAttack), and retail's selector
+// (0x4dd8ac..0x4ddc1b S) shows Airstrike for a `dropped` slot; for a mover,
+// Attack over ground and TooFar over a friendly unit, a melee one Attack only
+// over a clearable blocking feature (TooFar elsewhere); for a structure TooFar
+// over a friendly unit, over ground Attack in reach and outside its minimum
+// range, else TooFar (an anti-air weapon too). Ours, so that the cursor
+// describes the click: a unit given the fire at the point shows Attack (its
+// Airstrike for a `dropped` slot) -- the order is given out of reach and over a
+// friendly unit too -- and an attacker given nothing shows TooFar, where retail
+// shows Attack for an anti-air mover over ground.
 struct AttackUnitFacts {
     bool rallyHolder = false;   // ours: a factory's Attack sends its output
     bool attacker = false;      // canattack, alive, finished, not carried
@@ -158,13 +163,14 @@ struct AttackUnitFacts {
     // The target can be hit: for an enemy, cursorCanAttackEnemy; for a friendly
     // target only an immobile unit's immunity and range tests apply.
     bool canHit = false;
+    bool pointFire = false;     // ground or a friendly unit: the click fires at the point
 };
 
 inline CursorId attackUnitCursor(HoverKind target, const AttackUnitFacts& u) {
     if (u.rallyHolder) return CursorId::Attack;
     if (!u.attacker) return CursorId::Normal;
     if (target != HoverKind::Enemy) {
-        if (!u.mobile) return CursorId::Normal;
+        if (!u.pointFire) return CursorId::TooFar;
         return u.airstrike ? CursorId::Airstrike : CursorId::Attack;
     }
     // Retail shows Airstrike over any enemy; ours only over one the click attacks

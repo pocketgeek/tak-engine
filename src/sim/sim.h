@@ -2952,6 +2952,15 @@ public:
     // (Order::airPoint). Whether an order was given.
     bool suppress(int unitId, float x, float z, bool queue);
     bool suppressAccepts(int unitId, float x, float z) const;
+    // The resolver's rule by the type and the selected slot alone (519ac0: a
+    // switcher's selected slot, else the first), shared with the client's
+    // click (clickrules.h): Fire gives the order anywhere, OverBlocker (a melee
+    // weapon) only where clearableBlockerAtPoint holds.
+    enum class SuppressRule : uint8_t { None, Fire, OverBlocker };
+    static SuppressRule suppressRule(const UnitType& t, int weaponSlot);
+    bool clearableBlockerAtPoint(float x, float z) const {
+        return clearableBlockerAt(Fixed::fromFloat(x), Fixed::fromFloat(z));
+    }
     // Can a unit of `type` at (fx,fz) actually reach goal (gx,gz)? Answered from
     // footprint-aware COMPONENT labelling (one flood fill per grid+footprint, see
     // components()), not from a distance field -- the flow-field version cost ~40ms a
@@ -3047,7 +3056,7 @@ public:
     // toggle; applyCommand reads them from Command::queue). The kind a queued
     // order is matched by, from its own fields (queuedKind).
     enum class QueuedKind : uint8_t { None, Move, AttackMove, Patrol, Attack, Guard, Load, Unload,
-                                      Build, Reclaim, Repair, Assist };
+                                      Build, Reclaim, Repair, Assist, AttackGround };
     struct QueuedMatch {
         QueuedKind kind = QueuedKind::None;
         Fixed x, z;                         // the point kinds' click (Build: the site)

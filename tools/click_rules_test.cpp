@@ -33,6 +33,7 @@ const char* name(ClickOrder o) {
         case ClickOrder::Reclaim: return "Reclaim";
         case ClickOrder::ReclaimArea: return "ReclaimArea";
         case ClickOrder::Unload: return "Unload";
+        case ClickOrder::AttackGround: return "AttackGround";
     }
     return "?";
 }
@@ -56,10 +57,10 @@ void expectAction(SelectAction got, SelectAction want, const std::string& row) {
 
 ClickTarget target(HoverKind k, bool flies = false) { ClickTarget t; t.kind = k; t.flies = flies; return t; }
 
-ClickUnit soldier() { ClickUnit u; u.mobile = true; u.attacker = true; u.canHit = true; u.canGuard = true; u.canPatrol = true; u.friendly = FriendlyOrder::Guard; return u; }
+ClickUnit soldier() { ClickUnit u; u.mobile = true; u.attacker = true; u.canHit = true; u.pointFire = true; u.canGuard = true; u.canPatrol = true; u.friendly = FriendlyOrder::Guard; return u; }
 ClickUnit builder() { ClickUnit u; u.mobile = true; u.canGuard = true; u.canPatrol = true; u.friendly = FriendlyOrder::Guard; return u; }
 ClickUnit scout() { ClickUnit u; u.mobile = true; u.friendly = FriendlyOrder::Move; return u; }   // no weapon, no canguard
-ClickUnit tower() { ClickUnit u; u.attacker = true; return u; }
+ClickUnit tower() { ClickUnit u; u.attacker = true; u.pointFire = true; return u; }
 ClickUnit factory() { ClickUnit u; u.rallyHolder = true; return u; }
 ClickUnit transportUnit() { ClickUnit u; u.mobile = true; u.transport = true; u.canGuard = true; u.friendly = FriendlyOrder::Guard; return u; }
 
@@ -200,24 +201,46 @@ void armedRows() {
     expectCursor(armed('c', HoverKind::None, raiser).cursor, CursorId::Revive, "2.5 a non-reclaimable body: Revive (ours)");
     expectCursor(armed('c', HoverKind::None, soldier()).cursor, CursorId::Normal, "2.5 nothing there: Normal");
 
-    // 2.6 / C1 staged: armed ATTACK over ground or a friendly attack-moves.
+    // 2.6 / C1: armed ATTACK over ground or a friendly fires at the point
+    // (0x4de65f..0x4de7e3), the cursor Attack where the unit acts (ours) and
+    // TooFar where it gets nothing.
     c = armed('a', HoverKind::None, soldier());
-    expect(c.order, ClickOrder::AttackMove, "C1 armed A over ground: attack-move (staged)");
+    expect(c.order, ClickOrder::AttackGround, "C1 armed A over ground: fire at the point");
     expectCursor(c.cursor, CursorId::Attack, "C1 armed A over ground: Attack");
     c = armed('a', HoverKind::Friendly, soldier());
-    expect(c.order, ClickOrder::AttackMove, "C1 armed A over a friendly: attack-move (staged)");
-    expectCursor(c.cursor, CursorId::Attack, "C1 armed A over a friendly: Attack, never TooFar for an attack-move");
+    expect(c.order, ClickOrder::AttackGround, "C1 armed A over a friendly: fire at the point");
+    expectCursor(c.cursor, CursorId::Attack, "C1 armed A over a friendly: Attack (retail TooFar; ours names the order)");
     c = armed('a', HoverKind::OwnSelectable, soldier());
+    expect(c.order, ClickOrder::AttackGround, "C1 armed A over an own unit: fire at the point");
     expectCursor(c.cursor, CursorId::Attack, "C1 armed A over an own unit: Attack");
     ClickUnit air = soldier(); air.airstrike = true; air.flies = true;
     c = armed('a', HoverKind::None, air);
-    expect(c.order, ClickOrder::AttackMove, "C1 an airstrike flyer over ground attack-moves");
+    expect(c.order, ClickOrder::AttackGround, "C1 an airstrike flyer over ground: AIRSTRIKE at the point");
     expectCursor(c.cursor, CursorId::Airstrike, "C1 an airstrike flyer over ground: Airstrike");
     c = armed('a', HoverKind::Friendly, tower());
-    expect(c.order, ClickOrder::None, "C1 a tower over a friendly: nothing yet");
-    expectCursor(c.cursor, CursorId::Normal, "C1 a tower over a friendly: Normal");
-    expect(armed('a', HoverKind::None, builder()).order, ClickOrder::None, "C1 a builder without a weapon: nothing");
+    expect(c.order, ClickOrder::AttackGround, "C1 a tower over a friendly: fire at the point");
+    expectCursor(c.cursor, CursorId::Attack, "C1 a tower over a friendly: Attack");
+    c = armed('a', HoverKind::None, tower());
+    expect(c.order, ClickOrder::AttackGround, "C1 a tower over ground (in reach or not): fire at the point");
+    ClickUnit antiAir = soldier(); antiAir.pointFire = false;   // a toairweapon, or melee off a clearable blocker
+    c = armed('a', HoverKind::None, antiAir);
+    expect(c.order, ClickOrder::None, "C1 an attacker the resolver refuses: nothing");
+    expectCursor(c.cursor, CursorId::TooFar, "C1 an attacker the resolver refuses: TooFar");
+    c = armed('a', HoverKind::Friendly, antiAir);
+    expect(c.order, ClickOrder::None, "C1 refused over a friendly: nothing");
+    expectCursor(c.cursor, CursorId::TooFar, "C1 refused over a friendly: TooFar");
+    {
+        ClickUnit both[2] = {antiAir, soldier()};
+        CursorId agg = CursorId::Normal;
+        for (const auto& u : both) agg = lowerCursorSlot(agg, armed('a', HoverKind::None, u).cursor);
+        expectCursor(agg, CursorId::Attack, "C1 one unit acts, one refused: Attack (lowest slot)");
+    }
+    c = armed('a', HoverKind::None, builder());
+    expect(c.order, ClickOrder::None, "C1 a builder without a weapon: nothing");
+    expectCursor(c.cursor, CursorId::Normal, "C1 a builder without a weapon: Normal");
     expect(armed('a', HoverKind::None, factory()).order, ClickOrder::AttackMove, "C1 a rally holder rallies");
+    c = armed('f', HoverKind::None, soldier());
+    expect(c.order, ClickOrder::AttackMove, "C1 fight-move stays our attack-move");
 
     // 2.7: armed ATTACK over an enemy.
     c = armed('a', HoverKind::Enemy, soldier());
@@ -346,6 +369,7 @@ void selectRows() {
 bool cursorNames(CursorId c, ClickOrder o) {
     switch (o) {
         case ClickOrder::Attack: return c == CursorId::Attack || c == CursorId::Airstrike || c == CursorId::TooFar;
+        case ClickOrder::AttackGround: return c == CursorId::Attack || c == CursorId::Airstrike;
         case ClickOrder::AttackMove: return c == CursorId::Attack || c == CursorId::Airstrike || c == CursorId::Move;
         case ClickOrder::Reclaim: case ClickOrder::ReclaimArea: return c == CursorId::Reclaim;
         case ClickOrder::Resurrect: return c == CursorId::Revive;
@@ -371,6 +395,8 @@ void parity() {
         u.loaded = u.transport && (bits & 256); u.assist = bits & 512; u.board = bits & 1024;
         u.pickup = bits & 2048; u.loadTarget = u.transport && (bits & 2048); u.raise = bits & 4096;
         u.reclaim = bits & 8192; u.friendly = friendlies[(bits >> 14) & 3];
+        for (bool pointFire : {false, true}) {
+        u.pointFire = pointFire;
         for (char cmd : {'a', 'm', 'f', 'p', 'g', 'r', 'l', 'u', 'c'})
             for (HoverKind k : {HoverKind::None, HoverKind::OwnSelectable, HoverKind::Friendly, HoverKind::Enemy})
                 for (int s = 0; s < 8; ++s) {
@@ -384,6 +410,7 @@ void parity() {
                         ++failures;
                     }
                 }
+        }
     }
     // The box: its cursor is Normal exactly when the release orders nothing.
     for (uint32_t bits = 0; bits < (1u << 12); ++bits)

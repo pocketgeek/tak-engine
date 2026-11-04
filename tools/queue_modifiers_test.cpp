@@ -207,6 +207,88 @@ void attackAndGuard() {
     check(goals(o).size() == 3 && o.back().targetId == e2, "...and the move and the queued attack stay behind it");
 }
 
+// Armed ATTACK at a point (Cmd::AttackGround, SUPPRESS): Shift on a queued
+// point takes it back (its kind only; +0x22 within 16 px), Ctrl puts it at the
+// head, and a unit the resolver refuses is left alone by both.
+std::vector<std::pair<int, int>> suppressPoints(const std::vector<Order>& list) {
+    std::vector<std::pair<int, int>> out;
+    for (const Order& o : list)
+        if (o.suppress) out.push_back({o.attackPointX.floorInt(), o.attackPointZ.floorInt()});
+    return out;
+}
+void attackGround() {
+    Types t; Rig r;
+    const int id = r.w.spawn(&t.gun, 300, 1000, 0, 0);
+    r.send(net::Cmd::Move, id, 1300, 1000, 0);
+    r.send(net::Cmd::AttackGround, id, 1300, 1500, kShift);
+    r.send(net::Cmd::AttackGround, id, 1800, 1500, kShift);
+    check(World::queuedKind(r.w.unit(id)->orders.back()) == World::QueuedKind::AttackGround,
+          "AttackGround: a SUPPRESS order is its own queued kind");
+    r.send(net::Cmd::Move, id, 1300, 1500, kShift);   // other kind on its point: appends
+    check(suppressPoints(r.w.unit(id)->orders).size() == 2 && goals(r.w.unit(id)->orders).size() == 4,
+          "AttackGround: a Shift Move on a queued SUPPRESS point appends (kind differs)");
+    r.send(net::Cmd::AttackGround, id, 1310, 1490, kShift);   // within 16 px of the first
+    check(suppressPoints(r.w.unit(id)->orders) == Pts{{1800, 1500}},
+          "AttackGround: Shift on a queued SUPPRESS point (within 16 px) removes it and adds nothing");
+    r.send(net::Cmd::AttackGround, id, 600, 1000, kCtrl);
+    {
+        const auto& o = r.w.unit(id)->orders;
+        check(!o.empty() && o.front().suppress && o.front().attackPointX.floorInt() == 600,
+              "AttackGround: Ctrl puts the SUPPRESS at the head");
+        check(goals(o).size() == 4 && World::queuedKind(o[1]) == World::QueuedKind::Move,
+              "...and the interrupted move and the queued orders stay behind it");
+    }
+    // A refused unit (an anti-air weapon): Ctrl and Shift leave its queue alone.
+    UnitType aa = t.gun; aa.id = aa.name = "aa"; aa.weapons[0].toAir = true; aa.weapon = aa.weapons[0];
+    const int a = r.w.spawn(&aa, 300, 600, 0, 0);
+    r.send(net::Cmd::Move, a, 1300, 600, 0);
+    r.send(net::Cmd::Move, a, 1300, 900, kShift);
+    r.ticks(20);
+    const auto before = goals(r.w.unit(a)->orders);
+    r.send(net::Cmd::AttackGround, a, 700, 600, kCtrl);
+    r.send(net::Cmd::AttackGround, a, 1300, 900, kShift);
+    check(goals(r.w.unit(a)->orders) == before && suppressPoints(r.w.unit(a)->orders).empty(),
+          "AttackGround: an anti-air unit given it with Ctrl or Shift keeps its queue as it was");
+}
+
+// The SUPPRESS order's approach (stage 4's ring or circle, a move ahead of
+// it) is part of the order: Ctrl rewinds it away, Shift on the point takes
+// both back.
+void attackGroundApproach() {
+    Types t; Rig r;
+    const int id = r.w.spawn(&t.gun, 300, 1000, 0, 0);
+    r.send(net::Cmd::AttackGround, id, 1300, 1000, 0);   // 1000 px off, range 200
+    bool approach = false;
+    for (int i = 0; i < 60 && !approach; ++i) {
+        r.ticks(1);
+        const auto& o = r.w.unit(id)->orders;
+        approach = o.size() >= 2 && o[0].suppressApproach && o[1].suppress;
+    }
+    check(approach, "AttackGround out of reach: an approach goes ahead of the SUPPRESS order");
+    check(World::queuedKind(r.w.unit(id)->orders.front()) == World::QueuedKind::None,
+          "...and the approach is no queued kind of its own");
+    r.ticks(10);
+    r.send(net::Cmd::Move, id, 300, 1600, kCtrl);
+    {
+        const auto& o = r.w.unit(id)->orders;
+        int approaches = 0;
+        for (const auto& x : o) approaches += x.suppressApproach;
+        check(goals(o).size() == 2 && World::queuedKind(o.front()) == World::QueuedKind::Move && o[1].suppress &&
+              approaches == 0,
+              "Ctrl Move during the approach: the move first, the SUPPRESS behind it, its approach gone");
+    }
+    Rig r2;
+    const int u2 = r2.w.spawn(&t.gun, 300, 1000, 0, 0);
+    r2.send(net::Cmd::AttackGround, u2, 1300, 1000, 0);
+    for (int i = 0; i < 60 && !(r2.w.unit(u2)->orders.size() >= 2 && r2.w.unit(u2)->orders[0].suppressApproach); ++i)
+        r2.ticks(1);
+    r2.send(net::Cmd::AttackGround, u2, 1305, 1005, kShift);
+    check(r2.w.unit(u2)->orders.empty(), "Shift on the running SUPPRESS point takes back the order and its approach");
+    r2.ticks(30);
+    check(r2.w.unit(u2)->orders.empty() && r2.w.unit(u2)->x.toFloat() < 700,
+          "...and the unit stops instead of walking on to the point");
+}
+
 // A tower is no producer: Ctrl puts its Attack at the head of its own list
 // (it was appended behind the target it was on).
 void towerFront() {
@@ -424,6 +506,8 @@ int main(int argc, char** argv) {
     frontEmptyIsMove();
     toggleMoves();
     attackAndGuard();
+    attackGround();
+    attackGroundApproach();
     frontInterruptsBuild();
     buildQueue();
     factoryRally();

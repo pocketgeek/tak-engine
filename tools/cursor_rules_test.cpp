@@ -154,14 +154,24 @@ void attack() {
            "B a: airstrike weapon over an enemy it cannot hurt: TooFar (retail Airstrike; the click gives nothing)");
     expect(mix(HoverKind::Enemy, {air, mobileMiss}), CursorId::Airstrike, "B a: Airstrike beats TooFar");
     expect(mix(HoverKind::Enemy, {air, mobileHit}), CursorId::Attack, "B a: Attack beats Airstrike");
-    expect(mix(HoverKind::None, {mobileMiss}), CursorId::Attack, "B a: ground (C1 staged: attack-move)");
-    expect(mix(HoverKind::None, {air}), CursorId::Airstrike, "B a: all-airstrike selection over ground");
-    expect(mix(HoverKind::None, {air, mobileMiss}), CursorId::Attack, "B a: mixed selection over ground");
-    expect(mix(HoverKind::Friendly, {mobileHit}), CursorId::Attack,
-           "B a / C1: friendly target, mobile attacker: Attack -- it attack-moves, never TooFar");
-    expect(mix(HoverKind::OwnSelectable, {mobileHit}), CursorId::Attack, "B a / C1: own unit, mobile attacker: Attack");
-    expect(mix(HoverKind::Friendly, {tower}), CursorId::Normal, "B a / C1: friendly, immobile attacker: nothing yet");
-    expect(mix(HoverKind::None, {towerOut}), CursorId::Normal, "B a / C1: ground, immobile attacker: nothing yet");
+    // Ground or a friendly unit: the fire at the point (C1). Attack (Airstrike)
+    // where the unit is given it, TooFar where the resolver gives it nothing.
+    AttackUnitFacts fire = mobileMiss; fire.pointFire = true;
+    AttackUnitFacts airFire = air; airFire.pointFire = true;
+    AttackUnitFacts towerFire = towerOut; towerFire.pointFire = true;
+    expect(mix(HoverKind::None, {fire}), CursorId::Attack, "B a / C1: ground, a unit that fires there");
+    expect(mix(HoverKind::None, {mobileMiss}), CursorId::TooFar, "B a / C1: ground, a unit refused (anti-air, melee)");
+    expect(mix(HoverKind::None, {airFire}), CursorId::Airstrike, "B a / C1: all-airstrike selection over ground");
+    expect(mix(HoverKind::None, {airFire, fire}), CursorId::Attack, "B a / C1: mixed selection over ground");
+    expect(mix(HoverKind::None, {mobileMiss, fire}), CursorId::Attack, "B a / C1: one refused, one fires: Attack");
+    expect(mix(HoverKind::Friendly, {fire}), CursorId::Attack,
+           "B a / C1: friendly target, a mover that fires at the point: Attack (retail TooFar)");
+    expect(mix(HoverKind::OwnSelectable, {fire}), CursorId::Attack, "B a / C1: own unit: Attack");
+    expect(mix(HoverKind::Friendly, {towerFire}), CursorId::Attack, "B a / C1: friendly, a tower: Attack (retail TooFar)");
+    expect(mix(HoverKind::None, {towerFire}), CursorId::Attack, "B a / C1: ground out of a tower's reach: Attack (it keeps the order)");
+    expect(mix(HoverKind::None, {towerOut}), CursorId::TooFar, "B a / C1: ground, an anti-air tower: TooFar");
+    expect(mix(HoverKind::None, {none}), CursorId::Normal, "B a / C1: no attacker: Normal");
+    expect(mix(HoverKind::None, {rally}), CursorId::Attack, "C10/B a: rally holder over ground (ours)");
     expect(mix(HoverKind::Enemy, {rally}), CursorId::Attack, "C10/B a: rally holder sends its output (ours)");
 }
 

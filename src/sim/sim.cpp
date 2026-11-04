@@ -1858,6 +1858,10 @@ World::QueuedKind World::queuedKind(const Order& o) {
         o.reclaimAreaApproach || o.transportPickup || o.patrolRepair || o.guardRepair || o.wait ||
         o.waitAttack || o.reclaimArea || o.manaBuildArea)
         return QueuedKind::None;
+    // SUPPRESS and a flyer's attack at a point (+0x22); the approach SUPPRESS
+    // puts ahead of itself is part of that order, never matched on its own.
+    if (o.suppressApproach) return QueuedKind::None;
+    if (o.suppress || o.airPoint) return QueuedKind::AttackGround;
     if (o.buildType) return QueuedKind::Build;
     if (o.helpSite) return QueuedKind::Assist;
     if (o.repairTarget) return QueuedKind::Repair;
@@ -1881,7 +1885,8 @@ bool World::removeQueuedMatch(int unitId, bool rally, const QueuedMatch& m) {
     if (!u || !u->alive() || !u->type || m.kind == QueuedKind::None) return false;
     if (m.kind == QueuedKind::Build && !m.type) return false;
     const bool point = m.kind == QueuedKind::Move || m.kind == QueuedKind::AttackMove ||
-                       m.kind == QueuedKind::Patrol || m.kind == QueuedKind::Unload || m.kind == QueuedKind::Build;
+                       m.kind == QueuedKind::Patrol || m.kind == QueuedKind::Unload || m.kind == QueuedKind::Build ||
+                       m.kind == QueuedKind::AttackGround;
     Fixed mx = m.x, mz = m.z;
     if (m.kind == QueuedKind::Build) {   // the site as makeBuildOrder keeps it
         mx = footprintWaypoint(footprintCell(m.x, m.type->footX), m.type->footX);
@@ -1897,6 +1902,7 @@ bool World::removeQueuedMatch(int unitId, bool rally, const QueuedMatch& m) {
             if (m.kind == QueuedKind::Build && o.buildType != m.type) return false;
             Fixed px = o.x, pz = o.z;
             if (o.buildType) { px = o.buildX; pz = o.buildZ; }
+            else if (o.suppress || o.airPoint) { px = o.attackPointX; pz = o.attackPointZ; }   // +0x22
             else if (o.missionTarget) { px = o.missionTarget->first; pz = o.missionTarget->second; }
             else if (o.groundMission) { px = o.clickX; pz = o.clickZ; }
             return near(px, mx) && near(pz, mz);
@@ -1907,10 +1913,17 @@ bool World::removeQueuedMatch(int unitId, bool rally, const QueuedMatch& m) {
         return t == m.target;
     };
     std::vector<Order>& list = rally ? u->rally : u->orders;
-    const auto it = std::find_if(list.begin(), list.end(), matches);
+    auto it = std::find_if(list.begin(), list.end(), matches);
     if (it == list.end()) return false;
     if (rally) { list.erase(it); return true; }
     OrdersNote note{*this, unitId};
+    // A SUPPRESS order goes with the approach it put ahead of itself.
+    if (it->suppress && it != list.begin() && std::prev(it)->suppressApproach) {
+        const size_t a = size_t(it - list.begin()) - 1;
+        if (a != currentLeg(list)) { list.erase(list.begin() + long(a), list.begin() + long(a) + 2); return true; }
+        dropLeg(*u);   // the approach is the current leg; the order is now
+        it = list.begin();
+    }
     if (size_t(it - list.begin()) != currentLeg(list)) { list.erase(it); return true; }
     // The current leg: it ends with its route, and its job with it.
     dropLeg(*u);
@@ -1958,7 +1971,9 @@ void World::insertOrderFront(int unitId, bool rally, const std::function<void()>
             first += o.chaseLeashed ? 2 : 1;
             continue;
         }
-        if (o.goal && !o.stepOut && !o.landing && !o.formationLevel && !o.reclaimAreaApproach && !o.guardRepair)
+        // SUPPRESS's approach goes: the order's stage 4 puts it back if needed.
+        if (o.goal && !o.stepOut && !o.landing && !o.formationLevel && !o.reclaimAreaApproach && !o.guardRepair &&
+            !o.suppressApproach)
             break;
         ++first;
     }
@@ -8383,18 +8398,27 @@ void World::tickPointWeapons(Unit& u) {
     }
 }
 
-bool World::suppressAccepts(int unitId, float x, float z) const {
-    const Unit* u=unit(unitId);
-    if (!u || !u->alive() || !u->type || u->type->weapons.empty()) return false;
+World::SuppressRule World::suppressRule(const UnitType& t, int weaponSlot) {
+    if (t.weapons.empty()) return SuppressRule::None;
     // 4de530 kind 3 with a point, by the selected slot's weapon (519ac0: a
     // switcher's selected slot, else the first).
-    const int n=int(std::min<size_t>(3,u->type->weapons.size()));
-    const int slot=u->type->weaponSwitching ? std::clamp(u->weaponSlot,0,n-1) : 0;
-    const Weapon& w=u->type->weapons[size_t(slot)];
-    if (w.toAir) return false;                    // 4de673: no order
-    if (u->type->canFly) return !u->type->isStructure();   // 4de684: the airstrike branch (Order::airPoint)
+    const int n=int(std::min<size_t>(3,t.weapons.size()));
+    const int slot=t.weaponSwitching ? std::clamp(weaponSlot,0,n-1) : 0;
+    const Weapon& w=t.weapons[size_t(slot)];
+    if (w.toAir) return SuppressRule::None;       // 4de673: no order
+    if (t.canFly) return t.isStructure() ? SuppressRule::None : SuppressRule::Fire;   // 4de684: the airstrike branch (Order::airPoint)
     // 4de68a..4de6eb: a melee weapon only over a clearable blocker.
-    return !w.melee || clearableBlockerAt(Fixed::fromFloat(x),Fixed::fromFloat(z));
+    return w.melee ? SuppressRule::OverBlocker : SuppressRule::Fire;
+}
+
+bool World::suppressAccepts(int unitId, float x, float z) const {
+    const Unit* u=unit(unitId);
+    if (!u || !u->alive() || !u->type) return false;
+    switch (suppressRule(*u->type,u->weaponSlot)) {
+    case SuppressRule::Fire: return true;
+    case SuppressRule::OverBlocker: return clearableBlockerAt(Fixed::fromFloat(x),Fixed::fromFloat(z));
+    default: return false;
+    }
 }
 
 bool World::suppress(int unitId, float x, float z, bool queue) {

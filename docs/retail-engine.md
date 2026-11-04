@@ -4923,7 +4923,7 @@ units, Revive over a body, Move elsewhere (see "What a click orders").
 
 Ours (`src/client/cursorrules.h`, test `cursor_rules`): those rules for hover
 and placement, the interface/minimap split, armed ATTACK per unit with the
-lowest slot (a mobile attacker over a friendly unit is TooFar), armed CLEAR
+lowest slot (over ground or a friendly unit: see "Fire at a point"), armed CLEAR
 showing Reclaim over a reclaimable feature, armed MOVE and fight-move showing
 Repair/Load/Defend over friendly units (their clicks do those), and fight-move
 otherwise as an untinted Move.
@@ -4935,8 +4935,9 @@ not a reclaimable feature, and Normal for placement over the minimap (our
 minimap click moves the camera; retail's selector gives FindSite there). The
 minimap with nothing armed is always Normal (our left-click there moves the
 camera and our right-click is a plain Move, so no dot is selected or
-attacked), and an armed ATTACK there ignores the dot (our minimap attack is an
-attack-move to the ground point). The left-click interface is not offered.
+attacked), and an armed ATTACK there takes the dot as the hovered unit: an
+enemy dot is attacked, ground or a friendly dot is a fire at that point, as in
+the main view. The left-click interface is not offered.
 
 ## What a click orders: the resolver per unit, on release (icd, 2026-11-03)
 
@@ -5016,8 +5017,8 @@ the one picker (our hit region's screen area stands in for the model box).
 Kept or chosen differently, by the owner's decisions: our ground-move spread;
 an own transport a passenger fits in is boarded (the rest guard it);
 Alt+right-click unloads a loaded transport; a rally holder's Move / Attack set
-its output's rally; armed ATTACK on ground or a friendly attack-moves for now
-(cursor Attack, never TooFar) until the fire-at-point order is ported; the box
+its output's rally; armed ATTACK on ground or a friendly is the fire at the
+point (Cmd::AttackGround, cursor Attack where a unit acts); the box
 attacks every visible enemy once, nearest first, and a unit without a weapon
 always clears; minimap placement is checked at the minimap point and falls
 back to our clear-then-build; a left-click on an enemy or ally with nothing of
@@ -6172,12 +6173,32 @@ the point in pixels):
 The order lasts until another order replaces it, its feature target is gone,
 the approach runs out of reach, or a `commandfire` shot. Not emulated yet.
 
-Ours: armed ATTACK on ground or a friendly attack-moves (cursor Attack); a
-campaign `a X Y` walks into reach and fights (`mission.cpp`). A port needs a
-point target through the whole weapon path (`queryWeaponAim`,
-`tickScriptWeapon`, every class in `fire`, the range and minimum-range
-tests, the facing request), and AirToGround / AirStrike / AirToGroundHover
-without a target unit.
+The selector for the same click (`0x4dd780` mode 3, `0x4dd8ac..0x4ddc1b`,
+S): no `canattack`, Normal; a `dropped` selected slot, Airstrike; with
+neither a hovered unit nor a point, Attack. A mover: over ground or a friendly
+unit with a melee slot, Attack when the point's cell holds a blocking,
+clearable feature, else TooFar; a ranged one, Attack over ground and TooFar
+over a friendly unit. A structure: TooFar over a friendly unit; over ground
+TooFar out of reach (`52ad20`) or for a `toairweapon`, else TooFar inside the
+minimum range (`52adb0`, I: read by its use) and Attack outside it. The resolver takes the
+pointer's point (`esi`), not a hovered friendly unit's position.
+
+Ours (the click, 2026-11-03): armed ATTACK on ground or on a friendly unit, in
+the main view or on the minimap, sends `Cmd::AttackGround` at the click point
+to each selected unit the resolver gives an order (`World::suppressRule`,
+shared by `World::suppressAccepts` and `clickrules.h`; a melee slot reads the
+sim's `clearableBlockerAtPoint`), none to the rest; a Legion net game packs
+the run as one explicit order. Shift appends and Ctrl front-inserts; both
+toggle a queued SUPPRESS / flyer point order within 16 px of its `+0x22`
+(`QueuedKind::AttackGround`), taking its approach with it, and a Ctrl order
+drops a running SUPPRESS's approach (stage 4 puts it back). A refused unit
+neither toggles nor front-inserts. The cursor, so that it describes the click
+(I, owner's rule): Attack (Airstrike for a `dropped` slot) for a unit given
+the order -- where retail shows TooFar for a tower out of reach and for any
+unit over a friendly one -- and TooFar for an attacker given nothing -- where
+retail shows Attack for an anti-air mover over ground. A rally holder keeps
+our attack-move rally. Fight-move (F) stays our attack-move. A campaign
+`a X Y` still walks into reach and fights (`mission.cpp`).
 
 ## Mission order strings (icd 0x513fb0, 2026-10-30)
 
