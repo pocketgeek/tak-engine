@@ -628,6 +628,9 @@ constexpr uint32_t kAiTakeoverProtocol = 289;
 // Cmd::Resurrect: the first protocol that carries it (a strict replay read
 // refuses it before).
 constexpr uint32_t kResurrectProtocol = 305;
+// Cmd::AttackGround: the first protocol that carries it (a strict replay read
+// refuses it before).
+constexpr uint32_t kAttackGroundProtocol = 312;
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)
 constexpr int kServerHz = 30;              // sim/tick rate
 constexpr int kHashPeriod = 30;            // ticks between StateHash reports; the

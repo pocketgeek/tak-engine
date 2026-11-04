@@ -55,6 +55,10 @@ enum class Cmd : uint8_t {
     // client sends it where retail's right-click resolver (0x4de530 mode 1)
     // would pick it over a reclaim. An ordinary PlayerCommands item (base layout).
     Resurrect,
+    // Protocol 312: armed ATTACK on the ground: unitId fires at (x, z)
+    // (retail 4de530 kind 3 with a point: SUPPRESS, World::suppress). An
+    // ordinary PlayerCommands item (base layout); an order verb (Shared).
+    AttackGround,
 };
 
 struct SelectionOrder;

@@ -78,7 +78,7 @@ bool orderVerb(Cmd c) {
     case Cmd::Move: case Cmd::Attack: case Cmd::AttackMove: case Cmd::Patrol: case Cmd::Stop:
     case Cmd::Unload: case Cmd::Guard: case Cmd::SetWeapon: case Cmd::Destroy:
     case Cmd::Assist: case Cmd::Repair: case Cmd::Stance: case Cmd::Cloak: case Cmd::SetActive:
-    case Cmd::SetSquad:
+    case Cmd::SetSquad: case Cmd::AttackGround:
         return true;
     default:
         return false;
@@ -189,7 +189,8 @@ bool getBundle(Reader& r, uint32_t& tick, Bundle& out, bool strict, uint32_t pro
     // at least 35 bytes and an event 2, so a corrupt count cannot ask for gigabytes.
     const uint32_t nc = r.u32();
     if (uint64_t(nc) * 35 > uint64_t(r.end - r.p)) return false;
-    const auto maxKind = proto >= kResurrectProtocol ? Cmd::Resurrect
+    const auto maxKind = proto >= kAttackGroundProtocol ? Cmd::AttackGround
+                       : proto >= kResurrectProtocol ? Cmd::Resurrect
                        : proto >= kPowerCodesProtocol ? Cmd::PowerCode : proto >= 267 ? Cmd::Order
                        : proto >= 221 ? Cmd::BuildManaArea : Cmd::ShareMana;
     for (uint32_t i = 0; i < nc && r.ok; ++i) {

@@ -1774,6 +1774,10 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
             o.groundResponse = tmpl.groundResponse;
             o.formationLevel = tmpl.formationLevel;
             o.reclaimAreaApproach = tmpl.reclaimAreaApproach;
+            o.suppress = tmpl.suppress; o.suppressFeature = tmpl.suppressFeature;
+            o.suppressSlot = tmpl.suppressSlot; o.suppressReach = tmpl.suppressReach;
+            o.suppressApproach = tmpl.suppressApproach; o.suppressInner = tmpl.suppressInner;
+            if (tmpl.suppress || tmpl.suppressApproach) { o.attackPointX = tmpl.attackPointX; o.attackPointZ = tmpl.attackPointZ; }
             o.controller = tmpl.controller;
             o.park = tmpl.park;
             o.buildType = tmpl.buildType;
@@ -2020,7 +2024,7 @@ Order* World::groundMissionOrder(Unit& u, bool includeCombatMoves) {
         return !o.targetId && (includeCombatMoves || (!o.attackMove && !o.patrol)) && !o.guard && !o.load &&
                (!o.unload || o.transportUnloadApproach) &&
                !o.buildType && !o.reclaimFeat && !o.reclaimArea && !o.manaBuildArea &&
-               !o.repairTarget && !o.wait && !o.waitAttack && !o.scripted;
+               !o.repairTarget && !o.wait && !o.waitAttack && !o.scripted && !o.suppress;
     };
     if (!plain(u.orders.front())) return nullptr;
     Order& goal = u.orders[currentLeg(u.orders)];
@@ -2032,6 +2036,21 @@ Order* World::navigationMissionOrder(Unit& u) {
     if (!u.type || u.type->canFly || u.orders.empty()) return nullptr;
     auto& goal=u.orders[currentLeg(u.orders)];
     return goal.buildRectangle || goal.load ? &goal : nullptr;
+}
+
+// SUPPRESS's ring approach (4d4e10, the 4e28f0 ring controller PARK uses):
+// round the point's footprint origin for this unit (the approach keeps the
+// point in attackPointX/Z; x/z steer to the ring), from the inner radius out
+// to the order's circle radius (missionRadius + 4).
+static RetailRingGoal suppressRingGoal(const Unit& u,const Order& goal) {
+    const int outer=std::bit_cast<int32_t>(goal.missionRadius+4u);
+    return {footprintOrigin(goal.attackPointX,u.type->footX),footprintOrigin(goal.attackPointZ,u.type->footZ),
+            goal.suppressInner,outer,retailCircleRadiusSquared(outer)};
+}
+
+std::optional<RetailRingGoal> World::suppressRing(const Unit& u,const Order& goal) const {
+    if (!goal.suppressApproach || goal.suppressInner<=0) return std::nullopt;
+    return suppressRingGoal(u,goal);
 }
 
 bool World::groundMissionAccepts(const Unit& u,const Order& goal) {
@@ -2057,6 +2076,9 @@ bool World::groundMissionAccepts(const Unit& u,const Order& goal) {
         const int dz=footprintOrigin(u.z,u.type->footZ)-goal.park->spot->second;
         return std::abs(dx)<=1 && std::abs(dz)<=1;
     }
+    // SUPPRESS's ring approach (4d4e10) arrives inside its band only.
+    if (goal.suppressApproach && goal.suppressInner>0)
+        return suppressRingGoal(u,goal).accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
     return goal.park && goal.park->ring
         ? goal.park->ring->accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ))
         : circle.accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
@@ -3476,6 +3498,12 @@ void World::tickGroundMission(Unit& u) {
                 if (m.stage==0) { resetGoal(4); m.waitMask=0x700; return 1; }
                 return 5;
             }
+            // SUPPRESS's approach (its stage 4: 4d4e10 / 4d4da0, wait 0x700):
+            // the order behind it takes over on arrival or failure alike.
+            if (goal.suppressApproach) {
+                if (m.stage==0) { resetGoal(4); m.waitMask=0x700; return 1; }
+                return 5;
+            }
             // Retail group pacing: Move_Ground_Formation (402880) and the
             // two group checks at the head of Move_Ground (402b00..402cd8).
             const RetailGroupRecord* group=w.retailGroupOf(u);
@@ -3813,7 +3841,8 @@ bool World::requestPath(Unit& u, float x, float z) {
                    tolerance, mission ? mission->controller : 0,
                    mission ? retailCircleRadiusSquared(tolerance) : 0,
                    u.orders.empty() ? std::nullopt : u.orders[currentLeg(u.orders)].buildRectangle,
-                   mission && mission->park ? mission->park->ring : std::nullopt);
+                   mission && mission->park ? mission->park->ring :
+                   mission ? suppressRing(u,*mission) : std::nullopt);
     // 4e4f50 clears prior outcome bits only when first marking a request pending.
     if (newlyPending) u.routeCrowded=u.routeTraffic=u.routeFailed=u.routeDetour=false;
     return true;
@@ -5493,6 +5522,9 @@ bool World::switchWeaponSlot(Unit& u,int slot,bool fromCommand) {
     dropSlotTarget(u,u.weaponSlot);
     u.weaponSlot=slot;
     u.reloads[size_t(slot)]=u.type->weapons[size_t(slot)].switchReloadTicks;
+    // The 0x40 event: SUPPRESS is its one ported reader (it restarts from
+    // stage 0), so only a unit on one gets it.
+    if (!u.orders.empty() && u.orders[currentLeg(u.orders)].suppress) u.missionEvents|=0x40u;
     if (const auto script=unitScripts_.find(u.id);script!=unitScripts_.end()) {
         const auto& file=*u.type->script();
         script->second.state().startArguments(file,file.scriptIndex("SwitchWeapon"),{uint32_t(slot),0,0,0},1);
@@ -6005,9 +6037,14 @@ static void leadAim(const Unit& shooter, const Unit& tgt, const Weapon& w,
     az += tsc.c.toFloat() * tgt.speed.toFloat() * kTick * t;
 }
 
-void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
+// A point target (t.unit null: SUPPRESS) gives every class its aim point in
+// place of the unit's position or led SweetSpot, and a shot that carries no
+// target unit (51a9a0 gives 0): it flies to the point and bursts where it
+// lands or on what it strikes on the way.
+void World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) {
     const Weapon& w = u.type->weapons[size_t(slot)];
-    if (w.mindControl && !canCaptureTarget(u.player,target)) return;
+    Unit* const tu = t.unit;
+    if (w.mindControl && tu && !canCaptureTarget(u.player,*tu)) return;
     // manapershot: a caster spends personal mana to fire; if it can't pay, the
     // shot doesn't happen (reload not consumed, so it fires the moment it can).
     if (w.manaCost > 0 && u.type->maxMana > 0) {
@@ -6041,7 +6078,7 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         // 52fd80 takes it from 51aa50 for every Remote class: the SweetSpot plus
         // 80% of the target's motion over the weapon's flight time. Hailstorm is
         // centred on the same point (52ee03).
-        const std::array<int32_t,3> aim = retailLeadPoint(u, target, &w);
+        const std::array<int32_t,3> aim = tu ? retailLeadPoint(u, *tu, &w) : t.point;
         e.x = Fixed::raw(aim[0]); e.y = Fixed::raw(aim[1]); e.z = Fixed::raw(aim[2]);
         e.player = u.player; e.fromId = u.id;
         const int32_t start = 1 + (w.nimbus && u.type->hasNimbusArt ? w.nimbusTicks : 0);
@@ -6139,9 +6176,9 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         // for good (a storm never re-aims), weaving as it goes, so the caster is
         // aiming a slow moving hazard rather than placing one.
         Storm s;
-        const auto aim=queryWeaponAim(u.id,target.id,slot);
-        const std::array<int32_t,3> point=aim ? aim->target :
-            std::array<int32_t,3>{target.x.v,target.groundY.v,target.z.v};
+        const auto aim=queryWeaponAim(u,t,slot);
+        const std::array<int32_t,3> point=aim ? aim->target : !tu ? t.point :
+            std::array<int32_t,3>{tu->x.v,tu->groundY.v,tu->z.v};
         const int32_t raw=std::max(0,int32_t(double(w.projVel)*2184.5333333333333));
         s.substeps=std::max(1u,(uint32_t(raw)+0xfffffu)>>20);
         const auto launch=retailStormLaunch({u.x.v,(u.type->canFly ? u.flightY : u.groundY).v,u.z.v},
@@ -6168,15 +6205,15 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         const int32_t raw=int32_t(double(w.projVel)*2184.5333333333333);
         if(raw<=0)return;
         FlameShot flame;flame.weapon=&w;flame.owner=u.player;flame.fromId=u.id;flame.slot=slot;
-        flame.targetId=target.id;
+        flame.targetId=tu ? tu->id : 0;
         flame.position=queryUnitScriptPoint(u.id,false,slot);
         flame.muzzle=flame.position;
-        flame.aimPoint=scriptTriggered ? u.weaponAimPoints[size_t(slot)] :
-            std::array<int32_t,3>{target.x.v,(target.type->canFly ? target.flightY : target.groundY).v,target.z.v};
+        flame.aimPoint=scriptTriggered ? u.weaponAimPoints[size_t(slot)] : !tu ? t.point :
+            std::array<int32_t,3>{tu->x.v,(tu->type->canFly ? tu->flightY : tu->groundY).v,tu->z.v};
         flame.substeps=std::max(1u,(uint32_t(raw)+0xfffffu)>>20);
         flame.speed=uint32_t(raw)/flame.substeps;
         uint16_t heading=u.weaponAim[size_t(slot)].heading,pitch=u.weaponAim[size_t(slot)].pitch;
-        if(!scriptTriggered)if(const auto aim=queryWeaponAim(u.id,target.id,slot)) {
+        if(!scriptTriggered)if(const auto aim=queryWeaponAim(u,t,slot)) {
             heading=aim->heading;pitch=aim->pitch;flame.aimPoint=aim->target;
         }
         heading=uint16_t(heading+portHeadingToRetail(u.heading));
@@ -6192,13 +6229,13 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         const int32_t raw=int32_t(double(w.projVel)*2184.5333333333333);
         if(raw<=0)return;
         Projectile p;p.guided3d=true;p.wsrc=&w;p.fromId=u.id;p.fromPlayer=u.player;
-        p.targetId=target.id;p.slot=slot;p.fx=w.fx;
+        p.targetId=tu ? tu->id : 0;p.slot=slot;p.fx=w.fx;
         p.position=queryUnitScriptPoint(u.id,false,slot);p.muzzle=p.position;
         p.substeps=std::max(1u,(uint32_t(raw)+0xfffffu)>>20);
         const int32_t speed=int32_t(uint32_t(raw)/p.substeps);
         uint16_t heading=u.weaponAim[size_t(slot)].heading,pitch=u.weaponAim[size_t(slot)].pitch;
         std::optional<WeaponAimSolution> aim;
-        if(!scriptTriggered)aim=queryWeaponAim(u.id,target.id,slot);
+        if(!scriptTriggered)aim=queryWeaponAim(u,t,slot);
         if(aim) {heading=aim->heading;pitch=aim->pitch;}
         const auto launch=retailGuidedLaunch(p.position,portHeadingToRetail(u.heading),heading,pitch,speed);
         p.position=launch.position;p.velocity=launch.velocity;p.angles=launch.angles;
@@ -6224,14 +6261,14 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         const int32_t raw=int32_t(double(w.projVel)*2184.5333333333333);
         if(raw<=0)return;
         Projectile p;p.straight=true;p.wsrc=&w;p.fromId=u.id;p.fromPlayer=u.player;
-        p.targetId=target.id;p.slot=slot;p.fx=w.fx;
+        p.targetId=tu ? tu->id : 0;p.slot=slot;p.fx=w.fx;
         p.position=queryUnitScriptPoint(u.id,false,slot);
         p.muzzle=p.position;
         if(w.lightningEffect)p.lightningEffect=w.lightningEffect->initial;
         p.substeps=std::max(1u,(uint32_t(raw)+0xfffffu)>>20);
         const int32_t speed=int32_t(uint32_t(raw)/p.substeps);
         uint16_t heading=u.weaponAim[size_t(slot)].heading,pitch=u.weaponAim[size_t(slot)].pitch;
-        if(!scriptTriggered)if(const auto aim=queryWeaponAim(u.id,target.id,slot)) {
+        if(!scriptTriggered)if(const auto aim=queryWeaponAim(u,t,slot)) {
             heading=aim->heading;pitch=aim->pitch;
         }
         p.angles={0,heading,uint16_t(0u-pitch)};
@@ -6259,10 +6296,13 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         const auto muzzle=captured ? u.weaponMuzzlePoints[size_t(slot)] : std::array<int32_t,3>{};
         const auto aimPoint=captured ? u.weaponAimPoints[size_t(slot)] : std::array<int32_t,3>{};
         const size_t event=hits_.size();
-        // A melee shot sits on the target's origin (52bac0 copies +68..+70).
-        applyHit(w, target.x.toFloat(), target.z.toFloat(), u.player, u.id, &target, {},
-                 std::array<int32_t,3>{target.x.v,
-                     (target.type && target.type->canFly ? target.flightY : target.groundY).v, target.z.v}, slot);
+        // A melee shot sits on the target's origin (52bac0 copies +68..+70),
+        // a point target's on its aim point.
+        if (!tu) applyHit(w, Fixed::raw(t.point[0]).toFloat(), Fixed::raw(t.point[2]).toFloat(), u.player, u.id,
+                          nullptr, {}, t.point, slot);
+        else applyHit(w, tu->x.toFloat(), tu->z.toFloat(), u.player, u.id, tu, {},
+                 std::array<int32_t,3>{tu->x.v,
+                     (tu->type && tu->type->canFly ? tu->flightY : tu->groundY).v, tu->z.v}, slot);
         if (captured) {
             hits_[event].fromPosition=muzzle;
             hits_[event].position=aimPoint;
@@ -6274,16 +6314,16 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
     // travel to the selected aim point over the gravity-derived fall time, then
     // the common ballistic updater advances and collides the full XYZ shot.
     if (w.kind == Weapon::Kind::Dropped) {
-        const auto aim=queryWeaponAim(u.id,target.id,slot);
-        const auto targetPoint=aim ? aim->target :
-            std::array<int32_t,3>{target.x.v,(target.type->canFly ? target.flightY : target.groundY).v,target.z.v};
+        const auto aim=queryWeaponAim(u,t,slot);
+        const auto targetPoint=aim ? aim->target : !tu ? t.point :
+            std::array<int32_t,3>{tu->x.v,(tu->type->canFly ? tu->flightY : tu->groundY).v,tu->z.v};
         const auto muzzle=queryUnitScriptPoint(u.id,false,slot);
         uint32_t fallTicks=1;
         const auto launch=retailDroppedBallisticLaunch(muzzle,targetPoint,ballisticGravityRaw_,&fallTicks);
         Projectile b;b.ballistic3d=true;b.wsrc=&w;
         b.position=launch.position;b.velocity=launch.velocity;b.angles=launch.angles;
         b.x=Fixed::raw(b.position[0]);b.z=Fixed::raw(b.position[2]);
-        b.targetId=target.id;b.slot=slot;b.fromPlayer=u.player;b.fromId=u.id;b.fx=w.fx;
+        b.targetId=tu ? tu->id : 0;b.slot=slot;b.fromPlayer=u.player;b.fromId=u.id;b.fx=w.fx;
         b.projectileUsesVeteranModel=w.usesVeteranShotModel(u.veteran);
         b.substeps=uint32_t(std::max(1,w.subSteps));
         b.start=tickCounter_+1;b.flight=int32_t(fallTicks);
@@ -6300,8 +6340,8 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
     // Aim where the target WILL be, not where it is (see leadAim). The projectile
     // keeps targetId so the swept proximity test still resolves a direct hit; what
     // changes is that a shot at a runner now lands behind it and detonates there.
-    float aimX = target.x.toFloat(), aimZ = target.z.toFloat();
-    leadAim(u, target, w, aimX, aimZ);
+    float aimX = Fixed::raw(t.point[0]).toFloat(), aimZ = Fixed::raw(t.point[2]).toFloat();
+    if (tu) leadAim(u, *tu, w, aimX, aimZ);
     float dx = aimX - u.x.toFloat(), dz = aimZ - u.z.toFloat();
     float dist = std::max(std::sqrt(dx * dx + dz * dz), 1e-3f);
     const float vel = w.projVel;             // weaponvelocity, px/s
@@ -6322,7 +6362,7 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
             const int32_t raw = int32_t(rawSpeed);
             const uint32_t steps = std::max(1u, (uint32_t(raw) + 0xfffffu) >> 20);
             const auto aim = scriptTriggered ? std::optional<WeaponAimSolution>{} :
-                                               queryWeaponAim(u.id, target.id, slot);
+                                               queryWeaponAim(u, t, slot);
             if (aim && aim->unreachable) return;   // no arc: no flat shell (queryWeaponAim)
             const uint16_t heading = scriptTriggered ? u.weaponAim[size_t(slot)].heading :
                 aim ? aim->heading : u.weaponAim[size_t(slot)].heading;
@@ -6338,7 +6378,7 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
             p.ballistic3d = true;
         }
     }
-    p.targetId = target.id;
+    p.targetId = tu ? tu->id : 0;
     p.fromPlayer = u.player;
     p.fromId = u.id;
     p.fx = w.fx;
@@ -6463,8 +6503,10 @@ bool categoryMatch(const std::vector<std::string>& cats,const UnitType& t) {
 } // namespace
 
 void World::dropSlotTarget(Unit& u,int slot) {
-    if (slot<0 || slot>=3 || !u.slotTarget[size_t(slot)]) return;
+    if (slot<0 || slot>=3 || (!u.slotTarget[size_t(slot)] && !(u.slotPoint>>slot&1))) return;
+    // The record holds a unit or a point (Unit::slotPoint); either goes.
     u.slotTarget[size_t(slot)]=0;
+    u.slotPoint=uint8_t(u.slotPoint&~(1u<<slot));
     // 51a7f0: TargetCleared(slot) only when a target was set, and for a
     // switcher only on the selected slot.
     if (u.type->weaponSwitching && slot!=u.weaponSlot) return;
@@ -6479,7 +6521,24 @@ void World::setSlotTarget(Unit& u,int slot,int id) {
     // 51a700: record +0x10 = target, +0x12 = 0x8000, and the slot's fire and
     // aim events are cleared from the unit's mission event word.
     u.slotTarget[size_t(slot)]=id;
+    u.slotPoint=uint8_t(u.slotPoint&~(1u<<slot));
     u.missionEvents&=0xfe08ffffu;
+}
+
+// 51a770: a point target for the slot (a switcher's selected slot only),
+// kept in whole px, replacing a unit target; the slot's fire and aim events
+// are cleared as 51a700 clears them.
+void World::setSlotPoint(Unit& u,int slot,RetailGroundPoint p) {
+    if (slot<0 || slot>=3) return;
+    if (u.type->weaponSwitching && slot!=u.weaponSlot) return;
+    u.slotTarget[size_t(slot)]=0;
+    u.slotPoint=uint8_t(u.slotPoint|(1u<<slot));
+    u.slotPointAt[size_t(slot)]=p;
+    u.missionEvents&=0xfe08ffffu;
+}
+
+void World::dropSlotPoint(Unit& u,int slot) {
+    if (slot>=0 && slot<3 && (u.slotPoint>>slot&1)) dropSlotTarget(u,slot);
 }
 
 // 519b10/519b70 on one slot: a slot that changes mode drops its target
@@ -6508,8 +6567,13 @@ void World::setSlotsManual(Unit& u,uint8_t cause) {
 // the in-reach work call); an attack order and a status are recognised here.
 void World::syncSlotMode(Unit& u) {
     const bool status=u.incapacitated() || u.embarked() || u.underConstruction;
-    const bool attack=!u.orders.empty() && u.orders.front().targetId!=0 &&
-        !u.orders.front().guard && !u.orders.front().load;
+    // A point target belongs to the SUPPRESS leg that aimed it; the
+    // mission's end (4d6da0's 519b10(3)) drops it with TargetCleared.
+    const bool suppressing=u.slotPoint && !u.orders.empty() && u.orders[currentLeg(u.orders)].suppress;
+    if (u.slotPoint && !suppressing)
+        for (int s=0;s<3;++s) dropSlotPoint(u,s);
+    const bool attack=!u.orders.empty() && ((u.orders.front().targetId!=0 &&
+        !u.orders.front().guard && !u.orders.front().load) || (suppressing && u.slotPoint));
     const bool work=u.buildSiteId || u.repairId || u.reclaimId || u.reviveTarget || u.workScriptWorking;
     // A resurrect channel starts only in reach (and from the threaded ability
     // pass, which must not start scripts), so it is recognised here too.
@@ -7606,6 +7670,12 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     // a structure fires through the sweep alone.
     const int activeTarget=!u.orders.empty() && !u.orders.front().guard ? u.orders.front().targetId : 0;
     if(u.scriptAimTarget && u.scriptAimTarget!=activeTarget)clearScriptWeaponTarget(u);
+    // SUPPRESS owns the body while its leg is current (bar a melee walk);
+    // when it goes, the next order runs from here in the same tick.
+    if (!u.orders.empty() && u.orders[currentLeg(u.orders)].suppress) {
+        if (tickSuppress(u,groundMovementHandled)) return;
+        if (!u.orders.empty() && u.orders[currentLeg(u.orders)].suppress) return;
+    }
     if (!u.orders.empty() && u.orders.front().seekAttack) {
         tickSeekAttack(u);
         groundMovementHandled=true;
@@ -8046,6 +8116,320 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
         tickAirStrike(u,*target);
         groundMovementHandled=true;
     }
+}
+
+// ---------------------------------------------------------------------------
+// SUPPRESS: fire at a point (icd 0x404d70, registry row 0x5eb8b8, jump table
+// 0x405548; docs/retail-engine.md, "Fire at a point: SUPPRESS"). The order
+// holds its point (mission +0x22) in attackPointX/Z; its weapon slots hold
+// the point too once stage 3 has aimed them (Unit::slotPoint), and their
+// weapon update (tickPointWeapons) aims, fires and refuses on its own.
+
+bool World::clearableBlockerAt(Fixed x,Fixed z,std::array<int,4>* footprint) const {
+    // 50e660: the 16 px cell under the point, none off the map; a tail
+    // (0xfffe) followed back to its anchor. Feature +0x13c: 0x20 blocking,
+    // 0x20000 clearable (RetailMapFeatureType::clearable).
+    if (mapPlacementCells_.empty()) return false;
+    int cx=x.v>>20,cz=z.v>>20;
+    if (cx<0 || cz<0 || cx>=hW_ || cz>=hH_) return false;
+    uint16_t feature=mapPlacementCells_[size_t(cz)*hW_+cx].feature;
+    if (feature==0xfffe) {
+        const auto& cell=mapPlacementCells_[size_t(cz)*hW_+cx];
+        cx-=cell.backX;cz-=cell.backZ;
+        if (cx<0 || cz<0) return false;
+        feature=mapPlacementCells_[size_t(cz)*hW_+cx].feature;
+    }
+    if (feature>=0xfffa || feature>=mapPlacementTypes_.size()) return false;
+    const auto& type=mapPlacementTypes_[feature];
+    if (!type.blocking || !type.clearable) return false;
+    if (footprint) *footprint={cx,cz,type.footX,type.footZ};
+    return true;
+}
+
+bool World::slotPointInsideMinRange(const Unit& u,const std::array<int32_t,3>& aim,int slot) const {
+    // 530630: strictly inside, the 64-bit squares' high dwords as 530580.
+    const int64_t m=u.type->weapons[size_t(slot)].minRange;
+    if (m<=0) return false;
+    const int64_t dx=int32_t(uint32_t(aim[0])-uint32_t(u.x.v)),dz=int32_t(uint32_t(aim[2])-uint32_t(u.z.v));
+    return ((dx*dx)>>32)+((dz*dz)>>32)<m*m;
+}
+
+bool World::slotReachesPoint(const Unit& u,const std::array<int32_t,3>& aim,int slot) const {
+    const Weapon& w=u.type->weapons[size_t(slot)];
+    if (w.melee) {
+        // 52b8a0: the point's 16 px cell against the unit's footprint box, as
+        // meleeInRange boxes a 1x1 target.
+        auto axis=[](Fixed pa,int fa,int32_t point) {
+            const int64_t ca=int64_t(footprintOrigin(pa,fa))*16+fa*8;
+            const int64_t cp=int64_t(int16_t(point>>20))*16+8;
+            return std::abs(ca-cp)-8*int64_t(fa)-8<8;
+        };
+        return axis(u.x,u.type->footX,aim[0]) && axis(u.z,u.type->footZ,aim[2]);
+    }
+    auto delta=[](int32_t to,int32_t from) { return std::bit_cast<int32_t>(uint32_t(to)-uint32_t(from)); };
+    if (w.ballisticClass())   // 52bbb0: the arc from the origin first, then 530500
+        return tak::retailBallisticInRange(delta(aim[0],u.x.v),delta(aim[1],(u.type->canFly ? u.flightY : u.groundY).v),
+            delta(aim[2],u.z.v),tak::retailAimSpeed(w.projVel),w.gravityAdj,w.lobPreferred,ballisticGravityRaw_,w.range);
+    // 530500 (DroppedBallistic 532270 too): 2D, inclusive; range 0 reaches anywhere.
+    if (!w.range) return true;
+    const int64_t dx=delta(aim[0],u.x.v),dz=delta(aim[2],u.z.v);
+    return ((dx*dx)>>32)+((dz*dz)>>32)<=int64_t(w.range)*w.range;
+}
+
+// 52ae90 -> 52fe30's point branch for the slots that hold a point: the aim
+// point (51aa50), then the minimum range (530630) and the reach (vtable
+// +0x10); either refusal raises 0x100000 on the unit (52ffd3) and the slot
+// neither aims nor fires. Otherwise it aims and fires as a unit target's
+// slot does (tickScriptWeapon), posting the mover's facing request.
+void World::tickPointWeapons(Unit& u) {
+    if (!u.slotPoint) return;
+    syncSlotMode(u);
+    if (!u.slotPoint || u.type->weapons.empty() || (u.type->onOffable && !u.active)) return;
+    const bool facing=slotNeedsFacing(*u.type);
+    for (int s=0;s<int(std::min<size_t>(3,u.type->weapons.size()));++s) {
+        if (!(u.slotPoint>>s&1)) continue;
+        if (u.type->weaponSwitching && s!=u.weaponSlot) continue;
+        const WeaponTarget t{nullptr,pointAimPoint(u.slotPointAt[size_t(s)])};
+        if (slotPointInsideMinRange(u,t.point,s) || !slotReachesPoint(u,t.point,s)) {
+            u.missionEvents|=0x100000u;
+            continue;
+        }
+        const auto solution=queryWeaponAim(u,t,s);
+        if (!solution) continue;
+        const Bam desired=retailHeadingToPort(solution->facing);
+        if (facing) u.faceRequest=desired.v&0xffff;
+        if (tickScriptWeapon(u,t,s,true,&*solution)) continue;
+        const Weapon& w=u.type->weapons[size_t(s)];
+        if (u.reloads[size_t(s)]>0) continue;
+        if (facing && std::abs(bamDiff(desired,u.heading))>std::max(512,int(uint16_t(w.aimTol)))) continue;
+        fire(u,t,s);
+    }
+}
+
+bool World::suppressAccepts(int unitId, float x, float z) const {
+    const Unit* u=unit(unitId);
+    if (!u || !u->alive() || !u->type || u->type->weapons.empty()) return false;
+    // 4de530 kind 3 with a point, by the selected slot's weapon (519ac0: a
+    // switcher's selected slot, else the first).
+    const int n=int(std::min<size_t>(3,u->type->weapons.size()));
+    const int slot=u->type->weaponSwitching ? std::clamp(u->weaponSlot,0,n-1) : 0;
+    const Weapon& w=u->type->weapons[size_t(slot)];
+    if (w.toAir) return false;                    // 4de673: no order
+    if (u->type->canFly) return false;            // AIRSTRIKE / AIRTOGROUND(HOVER) at a point: not ported
+    // 4de68a..4de6eb: a melee weapon only over a clearable blocker.
+    return !w.melee || clearableBlockerAt(Fixed::fromFloat(x),Fixed::fromFloat(z));
+}
+
+bool World::suppress(int unitId, float x, float z, bool queue) {
+    OrdersNote note{*this,unitId};
+    if (!suppressAccepts(unitId,x,z)) return false;
+    Unit* u=unit(unitId);
+    const int n=int(std::min<size_t>(3,u->type->weapons.size()));
+    const int slot=u->type->weaponSwitching ? std::clamp(u->weaponSlot,0,n-1) : 0;
+    const Fixed px=Fixed::fromFloat(x),pz=Fixed::fromFloat(z);
+    if (!queue) {
+        u->orders.clear();
+        cancelPath(*u);
+        u->routeStamp=-1;
+    }
+    Order o{px,pz,0};
+    o.goal=true;
+    o.issuedTick=tickCounter_;
+    o.suppress=true;
+    o.suppressSlot=uint8_t(slot);
+    o.attackPointX=px;o.attackPointZ=pz;
+    u->orders.push_back(o);
+    return true;
+}
+
+// 4d4e10 (a minimum range: the ring from `inner` out to `outer`) or 4d4da0
+// (the circle of radius `outer`) round the point, as a ground move ahead of
+// the SUPPRESS order (tickGroundMission runs it, wait 0x700).
+void World::pushSuppressApproach(Unit& u,Fixed x,Fixed z,int32_t outer,int32_t inner) {
+    Order a{x,z,0};
+    a.goal=a.groundMission=a.suppressApproach=true;
+    a.issuedTick=tickCounter_;
+    a.missionRadius=uint32_t(outer)-4u;
+    a.suppressInner=std::max(0,inner);
+    a.attackPointX=x;a.attackPointZ=z;
+    if (a.suppressInner>0) {
+        const auto point=suppressRingGoal(u,a).navigationPoint(u.x,u.z,u.type->footX,u.type->footZ);
+        a.x=point.x;a.z=point.z;
+    }
+    a.controller=++nextMovementController_;
+    cancelPath(u);
+    u.orders.insert(u.orders.begin(),a);
+    resetGroundSegment(u,u.orders.front());
+}
+
+int World::suppressStage(Unit& u,Order& o,RetailMissionState& m,uint32_t events) {
+    const int n=int(std::min<size_t>(3,u.type->weapons.size()));
+    if (!n) return 5;
+    // Head: a switcher fires its selected slot (519ac0), any other unit the
+    // order's (+0x4e). Event 0x40000 (a commandfire shot) ends the order.
+    const int slot=u.type->weaponSwitching ? std::clamp(u.weaponSlot,0,n-1) : std::min(int(o.suppressSlot),n-1);
+    const Weapon& w=u.type->weapons[size_t(slot)];
+    const bool melee=w.melee;
+    if (events&0x40000u) return 5;
+    // Not ported: the group check 51d1e0(unit,1,4) and the
+    // Move_Ground_Formation it puts in front (as in AirToGround), so its
+    // flag 0x8000000 is never set and its rand(3) / rand(15) never drawn.
+    switch (m.stage) {
+    case 0:
+        if (u.type->canFly) return 8;
+        o.suppressReach=w.range-w.minRange;   // 52aba0 - 52abd0
+        return 1;
+    case 1: {
+        std::array<int,4> foot{};
+        const bool feature=clearableBlockerAt(o.attackPointX,o.attackPointZ,&foot);
+        if (!melee) {
+            // A ranged unit fires at a clearable blocker there until it is
+            // gone, or at bare ground for ever.
+            if (feature) { o.suppressFeature=true; return 1; }
+            return o.suppressFeature ? 5 : 1;
+        }
+        if (!feature) return 5;
+        // 4930d0 + 4d4e80: RECLAIM's rectangle round the feature, on this
+        // order (as prepareReclaimApproach); wait 0x740.
+        o.suppressFeature=true;
+        m.waitMask=0x740;
+        if (!u.type->canMove || u.type->isStructure() || u.type->canFly) { m.pending|=0x200; return 1; }
+        o.buildRectangle=retailReclaimRectangle(foot[0],foot[1],foot[2],foot[3],u.type->footX,u.type->footZ);
+        const auto [cx,cz]=o.buildRectangle->navigationCell(
+            footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
+        o.x=Fixed::fromInt(cx*16+u.type->footX*8);
+        o.z=Fixed::fromInt(cz*16+u.type->footZ*8);
+        o.segmentX=Fixed::fromInt(u.x.floorInt());
+        o.segmentZ=Fixed::fromInt(u.z.floorInt());
+        o.hasSegment=true;
+        o.controller=++nextMovementController_;
+        o.navigationExhausted=o.navigationConsumed=false;
+        m.pending&=~0x3700u;
+        if (u.routeStamp<0 || uint32_t(u.routeStamp)<=tickCounter_-6u) u.routeStamp=0;
+        cancelPath(u);
+        requestPath(u,o.x.toFloat(),o.z.toFloat());
+        return 1;
+    }
+    case 2: {
+        if (!melee) return 1;
+        if (events&0x40) { m.sleep(tickCounter_,1); return 0; }
+        if (!(events&0x100)) return 9;    // the approach failed
+        // Arrived: the rectangle is spent. Then the point is walked toward
+        // the unit 8 px at a time (51b340, 5360bf / 5360f3) until the slot
+        // reaches it, at most 100 steps.
+        o.buildRectangle.reset();o.controller=0;o.navigationExhausted=o.navigationConsumed=false;
+        cancelPath(u);
+        auto reaches=[&] { return slotReachesPoint(u,{o.attackPointX.v,0,o.attackPointZ.v},slot); };
+        if (reaches()) return 1;
+        int steps=0;
+        for (;;) {
+            if (steps>=100) return 8;
+            const uint16_t h=uint16_t(retailDirection(o.attackPointX-u.x,o.attackPointZ-u.z).v);
+            o.attackPointX=Fixed::raw(int32_t(uint32_t(o.attackPointX.v)-uint32_t(retailScaledSine(h,0x80000))));
+            o.attackPointZ=Fixed::raw(int32_t(uint32_t(o.attackPointZ.v)-uint32_t(retailScaledCosine(h,0x80000))));
+            ++steps;
+            if (reaches()) return steps<100 ? 1 : 8;
+        }
+    }
+    case 3: {
+        // Every slot manual (519b70(3)); the selected slot aimed at the point
+        // (51a770, whole px), and a non-switcher's other slots too -- a
+        // melee one only when the selected weapon is melee.
+        setSlotsManual(u,kSlotsAttack);
+        const RetailGroundPoint p{int16_t(o.attackPointX.v>>16),int16_t(o.attackPointZ.v>>16)};
+        setSlotPoint(u,slot,p);
+        if (!u.type->weaponSwitching)
+            for (int s=0;s<n;++s)
+                if (s!=slot && (melee || !u.type->weapons[size_t(s)].melee)) setSlotPoint(u,s,p);
+        m.waitMask=0x150040;
+        return 1;
+    }
+    case 4: {
+        if (events&0x10000u) {
+            // The selected (or first) slot fired (530140). On a feature
+            // until it is gone; at the ground, to the back of the queue: alone
+            // it fires again, Shift-queued points take turns.
+            if (o.suppressFeature) {
+                if (!clearableBlockerAt(o.attackPointX,o.attackPointZ)) return 5;
+                m.stage=3;m.sleep(tickCounter_,1);
+                return 4;
+            }
+            m.stage=3;
+            return 6;
+        }
+        if (events&0x40) { m.sleep(tickCounter_,1); return 0; }   // a weapon switch
+        // 0x100000: the aim start refused the point (inside the minimum range
+        // or out of reach). Every slot automatic (519b10(3)); no mover (a
+        // structure) looks again after rand(30)+15 ticks when alone (9).
+        setSlotsAuto(u);
+        if (!u.type->canMove || u.type->isStructure()) return 9;
+        const int32_t range=w.range,minimum=w.minRange,span=range-minimum;
+        // Retail compares the reach left with the REMAINDER of span / 3.
+        if (!(o.suppressReach>span%3)) return 9;
+        const Fixed px=o.attackPointX,pz=o.attackPointZ;
+        int32_t outer=0,inner=0;
+        if (minimum>0) {
+            inner=int32_t(gameRand(span/6))+minimum;
+            outer=o.suppressReach+minimum;
+            // 4054ee..405505: reach left -= span / 3 (0x55555555 multiply).
+            int32_t d=(int32_t((int64_t(0x55555555)*span)>>32)-span)>>1;
+            d+=int32_t(uint32_t(d)>>31);
+            o.suppressReach+=d;
+        } else {
+            outer=o.suppressReach;
+            o.suppressReach-=int32_t(gameRand(range/3));
+        }
+        m.stage=3;
+        // Inserting invalidates o and m: the stage is set first, and the
+        // dispatcher touches m no more on 4.
+        pushSuppressApproach(u,px,pz,outer,inner);
+        return 4;
+    }
+    default:
+        return 7;
+    }
+}
+
+bool World::tickSuppress(Unit& u,bool& groundMovementHandled) {
+    struct Host {
+        World& w; Unit& u;
+        bool enabled() const { return u.alive() && !u.underConstruction && !u.embarked(); }
+        RetailMissionState* head() {
+            if (u.orders.empty()) return nullptr;
+            Order& o=u.orders[currentLeg(u.orders)];
+            return o.suppress ? &o.mission : nullptr;
+        }
+        bool hasNext(const RetailMissionState&) const { return currentLeg(u.orders)+1<u.orders.size(); }
+        void idle() {}
+        uint32_t random(int n) { return w.gameRand(n); }
+        void remove(RetailMissionState&) { w.dropLeg(u); }
+        void rotate(RetailMissionState&) {
+            Order o=u.orders[currentLeg(u.orders)];
+            w.dropLeg(u);
+            o.controller=0;o.buildRectangle.reset();o.hasSegment=false;
+            o.navigationExhausted=o.navigationConsumed=false;o.mission.pending=0;
+            u.orders.push_back(std::move(o));
+        }
+        void clear() { w.cancelPath(u); u.orders.clear(); u.routeStamp=-1; }
+        int handle(RetailMissionState& m,uint32_t events) {
+            return w.suppressStage(u,u.orders[currentLeg(u.orders)],m,events);
+        }
+    } host{*this,u};
+    retailDispatchMissions(tickCounter_,u.missionEvents,host);
+    noteOrders(u.id);
+    if (u.orders.empty()) return false;
+    const size_t leg=currentLeg(u.orders);
+    if (!u.orders[leg].suppress) return false;
+    if (u.orders[leg].buildRectangle) return false;   // a melee walk to its feature
+    // Arrived: the route corners of the walk go, the order is the leg.
+    if (leg) { u.orders.erase(u.orders.begin(),u.orders.begin()+long(leg)); noteOrders(u.id); }
+    // The order holds the body: a mover stands and pivots to the facing
+    // request its aiming slots posted (the idle navigator, 4d9b6a); a
+    // structure has no mover to run.
+    if (!u.type->canFly && !u.type->isStructure())
+        brakeGround(u,u.faceRequest>=0 ? std::optional<Bam>(Bam(u.faceRequest)) : std::nullopt);
+    groundMovementHandled=true;
+    return true;
 }
 
 void World::setManaSharing(int fromPlayer, int toPlayer, bool enabled) {
@@ -15823,6 +16207,54 @@ std::optional<World::WeaponAimSolution> World::queryWeaponAim(int unitId,int tar
     return result;
 }
 
+std::array<int32_t,3> World::pointAimPoint(RetailGroundPoint p) const {
+    // 51aa50 for a point: x/z the point's whole px, y the terrain height
+    // there (511170) or the sea level (+0x19ef8), whichever is greater.
+    std::array<int32_t,3> aim{int32_t(uint32_t(int32_t(p.x))<<16),0,int32_t(uint32_t(int32_t(p.z))<<16)};
+    const int ground=heights_.empty() ? 0 : retailTerrainHeight(aim[0],aim[2],terW_,terH_,[&](int x,int z) {
+        return heights_[size_t(z)*size_t(terW_)+size_t(x)];
+    });
+    aim[1]=int32_t(uint32_t(std::max(ground,int(uint8_t(seaLevel_))))<<16);
+    return aim;
+}
+
+// queryWeaponAim for a unit or a point target. A point is aimed at as it
+// stands: no SweetSpot and no lead (51aa50's point branch), and every class
+// faces it (a melee slot faces a unit target's origin, which a point is).
+std::optional<World::WeaponAimSolution> World::queryWeaponAim(Unit& u,const WeaponTarget& t,int slot) {
+    if(t.unit)return queryWeaponAim(u.id,t.unit->id,slot);
+    if(!u.type || slot<0 || size_t(slot)>=u.type->weapons.size())return {};
+    const auto& weapon=u.type->weapons[size_t(slot)];
+    const std::array<int32_t,3> origin{u.x.v,(u.type->canFly ? u.flightY : u.groundY).v,u.z.v};
+    WeaponAimSolution result;
+    result.source=origin;
+    result.target=t.point;
+    const auto heading=portHeadingToRetail(u.heading);
+    result.heading=uint16_t(retailDirection(Fixed::raw(t.point[0])-u.x,Fixed::raw(t.point[2])-u.z).v-heading);
+    const bool aimed=weapon.ballistic || weapon.beam || weapon.kind==Weapon::Kind::Guided;
+    if(aimed)result.source=queryUnitScriptPoint(u.id,false,slot);
+    result.facing=retailSlotFacing(origin,t.point,t.point,weapon.melee);
+    if(aimed) {
+        const auto source=result.source;
+        const int32_t speed=tak::retailAimSpeed(weapon.projVel);
+        std::array<int32_t,3> delta;
+        for(size_t axis=0;axis<3;++axis)
+            delta[axis]=std::bit_cast<int32_t>(uint32_t(t.point[axis])-uint32_t(source[axis]));
+        const auto angles=retailDirectAim(delta[0],delta[1],delta[2],heading);
+        result.heading=angles[0];result.pitch=angles[1];
+        if(weapon.ballistic) {
+            result.pitch=tak::retailBallisticPitch(float(delta[0])/65536.f,float(delta[1])/65536.f,
+                float(delta[2])/65536.f,float(speed)/65536.f,weapon.gravityAdj,weapon.lobPreferred,
+                ballisticGravityRaw_);
+            if(result.pitch==0x8000) {
+                result.pitch=0;
+                result.unreachable=weapon.ballisticClass();
+            }
+        }
+    }
+    return result;
+}
+
 void World::clearScriptWeaponTarget(Unit& u,bool fromCommand) {
     const auto it=unitScript(u.id);
     if(it) {
@@ -15850,7 +16282,7 @@ void World::clearScriptWeaponTarget(Unit& u,bool fromCommand) {
     u.scriptAimTarget=0;
 }
 
-bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept,const WeaponAimSolution* given) {
+bool World::tickScriptWeapon(Unit& u,const WeaponTarget& t,int slot,bool swept,const WeaponAimSolution* given) {
     const auto it=unitScript(u.id);
     if(!it || slot<0 || slot>=3)return false;
     const auto& file=*u.type->script();
@@ -15859,11 +16291,12 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept,const Weap
     // shot: readiness/release still require the script's SET 22 / SET 23.
     // A caller that already solved this slot this tick (for the body's
     // facing request) hands its solution in.
-    const auto solution=given ? std::optional<WeaponAimSolution>(*given) : queryWeaponAim(u.id,target.id,slot);
+    const auto solution=given ? std::optional<WeaponAimSolution>(*given) : queryWeaponAim(u,t,slot);
     if(!solution)return true;
     // A swept (auto-slot) target lives in the slot record, not in the
     // order-driven scriptAimTarget, which tickCombat retires with its order.
-    if(!swept)u.scriptAimTarget=target.id;
+    // So does a point (Unit::slotPoint).
+    if(!swept && t.unit)u.scriptAimTarget=t.unit->id;
     u.weaponAimPoints[size_t(slot)]=solution->target;
     u.weaponMuzzlePoints[size_t(slot)]=solution->source;
     auto& aim=u.weaponAim[size_t(slot)];const auto& weapon=u.type->weapons[size_t(slot)];
@@ -15899,12 +16332,16 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept,const Weap
         // Aimed, loaded, and still no arc: a dud for the blocked-shot count
         // (noteNoArc), one per nominal reload.
         u.reloads[slot]=uint16_t(int32_t(weapon.reload*kTick+0.5f));
-        noteNoArc(u,target);
+        if(t.unit)noteNoArc(u,*t.unit);
     }else if(ready) {
         const uint16_t nominal=uint16_t(int32_t(weapon.reload*kTick+0.5f));
         u.reloads[slot]=retailWeaponReload(nominal,uint16_t(crtRand(0x530167)));
         const bool all=!u.type->weaponSwitching && u.type->weapons.size()>1;
-        u.missionEvents|=retailWeaponFireEvent(0,0x10000,all ? 0xc0000000u : uint32_t(slot)<<30,aim.flags);
+        // A commandfire shot raises 0x40000 (5301a1), which ends SUPPRESS;
+        // only a point target passes the weapon's flag (no unit-target
+        // reader of the bit is ported).
+        const uint32_t weaponFlags=!t.unit && weapon.commandFire ? 0x20000u : 0u;
+        u.missionEvents|=retailWeaponFireEvent(weaponFlags,0x10000,all ? 0xc0000000u : uint32_t(slot)<<30,aim.flags);
         u.fireAnimations|=uint32_t(1)<<slot;
         u.weaponAnimations.add(tak::RetailWeaponAnimation::Fire,slot);
         // Native 530140 also starts FireWeapon with immediate=0. SET 23 can
@@ -15912,7 +16349,7 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept,const Weap
         it->state().startArguments(file,fireScript,{uint32_t(slot),0,0,0},1);
     }
     if(aim.flags&16) {
-        fire(u,target,slot,true);
+        fire(u,t,slot,true);
         aim.projectileCreated();
     }
     return true;
@@ -16902,6 +17339,7 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         const Fixed goalRadius = Fixed::fromInt(std::max(16, std::max(u.type->footX, u.type->footZ) * 8));
         if (!groundMissionOrder(u,true) && legGoal.goal && !legGoal.targetId && !legGoal.buildType &&
             !legGoal.reclaimFeat && !legGoal.repairTarget && !legGoal.helpSite && !legGoal.load && !legGoal.unload &&
+            !legGoal.suppress &&
             fxLen(legGoal.x - u.x, legGoal.z - u.z) < goalRadius) {
             // dropLeg erases the order `leg` refers to: copy the lap first.
             std::optional<Order> lap;
@@ -18344,6 +18782,8 @@ void World::tick(float dt) {
 
         // 52ae90's auto slots: fire at swept targets whatever the order.
         tickSlotWeapons(u);
+        // ... and the slots that hold a point (SUPPRESS).
+        tickPointWeapons(u);
 
         bool groundMovementHandled=false;
         const size_t currentOrder=u.orders.empty()?0:currentLeg(u.orders);
@@ -19446,6 +19886,22 @@ uint64_t World::stateHash() const {
                 mix(0x53544e52454cull);mix(order.stationFree);
                 mix(uint32_t(order.stationRefX));mix(uint32_t(order.stationRefZ));mix(order.stationRefTick);
             }
+            if (order.suppress) {
+                mix(0x5355505052455353ull);
+                mix(uint32_t(order.attackPointX.v));mix(uint32_t(order.attackPointZ.v));
+                mix(order.suppressFeature);mix(order.suppressSlot);mix(uint32_t(order.suppressReach));
+                mix(order.mission.stage);mix(order.mission.waitMask);mix(order.mission.deadline);
+                mix(order.mission.pending);mix(order.mission.flags);mix(order.controller);
+                mix(order.buildRectangle.has_value());
+                if (order.buildRectangle) {
+                    const auto& r=*order.buildRectangle;
+                    mix(uint32_t(r.minX));mix(uint32_t(r.maxX));mix(uint32_t(r.minZ));mix(uint32_t(r.maxZ));
+                }
+            }
+            if (order.suppressApproach) {
+                mix(0x5355505041505052ull);mix(uint32_t(order.suppressInner));
+                mix(uint32_t(order.attackPointX.v));mix(uint32_t(order.attackPointZ.v));
+            }
             if (!order.groundMission && !(u.type && u.type->canFly && (order.patrol || order.flightMoveMission))) continue;
             mix(order.controller);
             if(isLegionPathfinding(pathfindingMode_))mix(order.issuedTick);
@@ -19514,6 +19970,10 @@ uint64_t World::stateHash() const {
         mix(uint32_t(u.scriptAimTarget));
         for (int32_t t : u.slotTarget) mix(uint32_t(t));
         mix(uint32_t(u.slotAuto)|uint32_t(u.slotManual)<<8);
+        if (u.slotPoint) {
+            mix(0x534c4f54504f4954ull);mix(u.slotPoint);
+            for (const auto& p : u.slotPointAt) mix(uint32_t(uint16_t(p.x))|uint32_t(uint16_t(p.z))<<16);
+        }
         mix(uint32_t(u.faceRequest));
         if (u.blockedTarget) {
             mix(0x424c4b44u);mix(uint32_t(u.blockedTarget));

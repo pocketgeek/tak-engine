@@ -5898,3 +5898,62 @@ renderer's vtable (`[esi]+0x64`, 24 vertices as lines), so Glide and software sh
   the dash phase.
 
 `client/selectionring.h` is the port; `selection_ring_test` checks it.
+
+## SUPPRESS port: what was re-read and what is ours (icd static, 2026-11-03)
+
+The order itself is read stage by stage in "Fire at a point: SUPPRESS" (on
+`fx-clicks`). For the port the details below were read again in the code (S);
+none was emulated (no E). What World does differently is marked I.
+
+- **S, resolver** `4de65f..4de7a6`: the selected slot's weapon (`519ac0`: a
+  switcher's selected slot, else the first present). `+0xc8` 0x4000
+  (toairweapon): no order; a flyer (`+0x260` 0x800) goes to the airstrike
+  branch; vtable `+0x14` false (not melee): SUPPRESS (`0x615db8`); melee:
+  SUPPRESS only over a blocking (0x20), clearable (0x20000) feature.
+- **S, head.** For a switcher the slot is `519ac0`'s, kept in a local: `+0x4e`
+  is never written back. Event 0x40000 returns 5 before the group check.
+- **S, stage 2** (melee): the reach test before the walk; the walk stops at 100
+  steps, and reaching on the 100th still returns 8.
+- **S, stage 4.** The span is `52aba0 - 52abd0`; the ring is `4d4e10(point,
+  left + min, rand(span/6) + min)` (span/6 and span/3 by `0x2aaaaaab` and
+  `0x55555555`, truncated toward zero), then left -= span/3; the circle is
+  `4d4da0(point, left)`, then left -= rand(range/3). The test is left > span % 3.
+  A feature target still there: stage 3 and a tick's sleep (4); gone: 5.
+- **S, 51a770** (a point for a slot): a switcher takes it on its selected slot
+  only; the point is stored in whole px (`sar 16`; a z of 0x8000 becomes 0x8001);
+  the unit's events are masked with 0xfe08ffff, as `51a700` does for a unit.
+- **S, 52fe30's point branch** (`52ff7d`): `51aa50` gives the aim point, then
+  `530630` (inside the minimum range, strict) and vtable `+0x10` (reach); a
+  refusal ORs 0x100000 into unit `+0xd0`, for every aimed slot. Then the
+  facing request as for a unit (`52feaa`). `530500` (the base reach for a
+  point) has no air-flag tests, range 0 reaches anywhere, and is inclusive;
+  `52bbb0` solves the arc from the origin to the aim point and then calls it;
+  `52b8a0` boxes the point's cell (16 px) against the footprint as
+  `52b980` boxes two units. `52ad20` (stage 2) is vtable `+0x10` on the raw
+  mission point.
+- **S, 51aa50** for a point (record `+6` not 0x8000): x and z the point's px
+  << 16, y the terrain height there (`511170`) or the sea-level byte
+  (`+0x19ef8`), whichever is greater.
+
+Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
+
+- I: stage 4's ring or circle is a ground leg pushed ahead of the order
+  (`Order::suppressApproach`, run like RECLAIMAREA's approach: arrival or
+  failure ends it) instead of a controller on the order; the order resumes at
+  stage 3 when it ends. In Legion it stays on the native navigator (a Legion
+  move does not stop on a circle or ring). The melee rectangle is on the order
+  itself, as RECLAIM's.
+- I: a slot's point (`Unit::slotPoint`) is dropped, with TargetCleared, as soon
+  as the SUPPRESS that aimed it is not the current leg, including when the
+  order has gone to the back behind another kind of order.
+- I: the 0x40 event (`51a8b0`'s weapon switch) is raised only for a unit on
+  SUPPRESS, and a commandfire shot's 0x40000 only for a point target; no
+  unit-target mission reads either.
+- I: the group check `51d1e0(unit,1,4)` and its Move_Ground_Formation are not
+  ported (as in AirToGround). A flyer gets no order: AIRSTRIKE, AIRTOGROUNDHOVER
+  and AIRTOGROUND at a point are not ported yet.
+- I: a Guided shot at a point flies without homing (its update steers only at
+  a live target).
+- Campaign `a X Y` still walks into reach and fights (`mission.cpp`).
+
+`suppress_test` checks it in both pathfinding modes.

@@ -19,7 +19,8 @@ inline bool parsePlayerCommands(const std::vector<uint8_t>& payload, std::vector
         // argument is forged: the client sends only the seven the sim applies).
         const bool power=c.kind==tak::net::Cmd::PowerCode;
         const bool resurrect=c.kind==tak::net::Cmd::Resurrect;
-        if ((uint8_t(c.kind)>uint8_t(tak::net::Cmd::BuildManaArea) && !power && !resurrect) ||
+        const bool ground=c.kind==tak::net::Cmd::AttackGround;
+        if ((uint8_t(c.kind)>uint8_t(tak::net::Cmd::BuildManaArea) && !power && !resurrect && !ground) ||
             !coordinate(c.x) || !coordinate(c.z) ||
             !coordinate(c.x2) || !coordinate(c.z2)) return false;
         if (power && (!tak::sim::simPowerCode(c.targetId) || c.queue>uint8_t(tak::sim::PowerArg::Invalid)))

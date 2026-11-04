@@ -130,6 +130,14 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         case Cmd::AttackMove:
             if (owns(c.unitId)) { redirect(); world.attackMove(c.unitId, c.x, c.z, c.queue); }
             break;
+        case Cmd::AttackGround:
+            // A refused point (an anti-air weapon, a melee one off a
+            // clearable blocker, a flyer) leaves the unit's work alone.
+            if (owns(c.unitId) && world.suppressAccepts(c.unitId, c.x, c.z)) {
+                redirect();
+                world.suppress(c.unitId, c.x, c.z, c.queue);
+            }
+            break;
         case Cmd::Patrol:
             // Shift-patrol ADDS a waypoint to the route. patrol() builds a fresh
             // two-point loop and was the only thing wired up, so a queued patrol
