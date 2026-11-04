@@ -22,6 +22,41 @@ their validation reports; both live in [`docs/`](docs/).
 ## Unreleased
 *protocol 312 · replay format 15 · does not play with 0.9.19 or earlier, nor their replays*
 
+- **Clicks do what the original game's clicks do, and the cursor says so.** Orders now
+  go out when you let go of the button, as in the original game, and every click
+  picks the same unit the cursor shows: where units overlap, the smallest one under
+  the pointer. Each selected unit decides for itself:
+  - Right-clicking an enemy: units that can hurt it attack, units with no weapon walk
+    there, and a unit that cannot hurt it stays put. Right-clicking one of your own or
+    an ally's units helps build it, repairs it, boards it (when it is your transport
+    and the unit fits), guards it, or else walks there. A right-click on a body or a
+    tree raises or reclaims it, and the other units walk there.
+  - A loaded transport now just moves where you right-click; **Alt+right-click**
+    unloads it there (or use the Unload button).
+  - Right-dragging a box attacks the visible enemies in it, nearest first; units with
+    no attack order and the ability to clear it clear the box; a lone transport loads
+    your units in it. The cursor shows what the box will do.
+  - With Attack, Load or Clear armed, a left-drag box attacks, loads or clears too.
+  - An armed button acts only where its cursor shows an order; elsewhere the click
+    does nothing and the button stays armed. Guard no longer lets ground units guard
+    a flyer (unless a flyer is selected too), Attack over your own units or the
+    ground attack-moves with an Attack cursor, Move over a friendly unit helps,
+    repairs, loads or guards it, and Clear shows Revive where it will raise a body.
+    Fight-move (F) is the original game's move-fight: over a friendly unit it does
+    what Move does there (helps, repairs, loads or guards it, with the same cursor),
+    and everywhere else it moves to the point, fighting on the way.
+  - On the minimap, a right-click attacks, helps or repairs the unit under the
+    pointer, armed orders aim at it, and a building can be placed by clicking the
+    minimap (with the found-site cursor where it would be accepted).
+  - Left-clicking an enemy or ally clears your selection, as in the original game;
+    with nothing of yours selected it still selects the unit so you can look at it.
+    Shift-clicking a selected unit now removes it from the selection.
+  - A random unit of the selection acknowledges an order, as in the original game.
+  - **Ctrl+click puts an order at the front** of a unit's queue without clearing it,
+    as in the original game: the unit does it first, then carries on with what it
+    was doing. Shift- or Ctrl-clicking the same order again (on the same target, or
+    within 16 pixels of a queued point) takes that queued order back. For a factory,
+    or a Zhon builder repeating production, both work on its rally orders.
 - **A unit no longer ignores an enemy for good after its shots hit a rock.** A unit
   that wrote off an enemy because three shots in a row struck a hill or rock used to
   keep skipping it, even after that enemy walked into the open, until you gave it an
@@ -125,6 +160,17 @@ their validation reports; both live in [`docs/`](docs/).
   and other passive players in a campaign mission share nothing, as in the original
   game, even though missions put them on your team; outside campaigns a passive
   player never shares sight either.
+- **Fire at a point.** The game now has the original game's fire at
+  a point (SUPPRESS), as the new Attack Ground command: a ground unit or tower fires
+  at the spot itself, a walker steps into range (or out of its minimum range) first
+  and fires at will on the way, a tower out of range keeps the order and waits, and
+  Shift-queued points take turns one shot each. A melee unit fells a tree or other
+  clearable obstacle there; anti-air weapons get no order. A flyer flies attack runs
+  over the spot, hovers off it if it has hover attack, or bombs it with a dropped
+  weapon. An armed Attack (A) clicked on the ground or on a friendly unit, in the
+  view or on the minimap, now gives it to each selected unit that can, under an
+  Attack cursor; Shift queues it, Ctrl puts it first, and Shift or Ctrl on a
+  queued point takes it back. Fight-move (F) still attack-moves.
 - **Investigated, no change needed:**
   - A computer's Sea Dragon on Hold Position with an enemy just outside Tsunami's range
     keeps switching weapons and never fires: the original game does exactly the same.

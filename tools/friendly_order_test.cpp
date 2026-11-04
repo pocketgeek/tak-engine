@@ -2,7 +2,8 @@
 //
 // Retail's default-order resolver (0x4de530, action mode 1, right-click
 // interface) decides per selected unit: help-build, else repair, else load,
-// else Guard (FOLLOW_GROUND) when the type has `canguard`. It never asks for a
+// else Guard (FOLLOW_GROUND) when the type has `canguard`, else a Move to the
+// point. It never asks for a
 // weapon, so a builder guards a healthy unit as a soldier does. Our right-click
 // used to guard only with armed units, so a builder did nothing.
 //
@@ -50,13 +51,17 @@ int main(int argc, char** argv) {
 
     check(order(builder, false) == FriendlyOrder::Guard, "builder over a healthy unit guards it");
     check(order(builder, true) == FriendlyOrder::Repair, "builder over a damaged unit repairs it");
-    check(order(builder, false, true) == FriendlyOrder::None, "a repeating builder takes no guard");
-    check(order(builder, true, true) == FriendlyOrder::None, "a repeating builder does not repair");
+    check(order(builder, false, true) == FriendlyOrder::Move, "a repeating builder takes no guard: it rallies (Move)");
+    check(order(builder, true, true) == FriendlyOrder::Move, "a repeating builder does not repair: it rallies (Move)");
     check(order(builder, false, false, false) == FriendlyOrder::None, "an unfinished builder does nothing");
     check(order(builder, false, false, true, true) == FriendlyOrder::None, "a unit never guards itself");
     check(order(soldier, false) == FriendlyOrder::Guard, "soldier over a healthy unit guards it");
     check(order(soldier, true) == FriendlyOrder::Guard, "soldier over a damaged unit guards it (per unit)");
-    check(order(avatar, false) == FriendlyOrder::None, "no canguard: no guard, weapon or not");
+    check(order(avatar, false) == FriendlyOrder::Move, "no canguard: no guard, weapon or not -- retail moves to the point");
+    sim::UnitType tower = soldier;    // armed structure, no canguard
+    tower.maxVel = sim::Fixed();
+    tower.canGuard = false;
+    check(order(tower, false) == FriendlyOrder::None, "a structure with nothing to do does nothing (no move)");
     check(order(factory, true) == FriendlyOrder::None, "a factory neither repairs nor guards");
 
     if (argc >= 2) {

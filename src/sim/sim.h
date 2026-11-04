@@ -989,6 +989,36 @@ struct alignas(64) Order {
     // and is not the last mission (+0x66), so a lost target ends it without
     // VTOL_SEEKATTACK. Hashed with a tag when set.
     bool aheadOfDefault = false;
+
+    // ---- line 5: SUPPRESS ----------------------------------------------------
+    // Retail SUPPRESS (UNITMISSIONCODE_SUPPRESS, 0x404d70; World::tickSuppress):
+    // fire at a point. Armed ATTACK on the ground (Cmd::AttackGround) gives it
+    // to a ground unit or a structure whose selected weapon is not melee, and
+    // to a melee one only over a blocking, clearable feature (World::suppress).
+    // Its point is the mission's +0x22, kept in attackPointX/Z (the melee
+    // stage 2 walks it toward the unit); x/z are where the order line points
+    // and, on a melee approach, the rectangle's steering cell. targetId stays
+    // 0. Its stages run on `mission`. Hashed with a tag when set.
+    bool suppress = false;
+    bool suppressFeature = false;   // +0x56: a clearable blocking feature is the target
+    uint8_t suppressSlot = 0;       // +0x4e: the slot it fires (519ac0 at the order)
+    int32_t suppressReach = 0;      // +0x52: reach left for the approach rings (range - minrange at stage 0)
+    // The approach stage 4 puts ahead of the order (4d4e10's ring with a
+    // minimum range, else 4d4da0's circle; wait 0x700): a ground move to the
+    // point that ends on arrival or failure, like RECLAIMAREA's. Its outer
+    // radius is missionRadius + 4 (the circle's), suppressInner the ring's
+    // inner one (0: the circle). Hashed with a tag when set.
+    bool suppressApproach = false;
+    int32_t suppressInner = 0;
+    // A flyer's attack at a point (the same 4de530 kind 3 resolver, by the
+    // selected slot's weapon): AIRSTRIKE (`dropped`), AIRTOGROUNDHOVER (the
+    // type's hoverattack) or AIRTOGROUND, each with no target unit (mission
+    // +0x16 is 0). Its point (+0x22) is attackPointX/Z, its mission runs on
+    // `mission`, its +0x4e in airRunCount and its controller in flightGoal,
+    // as on a flyer's unit attack (World::tickAirPoint). targetId stays 0.
+    // Hashed with a tag when set.
+    static constexpr uint8_t kAirStrike = 1, kAirHover = 2, kAirRun = 3;
+    uint8_t airPoint = 0;
 };
 // Which line each field sits on (WE D2). Moving a field across a line, or
 // growing line 0/1 past 64 bytes, is a compile error here. (offsetof on a type
@@ -1020,7 +1050,11 @@ TAK_ORDER_LINE(transportUnloadReleasePending, 1); TAK_ORDER_LINE(transportUnload
 TAK_ORDER_LINE(formationLevel, 1); TAK_ORDER_LINE(stationFree, 1); TAK_ORDER_LINE(missionRadius, 1);
 TAK_ORDER_LINE(orderSerial, 4);
 static_assert(offsetof(Order, mission) == 128, "line 1 ends at byte 127; line 2 starts with mission");
-static_assert(sizeof(Order) == 320, "Order is five cache lines (the cold tail has room left); a new field names its line above");
+TAK_ORDER_LINE(suppress, 5); TAK_ORDER_LINE(suppressFeature, 5); TAK_ORDER_LINE(suppressSlot, 5);
+TAK_ORDER_LINE(suppressReach, 5); TAK_ORDER_LINE(suppressApproach, 5); TAK_ORDER_LINE(suppressInner, 5);
+TAK_ORDER_LINE(airPoint, 5);
+static_assert(offsetof(Order, suppress) == 320, "lines 0-4 are full; line 5 starts with SUPPRESS");
+static_assert(sizeof(Order) == 384, "Order is six cache lines (line 5 has room left); a new field names its line above");
 #undef TAK_ORDER_LINE
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
@@ -1389,6 +1423,14 @@ struct alignas(64) Unit {
     // Retail. Hashed with a tag when set.
     std::array<uint8_t,3> aimWait{};
     int32_t faceRequest = -1;
+    // A slot's point target (record +4/+6 with +6 not 0x8000, set by 51a770:
+    // SUPPRESS's stage 3): the point in whole px, and a bit per slot that
+    // holds one. A slot holds a unit target or a point, never both. Its
+    // weapon update (52ae90 -> 52fe30) aims and fires at the point
+    // (World::tickPointWeapons) whatever mission leads, until the slot is
+    // retargeted or changes mode (51a7f0, TargetCleared). Hashed when set.
+    uint8_t slotPoint = 0;
+    std::array<RetailGroundPoint,3> slotPointAt{};
     // 4c6800's current-view footprint (the sight object at unit+0x84 as the
     // per-player view counters see it) and the plane it is counted in (-1 =
     // none). Kept beside sightFootprint, which feeds the persistent exploration
@@ -2733,6 +2775,17 @@ public:
         bool unreachable=false;
     };
     std::optional<WeaponAimSolution> queryWeaponAim(int unitId,int targetId,int slot);
+    // A weapon slot's target: a unit, or (unit null) a ground point -- retail's
+    // slot record holds either (+4/+6, +6 == 0x8000 for a unit). `point` is
+    // the slot's aim point for a point target (pointAimPoint, 51aa50).
+    struct WeaponTarget {
+        Unit* unit=nullptr;
+        std::array<int32_t,3> point{};
+    };
+    std::optional<WeaponAimSolution> queryWeaponAim(Unit& u,const WeaponTarget& t,int slot);
+    // 51aa50 for a point target: the point in whole px, its height the
+    // terrain's there or the sea level, whichever is greater.
+    std::array<int32_t,3> pointAimPoint(RetailGroundPoint p) const;
     // 51aa50 for a unit target: its SweetSpot plus the weapon's lead.
     std::array<int32_t,3> retailLeadPoint(const Unit& u,const Unit& target,const Weapon* weapon);
     std::array<int32_t,3> queryUnitScriptPoint(int unitId,bool sweetSpot,int slot=0);
@@ -2905,6 +2958,23 @@ public:
         return false;
     }
     void attackMove(int unitId, float x, float z, bool queue);
+    // Armed ATTACK on the ground (Cmd::AttackGround; 4de530 kind 3 with a
+    // point and no target): SUPPRESS for a ground unit or a structure whose
+    // selected weapon is ranged, or a melee one over a clearable blocking
+    // feature; nothing for a toairweapon, or a melee weapon elsewhere. A
+    // flyer gets AIRSTRIKE, AIRTOGROUNDHOVER or AIRTOGROUND at the point
+    // (Order::airPoint). Whether an order was given.
+    bool suppress(int unitId, float x, float z, bool queue);
+    bool suppressAccepts(int unitId, float x, float z) const;
+    // The resolver's rule by the type and the selected slot alone (519ac0: a
+    // switcher's selected slot, else the first), shared with the client's
+    // click (clickrules.h): Fire gives the order anywhere, OverBlocker (a melee
+    // weapon) only where clearableBlockerAtPoint holds.
+    enum class SuppressRule : uint8_t { None, Fire, OverBlocker };
+    static SuppressRule suppressRule(const UnitType& t, int weaponSlot);
+    bool clearableBlockerAtPoint(float x, float z) const {
+        return clearableBlockerAt(Fixed::fromFloat(x), Fixed::fromFloat(z));
+    }
     // Can a unit of `type` at (fx,fz) actually reach goal (gx,gz)? Answered from
     // footprint-aware COMPONENT labelling (one flood fill per grid+footprint, see
     // components()), not from a distance field -- the flow-field version cost ~40ms a
@@ -2996,6 +3066,28 @@ public:
     void loadInto(int unitId, int transportId, bool queue = false);
     void unloadAt(int transportId, float x, float z, Fixed destinationY = {},
                   bool queue = false);
+    // Retail's queue modifiers on a player's order (4d78a0's place, 4d7a30's
+    // toggle; applyCommand reads them from Command::queue). The kind a queued
+    // order is matched by, from its own fields (queuedKind).
+    enum class QueuedKind : uint8_t { None, Move, AttackMove, Patrol, Attack, Guard, Load, Unload,
+                                      Build, Reclaim, Repair, Assist, AttackGround };
+    struct QueuedMatch {
+        QueuedKind kind = QueuedKind::None;
+        Fixed x, z;                         // the point kinds' click (Build: the site)
+        int target = 0;                     // the unit kinds' target (Reclaim: the feature)
+        const UnitType* type = nullptr;     // Build
+    };
+    static QueuedKind queuedKind(const Order& o);
+    // Ctrl (4d7a09 -> 4d7750): `issue` appends its order to an emptied list --
+    // the unit's own, or its rally list when `rally` (a producer, or a mobile
+    // builder repeating production) -- and everything that was queued goes
+    // back behind it. The interrupted leg starts over when it comes round.
+    void insertOrderFront(int unitId, bool rally, const std::function<void()>& issue);
+    // Shift or Ctrl on an order of the same kind as a queued one, on its target
+    // or within 16 px of its point (4d7a5b..4d7ab2): that order goes instead.
+    // The first match from the head; the rally list when `rally`. True when
+    // one went.
+    bool removeQueuedMatch(int unitId, bool rally, const QueuedMatch& m);
     void tick(float dt);
 
     std::vector<Unit>& units() { return units_; }
@@ -3131,8 +3223,33 @@ private:
                       int& x, int& z) const;
     void leaveFactoryYard(int helperId);
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
-    void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false);
-    bool tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept=false,const WeaponAimSolution* given=nullptr);
+    void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false) { fire(u,WeaponTarget{&target},slot,scriptTriggered); }
+    void fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered=false);
+    bool tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept=false,const WeaponAimSolution* given=nullptr) {
+        return tickScriptWeapon(u,WeaponTarget{&target},slot,swept,given);
+    }
+    bool tickScriptWeapon(Unit& u,const WeaponTarget& t,int slot,bool swept=false,const WeaponAimSolution* given=nullptr);
+    // SUPPRESS (0x404d70): the order's five stages on the current leg, run
+    // ahead of the unit's combat; true while it owns the body this tick.
+    bool tickSuppress(Unit& u,bool& groundMovementHandled);
+    // 52ae90 for the slots that hold a point (Unit::slotPoint): aim, fire,
+    // and 52ffd3's refusal (event 0x100000) when the point is out of reach
+    // or inside the minimum range.
+    void tickPointWeapons(Unit& u);
+    void setSlotPoint(Unit& u,int slot,RetailGroundPoint p);   // 51a770
+    void dropSlotPoint(Unit& u,int slot);                      // 51a7f0 on a point
+    // 530630 / vtable +0x10 (530500, BallisticWeapon 52bbb0, MeleeWeapon
+    // 52b8a0) for a point target's aim point.
+    bool slotPointInsideMinRange(const Unit& u,const std::array<int32_t,3>& aim,int slot) const;
+    bool slotReachesPoint(const Unit& u,const std::array<int32_t,3>& aim,int slot) const;
+    // 50e660 + feature +0x13c: a blocking (0x20), clearable (0x20000) feature
+    // in the point's cell (a tail followed back to its anchor).
+    // `footprint`: the feature's anchor cell and size (4930d0).
+    bool clearableBlockerAt(Fixed x,Fixed z,std::array<int,4>* footprint=nullptr) const;
+    int suppressStage(Unit& u,Order& o,RetailMissionState& m,uint32_t events);
+    void pushSuppressApproach(Unit& u,Fixed x,Fixed z,int32_t outer,int32_t inner);
+    // The approach ring of a SUPPRESS approach leg (Order::suppressInner).
+    std::optional<RetailRingGoal> suppressRing(const Unit& u,const Order& goal) const;
     void legionAimStall(Unit& u,int slot,bool available);
     void clearScriptWeaponTarget(Unit& u,bool fromCommand=false);
     // Convert a unit to another player (contact charm + mind-control weapons).
@@ -3608,11 +3725,21 @@ private:
     void tickFlightMovement(Unit& u, bool persistent = false);
     void tickRetainedFlightMovement(Unit& u);
     void tickFlightBody(Unit& u);
-    void tickAirToGroundHover(Unit& u, const Unit& target, const Weapon* weapon, int slot);
-    void flyHoverGoal(Unit& u, Order& order, const Unit& target);
-    void tickAirToGround(Unit& u, const Unit& target, const Weapon* weapon);
+    // The flyer attack missions take a null target for an attack at a
+    // point (Order::airPoint, tickAirPoint): mission +0x16 is 0.
+    void tickAirToGroundHover(Unit& u, const Unit* target, const Weapon* weapon, int slot);
+    void flyHoverGoal(Unit& u, Order& order, const Unit* target);
+    void tickAirToGround(Unit& u, const Unit* target, const Weapon* weapon);
     void tickAirToAir(Unit& u, const Unit& target, const Weapon* weapon);
-    void tickAirStrike(Unit& u, const Unit& target);
+    void tickAirStrike(Unit& u, const Unit* target);
+    // A flyer's attack at a point at the front (Order::airPoint): its
+    // mission, then the mover.
+    void tickAirPoint(Unit& u);
+    // The lost-target exit (41c8f6 / 41e28f / 41be1b) of an attack at a
+    // point: VTOL_SEEKATTACK at the point, with no target, when the flyer is
+    // alive and not dying, the attack is its last mission and not on Hold
+    // Fire. Called once the attack has gone, when those held.
+    void seekLostPoint(Unit& u, Fixed x, Fixed z);
     bool seekLostTarget(Unit& u, const Unit* target, bool targetLive);
     void tickSeekAttack(Unit& u, bool carriesTarget = false);
     // VTOL_Follow's lost ward (4191d7) and VTOL_SeekGuard (4197d0).

@@ -347,6 +347,7 @@ add_executable(blocked_shot_test tools/blocked_shot_test.cpp)
 add_executable(ballistic_line_test tools/ballistic_line_test.cpp)
 add_executable(shot_range_test tools/shot_range_test.cpp)
 add_executable(attack_stop_test tools/attack_stop_test.cpp)
+add_executable(suppress_test tools/suppress_test.cpp)
 add_executable(vermage_fight_test tools/vermage_fight_test.cpp)
 add_executable(target_search_test tools/target_search_test.cpp)
 add_executable(sweetspot_test tools/sweetspot_test.cpp)
@@ -1433,6 +1434,7 @@ add_executable(featdie_test tools/featdie_test.cpp)
 add_executable(transport_test tools/transport_test.cpp)
 add_executable(production_test tools/production_test.cpp)
 add_executable(helpbuild_test tools/helpbuild_test.cpp)
+add_executable(queue_modifiers_test tools/queue_modifiers_test.cpp)
 add_executable(factory_death_test tools/factory_death_test.cpp)
 add_executable(replay_test tools/replay_test.cpp)
 add_executable(pathblock_test tools/pathblock_test.cpp)
@@ -1584,6 +1586,7 @@ target_link_libraries(blocked_shot_test PRIVATE tak-formats)
 target_link_libraries(ballistic_line_test PRIVATE tak-formats)
 target_link_libraries(shot_range_test PRIVATE tak-formats)
 target_link_libraries(attack_stop_test PRIVATE tak-formats)
+target_link_libraries(suppress_test PRIVATE tak-formats)
 target_link_libraries(vermage_fight_test PRIVATE tak-formats)
 target_link_libraries(target_search_test PRIVATE tak-formats)
 target_link_libraries(sweetspot_test PRIVATE tak-formats)
@@ -1606,6 +1609,7 @@ target_link_libraries(featdie_test PRIVATE tak-formats)
 target_link_libraries(transport_test PRIVATE tak-formats)
 target_link_libraries(production_test PRIVATE tak-formats)
 target_link_libraries(helpbuild_test PRIVATE tak-formats)
+target_link_libraries(queue_modifiers_test PRIVATE tak-formats)
 target_link_libraries(factory_death_test PRIVATE tak-formats)
 target_link_libraries(replay_test PRIVATE tak-formats)
 target_link_libraries(pathblock_test PRIVATE tak-formats)
@@ -1653,6 +1657,8 @@ add_test(NAME transport COMMAND transport_test)
 add_test(NAME explode_capture COMMAND cobanim_test --explode-capture)
 add_test(NAME production COMMAND production_test)
 add_test(NAME helpbuild COMMAND helpbuild_test)
+add_test(NAME queue_modifiers COMMAND queue_modifiers_test)
+add_test(NAME legion_queue_modifiers COMMAND queue_modifiers_test --legion)
 add_test(NAME factory_death COMMAND factory_death_test)
 add_test(NAME replay COMMAND replay_test)
 add_test(NAME pathblock COMMAND pathblock_test)
@@ -1851,6 +1857,9 @@ if(TAK_TEST_DATA)
     add_test(NAME attack_stop COMMAND attack_stop_test "${TAK_TEST_DATA}")
     add_test(NAME legion_attack_stop COMMAND attack_stop_test "${TAK_TEST_DATA}" --legion)
     set_tests_properties(legion_attack_stop PROPERTIES LABELS legion)
+    add_test(NAME suppress COMMAND suppress_test "${TAK_TEST_DATA}")
+    add_test(NAME legion_suppress COMMAND suppress_test "${TAK_TEST_DATA}" --legion)
+    set_tests_properties(legion_suppress PROPERTIES LABELS legion)
     add_test(NAME vermage_fight COMMAND vermage_fight_test "${TAK_TEST_DATA}")
     add_test(NAME legion_vermage_fight COMMAND vermage_fight_test "${TAK_TEST_DATA}" --legion)
     set_tests_properties(legion_vermage_fight PROPERTIES LABELS legion)
@@ -2337,7 +2346,7 @@ set_tests_properties(credstore PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takclient src/client/main.cpp src/client/alloccount.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/gameview_powercodes.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/gameview_hidden.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp)
+    add_executable(takclient src/client/main.cpp src/client/alloccount.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_clicks.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/gameview_powercodes.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/gameview_hidden.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp)
     # Local dev/test harness (standalone scenario/demo/FFA setup, --testbuild/--firetest...):
     # debug builds only. The file is also wrapped in #ifndef NDEBUG, as are its callers, so
     # this just skips an empty TU when the config's flags define NDEBUG.
@@ -2484,6 +2493,18 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(cursor_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(cursor_test PRIVATE tak-formats ${_tak_sdl2})
     add_test(NAME cursor_roster COMMAND cursor_test)
+    # Which cursor shows when (client/cursorrules.h), row by row against retail's selector.
+    add_executable(cursor_rules_test tools/cursor_rules_test.cpp src/client/cursors.cpp)
+    target_include_directories(cursor_rules_test PRIVATE src)
+    target_compile_definitions(cursor_rules_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(cursor_rules_test PRIVATE tak-formats ${_tak_sdl2})
+    add_test(NAME cursor_rules COMMAND cursor_rules_test)
+    # What a click orders (client/clickrules.h), with the cursor parity test.
+    add_executable(click_rules_test tools/click_rules_test.cpp src/client/cursors.cpp)
+    target_include_directories(click_rules_test PRIVATE src)
+    target_compile_definitions(click_rules_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(click_rules_test PRIVATE tak-formats ${_tak_sdl2})
+    add_test(NAME click_rules COMMAND click_rules_test)
     if(TAK_TEST_DATA AND CMAKE_BUILD_TYPE STREQUAL "Debug")
       add_test(NAME build_controls COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_CURSOR_TEST=1
@@ -2522,6 +2543,17 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/reclaim-fanout.png")
       set_tests_properties(reclaim_fanout PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: reclaim fan-out to every selected reclaimer")
+      # What a click orders through the real input() (client/clickrules.h): right-click
+      # per unit on release, right-drag and armed boxes, armed clicks gated by their
+      # cursor, the minimap's orders and placement, the picker and select rules.
+      add_test(NAME click_input COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_CLICK_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/click-input-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/click-input-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/click-input.png")
+      set_tests_properties(click_input PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: clicks all")
       add_test(NAME area_drag_input COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_AREA_DRAG_TEST=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/area-drag-profile

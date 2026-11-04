@@ -3418,13 +3418,16 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     }
 
     // ---- groups and fields -------------------------------------------
+    // A SUPPRESS approach (Order::suppressApproach) is not one: it ends on
+    // its native circle or ring round the point, which a Legion move does not
+    // stop at, so the native navigator drives it.
     static bool plainMove(const Order& front) {
         return !front.targetId&&!front.load&&!front.unload&&!front.buildType&&!front.reclaimFeat&&
             !front.reclaimArea&&!front.manaBuildArea&&!front.repairTarget&&!front.wait&&!front.waitAttack&&
             !front.attackMove&&!front.patrol&&!front.guard&&!front.autoTarget&&!front.landing&&!front.park&&
             !front.buildRectangle&&!front.flightGoal&&!front.transportPickup&&!front.transportUnloadApproach&&
             !front.transportUnloadReleasePending&&!front.transportUnloadTransferDeferred&&!front.transportPassenger&&
-            !front.productionExit;
+            !front.productionExit&&!front.suppressApproach;
     }
     // A leg Legion routes, apart from the combat flags its mission kind
     // allows (fight/patrol) and the target it chases (attack/guard).

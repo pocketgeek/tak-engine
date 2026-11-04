@@ -319,9 +319,10 @@
         return out;
     }
 
-    void GameView::issueReclaimBox(float x0, float z0, float x1, float z1, bool queue) {
+    void GameView::issueReclaimBox(float x0, float z0, float x1, float z1, uint8_t queue,
+                                   const std::vector<int>& only) {
         ClickScope click(*this);
-        const auto ids = reclaimers();
+        const auto ids = only.empty() ? reclaimers() : only;
         if (ids.empty()) return;
         for (int id : ids) {   // each its own RECLAIMAREA (4d78a0), Shift queues per unit
             tak::net::Command c;
@@ -333,30 +334,7 @@
         }
         notice_ = "CLEAR AREA";
         noticeTimer_ = 2;
-        voice(ids.front(), "move");
-    }
-
-    // Retail's resolver per selected unit (0x4de530, mode 1 for a right-click,
-    // 12 for the CLEAR button): RESURRECT on a body it can raise (a resurrect,
-    // else an animate), else RECLAIM of the reclaim target, else nothing for
-    // that unit. `bodyId` is raiseTargetAt's pick, `reclaimId` reclaimTargetAt's.
-    void GameView::issueRaiseOrReclaim(int bodyId, std::optional<int> reclaimId, bool queue) {
-        ClickScope click(*this);
-        const UnitR* body = bodyId ? frameUnitP(bodyId) : nullptr;
-        int first = 0;
-        for (int id : selection_) {
-            const auto* u = frameUnitP(id);
-            if (!u) continue;
-            tak::net::Command c;
-            c.unitId = id;
-            c.queue = uint8_t(queue);
-            if (body && reviveKindOn(*u, *body)) { c.kind = tak::net::Cmd::Resurrect; c.targetId = bodyId; }
-            else if (reclaimId && canReclaimAsLocal(*u, localPlayer_)) { c.kind = tak::net::Cmd::Reclaim; c.targetId = *reclaimId; }
-            else continue;
-            issue(c);
-            if (!first) first = id;
-        }
-        if (first) voice(first, "move");
+        voice(ackUnit(ids), "move");
     }
 
     std::pair<int, size_t> GameView::keytestPickOwnUnit() const {

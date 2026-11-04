@@ -97,24 +97,7 @@ int main(int argc, char** argv) {
     if (static_cast<size_t>(tak::CursorId::Count) != roster.size())
         return fail("cursor enum and retail sequence roster size");
 
-    if (tak::cursorForArmedCommand('l', false) != tak::CursorId::Normal ||
-        tak::cursorForArmedCommand('l', true, false) != tak::CursorId::Normal ||
-        tak::cursorForArmedCommand('l', false, true) != tak::CursorId::Normal ||
-        tak::cursorForArmedCommand('l', true, true) != tak::CursorId::Load ||
-        tak::cursorForArmedCommand('u', true) != tak::CursorId::Unload ||
-        tak::cursorForArmedCommand('m') != tak::CursorId::Move ||
-        tak::cursorForArmedCommand('g') != tak::CursorId::Defend)
-        return fail("armed Load and Unload commands use their matching native cursor sequences");
-    if (tak::cursorForArmedAttack(tak::CursorId::Attack,true,false)!=tak::CursorId::Attack ||
-        tak::cursorForArmedAttack(tak::CursorId::TooFar,true,false)!=tak::CursorId::Airstrike ||
-        tak::cursorForArmedAttack(tak::CursorId::TooFar,false,false)!=tak::CursorId::TooFar ||
-        tak::cursorForArmedAttack(tak::CursorId::Normal,true,true)!=tak::CursorId::Airstrike ||
-        tak::cursorForArmedAttack(tak::CursorId::Normal,true,false)!=tak::CursorId::Attack)
-        return fail("armed attack cursor follows native minimum-slot selection for mixed Airstrike groups");
-    if (tak::cursorForBuildPlacement(true,true) != tak::CursorId::FindSite ||
-        tak::cursorForBuildPlacement(false,true) != tak::CursorId::Normal ||
-        tak::cursorForBuildPlacement(true,false) != tak::CursorId::Normal)
-        return fail("FindSite requires armed build placement and a selected builder");
+    // Which cursor shows when: tools/cursor_rules_test.cpp.
 
     const std::array<std::vector<TimedFrame>, 2> liveSequences{{
         std::vector<TimedFrame>{{2}, {2}, {2}},

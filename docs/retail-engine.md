@@ -4799,6 +4799,12 @@ pointer (unit+8):
 - **Immobile** (no mover): the same immunity gates, then minrange `0x52adf0`
   (`0x5306a0`) and damage+inRange `0x52ad60`: TooFar unless in range.
 
+This mode-1 re-entry is the LEFT-click interface's (options+5 = 1, the code
+default set at `0x499940`); with `UseLeftClickIface=0`, the shipped setting,
+options+5 = 0 jumps to `0x4de03b` before the attack test and default hover over
+an enemy is Red for any selection (see "The pointer cursor" below). Mode 3 itself
+-- the armed ATTACK -- is as described here.
+
 The selector is display-only: order dispatch (`0x5214b0`) does not call it. Our
 HUD had applied the range test to every unit, so a selected archer or swordsman
 showed TooFar over any enemy out of reach. `tools/re/probe_cursor_enemy_hover.py`
@@ -4878,16 +4884,188 @@ The hover cursor for that mode (`0x4dd780`, right-click interface branch
 (slot 15) for an own selectable unit, else Grn (18); slots follow the
 `cursors` GAF order at `0x4bdc0e` (1 attack, 2 airstrike, 3 toofar, 4 capture,
 5 defend, 6 repair, 7 patrol, ..., 14 move, 15 select, 17 red, 18 grn, 19
-normal). Our hover shows Repair over a site or damaged unit a selected builder
-can work on (the left-click interface's order cursors), Select over another own
-unit and Green over an ally's; a guard keeps Select, as retail's does.
+normal). Since 2026-11-03 ours matches: see "The pointer cursor" below (before,
+our hover showed the left-click interface's Repair over a site or damaged unit a
+selected builder could work on).
 
 Ours, by `src/client/friendlyorder.h` (`friendly_order` test): per unit,
 repair when a mobile builder (not repeating production) and the target is
-damaged, else Guard when `canguard`. Differences kept: a unit that can neither
-repair nor guard does nothing (retail moves it to the point), a non-builder over
-an unfinished unit does nothing (retail guards it), and an ally's unit is
-offered the guard but `World::guard` accepts only its own side's units.
+damaged, else Guard when `canguard`, else -- since 2026-11-03, as retail -- a
+Move to the point (a repeating builder's Move sets its output's rally). The
+whole mode-1 resolver now runs per unit in `src/client/clickrules.h`; see
+"What a click orders" below. An ally's unit is offered the guard but
+`World::guard` accepts only its own side's units.
+
+## The pointer cursor: the right-click interface's four hover cursors (icd + emulation, 2026-11-03)
+
+Once a frame `0x528040` sorts the pointer (`0x528430`: main view, minimap, or
+neither) and `0x525d30` decides: build placement (mode 14) in the main view
+draws the ghost and sets Normal -- an invalid site shows only on the ghost; any
+interface area outside the main view and the minimap is Normal; otherwise
+`0x521260` picks ONE hovered unit (the nearest drawn sprite, or on the minimap
+the nearest dot within 2 px) and the aggregator `0x521cd0` runs the selector
+`0x4dd780` for each selected unit of the local player except the hovered one,
+keeping the lowest slot. With that list empty: Select over an own selectable
+unit, else Normal. Neither stage reads Shift, Ctrl or Alt.
+
+In the right-click interface (`UseLeftClickIface=0`, what shipped installs
+run, and what our right-click orders follow) nothing-armed hover (`0x4de03b`)
+has four results: Select over an own finished selectable unit; Red over an
+enemy, whatever is selected; Green over an ally's unit or one of ours that is
+not selectable -- under construction, the site the selected builder is building
+included (emulated), or carried; Green over ground holding a body a selected
+unit can resurrect/animate or a feature a selected reclaimer can reclaim;
+Normal elsewhere. Attack, TooFar, Repair, Load, Unload, Revive, Reclaim and
+Move appear only with a command armed. Fight-move (`UnitCommand MoveFight`)
+is armed MOVE plus the bit `game+0x17633` 0x400, which the selector never
+reads, so it shows armed MOVE's cursors: Repair, Load, Defend over friendly
+units, Revive over a body, Move elsewhere (see "What a click orders").
+
+Ours (`src/client/cursorrules.h`, test `cursor_rules`): those rules for hover
+and placement, the interface/minimap split, armed ATTACK per unit with the
+lowest slot (over ground or a friendly unit: see "Fire at a point"), armed CLEAR
+showing Reclaim over a reclaimable feature, armed MOVE and fight-move showing
+Repair/Load/Defend over friendly units (their clicks do those), and fight-move
+otherwise as an untinted Move.
+Kept ours: the watcher's Select over units, the right-drag box's Reclaim (our
+box only reclaims), a rally holder's Attack, armed MOVE and fight-move showing
+Move over a body (the click moves), armed GUARD not testing the flyer
+rule (ours guards a flyer from the ground), CLEAR's Revive over a body that is
+not a reclaimable feature, and Normal for placement over the minimap (our
+minimap click moves the camera; retail's selector gives FindSite there). The
+minimap with nothing armed is always Normal (our left-click there moves the
+camera and our right-click is a plain Move, so no dot is selected or
+attacked), and an armed ATTACK there takes the dot as the hovered unit: an
+enemy dot is attacked, ground or a friendly dot is a fire at that point, as in
+the main view. The left-click interface is not offered.
+
+## What a click orders: the resolver per unit, on release (icd, 2026-11-03)
+
+Static reading (S) unless marked I (inferred). Retail issues every order through
+`0x5214b0`, which runs the resolver `0x4de530` for each selected unit except the
+hovered one (`0x521562`, `0x521625`) and voices one random selected unit
+(`0x5215df`). The hovered unit is ONE unit for cursor and click (`+0x17624`):
+among the units whose rotated footprint contains the pointer (`0x520530`), the
+smallest (height/2 + depth) x width of the type's model box (UnitDef
+`+0x152/+0x156/+0x15a`, set at `0x4c14c4`) wins, a tie to the earlier entry
+(`0x52133e..0x521381`); on the minimap the nearest dot within 2 px
+(`0x5213ae..0x52141f`). Main-view clicks act on the RELEASE (`0x5281ad`,
+`0x527bf0`); the minimap acts on the press (`0x52835b`). An armed left-click
+issues only when the cursor is an order cursor (`0x527dd0`, `0x525ce0`).
+
+- Mode 1 (right-click): an enemy -> ATTACK when `canattack` and the target
+  resolves, nothing when it does not (`0x4df215`), MOVE without `canattack`;
+  an ally -> HELPBUILD, REPAIR, pickup (single weaponless transport), FOLLOW,
+  MOVE; ground -> MOVE (a loaded transport too: no unload); a body or feature
+  -> RESURRECT, RECLAIM, MOVE. A passenger over its own transport FOLLOWs it.
+- Mode 2 (armed MOVE, `0x4df0b9..0x4df1d2`): the ally branch as above over an
+  own or allied unit, MOVE elsewhere; its cursor shows Revive over a body while
+  the click moves.
+- Fight-move (`UnitCommand MoveFight`, the name dispatcher `0x4b0e40`) is
+  mode 2 plus a bit: it presses the MOVE button (`0x4b0df0` sends the "MOVE"
+  control a 0x201/0x202 click, which arms mode 2 through `0x429950`, clearing
+  `game+0x17633` 0x400 and 0x8) and then sets `game+0x17633 |= 0x400`
+  (`0x4b0f4a..0x4b0f53`). That word is the pending command's flags, the same
+  word that holds the placement bit 0x80 and the Shift-keeps-armed bit 0x40.
+  Neither the resolver `0x4de530` nor the selector `0x4dd780` reads it (its
+  only readers in the order path are the order code's two tests), so every
+  target resolves and shows as under armed MOVE: HELPBUILD, REPAIR, pickup or
+  FOLLOW over a friendly unit, MOVE over an enemy, a body or ground (Revive
+  cursor over a body, the click moves). After the resolver, `0x5214b0` gives
+  the resolved mission response mode -1 only when the bit is set, the mode
+  byte `game+0x1762c` is 2 and the mission is Move_Ground, VTOL_Move or QMove
+  (`0x521bf4..0x521c5b`; on the flyer group-spread path VTOL_Move alone,
+  `0x521867..0x521892`); every other mission goes as it was resolved. It is
+  one-shot like any armed command: after the click `0x526620` keeps the mode
+  (and so the bit) armed while Shift is down (`0x40`) and otherwise
+  `0x5265d0` writes mode 1 directly, which leaves the 0x400 bit stale but
+  inert (only mode 2 reads it, and mode 2 is armed only through `0x429950`,
+  which clears it). The minimap's armed press runs the same `0x527dd0` ->
+  `0x5214b0` path on the nearest dot, so it behaves the same there; an armed
+  MOVE box (`0x527d00` -> `0x4dd6a0` mode 2: 0) selects, fight or not; Shift
+  and Ctrl queue and toggle as for any order (`0x4d7a30`, the bit is not read
+  there). The acknowledgement plays the resolved mission's sound (`0x5217a5`
+  calls `0x50aa30` with the mission's +0x10 byte, before the 0x400 test), so
+  a fight-move voices as armed MOVE does, never as an attack; ours does too.
+- Mode 3 (armed ATTACK, `0x4de65f..0x4de7cc`): ground or a friendly unit is a
+  fire-at-point (SUPPRESS for a ranged ground unit, AIRSTRIKE / AIRTOGROUND
+  for a flyer, nothing for anti-air units, nothing for melee units unless a
+  clearable feature stands there; see "Fire at a point: SUPPRESS").
+- Mode 5 (armed GUARD): the cursor needs `canguard` and (the unit flies or the
+  target does not); the resolver (`0x4dec78`) has no flyer rule, so a mixed
+  selection with one flyer guards a flyer with every unit.
+- Mode 12 (armed CLEAR, `0x4decd6..0x4deef6`): RESURRECT first, else RECLAIM;
+  the cursor (`0x4ddcf4`) shows Reclaim over a raisable reclaimable body.
+- The right-drag box (`0x520e30`, `0x527d00` for armed boxes): with exactly one
+  weaponless transport and no attacker, reclaimer or raiser selected, it loads
+  every own unit in the box; else each attacker attacks the visible enemies in
+  the screen box (3n random draws); a unit with no attack order and
+  `canreclaim` clears the box (RECLAIMAREA); with exactly one enemy a unit
+  without a weapon does nothing. Armed ATTACK / LOAD / CLEAR boxes do the
+  attack, load or clear step alone; any other armed box selects.
+- Minimap placement (mode 14, `0x527eb0`): MOBILEBUILD at the minimap point
+  with the sound "oktobuild", gated by the placement flag `+0x17633` 0x80 that
+  only the main-view ghost (`0x429690`, `0x4297a3`) sets -- stale on the
+  minimap (I) -- else "notoktobuild".
+- Modifiers: Shift appends and keeps the mode armed; Ctrl inserts at the front;
+  Shift/Ctrl on the same order kind within 16 px of a queued one removes it;
+  Alt is never read.
+
+Ours (`src/client/clickrules.h`, `click_rules` test with a cursor parity check;
+`src/client/gameview_clicks.cpp`): the same per-unit resolver, on release, with
+the one picker (our hit region's screen area stands in for the model box).
+Kept or chosen differently, by the owner's decisions: our ground-move spread;
+an own transport a passenger fits in is boarded (the rest guard it);
+Alt+right-click unloads a loaded transport; a rally holder's Move / Attack set
+its output's rally; armed ATTACK on ground or a friendly is the fire at the
+point (Cmd::AttackGround, cursor Attack where a unit acts); the box
+attacks every visible enemy once, nearest first, and a unit without a weapon
+always clears; minimap placement is checked at the minimap point and falls
+back to our clear-then-build; a left-click on an enemy or ally with nothing of
+ours selected selects it for inspection (with a selection it deselects, as
+retail); Ctrl removes from the selection and the box keeps our army filter.
+Fight-move ('F', our attack-move, which is retail's MoveFight Move with
+response mode -1) resolves exactly as armed MOVE and turns only a resulting
+Move into a fight-move: over a friendly unit it helps build, repairs, boards,
+picks up or guards it with armed MOVE's cursors; over ground, an enemy or a
+body, and over a friendly unit it can do none of those for, it fight-moves to
+the point under the Move cursor; a rally holder's rally step fights (QMove);
+its box selects. (The 2026-11-03 click pass left F a plain fight-move over
+friendly units, reading the 0x400 tests as something other than the pending
+command; corrected the same day.) Our client builds F in and does not read
+`Keys.TDF`'s `UnitCommand` bindings (the owner's file binds `LOWER_F` /
+`UPPER_F` to `UnitCommand MoveFight`; the shipped one binds no key to it):
+reading them would let such a file rebind it, not done here.
+Where retail's cursor and click disagree (armed MOVE over a body, armed CLEAR
+over a raisable reclaimable body, Airstrike over an enemy it cannot hurt, Attack
+over an empty right-drag box) ours shows what the click does.
+
+The order modifiers (C9, sim since 2026-11-03). Retail's order call `0x4d78a0`
+links a new mission at the head of the list (`0x4d7750`, ahead of the running
+one, which sleeps behind it) when Ctrl is down (`[ebp+0x24]`, `0x4d7a09`) and at
+the tail (`0x4d77f0`) for Shift; Ctrl+Shift is Ctrl. Before that, `0x4d7a30`
+walks the list from the head (`+0x60`, next `+0x66`) for a mission of the same
+kind (`+4`), the same target unit (`+0x16`) when the order names one, and a
+point (`+0x22`/`+0x2a`) within 16 px on both axes (`d + 0x100000 <= 0x200000`)
+when it has one, and removes the first match (`0x4d6ad0`) instead of adding
+(`0x4d7a5b..0x4d7ab2`) -- a toggle. Retail also drops a Shift order for a builder
+repeating production (count >= 10,000,000, `0x52162d..0x5216c5`); ours does not:
+a producer, or a mobile builder repeating production, takes Move / Patrol /
+Attack / fight-move as RALLY orders (rally rule), and Ctrl and the toggle work on
+that rally list. Ours (`Command::queue`, `net/lockstep.h`): `kQueueFront` (2)
+inserts, `kQueueToggle` (4) marks a player's click so that the toggle applies --
+the AI and scripts send 0/1 only, so their queued routes are never toggled
+(`World::insertOrderFront`, `World::removeQueuedMatch`, `queue_modifiers` test).
+The interrupted leg is rewound to its queued state (its route and what its run
+pushed ahead of it go; its mission restarts at stage 0 on a fresh controller);
+a builder at work on a placed site comes back to it as a HelpBuild (I: retail
+resumes the MobileBuild mission itself). A Ctrl Load front-inserts on the
+carrier as well as the passenger (its pickup is the carrier's mission), a tower
+takes Ctrl on its own list, and Ctrl on an empty list is the plain order. A
+Shift/Ctrl Patrol on a patrol point takes back only that leg: retail's patrol
+initializer appends the anchor (return) as a mission of its own, so the toggle's
+first match is the outbound leg alone (I, from `0x4d7a30`'s match rule; not
+emulated) -- ours keeps that.
 
 ## Drag boxes: world-anchored corners and the 32-pixel test (icd, 2026-10-21)
 
@@ -6012,6 +6190,108 @@ attackers can stop 110-180 px from the target, past their 96 px gun, where
 Standby (in range only, as retail) never picks; Retail's mover keeps pressing
 to the goal and gets them in range. Before this work the stride scan's
 range + 90 px picked them up.
+## Fire at a point: SUPPRESS (icd static, 2026-11-03; ported, see "SUPPRESS port" below)
+
+Armed ATTACK on ground or on a friendly unit, and a campaign `a X Y`, is
+`4de530` kind 3 with a point and no target unit (`4de65f..4de7cc`). The
+resolver reads the selected slot's weapon (`519ac0`, slot record `+0xc`):
+
+- `toairweapon` (WeaponType `+0xc8` 0x4000): no order, flyer or not.
+- A flyer (type `+0x260` 0x800): AIRSTRIKE with a `dropped` weapon (`+0xc8`
+  0x20), AIRTOGROUNDHOVER with `hoverattack` (`+0x260` 0x8000000), else
+  AIRTOGROUND, each at the point with no target.
+- A ground unit or a structure whose weapon is not melee (handler vtable
+  `+0x14` false): SUPPRESS.
+- A melee weapon: SUPPRESS only when the point's cell (`50e660`, a tail cell
+  `0xfffe` followed back to its anchor) holds a feature that is blocking
+  (feature `+0x13c` 0x20) and clearable (0x20000, see pathfinding-port.md);
+  else no order.
+
+SUPPRESS is registry row `0x5eb8b8` (`UNITMISSIONCODE_SUPPRESS`, handler
+`0x404d70`, jump table `0x405548`, five stages). Mission fields: point
+`+0x22`, slot `+0x4e`, reach left `+0x52`, feature target `+0x56`. Result
+codes are the dispatcher's (`sim/retailmission.h`).
+
+- **Head.** For a weapon switcher the slot is the selected one (`519ac0`).
+  Event 0x40000 ends the order (5). The group check (`51d1e0(unit,1,4)`)
+  puts Move_Ground_Formation (`0x604d70`) in front, its flag 0x8000000
+  re-rolled with `rand(3)` / `rand(15)`, as in the other ground missions.
+- **Stage 0.** A flyer: 8 (the order goes). Else reach left = the slot's
+  range minus its minimum range (`52aba0` - `52abd0`).
+- **Stage 1.** Melee: no clearable blocking feature at the point, 5. Else
+  the feature's anchor and footprint (`4930d0`) give the rectangle approach
+  (`4d4e80`, as RECLAIM's), feature target = 1, wait 0x740. Ranged: a
+  clearable blocking feature at the point sets feature target = 1; one that
+  was there and has gone ends the order (5); else on.
+- **Stage 2** (melee only; ranged goes straight on). On arrival (0x100) the
+  point is walked toward the unit 8 px at a time (heading `51b340`, sine and
+  cosine `5360bf`/`5360f3`) until the slot reaches it (vtable `+0x10`
+  through `52ad20`), at most 100 steps, else 8. Event 0x40: a tick's sleep,
+  stage 0. Anything else (the approach failed): 9.
+- **Stage 3.** Every slot manual (`519b70(3)`); the selected slot aimed at
+  the point (`51a770`); a non-switcher also aims each other slot it has, a
+  melee one only when the selected weapon is melee. Wait 0x150040.
+- **Stage 4.**
+  - 0x10000, the selected (or first) slot's shot (`530140`, as its reload
+    starts): with a feature target still there and clearable, stage 3 after
+    a tick, else 5; without a feature target, stage 3 and result 6: the
+    order goes to the BACK of the queue. Alone it fires again; Shift-queued
+    points take turns, one shot each.
+  - A `commandfire` weapon's shot raises 0x40000 instead (`5301a1`), so the
+    order ends after that one shot.
+  - 0x40 (a weapon switch, `51a8b0`): a tick's sleep, stage 0.
+  - 0x100000, the aim start's refusal (`52ffd3`: the point inside the
+    minimum range or out of reach): every slot automatic (`519b10(3)`). No
+    mover (a structure): 9, so a tower keeps a lone order and looks again
+    after `rand(30)+15` ticks. While reach left is more than
+    (range - minimum) % 3 (sic, the remainder): with a minimum range, the
+    ring `4d4e10(point, left + min, rand(span/6) + min)` and left -= span/3;
+    without, the circle `4d4da0(point, left)` and left -= rand(range/3).
+    Wait 0x700, stage 3. No reach left: 9.
+
+The weapon side, for a point target (slot record `+6` not 0x8000; `+4/+6`
+the point in pixels):
+
+- The aim point (`51aa50`): the point, with y the terrain height there or the
+  sea level (`+0x19ef8`), whichever is greater.
+- Reach (vtable `+0x10`): the base `530500` is `530580`'s 2D centre test
+  against the point (range 0: always); BallisticWeapon `52bbb0` first solves
+  the arc from the unit's origin to the point (`52bd10`, `0x8000` = out of
+  reach); DroppedBallistic `532270` is the base; MeleeWeapon `52b8a0` tests
+  the point's cell against the unit's footprint box. The minimum range for a
+  point is `530630` (strictly inside).
+- A shot carries no target unit (`51a9a0` gives 0) and flies to the aim
+  point.
+
+The order lasts until another order replaces it, its feature target is gone,
+the approach runs out of reach, or a `commandfire` shot. Not emulated yet.
+
+The selector for the same click (`0x4dd780` mode 3, `0x4dd8ac..0x4ddc1b`,
+S): no `canattack`, Normal; a `dropped` selected slot, Airstrike; with
+neither a hovered unit nor a point, Attack. A mover: over ground or a friendly
+unit with a melee slot, Attack when the point's cell holds a blocking,
+clearable feature, else TooFar; a ranged one, Attack over ground and TooFar
+over a friendly unit. A structure: TooFar over a friendly unit; over ground
+TooFar out of reach (`52ad20`) or for a `toairweapon`, else TooFar inside the
+minimum range (`52adb0`, I: read by its use) and Attack outside it. The resolver takes the
+pointer's point (`esi`), not a hovered friendly unit's position.
+
+Ours (the click, 2026-11-03): armed ATTACK on ground or on a friendly unit, in
+the main view or on the minimap, sends `Cmd::AttackGround` at the click point
+to each selected unit the resolver gives an order (`World::suppressRule`,
+shared by `World::suppressAccepts` and `clickrules.h`; a melee slot reads the
+sim's `clearableBlockerAtPoint`), none to the rest; a Legion net game packs
+the run as one explicit order. Shift appends and Ctrl front-inserts; both
+toggle a queued SUPPRESS / flyer point order within 16 px of its `+0x22`
+(`QueuedKind::AttackGround`), taking its approach with it, and a Ctrl order
+drops a running SUPPRESS's approach (stage 4 puts it back). A refused unit
+neither toggles nor front-inserts. The cursor, so that it describes the click
+(I, owner's rule): Attack (Airstrike for a `dropped` slot) for a unit given
+the order -- where retail shows TooFar for a tower out of reach and for any
+unit over a friendly one -- and TooFar for an attacker given nothing -- where
+retail shows Attack for an anti-air mover over ground. A rally holder keeps
+our attack-move rally. Fight-move (F) stays our attack-move. A campaign
+`a X Y` still walks into reach and fights (`mission.cpp`).
 
 ## Mission order strings (icd 0x513fb0, 2026-10-30)
 
@@ -6154,3 +6434,119 @@ renderer's vtable (`[esi]+0x64`, 24 vertices as lines), so Glide and software sh
   the dash phase.
 
 `client/selectionring.h` is the port; `selection_ring_test` checks it.
+
+## SUPPRESS port: what was re-read and what is ours (icd static, 2026-11-03)
+
+The order itself is read stage by stage in "Fire at a point: SUPPRESS" (on
+`fx-clicks`). For the port the details below were read again in the code (S);
+none was emulated (no E). What World does differently is marked I.
+
+- **S, resolver** `4de65f..4de7a6`: the selected slot's weapon (`519ac0`: a
+  switcher's selected slot, else the first present). `+0xc8` 0x4000
+  (toairweapon): no order; a flyer (`+0x260` 0x800) goes to the airstrike
+  branch; vtable `+0x14` false (not melee): SUPPRESS (`0x615db8`); melee:
+  SUPPRESS only over a blocking (0x20), clearable (0x20000) feature.
+- **S, head.** For a switcher the slot is `519ac0`'s, kept in a local: `+0x4e`
+  is never written back. Event 0x40000 returns 5 before the group check.
+- **S, stage 2** (melee): the reach test before the walk; the walk stops at 100
+  steps, and reaching on the 100th still returns 8.
+- **S, stage 4.** The span is `52aba0 - 52abd0`; the ring is `4d4e10(point,
+  left + min, rand(span/6) + min)` (span/6 and span/3 by `0x2aaaaaab` and
+  `0x55555555`, truncated toward zero), then left -= span/3; the circle is
+  `4d4da0(point, left)`, then left -= rand(range/3). The test is left > span % 3.
+  A feature target still there: stage 3 and a tick's sleep (4); gone: 5.
+- **S, 51a770** (a point for a slot): a switcher takes it on its selected slot
+  only; the point is stored in whole px (`sar 16`; a z of 0x8000 becomes 0x8001);
+  the unit's events are masked with 0xfe08ffff, as `51a700` does for a unit.
+- **S, 52fe30's point branch** (`52ff7d`): `51aa50` gives the aim point, then
+  `530630` (inside the minimum range, strict) and vtable `+0x10` (reach); a
+  refusal ORs 0x100000 into unit `+0xd0`, for every aimed slot. Then the
+  facing request as for a unit (`52feaa`). `530500` (the base reach for a
+  point) has no air-flag tests, range 0 reaches anywhere, and is inclusive;
+  `52bbb0` solves the arc from the origin to the aim point and then calls it;
+  `52b8a0` boxes the point's cell (16 px) against the footprint as
+  `52b980` boxes two units. `52ad20` (stage 2) is vtable `+0x10` on the raw
+  mission point.
+- **S, 51aa50** for a point (record `+6` not 0x8000): x and z the point's px
+  << 16, y the terrain height there (`511170`) or the sea-level byte
+  (`+0x19ef8`), whichever is greater.
+
+Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
+
+- I: stage 4's ring or circle is a ground leg pushed ahead of the order
+  (`Order::suppressApproach`, run like RECLAIMAREA's approach: arrival or
+  failure ends it) instead of a controller on the order; the order resumes at
+  stage 3 when it ends. In Legion it stays on the native navigator (a Legion
+  move does not stop on a circle or ring). The melee rectangle is on the order
+  itself, as RECLAIM's.
+- I: a slot's point (`Unit::slotPoint`) is dropped, with TargetCleared, as soon
+  as the SUPPRESS that aimed it is not the current leg, including when the
+  order has gone to the back behind another kind of order.
+- I: the 0x40 event (`51a8b0`'s weapon switch) is raised only for a unit on
+  SUPPRESS, and a commandfire shot's 0x40000 only for a point target; no
+  unit-target mission reads either.
+- I: the group check `51d1e0(unit,1,4)` and its Move_Ground_Formation are not
+  ported (as in AirToGround).
+- I: a Guided shot at a point flies without homing (its update steers only at
+  a live target).
+- Campaign `a X Y` still walks into reach and fights (`mission.cpp`).
+
+`suppress_test` checks it in both pathfinding modes.
+
+### Flyers at a point: AIRSTRIKE, AIRTOGROUNDHOVER, AIRTOGROUND (icd static, 2026-11-03)
+
+The same resolver's flyer branch, and the three missions' paths with no
+target (mission `+0x16` 0), read in the code (S); none emulated (no E). The
+missions' stages are the ported ones (`sim/retailairattack.h`); only what
+differs without a target is listed.
+
+- **S, resolver** `4de770..4de7e3`: after the `toairweapon` test, the
+  selected slot's `dropped` (`+0xc8` 0x20) gives AIRSTRIKE (`0x615dac`); else
+  the TYPE's hoverattack (`+0x260` 0x8000000; the weapon's is not read)
+  AIRTOGROUNDHOVER (`0x615d98`); else AIRTOGROUND (`0x615d8c`).
+- **S, mission ctor** `4d6c40`: the point is copied to `+0x22`; without a live
+  target `4d6d66` clears the target bit 0x200 from the row's flags, so the
+  heads' "no target and 0x200" seek (`41c08c`, `41d8ef`, `41b68a`) is never
+  taken by an order at a point.
+- **S, AirToGround head** (`41bf80`): no weapon (`+0x130` 0x8000000) or a
+  type with hoverattack: 7; a selected `dropped` weapon or events 0x2a: the
+  lost exit `41c8f6`, which without a target pushes VTOL_SEEKATTACK
+  (`0x6055a0`) at `+0x22` when the flyer is alive and not dying, the attack is
+  last (`+0x66` 0) and not on Hold Fire (`+0x130 & 0xc0000`); 5 either way.
+  `41c13c` copies the target's position to `+0x22` only with a target, so the
+  point stays as issued. Stage 2 (`41c357`): `51a770(unit, +0x22, slot)`, the
+  point for the selected slot, in place of `51a700`. Stage 4's rescan reads
+  `+0x16` first (`41c415`): never without a target.
+- **S, AirToGroundHover head** (`41d820`): the type's hoverattack is required
+  (else 7); `dropped` or events 0x28: the exit `41e28f`, which without a
+  target pushes the seek at `+0x22` when last and not on Hold Fire (no alive
+  test there). Stages 0, 1 and 3 read the target's position or led SweetSpot
+  into `+0x22` only with a target; stage 2 (`41de1c`) aims the slot at the
+  point (`51a770`). Stages 3 and 5 (`41df8f`, `41e225`) build a POINT
+  controller (`4e40e0`, flags 0x20) where a target gets the target controller
+  (`4e4140`, 0xa3 with the entity), give it a fixed heading (`4e4520`:
+  `51b340(ring point, +0x22)`, the ring point as seen from the point), then
+  radius 4 and the attack altitude as with a target. With no entity
+  `4e41b0` lets it go on arrival (`524c10` 0x100, the navigator's 0x400).
+- **S, AirStrike** (`41b5e0`) needs nothing new: its no-target branches were
+  already ported (`retailAirStrike`, `in.target`); stage 5 aims the slot at
+  the point (`51a770`), stage 4 installs the release ring on the point.
+
+Ours (`World::suppress`, `tickAirPoint`, the three missions' hosts with a
+null target; `Order::airPoint`):
+
+- I: World's unit-target hover also takes a weapon's hoverattack; the point
+  order follows the resolver (the type's only).
+- I: the slots' point is held only while the attack is the front order: a
+  step-out ahead of it drops it (TargetCleared), and the mission's restart at
+  stage 1 aims it again.
+- I: the weapon-switch event 0x40 is raised for a flyer on an attack at a
+  point, as for SUPPRESS (it restarts the mission), not on a unit attack.
+- I: the group check (`51d1e0`) is as on the unit-target missions: ported
+  for the hover, not for AirToGround and AirStrike.
+
+`suppress_test` (both modes): `creaeri` flies runs over the
+point and hits it (24 shots, 4 px off); a Tarbeak hovers ~134 px off a point
+(distance 150) and hits it; a `dropped` stand-in strikes it; a weapon that
+turns `dropped` ends the order, with the seek at the point on Fire At Will
+and none on Hold Fire; a flyer's `toairweapon` gets no order.

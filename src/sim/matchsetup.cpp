@@ -113,6 +113,77 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         const auto* u = world.unit(id);
         return u && u->player == int(c.player);
     };
+    // Retail's queue modifiers (net/lockstep.h kQueueFront, kQueueToggle): a
+    // player's Shift/Ctrl order on a queued one of its kind takes it back, and
+    // Ctrl puts the order at the head of the queue -- for a producer's rally
+    // verbs, of its rally list; for everyone else, a tower included, of its own.
+    // Armed ATTACK at a point: a unit the resolver gives nothing (4de530 kind
+    // 3) neither toggles nor front-inserts, and its work is left alone.
+    if (c.kind == Cmd::AttackGround && (!owns(c.unitId) || !world.suppressAccepts(c.unitId, c.x, c.z))) return;
+    {
+        using tak::net::kQueueFront; using tak::net::kQueuePlace; using tak::net::kQueueToggle;
+        const bool front = (c.queue & kQueuePlace) == kQueueFront;
+        const bool toggle = (c.queue & kQueueToggle) && (c.queue & kQueuePlace);
+        const bool rallyVerb = c.kind == Cmd::Move || c.kind == Cmd::AttackMove || c.kind == Cmd::Patrol ||
+                               c.kind == Cmd::Attack;
+        const bool orderVerb = rallyVerb || c.kind == Cmd::Build || c.kind == Cmd::BuildManaArea ||
+            c.kind == Cmd::Assist || c.kind == Cmd::Guard || c.kind == Cmd::Load || c.kind == Cmd::Unload ||
+            c.kind == Cmd::Reclaim || c.kind == Cmd::ReclaimArea || c.kind == Cmd::Resurrect || c.kind == Cmd::Repair ||
+            c.kind == Cmd::AttackGround;
+        if (orderVerb && (front || toggle) && owns(c.unitId) && producer->type) {
+            const bool rally = rallyVerb && (producer->repeatType ||
+                (c.kind == Cmd::Attack ? producer->type->producesUnits() : producer->type->isStructure()));
+            if (toggle) {
+                World::QueuedMatch m;
+                m.x = Fixed::fromFloat(c.x); m.z = Fixed::fromFloat(c.z);
+                m.target = c.targetId;
+                switch (c.kind) {
+                    case Cmd::Move:       m.kind = World::QueuedKind::Move; break;
+                    case Cmd::AttackMove: m.kind = World::QueuedKind::AttackMove; break;
+                    case Cmd::Patrol:     m.kind = World::QueuedKind::Patrol; break;
+                    case Cmd::Attack:     m.kind = World::QueuedKind::Attack; break;
+                    case Cmd::Guard:      m.kind = World::QueuedKind::Guard; break;
+                    case Cmd::Load:       m.kind = World::QueuedKind::Load; break;
+                    case Cmd::Unload:     m.kind = World::QueuedKind::Unload; break;
+                    case Cmd::Build:      m.kind = World::QueuedKind::Build; m.type = reg.find(c.type); break;
+                    case Cmd::Reclaim:    m.kind = World::QueuedKind::Reclaim; break;
+                    case Cmd::Repair:     m.kind = World::QueuedKind::Repair; break;
+                    case Cmd::Assist:     m.kind = World::QueuedKind::Assist; break;
+                    case Cmd::AttackGround: m.kind = World::QueuedKind::AttackGround; break;
+                    default: break;
+                }
+                if (world.removeQueuedMatch(c.unitId, rally, m)) return;
+            }
+            // A Load is the passenger's and the carrier's (World::loadInto queues
+            // the carrier's pickup), so Ctrl puts it at the head of both lists.
+            const auto* carrier = c.kind == Cmd::Load ? world.unit(c.targetId) : nullptr;
+            const bool idle = (rally ? producer->rally.empty() : producer->orders.empty()) &&
+                              (!carrier || carrier->orders.empty());
+            // Nothing can come ahead of a front unload to fill the hold: refused,
+            // as unloadAt refuses a plain one.
+            if (front && c.kind == Cmd::Unload && producer->cargo.empty()) return;
+            if (front && !idle) {
+                tak::net::Command append = c;
+                append.queue = tak::net::kQueueAppend;
+                const auto issue = [&] { applyCommand(world, reg, append); };
+                if (carrier) {
+                    const int passenger = c.unitId;
+                    world.insertOrderFront(c.targetId, false,
+                                           [&] { world.insertOrderFront(passenger, false, issue); });
+                } else
+                    world.insertOrderFront(c.unitId, rally, issue);
+                return;
+            }
+            // At the head of an empty list is the plain order, given as one (a
+            // Patrol then gets its two-leg loop, not an open leg).
+            if (front) {
+                tak::net::Command plain = c;
+                plain.queue = tak::net::kQueueReplace;
+                applyCommand(world, reg, plain);
+                return;
+            }
+        }
+    }
     auto redirect = [&] { if (!c.queue && !repeatingMobile) world.cancelBuilds(c.unitId); };
     switch (c.kind) {
         case Cmd::ShareMana:
@@ -129,6 +200,12 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
             break;
         case Cmd::AttackMove:
             if (owns(c.unitId)) { redirect(); world.attackMove(c.unitId, c.x, c.z, c.queue); }
+            break;
+        case Cmd::AttackGround:
+            // A refused point (an anti-air weapon, a melee one off a clearable
+            // blocker) returned above, leaving the unit's work alone.
+            redirect();
+            world.suppress(c.unitId, c.x, c.z, c.queue != 0);
             break;
         case Cmd::Patrol:
             // Shift-patrol ADDS a waypoint to the route. patrol() builds a fresh
