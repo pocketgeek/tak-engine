@@ -4977,7 +4977,9 @@ issues only when the cursor is an order cursor (`0x527dd0`, `0x525ce0`).
   `0x5214b0` path on the nearest dot, so it behaves the same there; an armed
   MOVE box (`0x527d00` -> `0x4dd6a0` mode 2: 0) selects, fight or not; Shift
   and Ctrl queue and toggle as for any order (`0x4d7a30`, the bit is not read
-  there).
+  there). The acknowledgement plays the resolved mission's sound (`0x5217a5`
+  calls `0x50aa30` with the mission's +0x10 byte, before the 0x400 test), so
+  a fight-move voices as armed MOVE does, never as an attack; ours does too.
 - Mode 3 (armed ATTACK, `0x4de65f..0x4de7cc`): ground or a friendly unit is a
   fire-at-point (SUPPRESS for a ranged ground unit, AIRSTRIKE / AIRTOGROUND
   for a flyer, nothing for anti-air units, nothing for melee units unless a

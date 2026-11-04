@@ -161,7 +161,9 @@ namespace {
             for (const auto& [id, o] : plan.orders) if (o == kind) ids.push_back(id);
             if (ids.empty()) continue;
             all.insert(all.end(), ids.begin(), ids.end());
-            attacked |= kind == ClickOrder::Attack || kind == ClickOrder::AttackMove;
+            // A fight-move's AttackMove is a resolved Move_Ground / VTOL_Move /
+            // QMove, so it voices that mission's sound, as armed MOVE does.
+            attacked |= kind == ClickOrder::Attack || (kind == ClickOrder::AttackMove && mode != 'f');
             const auto send = [&](tak::net::Cmd k, int unit, int targetId) {
                 tak::net::Command c;
                 c.kind = k; c.unitId = unit; c.targetId = targetId; c.queue = queue;
@@ -242,8 +244,9 @@ namespace {
                 default: break;
             }
         }
-        // Retail voices the order a unit resolved to (0x5217a5), so a fight-move
-        // that resolves to a repair or a guard does not voice an attack.
+        // Retail voices the mission a unit resolved to (0x5217a5 S: 0x50aa30 with
+        // the mission's +0x10 byte); the 0x400 bit changes only the response mode,
+        // so a fight-move voices exactly as armed MOVE does, never an attack.
         const char* event = attacked || mode == 'a' ? "attack"
                           : mode == 'p' ? "patrol" : mode == 'g' ? "guard" : "move";
         voice(ackUnit(all), event);
