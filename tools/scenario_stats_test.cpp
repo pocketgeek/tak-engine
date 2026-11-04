@@ -55,7 +55,9 @@ int main() try {
         auto t=fighter();World a,b;terrain(a);terrain(b);
         a.setScenarioTypeStats(t.id,200,150,7);b.setScenarioTypeStats(t.id,200,150,7);
         const int id=a.spawn(&t,400,400,0,0);b.spawn(&t,400,400,0,0);
-        check(a.unit(id)->veteran==7 && a.unit(id)->xp==7,"authored veteran did not initialize experience");
+        // setLevel 519370: (level + 0.5) x the type's experiencepoints, truncated.
+        check(a.unit(id)->veteran==7 && a.unit(id)->xp==int32_t(7.5*t.experiencePoints),
+              "authored veteran did not initialize experience");
         check(a.stateHash()==b.stateHash(),"same stat configuration diverged");
         b.unit(id)->scenarioWeapon=.5f;check(a.stateHash()!=b.stateHash(),"per-unit stat factor absent from lockstep hash");
     }
@@ -77,6 +79,40 @@ int main() try {
         w.setScenarioTypeStats(t.id,100,100,7);
         const int id=w.spawn(&t,400,400,0,0);
         check(w.unit(id)->veteran==0 && w.unit(id)->xp==0,"noveteran unit accepted scenario veteran default");
+    }
+    {
+        // 512ce0: the killer gains the VICTIM type's experiencepoints, and its
+        // level is that over its OWN type's (519310), capped at 10. Nothing of
+        // the killer is tested: a building gains it too.
+        auto t=fighter(),victim=fighter(),tower=fighter();t.experiencePoints=10;t.canMove=true;
+        victim.id="victim";victim.weapon.damage=0;victim.weapons.clear();victim.maxHp=40;victim.experiencePoints=25;
+        tower.id="tower";tower.experiencePoints=10;tower.canMove=false;tower.maxVel=Fixed();
+        tower.weapon.melee=false;tower.weapon.range=200;tower.weapons={tower.weapon};
+        for (const UnitType* killerType:{&t,&tower}) {
+            World w;terrain(w);
+            const int a=w.spawn(killerType,400,400,0,0),b=w.spawn(&victim,440,400,0,1);
+            w.attack(a,b,false);
+            for(int i=0;i<300 && w.unit(b)->alive();++i)w.tick(1.f/30);
+            check(!w.unit(b)->alive(),"synthetic victim survived");
+            check(w.unit(a)->xp==25 && w.unit(a)->veteran==2,"kill did not credit the victim's experiencepoints");
+        }
+        World w;terrain(w);
+        const int a=w.spawn(&t,400,400,0,0),b=w.spawn(&victim,440,400,0,1);
+        w.unit(a)->xp=95;w.unit(a)->veteran=w.unit(a)->veteranLevel();
+        w.attack(a,b,false);
+        for(int i=0;i<300 && w.unit(b)->alive();++i)w.tick(1.f/30);
+        check(w.unit(a)->xp==120 && w.unit(a)->veteran==10,"level is not capped at 10");
+        // An ally's kill counts (only the owner's own does not); a unit given
+        // away is a new object without experience (514da0 via 511990).
+        World allies;terrain(allies);allies.setTeam(0,1);allies.setTeam(1,1);
+        const int c=allies.spawn(&t,400,400,0,0),d=allies.spawn(&victim,440,400,0,1);
+        allies.spawn(&victim,900,900,0,1);   // player 1 stays in the game to be given a unit
+        allies.attack(c,d,false);
+        for(int i=0;i<300 && allies.unit(d)->alive();++i)allies.tick(1.f/30);
+        check(!allies.unit(d)->alive() && allies.unit(c)->xp==25,"an ally's kill did not credit experience");
+        const bool gave=allies.giveUnit(c,0,1);
+        check(gave && allies.unit(c)->xp==0 && allies.unit(c)->veteran==0,
+              "a given unit kept its experience");
     }
     std::cout<<"PASS: authored combat percentages, neutral targeting/capture and state hashing\n";
     return 0;

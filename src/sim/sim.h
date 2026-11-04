@@ -30,6 +30,7 @@
 #include "sim/retailgroup.h"
 #include "sim/retailplayer.h"
 #include "sim/retailconstruction.h"
+#include "sim/retailveterancy.h"
 #include "sim/retailconstructionparticles.h"
 #include "sim/retailai.h"
 #include "sim/retailgrade.h"
@@ -1292,9 +1293,11 @@ struct alignas(64) Unit {
     // floating point (the affordability check at 0x46e85f subtracts one with `fsubl`).
     double mana = 0;       // personal mana pool (casters), capped at type->maxMana
     uint32_t missionEvents = 0; // read by every unit's mission dispatch each tick
-    int   xp = 0;          // accumulated experience from kills
+    // Experience (+0xf0): the experiencepoints of every unit it killed (512ce0),
+    // or an authored level's worth (setLevel 519370). `veteran` is its level.
+    int32_t xp = 0;
     float scenarioArmor = 1.0f, scenarioWeapon = 1.0f; // permanent authored multipliers, separate from auras
-    int   veteran = 0;     // veteran level (0..10); scales attack/armor/reload
+    int   veteran = 0;     // veteranLevel(): up to 10; scales attack/armor/reload
     float atkBuff = 1;     // live attack multiplier from auras (decays to 1)
     float armBuff = 1;     // live armour multiplier from auras (decays to 1)
     // OFF until ordered. Retail treats cloaking as a MISSION, not a spawn state:
@@ -1571,7 +1574,14 @@ struct alignas(64) Unit {
     // A mission's `v F` (vetOverride) replaces it, as getMult 0x5193c0 does.
     float vetMul() const {
         if (vetOverride != 0.0f && type && !type->noVeteran) return vetOverride;
-        return 1.0f + 0.10f * float(veteran);
+        // getMult's fild/fmul 0.1f/fadd 1.0f run at the x87's 53 bits: one
+        // rounding to float, not two (tools/re/check_veterancy.py).
+        return float(1.0 + double(0.10f) * double(veteran));
+    }
+    // getLevel (0x519310), from xp, the unit's own experiencepoints and `v F`.
+    // Retail works it out on every read; World keeps `veteran` equal to it.
+    int veteranLevel() const {
+        return type ? retailVeteranLevel(xp, type->experiencePoints, type->noVeteran, vetOverride) : 0;
     }
     bool moving() const { return alive() && (speed > Fixed::fromFloat(1.0f / 30.0f) || !orders.empty()); }
     // Actually translating (for the walk animation), vs standing with an
@@ -3263,6 +3273,11 @@ private:
     void clearScriptWeaponTarget(Unit& u,bool fromCommand=false);
     // Convert a unit to another player (contact charm + mind-control weapons).
     void captureUnit(Unit& t, int newPlayer);
+    // The experience of the new object retail makes for a unit (512060): none
+    // (511990 zeroes +0xf0 and +0xf4), then its type's scenario level (4cd5f4).
+    void startExperience(Unit& u);
+    // A dead unit's kill credit to the unit that hit it last (512c9c..512ce6).
+    void creditKill(const Unit& victim);
     // Apply a weapon's damage at (hx,hz), as retail's impact dispatch 529c10
     // does: a weapon with areaofeffect <= 16 that struck `primary` hits it
     // alone; any other impact damages every unit near the 3D `impact` point

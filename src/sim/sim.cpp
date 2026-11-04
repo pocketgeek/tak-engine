@@ -1025,9 +1025,8 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
     if (type) if (auto it = scenarioTypeStats_.find(type->id); it != scenarioTypeStats_.end()) {
         u.scenarioArmor = float(it->second[0]) * 0.01f;
         u.scenarioWeapon = float(it->second[1]) * 0.01f;
-        u.veteran = type->noVeteran ? 0 : std::clamp(it->second[2], 0, 10);
-        u.xp = u.veteran;
     }
+    startExperience(u);
     if (retailAllocation_ && players_[size_t(player)].buildCache) {
         const auto& entries=players_[size_t(player)].buildCache->entries;
         auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto& e){return e.type==type;});
@@ -5534,8 +5533,7 @@ void World::setVeterancyOverride(int unitId, float multiplier) {
     // getLevel (0x519310) answers 10 while it is set, so the rank shown, the
     // veteran model and every rank test read full rank; kills still count
     // (xp) but cannot move it. Cleared, the rank comes from the kills again.
-    if (u->type->noVeteran) u->veteran = 0;
-    else u->veteran = multiplier != 0.0f ? 10 : std::min(10, u->xp);
+    u->veteran = u->veteranLevel();
 }
 
 void World::tickScriptedOrder(Unit& u) {
@@ -8732,6 +8730,7 @@ bool World::giveUnit(int unitId, int fromPlayer, int toPlayer) {
     ++players_[size_t(toPlayer)].unitCount;
     transferEntitySlot(u,toPlayer);
     u.player = toPlayer;
+    startExperience(u);   // ShareUnits gives a new object (514da0 at 4b6b33)
     u.rally.clear();
     u.selfDestructT = -1;
     u.squad = 0;
@@ -8820,12 +8819,7 @@ void World::scenarioDestroy(int unitId,uint8_t deathType) {
     }
     const int killOwner=creditedOwner(u.lastHitBy);
     if(validUnitOwner(killOwner) && !allied(killOwner,owner))++players_[size_t(killOwner)].kills;
-    if (auto* killer=unit(u.lastHitBy);killer && killer->type) {
-        if (killer->alive() && killer->type->canMove && !killer->type->noVeteran) {
-            // A mission's fixed multiplier (`v F`) holds the rank at 10.
-            ++killer->xp;if (killer->vetOverride==0.0f) killer->veteran=std::min(10,killer->xp);
-        }
-    }
+    creditKill(u);
     if (scenario_) scenario_->unitDied(*this,unitId);
     if (mission_) mission_->unitDied(*this,unitId);
 }
@@ -8880,6 +8874,7 @@ bool World::scenarioTransfer(int unitId, int newPlayer) {
     if (mission_) mission_->unitCaptured(*this, unitId);
     transferEntitySlot(*u,newPlayer);
     u->player = newPlayer;
+    startExperience(*u);
     u->rally.clear();
     u->selfDestructT = -1;
     u->squad = 0;
@@ -8922,17 +8917,34 @@ void World::captureUnit(Unit& t, int newPlayer) {
     t.player = newPlayer;
     gPlayersValid_=false;
     t.orders.clear();
-    // The new object's experience: zero, or the scenario's veteran rank for the
-    // type, exactly as spawn() starts a unit.
-    t.veteran = 0;
-    if (auto it = scenarioTypeStats_.find(t.type->id); it != scenarioTypeStats_.end())
-        t.veteran = t.type->noVeteran ? 0 : std::clamp(it->second[2], 0, 10);
-    t.xp = t.veteran;
+    // The new object's experience, exactly as spawn() starts a unit.
+    startExperience(t);
     t.lastHitBy = 0; t.lastHitPlayer = -1;
     t.squad = 0;             // no longer in its old owner's control group
     t.buildQueue.clear();    // and not still producing for them
     t.buildProgress = 0; t.buildFraction = 0;
     t.productionSiteId = 0;
+}
+
+void World::startExperience(Unit& u) {
+    u.xp = 0;u.vetOverride = 0.0f;
+    if (u.type) if (auto it = scenarioTypeStats_.find(u.type->id); it != scenarioTypeStats_.end())
+        u.xp = retailExperienceForLevel(u.xp, std::clamp(it->second[2], 0, 10), u.type->experiencePoints,
+                                        u.type->noVeteran, u.vetOverride);
+    u.veteran = u.veteranLevel();
+}
+
+// Native 512ae0 credits the unit its victim's last hit named (+0xf8, set by
+// 51a240 only while the hitter's object lives): it gains the victim type's
+// experiencepoints and its level follows (getLevel 519310 reads +0xf0 anew).
+// A dead killer's object is freed, so its credit reaches nobody.
+void World::creditKill(const Unit& victim) {
+    Unit* killer = victim.lastHitBy ? unit(victim.lastHitBy) : nullptr;
+    if (!killer || !killer->type || !killer->alive() || !victim.type ||
+        !retailKillCreditsExperience(victim.deathType, !victim.underConstruction, victim.lastHitPlayer, victim.player))
+        return;
+    killer->xp = retailAddExperience(killer->xp, victim.type->experiencePoints);
+    killer->veteran = killer->veteranLevel();
 }
 
 // Stamp every PARKED ground unit into the occupancy layer. O(n), one cell each:
@@ -18985,10 +18997,9 @@ void World::tick(float dt) {
                 auto& score=players_[size_t(u.lastHitPlayer)].score;
                 score=std::bit_cast<int32_t>(uint32_t(score)+uint32_t(u.type->experiencePoints));
             }
-            // Award the destroyed unit's experiencepoints to the killer, then set
-            // its veteran level = accumulatedXP / the killer's OWN experiencepoints,
-            // capped at 10 (retail KINGDOMS.icd). No HP-pool change — veterancy
-            // works through the attack/armor multipliers, not a bigger health bar.
+            // The killer gains the destroyed unit's experiencepoints (creditKill);
+            // no HP-pool change -- veterancy works through the attack/armor
+            // multipliers, not a bigger health bar.
             if (u.lastHitBy && u.type) {
                 Unit* k = unit(u.lastHitBy);
                 // Credit the killer's player with an enemy kill (F4 overlay). Counts
@@ -18997,14 +19008,7 @@ void World::tick(float dt) {
                 const int killOwner=creditedOwner(u.lastHitBy);
                 if(validUnitOwner(killOwner) && !allied(killOwner,u.player))
                     players_[size_t(killOwner)].kills++;
-                if (k && k->alive() && k->type && k->type->canMove &&
-                    !k->type->noVeteran) {
-                    // One veteran level per kill, capped at 10 (retail counts
-                    // kills, not the victim's value — so a cheap unit that lands
-                    // a single big kill doesn't jump straight to max veterancy).
-                    k->xp += 1;
-                    if (k->vetOverride == 0.0f) k->veteran = std::min(10, k->xp);   // `v F` holds 10
-                }
+                creditKill(u);
             }
             if (mission_ || scenario_) justDied_.push_back(u.id);
             // [EXPLODEAS]: the unit detonates its own death weapon where it stands
@@ -20002,6 +20006,7 @@ void World::hashTrace() const {
         }
         hUnitMisc = fnv(fnv(hUnitMisc, u.id), uint64_t(u.alive() ? 1 : 0));
         hUnitMisc = fnv(hUnitMisc, uint64_t(u.veteran));
+        if (u.xp) hUnitMisc = fnv(hUnitMisc, uint64_t(uint32_t(u.xp)));
         if (u.scenarioArmor != 1.0f || u.scenarioWeapon != 1.0f) {
             hUnitMisc = fnv(hUnitMisc, std::bit_cast<uint32_t>(u.scenarioArmor));
             hUnitMisc = fnv(hUnitMisc, std::bit_cast<uint32_t>(u.scenarioWeapon));
@@ -20546,6 +20551,7 @@ uint64_t World::stateHash() const {
         mix(u.viewSight.sightHeight);mix(u.viewSight.active);mix(uint8_t(u.viewPlayer));mix(u.viewPlanes);
         mix(u.groundGradeTick);
         mix(uint64_t(u.veteran));
+        if (u.xp) { mix(0x5645545845504552ull); mix(uint32_t(u.xp)); }
         if (u.vetOverride != 0.0f) { mix(0x5645544f56524445ull); mixf(u.vetOverride); }
         if (u.scenarioArmor != 1.0f || u.scenarioWeapon != 1.0f) {
             mix(0x4352545354415453ull);
