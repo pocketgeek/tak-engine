@@ -15458,6 +15458,11 @@ uint32_t LegionNavigator::swapTick(int id) const {
     const auto found=impl_->swapTicks.find(id);
     return found==impl_->swapTicks.end()?UINT32_MAX:found->second;
 }
+uint32_t LegionNavigator::stillTicks(int id) const {
+    const auto found=impl_->members.find(id);
+    if(found==impl_->members.end()||found->second.stillSince==kNoTick)return 0;
+    return found->second.windowTick-found->second.stillSince;
+}
 const char* LegionNavigator::whyName(int why) {
     static constexpr const char* names[kWhys]={"none","steer","direct","pass","flow_first","flow_brisk","flow_cap","sidestep","room","corner",
         "route_brisk","route_cap","press","yield","hold_movers","hold_settled","hold_jam","hold_corner","hold_refused","hold_detour","hold_ask",

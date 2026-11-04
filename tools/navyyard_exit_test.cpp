@@ -239,14 +239,22 @@ int main(int argc,char** argv) {
                 const Result pad=run(registry,mode,layout,ship,kShips,Crowd::Pad);
                 check(pad.produced==kShips && int(pad.clear.size())==kShips && pad.inDoor==0,
                       label+"an idle Iron Clad on the pad moves off it and the yard builds");
+                // Legion moves the yard's own parked outputs again only off one held
+                // on the pad: none of these cases holds one.
+                if(mode==sim::PathfindingMode::Legion)
+                    check(clear.nudged==0 && door.nudged==0 && pad.nudged==0,
+                          label+"no parked ship is moved again ("+std::to_string(clear.nudged)+", "+
+                          std::to_string(door.nudged)+", "+std::to_string(pad.nudged)+")");
                 const Result ward=run(registry,mode,layout,ship,kShips,Crowd::Ward);
-                // Known limit, as before guards stepped aside: under Legion an
-                // Iron Clad leaving a door onto a shore can be held in the yard by
-                // the yard's own parked outputs (Legion does not move them).
-                if(!(mode==sim::PathfindingMode::Legion && layout==Layout::Shore && std::string(ship)=="creiron"))
-                    check(ward.produced==kShips && int(ward.clear.size())==kShips,
-                          label+"eight Iron Clads guarding the yard at its door let all six out of the yard ("+
-                          std::to_string(int(ward.clear.size()))+", "+std::to_string(ward.stuck)+" not settled)");
+                // Under Legion an Iron Clad leaving a door onto a shore was held in
+                // the yard by the yard's own outputs, parked where the guards made
+                // them give up their PARK: they now move off a held one too.
+                // Under the Retail mover one shore Submersible is still edging
+                // to its spot among the guards at the end (out of the yard).
+                check(ward.produced==kShips && int(ward.clear.size())==kShips &&
+                      (mode!=sim::PathfindingMode::Legion || ward.stuck==0),
+                      label+"eight Iron Clads guarding the yard at its door let all six out of the yard ("+
+                      std::to_string(int(ward.clear.size()))+", "+std::to_string(ward.stuck)+" not settled)");
                 check(ward.guarding==8,label+"each guard ends back on its guard near the yard ("+
                       std::to_string(ward.guarding)+" of 8, farthest "+std::to_string(ward.farthest)+" px)");
                 check(ward.twice==0,label+"no guard moves aside twice for one output ("+std::to_string(ward.twice)+")");

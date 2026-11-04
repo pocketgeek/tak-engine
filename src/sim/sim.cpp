@@ -14922,9 +14922,11 @@ void World::clearProductionRoom(Unit& producer,const UnitType* type,Fixed x,Fixe
 //    factory only its half on the output's side), to just outside it across
 //    the door's axis, on their own side, the door's side last;
 //  - while its next site is refused, those on the pad (its rectangle);
-//  - under the Retail navigator, while an output on its PARK round it is held
-//    up by a body, those in the cells round that output, away from it (a crowd
-//    moved just past the area can hold a ship there).
+//  - while an output on its PARK round it is held up by a body (the Retail
+//    mover's refusal streak; under Legion, standing two windows on the pad), those
+//    in the cells round that output, away from it (a crowd moved just past the
+//    area can hold a ship there, and under Legion the factory's own outputs
+//    parked where they gave up their PARK).
 // The factory's own parked outputs move only off the pad or off an output they
 // hold up, not for every next one that walks past them (the Navy Yard's first
 // rule moved them each time). The point is pointOutside's: free, reachable,
@@ -14962,13 +14964,47 @@ void World::clearYardDoor(const Unit& factory) {
     };
     const int cx=factory.x.floorInt(),cz=factory.z.floorInt();
     const float reach=float(std::max(right-left,bottom-top));
-    // An output of this factory on its way out decides the door's axis. Under
-    // the Retail navigator, those still on their PARK round it and held up by a
-    // body (the mover's refusal streak), in the area or past it, mark the cells
-    // round each, 2 deep: where whatever holds it stands. Legion gives each
-    // output a spot of its own out of the door's lane and resolves its own
-    // crowds; moving its parked outputs there put them back in the lane
-    // (legion_park, measured 2026-11-03).
+    // Legion's standing that counts as held: two of its crowd windows (a fresh
+    // output stands one while its route is found).
+    static constexpr uint32_t kHeldStill=90;
+    // Under Legion a step aside of this factory's own output, off the yard,
+    // that has stood kHeldStill ticks (its navigator's headway windows) and is
+    // still not clear of where it began ends there: the output stood idle
+    // there before, so it gives up nothing. Legion's exit step ends only clear
+    // of where it began or with an order behind it, so an output penned in by
+    // guards back on their ring kept its move (and the door's area) open for
+    // good (measured 2026-11-03, shore Iron Clads with eight guards). One that
+    // got clear, or only paused on its way, is left to Legion's own end of the
+    // step. The Retail mover ends a held step itself (groundMissionAccepts'
+    // refusal streak).
+    if (isLegionPathfinding(pathfindingMode_) && legion_) {
+        std::vector<int> stalled;
+        forEachNear(float(cx),float(cz),reach,[&](int index) {
+            const Unit& k=units_[size_t(index)];
+            if (!body(k) || k.builtBy!=factory.id || k.orders.size()!=1 || overlaps(k,yl,yr,yt,yb)) return;
+            const Order& o=k.orders.front();
+            if (!o.productionExit || o.park || !o.goal || legion_->stillTicks(k.id)<kHeldStill) return;
+            const int dx=k.x.floorInt()-o.productionExit->first.floorInt(),dz=k.z.floorInt()-o.productionExit->second.floorInt();
+            if (std::abs(dx)<k.type->footX*16 && std::abs(dz)<k.type->footZ*16) stalled.push_back(k.id);
+        });
+        std::sort(stalled.begin(),stalled.end());
+        for (int id:stalled) if (Unit* k=unit(id)) dropLeg(*k);
+    }
+    // An output of this factory on its way out decides the door's axis. Those
+    // still on their PARK round it and held up by a body, in the area or past
+    // it, mark the cells round each, 2 deep: where whatever holds it stands.
+    // Held up is the Retail mover's refusal streak. Legion keeps no streak (it
+    // holds a blocked body at zero speed): there an output still on the pad
+    // that has stood kHeldStill ticks (one standing a single window while its
+    // route is found re-nudged parked outputs in the door crowds, measured
+    // 2026-11-03). Legion gives each output a spot of its own out of the
+    // door's lane and resolves its own crowds out there
+    // (moving parked outputs for every output standing anywhere on its way
+    // nudged each one again, and moving every parked output in the area put
+    // them back in the lane, legion_park); but at a door onto a shore with
+    // guards round the yard, outputs held in the one channel out give up their
+    // PARK there, and with no test at all those parked siblings held the sixth
+    // Iron Clad on the pad for good (measured 2026-11-03).
     const Unit* leaving=nullptr;
     std::vector<std::array<int,4>> held;   // World px: left, right, top, bottom.
     forEachNear(float(cx),float(cz),reach,[&](int index) {
@@ -14985,7 +15021,9 @@ void World::clearYardDoor(const Unit& factory) {
         const bool exiting=parking || plainMove || overlaps(k,yl,yr,yt,yb);
         const bool inArea=exiting && overlaps(k,left,right,top,bottom);
         if (inArea && (!leaving || k.id<leaving->id)) leaving=&k;
-        if (!isLegionPathfinding(pathfindingMode_) && (inArea || parking) && k.bodyBlockStreak>=2) {
+        const bool stopped=isLegionPathfinding(pathfindingMode_) ?
+            legion_ && legion_->stillTicks(k.id)>=kHeldStill && overlaps(k,yl,yr,yt,yb) : k.bodyBlockStreak>=2;
+        if ((inArea || parking) && stopped) {
             const int hx=(footprintOrigin(k.x,k.type->footX)-2)*16,hz=(footprintOrigin(k.z,k.type->footZ)-2)*16;
             held.push_back({hx,hx+(k.type->footX+4)*16,hz,hz+(k.type->footZ+4)*16});
         }
