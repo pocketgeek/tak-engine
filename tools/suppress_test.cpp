@@ -13,8 +13,8 @@
 // lone point is fired at for ever and Shift-queued points take turns. A
 // melee weapon gets the order only over a blocking, clearable feature, walks
 // up to it and hits it until it is gone; an anti-air weapon gets nothing.
-// The flyers' airstrike missions at a point are not ported: they get nothing
-// yet.
+// A flyer gets AIRSTRIKE (a `dropped` weapon), AIRTOGROUNDHOVER (the type's
+// hoverattack) or AIRTOGROUND at the point, each with no target unit.
 //
 // Checks (flat map, shipped units, Cmd::AttackGround through applyCommand):
 //   - an Archer in reach fires at the point without moving, and keeps the
@@ -27,7 +27,13 @@
 //   - a switcher aims its selected slot only;
 //   - a melee unit gets no order on bare ground; over a tree it walks up,
 //     fells it, and the order ends;
-//   - an anti-air weapon and each kind of flyer get no order;
+//   - an anti-air weapon gets no order, on the ground or in the air;
+//   - a flyer without hoverattack flies attack runs over the point and its
+//     shots land there; a hoverattack flyer hovers its distance off the
+//     point and fires; a `dropped` weapon's flyer strikes the point; each
+//     keeps the order and carries no target;
+//   - a switcher flyer whose selected weapon becomes `dropped` takes the
+//     lost-target exit: VTOL_SEEKATTACK at the point;
 //   - the same run twice gives the same state hash; the wire takes the
 //     command from protocol 312 only.
 //
@@ -102,7 +108,10 @@ struct Run {
     int hits = 0;
     bool targetedShot = false;   // a projectile of its with a target unit
     bool approach = false;       // an approach leg went ahead of the order
-    bool orderAtEnd = false;     // a SUPPRESS order is still queued at the end
+    bool orderAtEnd = false;     // a SUPPRESS (or air point) order is still queued at the end
+    uint8_t airKind = 0;         // Order::airPoint of the first order given
+    bool airborne = false;       // a flyer was in the air at some tick
+    double lateDist = 0;         // mean shooter-to-point distance over the last third
     size_t ordersAtEnd = 0;
     std::vector<int> sequence;   // per impact: index of the nearest point
     uint8_t slotPointMax = 0;    // every slot that held a point
@@ -148,7 +157,9 @@ Run fireAt(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const Shooter& sh,
     const float x0 = s.w.unit(shooter)->x.toFloat(), z0 = s.w.unit(shooter)->z.toFloat();
     for (size_t i = 0; i < points.size(); ++i)
         attackGround(s.w, reg, shooter, points[i].first, points[i].second, i > 0);
-    double hitSum = 0;
+    if (const sim::Unit* u = s.w.unit(shooter); u && !u->orders.empty()) r.airKind = u->orders.front().airPoint;
+    double hitSum = 0, lateSum = 0;
+    int lateN = 0;
     bool held = false;
     for (int i = 0; i < ticks; ++i) {
         const int now = int(s.w.tickCount());
@@ -160,6 +171,8 @@ Run fireAt(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const Shooter& sh,
         const float d = std::hypot(u->x.toFloat() - points[0].first, u->z.toFloat() - points[0].second);
         r.minDist = std::min(r.minDist, d);
         r.endDist = d;
+        if (i >= ticks * 2 / 3) { lateSum += d; ++lateN; }
+        r.airborne = r.airborne || u->flightGroundMode == 2;
         if (u->slotPoint && !held) ++r.aims;
         held = u->slotPoint != 0;
         r.slotPointMax |= u->slotPoint;
@@ -176,9 +189,10 @@ Run fireAt(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const Shooter& sh,
         }
     }
     if (r.hits) r.hitDist = float(hitSum / r.hits);
+    if (lateN) r.lateDist = lateSum / lateN;
     if (const sim::Unit* u = s.w.unit(shooter)) {
         r.ordersAtEnd = u->orders.size();
-        for (const auto& o : u->orders) r.orderAtEnd = r.orderAtEnd || o.suppress;
+        for (const auto& o : u->orders) r.orderAtEnd = r.orderAtEnd || o.suppress || o.airPoint;
     }
     r.treeAtEnd = treeAt(points[0].first, points[0].second);
     r.hash = s.w.stateHash();
@@ -214,6 +228,142 @@ const sim::UnitType* pick(const sim::TypeRegistry& reg, const std::vector<const 
     for (const auto& [id, t] : reg.types())
         if (ok(t)) return &t;
     return nullptr;
+}
+
+// A flyer given Cmd::AttackGround on a point 600 px off: the mission it
+// gets, its shots and where it flies.
+Run flyAt(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim::UnitType* t, int ticks) {
+    return fireAt(vfs, reg, {t->id.c_str()}, {{900, 768}}, ticks);
+}
+
+std::string describeAir(const Run& r) {
+    char b[120];
+    std::snprintf(b, sizeof b, ", kind %u, airborne %d, late distance %.0f", unsigned(r.airKind), r.airborne,
+                  r.lateDist);
+    return describe(r) + b;
+}
+
+// A Run for a type the registry does not hold (a stand-in copy).
+Run flyCopy(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim::UnitType& copy, int ticks,
+            const std::function<void(Scene&, int)>& during = {}, int at = -1, bool* seek = nullptr) {
+    Scene s;
+    build(s, vfs, reg);
+    Run r;
+    const int id = s.w.spawn(&copy, 300, 768, 1.5707963f, 0);
+    s.w.unit(id)->mana = copy.maxMana;
+    s.w.unit(id)->fireState = 0;
+    for (int i = 0; i < 30; ++i) s.w.tick(kTick);
+    attackGround(s.w, reg, id, 900, 768);
+    if (const sim::Unit* u = s.w.unit(id); u && !u->orders.empty()) r.airKind = u->orders.front().airPoint;
+    double hitSum = 0;
+    for (int i = 0; i < ticks; ++i) {
+        if (i == at && during) during(s, id);
+        s.w.tick(kTick);
+        const sim::Unit* u = s.w.unit(id);
+        if (!u || !u->alive()) break;
+        if (u->firedWeapons) { ++r.shots; if (r.firstShot < 0) r.firstShot = int(s.w.tickCount()); }
+        r.airborne = r.airborne || u->flightGroundMode == 2;
+        for (const auto& p : s.w.projectiles())
+            if (p.fromId == id && p.targetId) r.targetedShot = true;
+        for (const auto& h : s.w.hits()) { hitSum += std::hypot(h.x - 900, h.z - 768); ++r.hits; }
+        if (seek && !u->orders.empty() && u->orders.front().seekAttack &&
+            std::abs(u->orders.front().x.toFloat() - 900) < 1 && std::abs(u->orders.front().z.toFloat() - 768) < 1)
+            *seek = true;
+    }
+    if (r.hits) r.hitDist = float(hitSum / r.hits);
+    if (const sim::Unit* u = s.w.unit(id)) {
+        r.ordersAtEnd = u->orders.size();
+        for (const auto& o : u->orders) r.orderAtEnd = r.orderAtEnd || o.airPoint;
+    }
+    r.hash = s.w.stateHash();
+    return r;
+}
+
+void flyers(const hpi::Vfs& vfs, const sim::TypeRegistry& reg) {
+    using sim::Order;
+    const auto armed = [](const sim::UnitType& t) {
+        if (!t.canFly || t.isStructure() || !t.canMove || t.weapons.empty() || t.weaponSwitching) return false;
+        const auto& w = t.weapons[0];
+        return !w.toAir && !w.melee && !w.commandFire && !w.cursorAirstrike && w.range > 0 && w.damage > 0;
+    };
+    const sim::UnitType* runner = pick(reg, {}, [&](const sim::UnitType& t) { return armed(t) && !t.hoverAttack; });
+    const sim::UnitType* hover = pick(reg, {}, [&](const sim::UnitType& t) { return armed(t) && t.hoverAttack; });
+    std::printf("  flyers: attack runs %s, hover %s\n", runner ? runner->id.c_str() : "-",
+                hover ? hover->id.c_str() : "-");
+    if (!runner || !hover) { check(false, "the shipped data has a flyer of each kind"); return; }
+
+    // AIRTOGROUND: attack runs over the point.
+    {
+        const Run r = flyAt(vfs, reg, runner, 1500);
+        std::printf("  %s at a point 600 px off: %s\n", runner->id.c_str(), describeAir(r).c_str());
+        check(r.airKind == Order::kAirRun, "a flyer without hoverattack gets AIRTOGROUND at the point", describeAir(r));
+        check(r.airborne && r.shots >= 2 && r.hits >= 2 && r.hitDist < 64 && !r.targetedShot,
+              "it flies over the point and its shots land there, with no target", describeAir(r));
+        check(r.orderAtEnd && r.ordersAtEnd == 1, "and keeps the order", describeAir(r));
+        check(flyAt(vfs, reg, runner, 1500).hash == r.hash, "the same run gives the same state hash");
+    }
+    // AIRTOGROUNDHOVER: hovers its distance off the point and fires.
+    {
+        const Run r = flyAt(vfs, reg, hover, 1500);
+        const int d = hover->weapons[0].hoverAttackDistance ? hover->weapons[0].hoverAttackDistance
+                                                            : hover->hoverAttackDistance;
+        std::printf("  %s (hoverattack, distance %d) at a point 600 px off: %s\n", hover->id.c_str(), d,
+                    describeAir(r).c_str());
+        check(r.airKind == Order::kAirHover, "a hoverattack flyer gets AIRTOGROUNDHOVER at the point", describeAir(r));
+        check(r.airborne && std::abs(r.lateDist - d) < 48, "it hovers its hoverattack distance off the point",
+              describeAir(r));
+        check(r.shots >= 2 && r.hits >= 2 && r.hitDist < 64 && !r.targetedShot,
+              "and its shots land on the point, with no target", describeAir(r));
+        check(r.orderAtEnd && r.ordersAtEnd == 1, "and keeps the order", describeAir(r));
+    }
+    // AIRSTRIKE: no shipped weapon has `dropped`; the attack-run flyer with
+    // its weapon given the key stands in.
+    {
+        sim::UnitType striker = *runner;
+        striker.weapons[0].cursorAirstrike = true;
+        const Run r = flyCopy(vfs, reg, striker, 1500);
+        std::printf("  %s with a dropped weapon at a point 600 px off: %s\n", runner->id.c_str(), describeAir(r).c_str());
+        check(r.airKind == Order::kAirStrike, "a `dropped` weapon gets AIRSTRIKE at the point", describeAir(r));
+        check(r.airborne && r.shots >= 1 && r.hits >= 1 && r.hitDist < 96 && !r.targetedShot,
+              "it strikes the point, with no target", describeAir(r));
+        check(r.orderAtEnd, "and keeps the order", describeAir(r));
+    }
+    // A selected weapon that has `dropped` when AIRTOGROUND wakes: the lost
+    // exit, VTOL_SEEKATTACK at the point (41c8f6). The order is given on the
+    // plain type; the key appears on the unit's weapon mid-mission, as a
+    // switch to such a slot would give it.
+    {
+        sim::UnitType plain = *runner;
+        sim::UnitType keyed = *runner;
+        keyed.weapons[0].cursorAirstrike = true;
+        bool seek = false;
+        const Run r = flyCopy(vfs, reg, plain, 300, [&](Scene& s, int id) {
+            s.w.unit(id)->type = &keyed;
+            s.w.unit(id)->missionEvents |= 0x40;   // the switch's event wakes the mission
+        }, 120, &seek);
+        std::printf("  %s whose weapon turns dropped: %s, seek %d\n", runner->id.c_str(), describeAir(r).c_str(), seek);
+        // Hold Fire skips the seek (41c91c); on Fire At Will it goes in.
+        check(!r.orderAtEnd, "a selected `dropped` weapon ends AIRTOGROUND (Hold Fire: no seek)", describeAir(r));
+        bool seekFree = false;
+        sim::UnitType plain2 = *runner;
+        flyCopy(vfs, reg, plain2, 300, [&](Scene& s, int id) {
+            s.w.unit(id)->fireState = 2;
+            s.w.unit(id)->type = &keyed;
+            s.w.unit(id)->missionEvents |= 0x40;
+        }, 120, &seekFree);
+        check(!seek && seekFree, "on Fire At Will it seeks at the point (VTOL_SEEKATTACK, no target)");
+    }
+    // An anti-air weapon in the air: no order.
+    {
+        sim::UnitType aa = *runner;
+        aa.weapons[0].toAir = true;
+        Scene s;
+        build(s, vfs, reg);
+        const int u = s.w.spawn(&aa, 300, 768, 1.5707963f, 0);
+        s.w.tick(kTick);
+        attackGround(s.w, reg, u, 500, 768);
+        check(s.w.unit(u)->orders.empty(), "a flyer's anti-air weapon gets no order");
+    }
 }
 
 void wire() {
@@ -360,8 +510,7 @@ int main(int argc, char** argv) {
               "over a tree it walks up, fells it, and the order ends", describe(r));
     }
 
-    // An anti-air weapon, and every flyer (its missions at a point are not
-    // ported), get no order.
+    // An anti-air weapon gets no order, flyer or not (4de673).
     {
         Scene s;
         build(s, vfs, reg);
@@ -370,17 +519,8 @@ int main(int argc, char** argv) {
         attackGround(s.w, reg, u, 500, 768);
         check(s.w.unit(u)->orders.empty(), "an anti-air weapon gets no order");
     }
-    {
-        int flyers = 0, given = 0;
-        for (const auto& [id, t] : reg.types()) {
-            if (!t.canFly || t.weapons.empty() || t.isStructure()) continue;
-            ++flyers;
-            if (!refused(vfs, reg, id.c_str(), 500, 768)) ++given;
-            if (flyers >= 12) break;
-        }
-        check(flyers > 0 && given == 0, "no flyer gets an order (AIRSTRIKE / AIRTOGROUND at a point not ported)",
-              std::to_string(given) + " of " + std::to_string(flyers));
-    }
+
+    flyers(vfs, reg);
 
     wire();
 

@@ -5950,10 +5950,67 @@ Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
   SUPPRESS, and a commandfire shot's 0x40000 only for a point target; no
   unit-target mission reads either.
 - I: the group check `51d1e0(unit,1,4)` and its Move_Ground_Formation are not
-  ported (as in AirToGround). A flyer gets no order: AIRSTRIKE, AIRTOGROUNDHOVER
-  and AIRTOGROUND at a point are not ported yet.
+  ported (as in AirToGround).
 - I: a Guided shot at a point flies without homing (its update steers only at
   a live target).
 - Campaign `a X Y` still walks into reach and fights (`mission.cpp`).
 
 `suppress_test` checks it in both pathfinding modes.
+
+### Flyers at a point: AIRSTRIKE, AIRTOGROUNDHOVER, AIRTOGROUND (icd static, 2026-11-03)
+
+The same resolver's flyer branch, and the three missions' paths with no
+target (mission `+0x16` 0), read in the code (S); none emulated (no E). The
+missions' stages are the ported ones (`sim/retailairattack.h`); only what
+differs without a target is listed.
+
+- **S, resolver** `4de770..4de7e3`: after the `toairweapon` test, the
+  selected slot's `dropped` (`+0xc8` 0x20) gives AIRSTRIKE (`0x615dac`); else
+  the TYPE's hoverattack (`+0x260` 0x8000000; the weapon's is not read)
+  AIRTOGROUNDHOVER (`0x615d98`); else AIRTOGROUND (`0x615d8c`).
+- **S, mission ctor** `4d6c40`: the point is copied to `+0x22`; without a live
+  target `4d6d66` clears the target bit 0x200 from the row's flags, so the
+  heads' "no target and 0x200" seek (`41c08c`, `41d8ef`, `41b68a`) is never
+  taken by an order at a point.
+- **S, AirToGround head** (`41bf80`): no weapon (`+0x130` 0x8000000) or a
+  type with hoverattack: 7; a selected `dropped` weapon or events 0x2a: the
+  lost exit `41c8f6`, which without a target pushes VTOL_SEEKATTACK
+  (`0x6055a0`) at `+0x22` when the flyer is alive and not dying, the attack is
+  last (`+0x66` 0) and not on Hold Fire (`+0x130 & 0xc0000`); 5 either way.
+  `41c13c` copies the target's position to `+0x22` only with a target, so the
+  point stays as issued. Stage 2 (`41c357`): `51a770(unit, +0x22, slot)`, the
+  point for the selected slot, in place of `51a700`. Stage 4's rescan reads
+  `+0x16` first (`41c415`): never without a target.
+- **S, AirToGroundHover head** (`41d820`): the type's hoverattack is required
+  (else 7); `dropped` or events 0x28: the exit `41e28f`, which without a
+  target pushes the seek at `+0x22` when last and not on Hold Fire (no alive
+  test there). Stages 0, 1 and 3 read the target's position or led SweetSpot
+  into `+0x22` only with a target; stage 2 (`41de1c`) aims the slot at the
+  point (`51a770`). Stages 3 and 5 (`41df8f`, `41e225`) build a POINT
+  controller (`4e40e0`, flags 0x20) where a target gets the target controller
+  (`4e4140`, 0xa3 with the entity), give it a fixed heading (`4e4520`:
+  `51b340(ring point, +0x22)`, the ring point as seen from the point), then
+  radius 4 and the attack altitude as with a target. With no entity
+  `4e41b0` lets it go on arrival (`524c10` 0x100, the navigator's 0x400).
+- **S, AirStrike** (`41b5e0`) needs nothing new: its no-target branches were
+  already ported (`retailAirStrike`, `in.target`); stage 5 aims the slot at
+  the point (`51a770`), stage 4 installs the release ring on the point.
+
+Ours (`World::suppress`, `tickAirPoint`, the three missions' hosts with a
+null target; `Order::airPoint`):
+
+- I: World's unit-target hover also takes a weapon's hoverattack; the point
+  order follows the resolver (the type's only).
+- I: the slots' point is held only while the attack is the front order: a
+  step-out ahead of it drops it (TargetCleared), and the mission's restart at
+  stage 1 aims it again.
+- I: the weapon-switch event 0x40 is raised for a flyer on an attack at a
+  point, as for SUPPRESS (it restarts the mission), not on a unit attack.
+- I: the group check (`51d1e0`) is as on the unit-target missions: ported
+  for the hover, not for AirToGround and AirStrike.
+
+`suppress_test` (both modes): `creaeri` flies runs over the
+point and hits it (24 shots, 4 px off); a Tarbeak hovers ~134 px off a point
+(distance 150) and hits it; a `dropped` stand-in strikes it; a weapon that
+turns `dropped` ends the order, with the seek at the point on Fire At Will
+and none on Hold Fire; a flyer's `toairweapon` gets no order.

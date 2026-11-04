@@ -5522,9 +5522,11 @@ bool World::switchWeaponSlot(Unit& u,int slot,bool fromCommand) {
     dropSlotTarget(u,u.weaponSlot);
     u.weaponSlot=slot;
     u.reloads[size_t(slot)]=u.type->weapons[size_t(slot)].switchReloadTicks;
-    // The 0x40 event: SUPPRESS is its one ported reader (it restarts from
-    // stage 0), so only a unit on one gets it.
-    if (!u.orders.empty() && u.orders[currentLeg(u.orders)].suppress) u.missionEvents|=0x40u;
+    // The 0x40 event: SUPPRESS and a flyer's attack at a point are its
+    // ported readers (they restart from stage 0), so only a unit on one
+    // gets it.
+    if (!u.orders.empty() && (u.orders[currentLeg(u.orders)].suppress || u.orders.front().airPoint))
+        u.missionEvents|=0x40u;
     if (const auto script=unitScripts_.find(u.id);script!=unitScripts_.end()) {
         const auto& file=*u.type->script();
         script->second.state().startArguments(file,file.scriptIndex("SwitchWeapon"),{uint32_t(slot),0,0,0},1);
@@ -6567,13 +6569,15 @@ void World::setSlotsManual(Unit& u,uint8_t cause) {
 // the in-reach work call); an attack order and a status are recognised here.
 void World::syncSlotMode(Unit& u) {
     const bool status=u.incapacitated() || u.embarked() || u.underConstruction;
-    // A point target belongs to the SUPPRESS leg that aimed it; the
-    // mission's end (4d6da0's 519b10(3)) drops it with TargetCleared.
-    const bool suppressing=u.slotPoint && !u.orders.empty() && u.orders[currentLeg(u.orders)].suppress;
+    // A point target belongs to the SUPPRESS leg, or the flyer's attack at
+    // a point at the front, that aimed it; the mission's end (4d6da0's
+    // 519b10(3)) drops it with TargetCleared.
+    const bool airPoint=!u.orders.empty() && u.orders.front().airPoint;
+    const bool suppressing=u.slotPoint && !u.orders.empty() && (u.orders[currentLeg(u.orders)].suppress || airPoint);
     if (u.slotPoint && !suppressing)
         for (int s=0;s<3;++s) dropSlotPoint(u,s);
     const bool attack=!u.orders.empty() && ((u.orders.front().targetId!=0 &&
-        !u.orders.front().guard && !u.orders.front().load) || (suppressing && u.slotPoint));
+        !u.orders.front().guard && !u.orders.front().load) || (suppressing && u.slotPoint) || airPoint);
     const bool work=u.buildSiteId || u.repairId || u.reclaimId || u.reviveTarget || u.workScriptWorking;
     // A resurrect channel starts only in reach (and from the threaded ability
     // pass, which must not start scripts), so it is recognised here too.
@@ -7686,6 +7690,11 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
         groundMovementHandled=true;
         return;
     }
+    if (!u.orders.empty() && u.orders.front().airPoint) {
+        tickAirPoint(u);
+        groundMovementHandled=true;
+        return;
+    }
     if (u.orders.empty() || u.orders.front().targetId == 0) return;
 
     if (u.orders.front().guard) {
@@ -8101,11 +8110,11 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     // 52ae90 runs the weapons before the missions and the mover.
     forEachSlot(tryFire);
     if (airRun && !u.orders.empty() && u.orders.front().targetId==target->id) {
-        tickAirToGround(u,*target,sel);
+        tickAirToGround(u,target,sel);
         groundMovementHandled=true;
     }
     if (hovering && !u.orders.empty() && u.orders.front().targetId==target->id) {
-        tickAirToGroundHover(u,*target,sel,slot);
+        tickAirToGroundHover(u,target,sel,slot);
         groundMovementHandled=true;
     }
     if (airToAir && !u.orders.empty() && u.orders.front().targetId==target->id) {
@@ -8113,7 +8122,7 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
         groundMovementHandled=true;
     }
     if (strike && !u.orders.empty() && u.orders.front().targetId==target->id) {
-        tickAirStrike(u,*target);
+        tickAirStrike(u,target);
         groundMovementHandled=true;
     }
 }
@@ -8215,7 +8224,7 @@ bool World::suppressAccepts(int unitId, float x, float z) const {
     const int slot=u->type->weaponSwitching ? std::clamp(u->weaponSlot,0,n-1) : 0;
     const Weapon& w=u->type->weapons[size_t(slot)];
     if (w.toAir) return false;                    // 4de673: no order
-    if (u->type->canFly) return false;            // AIRSTRIKE / AIRTOGROUND(HOVER) at a point: not ported
+    if (u->type->canFly) return !u->type->isStructure();   // 4de684: the airstrike branch (Order::airPoint)
     // 4de68a..4de6eb: a melee weapon only over a clearable blocker.
     return !w.melee || clearableBlockerAt(Fixed::fromFloat(x),Fixed::fromFloat(z));
 }
@@ -8235,11 +8244,42 @@ bool World::suppress(int unitId, float x, float z, bool queue) {
     Order o{px,pz,0};
     o.goal=true;
     o.issuedTick=tickCounter_;
-    o.suppress=true;
-    o.suppressSlot=uint8_t(slot);
     o.attackPointX=px;o.attackPointZ=pz;
+    if (u->type->canFly) {
+        // 4de770..4de7e3: the selected slot's `dropped` key gives AIRSTRIKE
+        // (row 0x615dac), the type's hoverattack (+0x260 0x8000000; not the
+        // weapon's) AIRTOGROUNDHOVER (0x615d98), else AIRTOGROUND (0x615d8c);
+        // each with no target, so the ctor (4d6d66) clears the target bit
+        // 0x200 from the row's flags.
+        o.airPoint=u->type->weapons[size_t(slot)].cursorAirstrike ? Order::kAirStrike
+                 : u->type->hoverAttack ? Order::kAirHover : Order::kAirRun;
+    } else {
+        o.suppress=true;
+        o.suppressSlot=uint8_t(slot);
+    }
     u->orders.push_back(o);
     return true;
+}
+
+void World::tickAirPoint(Unit& u) {
+    const int slot=u.type->weapons.empty() ? 0 : std::clamp(u.weaponSlot,0,int(u.type->weapons.size())-1);
+    const Weapon* sel=slot<int(u.type->weapons.size()) ? &u.type->weapons[size_t(slot)] : nullptr;
+    switch (u.orders.front().airPoint) {
+    case Order::kAirStrike: tickAirStrike(u,nullptr); break;
+    case Order::kAirHover: tickAirToGroundHover(u,nullptr,sel,slot); break;
+    default: tickAirToGround(u,nullptr,sel); break;
+    }
+}
+
+void World::seekLostPoint(Unit& u,Fixed x,Fixed z) {
+    // 4d6da0, the attack's destructor: 519b10(3), every slot automatic.
+    for (int s=0;s<3;++s) setSlotMode(u,s,true);
+    Order seek{x,z,0};
+    seek.seekAttack=true;seek.goal=true;seek.issuedTick=tickCounter_;
+    u.orders.insert(u.orders.begin(),std::move(seek));
+    cancelPath(u);u.routeStamp=-1;
+    noteOrders(u.id);
+    tickSeekAttack(u,false);
 }
 
 // 4d4e10 (a minimum range: the ring from `inner` out to `outer`) or 4d4da0
@@ -12632,23 +12672,28 @@ void World::tickRetailConstruction(Unit& builder) {
 // mover (flyHoverGoal). Its stage-3 controller is the target controller
 // (4e4140): a fixed ring point at the attack altitude, radius 4, headed at the
 // target's SweetSpot, kept on arrival (it posts 0x100 and stays).
-void World::tickAirToGroundHover(Unit& u,const Unit& target,const Weapon* selected,int slot) {
+void World::tickAirToGroundHover(Unit& u,const Unit* target,const Weapon* selected,int slot) {
     // 519ac0: a switcher's selected slot, otherwise the first slot.
     const Weapon* weapon=u.type->weaponSwitching ? selected
                        : u.type->weapons.empty() ? nullptr : &u.type->weapons.front();
     const int distance=weapon && weapon->hoverAttackDistance ? weapon->hoverAttackDistance : u.type->hoverAttackDistance;
     const int altitude=weapon && weapon->hoverAttackAltitude ? weapon->hoverAttackAltitude : u.type->hoverAttackAltitude;
     struct Host {
-        World& w; Unit& u; const Unit& target; const Weapon* weapon; int altitude;
+        World& w; Unit& u; const Unit* target; const Weapon* weapon; int altitude;
         int retargetTo=0;            // 4d7de0's new attack, put ahead once the dispatch is done
         int32_t stepOutTo=0;         // a step-out's D, pushed ahead once the dispatch is done
         bool formationTo=false;      // VTOL_Move_Formation, pushed ahead once the dispatch is done
         bool ringInstalled=false;    // stage 3 drew a ring point this dispatch
+        bool seekTo=false;           // a point's lost-target exit: VTOL_SEEKATTACK once it has gone
         RetailFlightVector led;      // the last led SweetSpot (51aa50)
+        // The attack this mission runs on: the unit's, or one at a point.
+        bool owns(const Order& o) const {
+            return target ? o.targetId==target->id : (o.airPoint==Order::kAirHover && !o.targetId);
+        }
         bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
         RetailMissionState* head() {
             return !stepOutTo && !retargetTo && !formationTo && !u.orders.empty() &&
-                   u.orders.front().targetId==target.id ? &u.orders.front().mission : nullptr;
+                   owns(u.orders.front()) ? &u.orders.front().mission : nullptr;
         }
         bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
         void idle() {}
@@ -12661,7 +12706,12 @@ void World::tickAirToGroundHover(Unit& u,const Unit& target,const Weapon* select
         void clear() { w.cancelPath(u);u.orders.clear();u.routeStamp=-1; }
         // Events 0x28: World ends a lost target before the dispatch (tickCombat,
         // seekLostTarget) and posts neither; the exit just ends the attack.
-        int lostTarget() { return 5; }
+        // At a point (41e28f with +0x16 0): VTOL_SEEKATTACK at the point when
+        // the hover is the last mission and not on Hold Fire.
+        int lostTarget() {
+            if (!target) seekTo=u.orders.size()==1 && !u.orders.front().aheadOfDefault && u.fireState!=0;
+            return 5;
+        }
         bool outOfSlot() {
             // 51d1e0(unit, 1, 5): the attack's own flags lack 0x4000000.
             const RetailGroupRecord* group=w.retailGroupOf(u);
@@ -12695,13 +12745,17 @@ void World::tickAirToGroundHover(Unit& u,const Unit& target,const Weapon* select
         void aim() {
             const int sel=u.type->weaponSwitching ? std::clamp(u.weaponSlot,0,2) : 0;
             w.setSlotMode(u,sel,false);
-            w.setSlotTarget(u,sel,target.id);
+            if (target) w.setSlotTarget(u,sel,target->id);
+            else {   // 51a770: the point (+0x22), in whole px
+                const Order& o=u.orders.front();
+                w.setSlotPoint(u,sel,{int16_t(o.attackPointX.v>>16),int16_t(o.attackPointZ.v>>16)});
+            }
         }
         RetailFlightVector targetPoint() const {
-            return {target.x.v,target.flightGroundMode==2 ? target.flightY.v : target.groundY.v,target.z.v};
+            return {target->x.v,target->flightGroundMode==2 ? target->flightY.v : target->groundY.v,target->z.v};
         }
         RetailFlightVector lead() {
-            const auto p=w.retailLeadPoint(u,target,weapon);
+            const auto p=w.retailLeadPoint(u,*target,weapon);
             led={p[0],p[1],p[2]};
             return led;
         }
@@ -12709,7 +12763,7 @@ void World::tickAirToGroundHover(Unit& u,const Unit& target,const Weapon* select
             // 4d8370 is World's target scan, as AirToAir's; then 4d7de0(unit,
             // found, 0, 0, 1, 0), retailIssueAutoAttack's gates.
             const int found=w.retailHostScan(u);
-            if (!found || found==target.id) return false;
+            if (!found || (target && found==target->id)) return false;
             if (!w.retailIssueAutoAttackAllowed(u,found,false)) return false;
             retargetTo=found;
             return true;
@@ -12730,8 +12784,12 @@ void World::tickAirToGroundHover(Unit& u,const Unit& target,const Weapon* select
             if (!w.heights_.empty()) ground=std::max(ground,retailTerrainHeight(goal.point.x,goal.point.z,
                 w.terW_,w.terH_,[&](int x,int z) {return w.heights_[size_t(z)*w.terW_+x];}));
             goal.point.y=Fixed::fromInt(std::min(511,ground+altitude)).v;
-            goal.flags|=0x9;
             auto& order=u.orders.front();
+            if (target) goal.flags|=0x9;
+            // Without a target (41df8f / 41e225): a point controller (4e40e0)
+            // with a fixed heading (4e4520): the ring point as seen from the
+            // point (51b340), so the flyer faces it there; let go on arrival.
+            else goal.heading=detail::retailStrikeHeading(goal.point,{order.attackPointX.v,0,order.attackPointZ.v});
             order.flightGoal=goal;order.mission.pending&=~0x3700u;
             ringInstalled=true;
         }
@@ -12741,12 +12799,17 @@ void World::tickAirToGroundHover(Unit& u,const Unit& target,const Weapon* select
             in.position={u.x.v,u.flightY.v,u.z.v};
             in.distance=weapon && weapon->hoverAttackDistance ? weapon->hoverAttackDistance : u.type->hoverAttackDistance;
             in.flies=u.type->canFly && u.type->canMove;
-            in.target=true;
+            in.target=target!=nullptr;
+            // 41d863..41d895: without a target the head's own exits are a
+            // selected weapon with `dropped` and events 0x28.
+            if (!target && ((weapon && weapon->cursorAirstrike) || (events&0x28))) return lostTarget();
             // 41e160: no mover (+8: a building), or its MoveRate tier
             // (+0x130 & 0xc, 4db350) at rest.
-            const UnitScript* script=w.unitScript(target.id);
-            in.targetStill=target.type->isStructure() ||
-                (script ? script->movementRate==0 : target.speed.v==0);
+            if (target) {
+                const UnitScript* script=w.unitScript(target->id);
+                in.targetStill=target->type->isStructure() ||
+                    (script ? script->movementRate==0 : target->speed.v==0);
+            }
             in.automatic=order.autoTarget;
             in.traffic=u.airTraffic;
             in.footX=int16_t(u.type->footX);
@@ -12759,23 +12822,24 @@ void World::tickAirToGroundHover(Unit& u,const Unit& target,const Weapon* select
             const int result=retailAirToGroundHover(m,order.airRunCount,point,w.tickCounter_,events,in,*this);
             // Mission +0x22, the point a lost target's seek circles. (`order`
             // is gone when the attack ended.)
-            if (!u.orders.empty() && &u.orders.front()==&order && order.targetId==target.id) {
+            if (!u.orders.empty() && &u.orders.front()==&order && owns(order)) {
                 order.attackPointX=Fixed::raw(point.x);order.attackPointZ=Fixed::raw(point.z);
             }
             return result;
         }
     } host{*this,u,target,weapon,altitude};
+    const Fixed pointX=u.orders.front().attackPointX,pointZ=u.orders.front().attackPointZ;
     // A new attack goes in ahead of the hover and takes its next mission, as
     // AirToAir's retarget does.
     const bool aheadOfDefault=u.orders.front().aheadOfDefault;
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
-    if (host.ringInstalled && !u.orders.empty() && u.orders.front().targetId==target.id &&
-        shotBlockedHere(u,target)) {
+    if (target && host.ringInstalled && !u.orders.empty() && host.owns(u.orders.front()) &&
+        shotBlockedHere(u,*target)) {
         // Engine deviation (protocol 304): shots from here keep stopping on
         // something the weapon cannot destroy (noteShotImpact): move round the
         // ring to a clear shot instead, kept until the flyer can have flown
         // there or a wake redraws it.
-        hoverForShot(u,target,slot,{host.led.x,host.led.y,host.led.z},distance,altitude);
+        hoverForShot(u,*target,slot,{host.led.x,host.led.y,host.led.z},distance,altitude);
     }
     if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
         u.orders.front().aheadOfDefault=aheadOfDefault;
@@ -12791,8 +12855,9 @@ void World::tickAirToGroundHover(Unit& u,const Unit& target,const Weapon* select
         noteOrders(u.id);
     }
     if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
+    if (host.seekTo) { seekLostPoint(u,pointX,pointZ);return; }
     if (stepOutFront(u)) { flyMissionGoal(u,u.orders.front());return; }
-    if (!u.orders.empty() && u.orders.front().targetId==target.id) { flyHoverGoal(u,u.orders.front(),target);return; }
+    if (!u.orders.empty() && host.owns(u.orders.front())) { flyHoverGoal(u,u.orders.front(),target);return; }
     tickFlightBody(u);notifyFlightOccupancy(u);
 }
 
@@ -12803,7 +12868,7 @@ void World::tickAirToGroundHover(Unit& u,const Unit& target,const Weapon* select
 // its own altitude, heads at the target's SweetSpot, unled (4e4330 -> 4dd4f0,
 // 51b340, within 320 px), and only posts 0x100 while the flyer is within its
 // radius, as 4e41b0 keeps it.
-void World::flyHoverGoal(Unit& u,Order& order,const Unit& target) {
+void World::flyHoverGoal(Unit& u,Order& order,const Unit* target) {
     if (u.flightGroundMode!=2) { u.flightGroundMode=2;groundMove(u); }   // 51b3b0: taking off unstamps
     u.retainedFlightGoal.reset();u.retainedFlightControllerActive=false;
     const int cruise=flightGround(u)+u.type->cruiseAlt;
@@ -12812,8 +12877,8 @@ void World::flyHoverGoal(Unit& u,Order& order,const Unit& target) {
         auto& goal=*order.flightGoal;
         auto destination=goal.point;
         if (!(goal.flags&8)) destination.y=Fixed::fromInt(std::min(cruise,511)).v;
-        if (goal.flags&1) {
-            const auto sweetSpot=queryUnitScriptPoint(target.id,true);
+        if ((goal.flags&1) && target) {
+            const auto sweetSpot=queryUnitScriptPoint(target->id,true);
             goal.heading=uint16_t(retailDirection(Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.x.v)-uint32_t(sweetSpot[0]))),
                                                   Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.z.v)-uint32_t(sweetSpot[2])))).v);
         }
@@ -12834,17 +12899,22 @@ void World::flyHoverGoal(Unit& u,Order& order,const Unit& target) {
 // order's own state, then the mover: a point controller is let go on arrival
 // (524c10 posts 0x100, the navigator's release 0x400), and the body flies on
 // to the destination it left until the mission installs the next one.
-void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
+void World::tickAirToGround(Unit& u,const Unit* target,const Weapon* selected) {
     // 519ac0: a switcher's selected slot, otherwise the first slot.
     const Weapon* weapon=u.type->weaponSwitching ? selected
                        : u.type->weapons.empty() ? nullptr : &u.type->weapons.front();
     struct Host {
-        World& w; Unit& u; const Unit& target; const Weapon* weapon;
+        World& w; Unit& u; const Unit* target; const Weapon* weapon;
         int retargetTo=0;     // 4d7de0's new attack, put ahead once the dispatch is done
         int32_t stepOutTo=0;  // a step-out's D, pushed ahead once the dispatch is done
+        bool seekTo=false;    // a point's lost-target exit: VTOL_SEEKATTACK once it has gone
+        // The attack this mission runs on: the unit's, or one at a point.
+        bool owns(const Order& o) const {
+            return target ? o.targetId==target->id : (o.airPoint==Order::kAirRun && !o.targetId);
+        }
         bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
         RetailMissionState* head() {
-            return !stepOutTo && !retargetTo && !u.orders.empty() && u.orders.front().targetId==target.id
+            return !stepOutTo && !retargetTo && !u.orders.empty() && owns(u.orders.front())
                 ? &u.orders.front().mission : nullptr;
         }
         bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
@@ -12873,10 +12943,10 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
         // Stage 1 (41c308): 519b10(3), every slot automatic. Stage 2
         // (41c31f, and again whenever stage 7 sends the run back to it):
         // 519b70 makes the selected slot (519ac0) manual and 51a700 gives it
-        // the target (51a770, a ground point, has no World counterpart: an
-        // attack order here always has a unit). The other slots pick their
-        // own targets (the sweep, tickSlotWeapons) for the rest of the
-        // mission, until its destructor's 519b10(3) (4d6da0).
+        // the target, or 51a770 the point (+0x22) of an attack at a point.
+        // The other slots pick their own targets (the sweep,
+        // tickSlotWeapons) for the rest of the mission, until its
+        // destructor's 519b10(3) (4d6da0).
         void slotsAuto() {
             for (int s=0;s<3;++s) w.setSlotMode(u,s,true);
             u.orders.front().mixedSlots=true;
@@ -12884,13 +12954,17 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
         void aimSlot() {
             const int selected=u.type->weaponSwitching ? std::clamp(u.weaponSlot,0,2) : 0;
             w.setSlotMode(u,selected,false);
-            w.setSlotTarget(u,selected,target.id);
+            if (target) w.setSlotTarget(u,selected,target->id);
+            else {   // 51a770: the point (+0x22), in whole px
+                const Order& o=u.orders.front();
+                w.setSlotPoint(u,selected,{int16_t(o.attackPointX.v>>16),int16_t(o.attackPointZ.v>>16)});
+            }
         }
         bool retarget() {
             // 4d8370 is World's target scan, as AirToAir's; then 4d7de0(unit,
             // found, 0, 0, 1, 0), retailIssueAutoAttack's gates.
             const int found=w.retailHostScan(u);
-            if (!found || found==target.id) return false;
+            if (!found || (target && found==target->id)) return false;
             if (!w.retailIssueAutoAttackAllowed(u,found,false)) return false;
             retargetTo=found;
             return true;
@@ -12903,13 +12977,24 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
         }
         int handle(RetailMissionState& m,uint32_t events) {
             auto& order=u.orders.front();
+            if (!target && ((weapon && weapon->cursorAirstrike) || (events&0x2a))) {
+                // 41bfc3..41c010 without a target: a selected weapon with
+                // `dropped`, or events 0x2a, take the lost-target exit
+                // (41c8f6): VTOL_SEEKATTACK at the point when the flyer is
+                // alive and not dying, the attack is its last mission and
+                // not on Hold Fire; 5 either way.
+                seekTo=u.alive() && u.hp>Fixed() && u.orders.size()==1 && !order.aheadOfDefault && u.fireState!=0;
+                return 5;
+            }
             RetailAirRun run;
             run.traffic=u.airTraffic;run.footX=int16_t(u.type->footX);
-            run.automatic=order.autoTarget;run.hasTarget=true;
+            run.automatic=order.autoTarget;run.hasTarget=target!=nullptr;
             run.position={u.x.v,u.flightY.v,u.z.v};
-            run.target={target.x.v,target.flightGroundMode==2 ? target.flightY.v : target.groundY.v,target.z.v};
-            // 41c13c: mission +0x22, the point a lost target's seek circles.
-            order.attackPointX=target.x;order.attackPointZ=target.z;
+            if (target) {
+                run.target={target->x.v,target->flightGroundMode==2 ? target->flightY.v : target->groundY.v,target->z.v};
+                // 41c13c: mission +0x22, the point a lost target's seek circles.
+                order.attackPointX=target->x;order.attackPointZ=target->z;
+            } else run.target={order.attackPointX.v,0,order.attackPointZ.v};   // +0x22 as issued
             run.heading=portHeadingToRetail(u.heading);
             run.range=weapon ? std::max(2,int32_t(weapon->range)) : 2;
             run.runLength=u.type->attackRunLength;
@@ -12924,11 +13009,13 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
     // The new attack goes in ahead of AirToGround and takes its next mission,
     // as AirToAir's retarget does.
     const bool aheadOfDefault=u.orders.front().aheadOfDefault;
+    const Fixed pointX=u.orders.front().attackPointX,pointZ=u.orders.front().attackPointZ;
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
         u.orders.front().aheadOfDefault=aheadOfDefault;
     if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
-    if (stepOutFront(u) || (!u.orders.empty() && u.orders.front().targetId==target.id)) {
+    if (host.seekTo) { seekLostPoint(u,pointX,pointZ);return; }
+    if (stepOutFront(u) || (!u.orders.empty() && host.owns(u.orders.front()))) {
         flyMissionGoal(u,u.orders.front());
         return;
     }
@@ -12946,14 +13033,19 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
 // the target every tick). The release ring reads the navigator's +0x22, the
 // high word of its destination's z step (flightNavigation.velocity), as retail
 // does.
-void World::tickAirStrike(Unit& u,const Unit& target) {
+void World::tickAirStrike(Unit& u,const Unit* target) {
     struct Host {
-        World& w; Unit& u; const Unit& target;
+        World& w; Unit& u; const Unit* target;
         int retargetTo=0;     // 4d7de0's new attack, put ahead once the dispatch is done
         int32_t stepOutTo=0;  // a step-out's D, pushed ahead once the dispatch is done
+        bool seekTo=false;    // a point's lost-target exit: VTOL_SEEKATTACK once it has gone
+        // The attack this mission runs on: the unit's, or one at a point.
+        bool owns(const Order& o) const {
+            return target ? o.targetId==target->id : (o.airPoint==Order::kAirStrike && !o.targetId);
+        }
         bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
         RetailMissionState* head() {
-            return !stepOutTo && !retargetTo && !u.orders.empty() && u.orders.front().targetId==target.id
+            return !stepOutTo && !retargetTo && !u.orders.empty() && owns(u.orders.front())
                 ? &u.orders.front().mission : nullptr;
         }
         bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
@@ -12981,7 +13073,10 @@ void World::tickAirStrike(Unit& u,const Unit& target) {
             u.orders.front().mixedSlots=true;
         }
         void slotManual() { w.setSlotMode(u,slot(),false); }
-        void aimGround(RetailFlightVector) { w.setSlotTarget(u,slot(),target.id); }
+        void aimGround(RetailFlightVector point) {
+            if (target) w.setSlotTarget(u,slot(),target->id);
+            else w.setSlotPoint(u,slot(),{int16_t(point.x>>16),int16_t(point.z>>16)});   // 51a770, whole px
+        }
         void clearSlot() { w.dropSlotTarget(u,slot()); }
         void install(const RetailFlightGoal& goal) {
             // 4d4d40 also clears the mission's pending controller events.
@@ -12993,28 +13088,39 @@ void World::tickAirStrike(Unit& u,const Unit& target) {
             // 4e3f70: the point controller's class with the target attached:
             // its point is the target's (moved every tick below), its radius
             // the release ring's.
-            install(RetailFlightGoal{{target.x.v,0,target.z.v},0x30,0,int16_t(radius)});
+            install(RetailFlightGoal{{target->x.v,0,target->z.v},0x30,0,int16_t(radius)});
             u.orders.front().strikeFollow=true;
         }
         bool retarget() {
             // 4d8370 is World's target scan; then 4d7de0(unit, found, 0, 0, 1,
             // 0), retailIssueAutoAttack's gates, as AirToGround's.
             const int found=w.retailHostScan(u);
-            if (!found || found==target.id) return false;
+            if (!found || (target && found==target->id)) return false;
             if (!w.retailIssueAutoAttackAllowed(u,found,false)) return false;
             retargetTo=found;
             return true;
         }
         bool stepOut(int32_t distance) { stepOutTo=distance;return true; }
-        void seek(bool,RetailFlightVector) {}
+        // A unit target's exits are tickCombat's; a point's seek goes in once
+        // the strike has gone (at the point: no target to carry).
+        void seek(bool,RetailFlightVector) { if (!target) seekTo=true; }
         int handle(RetailMissionState& m,uint32_t events) {
             auto& order=u.orders.front();
             RetailAirStrike in;
             in.position={u.x.v,u.flightY.v,u.z.v};
             in.heading=portHeadingToRetail(u.heading);
             in.flies=u.type->canFly && u.type->canMove;
-            in.target=true;
-            in.targetPoint={target.x.v,target.flightGroundMode==2 ? target.flightY.v : target.groundY.v,target.z.v};
+            in.target=target!=nullptr;
+            if (target)
+                in.targetPoint={target->x.v,target->flightGroundMode==2 ? target->flightY.v : target->groundY.v,target->z.v};
+            else {
+                // 41b635..41b684 without a target: the selected weapon's
+                // `dropped` (a switcher may have changed it), the flyer alive
+                // and not dying, for the exit.
+                const int sel=slot();
+                in.dropped=sel<int(u.type->weapons.size()) && u.type->weapons[size_t(sel)].cursorAirstrike;
+                in.unitLive=u.alive() && u.hp>Fixed();
+            }
             in.automatic=order.autoTarget;
             in.last=u.orders.size()==1 && !order.aheadOfDefault;
             in.holdFire=u.fireState==0;
@@ -13032,15 +13138,17 @@ void World::tickAirStrike(Unit& u,const Unit& target) {
         }
     } host{*this,u,target};
     const bool aheadOfDefault=u.orders.front().aheadOfDefault;
+    const Fixed pointX=u.orders.front().attackPointX,pointZ=u.orders.front().attackPointZ;
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
         u.orders.front().aheadOfDefault=aheadOfDefault;
     if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
-    if (stepOutFront(u) || (!u.orders.empty() && u.orders.front().targetId==target.id)) {
+    if (host.seekTo) { seekLostPoint(u,pointX,pointZ);return; }
+    if (stepOutFront(u) || (!u.orders.empty() && host.owns(u.orders.front()))) {
         Order& front=u.orders.front();
         // 4e3f70's controller: its point is the target's, every tick.
-        if (front.strikeFollow && front.flightGoal) {
-            front.flightGoal->point.x=target.x.v;front.flightGoal->point.z=target.z.v;
+        if (target && front.strikeFollow && front.flightGoal) {
+            front.flightGoal->point.x=target->x.v;front.flightGoal->point.z=target->z.v;
         }
         flyMissionGoal(u,front);
         return;
@@ -19815,6 +19923,12 @@ uint64_t World::stateHash() const {
                 // and so does AirToAir (tickAirToAir).
                 else if (order.targetId && (order.mission.stage || order.mission.waitMask || order.airRunCount)) {
                     mix(0x41495252554eull);
+                    mix(order.mission.stage); mix(order.mission.waitMask); mix(order.mission.deadline);
+                    mix(order.mission.pending); mix(order.mission.flags); mix(uint32_t(order.airRunCount));
+                }
+                // An attack at a point (tickAirPoint) runs on its order's mission too.
+                else if (order.airPoint) {
+                    mix(0x414952504f494e54ull); mix(order.airPoint);
                     mix(order.mission.stage); mix(order.mission.waitMask); mix(order.mission.deadline);
                     mix(order.mission.pending); mix(order.mission.flags); mix(uint32_t(order.airRunCount));
                 }

@@ -1010,6 +1010,15 @@ struct alignas(64) Order {
     // inner one (0: the circle). Hashed with a tag when set.
     bool suppressApproach = false;
     int32_t suppressInner = 0;
+    // A flyer's attack at a point (the same 4de530 kind 3 resolver, by the
+    // selected slot's weapon): AIRSTRIKE (`dropped`), AIRTOGROUNDHOVER (the
+    // type's hoverattack) or AIRTOGROUND, each with no target unit (mission
+    // +0x16 is 0). Its point (+0x22) is attackPointX/Z, its mission runs on
+    // `mission`, its +0x4e in airRunCount and its controller in flightGoal,
+    // as on a flyer's unit attack (World::tickAirPoint). targetId stays 0.
+    // Hashed with a tag when set.
+    static constexpr uint8_t kAirStrike = 1, kAirHover = 2, kAirRun = 3;
+    uint8_t airPoint = 0;
 };
 // Which line each field sits on (WE D2). Moving a field across a line, or
 // growing line 0/1 past 64 bytes, is a compile error here. (offsetof on a type
@@ -1043,6 +1052,7 @@ TAK_ORDER_LINE(orderSerial, 4);
 static_assert(offsetof(Order, mission) == 128, "line 1 ends at byte 127; line 2 starts with mission");
 TAK_ORDER_LINE(suppress, 5); TAK_ORDER_LINE(suppressFeature, 5); TAK_ORDER_LINE(suppressSlot, 5);
 TAK_ORDER_LINE(suppressReach, 5); TAK_ORDER_LINE(suppressApproach, 5); TAK_ORDER_LINE(suppressInner, 5);
+TAK_ORDER_LINE(airPoint, 5);
 static_assert(offsetof(Order, suppress) == 320, "lines 0-4 are full; line 5 starts with SUPPRESS");
 static_assert(sizeof(Order) == 384, "Order is six cache lines (line 5 has room left); a new field names its line above");
 #undef TAK_ORDER_LINE
@@ -2905,8 +2915,8 @@ public:
     // point and no target): SUPPRESS for a ground unit or a structure whose
     // selected weapon is ranged, or a melee one over a clearable blocking
     // feature; nothing for a toairweapon, or a melee weapon elsewhere. A
-    // flyer's airstrike missions at a point are not ported: it gets nothing.
-    // Whether an order was given.
+    // flyer gets AIRSTRIKE, AIRTOGROUNDHOVER or AIRTOGROUND at the point
+    // (Order::airPoint). Whether an order was given.
     bool suppress(int unitId, float x, float z, bool queue);
     bool suppressAccepts(int unitId, float x, float z) const;
     // Can a unit of `type` at (fx,fz) actually reach goal (gx,gz)? Answered from
@@ -3635,11 +3645,21 @@ private:
     void tickFlightMovement(Unit& u, bool persistent = false);
     void tickRetainedFlightMovement(Unit& u);
     void tickFlightBody(Unit& u);
-    void tickAirToGroundHover(Unit& u, const Unit& target, const Weapon* weapon, int slot);
-    void flyHoverGoal(Unit& u, Order& order, const Unit& target);
-    void tickAirToGround(Unit& u, const Unit& target, const Weapon* weapon);
+    // The flyer attack missions take a null target for an attack at a
+    // point (Order::airPoint, tickAirPoint): mission +0x16 is 0.
+    void tickAirToGroundHover(Unit& u, const Unit* target, const Weapon* weapon, int slot);
+    void flyHoverGoal(Unit& u, Order& order, const Unit* target);
+    void tickAirToGround(Unit& u, const Unit* target, const Weapon* weapon);
     void tickAirToAir(Unit& u, const Unit& target, const Weapon* weapon);
-    void tickAirStrike(Unit& u, const Unit& target);
+    void tickAirStrike(Unit& u, const Unit* target);
+    // A flyer's attack at a point at the front (Order::airPoint): its
+    // mission, then the mover.
+    void tickAirPoint(Unit& u);
+    // The lost-target exit (41c8f6 / 41e28f / 41be1b) of an attack at a
+    // point: VTOL_SEEKATTACK at the point, with no target, when the flyer is
+    // alive and not dying, the attack is its last mission and not on Hold
+    // Fire. Called once the attack has gone, when those held.
+    void seekLostPoint(Unit& u, Fixed x, Fixed z);
     bool seekLostTarget(Unit& u, const Unit* target, bool targetLive);
     void tickSeekAttack(Unit& u, bool carriesTarget = false);
     // VTOL_Follow's lost ward (4191d7) and VTOL_SeekGuard (4197d0).
