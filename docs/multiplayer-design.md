@@ -1231,8 +1231,12 @@ retargets, Attack_Melee); the per-stride `findTarget` scan, `acquireTarget` and
 are retail's MoveFight: Move_Ground/VTOL_Move with response mode -1. Each player's sight
 plane (`viewCounts_`) and explored bits now also take the footprints of every allied
 player, human or computer (`World::viewShareMask`: retail's game-start sharing `4f6770`
-covers same-team humans only; the owner widened it to every ally). New hashed state: `Unit::viewPlanes`, `RetailDeathSight::planes` and the
-Attack_Melee retarget wake tick (in the order's `airRunCount`). The RNG streams change
+covers same-team humans only; the owner widened it to every ally). New hashed state:
+`Unit::viewPlanes`, `RetailDeathSight::planes`, the Attack_Melee retarget wake tick (in
+the order's `airRunCount`) and, in Legion only, `Unit::aimWait` (`World::legionAimStall`:
+a standing ground unit whose started aim its script has not accepted for 90 ticks hears
+TargetCleared once; folded in only when non-zero, always 0 in Retail mode). Legion's
+`passAhead` also no longer counts an enemy body as oncoming traffic. The RNG streams change
 (`fireRand` per scan, mission wake draws), so every hash changes. Nothing on the wire
 changes and it needed no further bump: it rides on 312 because 312 was not yet released.
 

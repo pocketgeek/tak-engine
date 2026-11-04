@@ -17,10 +17,10 @@
 // Checks (flat map, shipped units, a hold-position Archer of player 1):
 //   - on the attack-move she takes the Archer only once her player sees it;
 //   - she fires and the Archer loses hit points, and the Archer hits her;
-//   - she keeps firing: at least kSustained shots in the 60 s (Retail mode
-//     at this start phase: 11);
-//   - Legion: she keeps firing from every one of kPhases start phases (the
-//     order tick and her start point varied);
+//   - Legion: she keeps firing, at least kSustained shots in the 60 s, here
+//     and from every one of kPhases start phases (the order tick and her
+//     start point varied). Retail mode is not checked for continued fire:
+//     there it is the race's side at the start phase (8 of 120 phases);
 //   - on a plain move past it she fires (the sweep aims her automatic slot
 //     as she walks, as in retail).
 // --trace prints her script state per tick of the attack-move; --pre and
@@ -203,10 +203,13 @@ int main(int argc, char** argv) {
     // She stands about 200 px off, inside the hold-position Archer's sight:
     // its sweep takes her.
     check(am.hits > 0, "the Archer hits Kirenna", describe(am));
-    check(am.shots >= kSustained && am.dealt >= 10000, "she keeps firing (Retail mode here: 11 shots, 15859 damage)",
-          describe(am));
-
     if (legion) {
+        // Continued fire is checked under Legion only. In Retail mode it is
+        // the race's side at this start phase (11 shots here, but 8 of 120
+        // phases keep firing), which any change to the random draw order can
+        // move without a Kirenna regression.
+        check(am.shots >= kSustained && am.dealt >= 10000, "Legion: she keeps firing (here: 10 shots, 14958 damage)",
+              describe(am));
         // The race's side is the phase of her walk cycle at the stop. Over
         // 120 phases (pre 30-32, dx 0-117) Retail mode keeps firing in 8 and
         // fires once in 95; Legion clears the stalled aim in every one.
