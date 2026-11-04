@@ -372,6 +372,15 @@ target_link_libraries(navigation_telemetry_test PRIVATE tak-formats)
 add_test(NAME navigation_telemetry COMMAND navigation_telemetry_test)
 add_executable(world_clone_test tools/world_clone_test.cpp)
 target_link_libraries(world_clone_test PRIVATE tak-formats)
+# Extracted retail files (scripts/, objects3d/) for the tests that read loose files.
+# They sit beside the install TAK_TEST_DATA names (assets/game -> assets/extracted/all),
+# so a worktree without its own gitignored assets/ still finds them; else the source tree's.
+if(TAK_TEST_DATA AND NOT TAK_TEST_EXTRACTED)
+  get_filename_component(TAK_TEST_EXTRACTED "${TAK_TEST_DATA}/../extracted/all" ABSOLUTE)
+  if(NOT EXISTS "${TAK_TEST_EXTRACTED}/scripts")
+    set(TAK_TEST_EXTRACTED "${CMAKE_SOURCE_DIR}/assets/extracted/all")
+  endif()
+endif()
 if(TAK_TEST_DATA)
   add_test(NAME world_clone COMMAND world_clone_test --data "${TAK_TEST_DATA}")
 else()
@@ -1805,10 +1814,14 @@ if(TAK_TEST_DATA)
     add_test(NAME air_traffic COMMAND air_traffic_test "${TAK_TEST_DATA}" "${CMAKE_SOURCE_DIR}/tools/scenarios")
     add_test(NAME gate_scripts COMMAND retail_script_test --gates "${TAK_TEST_DATA}")
     add_test(NAME scenery_damage COMMAND retail_script_test --features "${TAK_TEST_DATA}")
-    add_test(NAME cobanim COMMAND cobanim_test "${CMAKE_SOURCE_DIR}/assets/extracted/all/scripts")
-    add_test(NAME gaitpace_shipped COMMAND gaitpace_test "${CMAKE_SOURCE_DIR}/assets/extracted/all/scripts")
-    set_tests_properties(animation_roster cobanim explode_capture PROPERTIES
+    set_tests_properties(animation_roster explode_capture PROPERTIES
         ENVIRONMENT "TAK_VERIFY_NATIVE_EXPORT=1")
+    # Loose extracted scripts; left out (not failed) where they were never extracted.
+    if(EXISTS "${TAK_TEST_EXTRACTED}/scripts")
+      add_test(NAME cobanim COMMAND cobanim_test "${TAK_TEST_EXTRACTED}/scripts")
+      add_test(NAME gaitpace_shipped COMMAND gaitpace_test "${TAK_TEST_EXTRACTED}/scripts")
+      set_tests_properties(cobanim PROPERTIES ENVIRONMENT "TAK_VERIFY_NATIVE_EXPORT=1")
+    endif()
     add_test(NAME retailgap COMMAND retailgap_test "${TAK_TEST_DATA}")
     add_test(NAME mission_orders_shipped COMMAND mission_orders_test --data "${TAK_TEST_DATA}")
     add_test(NAME conjure COMMAND conjure_test "${TAK_TEST_DATA}")
@@ -3275,8 +3288,8 @@ if(TAK_BUILD_CLIENT)
     # Unicorn and the extracted LIFBIRD assets, so keep it out of environments
     # that only have the C++ build dependencies installed.
     if(TAK_TEST_DATA AND EXISTS "${TAK_TEST_DATA}/KINGDOMS.icd" AND
-       EXISTS "${CMAKE_SOURCE_DIR}/assets/extracted/all/scripts/lifbird.cob" AND
-       EXISTS "${CMAKE_SOURCE_DIR}/assets/extracted/all/objects3d/lifbird.3do")
+       EXISTS "${TAK_TEST_EXTRACTED}/scripts/lifbird.cob" AND
+       EXISTS "${TAK_TEST_EXTRACTED}/objects3d/lifbird.3do")
       find_package(Python3 COMPONENTS Interpreter QUIET)
       if(Python3_Interpreter_FOUND)
         execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import unicorn"
@@ -3297,8 +3310,8 @@ if(TAK_BUILD_CLIENT)
     # mover callback roster. Keep the retail COB/model join available when
     # the local ICD, extracted assets, and Unicorn emulator are installed.
     if(TAK_TEST_DATA AND EXISTS "${TAK_TEST_DATA}/KINGDOMS.icd" AND
-       EXISTS "${CMAKE_SOURCE_DIR}/assets/extracted/all/scripts/zonroc.cob" AND
-       EXISTS "${CMAKE_SOURCE_DIR}/assets/extracted/all/objects3d/zonroc.3do")
+       EXISTS "${TAK_TEST_EXTRACTED}/scripts/zonroc.cob" AND
+       EXISTS "${TAK_TEST_EXTRACTED}/objects3d/zonroc.3do")
       find_package(Python3 COMPONENTS Interpreter QUIET)
       if(Python3_Interpreter_FOUND)
         execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import unicorn"
@@ -3319,8 +3332,8 @@ if(TAK_BUILD_CLIENT)
     # from BeginFlight, so keep its mission-to-COB-to-model join independently
     # repeatable when the local retail assets and emulator are available.
     if(TAK_TEST_DATA AND EXISTS "${TAK_TEST_DATA}/KINGDOMS.icd" AND
-       EXISTS "${CMAKE_SOURCE_DIR}/assets/extracted/all/scripts/zonroc.cob" AND
-       EXISTS "${CMAKE_SOURCE_DIR}/assets/extracted/all/objects3d/zonroc.3do")
+       EXISTS "${TAK_TEST_EXTRACTED}/scripts/zonroc.cob" AND
+       EXISTS "${TAK_TEST_EXTRACTED}/objects3d/zonroc.3do")
       find_package(Python3 COMPONENTS Interpreter QUIET)
       if(Python3_Interpreter_FOUND)
         execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import unicorn"
@@ -3340,8 +3353,8 @@ if(TAK_BUILD_CLIENT)
     # CREAERI has no BeginFlight/BeginLanding call-ins; its engine-driven
     # flight-to-ground mover edge animates the propellers and ground occupancy.
     if(TAK_TEST_DATA AND EXISTS "${TAK_TEST_DATA}/KINGDOMS.icd" AND
-       EXISTS "${CMAKE_SOURCE_DIR}/assets/extracted/all/scripts/creaeri.cob" AND
-       EXISTS "${CMAKE_SOURCE_DIR}/assets/extracted/all/objects3d/creaeri.3do")
+       EXISTS "${TAK_TEST_EXTRACTED}/scripts/creaeri.cob" AND
+       EXISTS "${TAK_TEST_EXTRACTED}/objects3d/creaeri.3do")
       find_package(Python3 COMPONENTS Interpreter QUIET)
       if(Python3_Interpreter_FOUND)
         execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import unicorn"
