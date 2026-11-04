@@ -1589,7 +1589,9 @@ response mode -1: "Mission target scan", 2026-11-03): a flyer's leg of one
 is VTOL_Move (`Order::flightMoveMission` kept beside `attackMove`), the
 move's mission with its air-traffic check, its coarse and refining
 controllers and, for a Ctrl group in Retail mode, its group checks;
-World's target acquisition still puts its attacks ahead of it. Every
+since fx-tsearch step 6 it carries MoveFight's response mode -1
+(`World::markFightLeg`), so VTOL_Move's own scan puts its attacks ahead of
+it, as Move_Ground's does on the ground. Every
 flyer's patrol is VTOL_Patrol, armed or a builder (`plainFlightPatrol`;
 until now only an unarmed flyer that builds nothing ran it): its stage-2
 target scan and job search are World's acquisition and `tickPatrolRepair`. A
@@ -5270,6 +5272,16 @@ castle or the lodestone); retail's automatic slot would aim during that walk.
 
 ## Kirenna on an attack-move (icd static + emulation, 2026-11-03)
 
+**Closed by fx-tsearch step 6.** A fight-move leg is now retail's MoveFight
+order (`World::markFightLeg`: Move_Ground / VTOL_Move response mode -1, the
+leg's point as the response goal), so its acquisition is the Move's own scan
+(`4d8370`, every stance) and not `findTarget`. She takes the Archer only once
+her player sees it, inside her selected slot's range, stops and fires:
+`vermage_fight_test` now checks that (kirenna_attack_move_fires: 11 shots in
+Retail, 1 in `--legion`, where after the first shot her AimWeapon waits on
+static 7 again, the same script race as below, not yet understood there).
+The text below is the finding as it stood.
+
 The 0.9.3 known limit "a Vermage on attack-move with Maneuver dealt no
 damage" reproduces on 0.9.19: Kirenna attack-moving past an Archer 1100 px
 off acquires it about 680 px off (inside 690), walks in, stands 400 px off aiming (her slot's
@@ -5628,6 +5640,22 @@ against `fire_sweep_test --guard`: one to three slots, switchers, the shot
 bits and the draw, each slot automatic or manual with no target, one inside
 the minimum range, one out of reach or a good one): the same final slot
 modes, cleared targets and bits, and a draw exactly when a bit is set.
+
+**Fight-move** (fx-tsearch step 6, D1 = AM-1). `World::attackMove` marks
+each leg with `markFightLeg`: `attackMove`, and (off a patrol) Move response
+mode -1 with the leg's point as the response goal, which is what retail's
+MoveFight gives its Move_Ground, VTOL_Move or QMove (`5214b0`); a rally step
+of a fight-move is marked the same way for each output. The leg's Move then
+scans at its wake on every stance, falls back to the stored attacker, puts an
+automatic chase leashed by maneuverleashlength from where the unit stood
+ahead of itself, and after it returns there if the unit ended up more than a
+third of the leash further from the goal (Move_Ground stage 3, VTOL_Move
+stage 5) and goes on. The stride scan no longer runs for a fight-move leg. A
+ranged walker so takes only a seen enemy inside its selected slot's range (it
+used to take one unseen within its longest range + 90 px) and walks on past
+one it sees beyond it. `target_search_test attack_move` (and `--legion`)
+guards the leg: the attack and the mode -1 leg behind it on all three
+stances, an unseen enemy walked past, the goal reached after the kill.
 
 ## Mission order strings (icd 0x513fb0, 2026-10-30)
 

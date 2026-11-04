@@ -1,28 +1,24 @@
 // vermage_fight_test: Kirenna (VERMAGE) on an attack-move with Maneuver
-// deals no damage (0.9.3 notes, Known limits). A guard on the finding of
-// 2026-11-03 (docs/retail-engine.md, "Kirenna on an attack-move"):
+// fires (kirenna_attack_move_fires). Until the retail target search
+// (fx-tsearch step 6) she dealt no damage (0.9.3 notes, Known limits;
+// docs/retail-engine.md, "Kirenna on an attack-move"):
 //
 //   vermage_fight_test <retail-install-dir> [--legion]
 //
-// The attack-move is World's own order (retail has no fight-move mission).
-// Its acquisition (findTarget) takes an enemy within the unit's longest
-// weapon range + 90 px whether or not the player sees it: Kirenna (sight
-// 215, Water Burst 600) picks up an Archer within 690 px. The ground attack it
-// starts (Attack_Chase) stops her in reach, 400 px off, still unseen, so
-// the fire-at-will sweep (40f330, the player's visible list) never aims for
-// her, and her AimWeapon waits on her walk controller's static 7, which it
-// never sets once she stood still before she aimed: the race retail has on
-// an attack order too ("Attack_Chase: the stop comes before the aim"). On a
-// plain move past the same Archer she walks on until she sees it, the sweep
-// aims her automatic slot while she walks, and she fires, as in retail.
+// The attack-move used World's own acquisition (findTarget): an enemy
+// within the longest weapon's range + 90 px whether or not the player saw
+// it, so she chased an Archer she could not see, stopped in reach unseen,
+// the sweep never aimed for her and her AimWeapon waited on her walk
+// controller's static 7 for good. Now a fight-move leg is retail's MoveFight
+// order, a Move with response mode -1 (World::markFightLeg): its scan
+// (4d8370) takes only an enemy her player sees, within her selected slot's
+// range, so she stops on sight and the attack fires.
 //
 // Checks (flat map, shipped units, a hold-position Archer of player 1):
-//   - on the attack-move she acquires the Archer while her player cannot
-//     see it;
-//   - she stands in reach aiming and fires no shot in 60 s (the known
-//     limit: when this check fails, the stall is gone and the notes and
-//     this guard are out of date);
-//   - on a plain move past it she fires.
+//   - on the attack-move she takes the Archer only once her player sees it;
+//   - she fires and the Archer loses hit points;
+//   - on a plain move past it she fires (the sweep aims her automatic slot
+//     as she walks, as in retail).
 //
 // A dev harness; not shipped in a game.
 
@@ -52,6 +48,7 @@ struct Run {
     int acquired = -1;      // first tick the front order was an auto attack on the Archer
     bool seenAtAcquire = false;
     int shots = 0;          // ticks Kirenna fired
+    long dealt = 0;         // hit points the Archer lost
     int hits = 0;           // ticks she lost hit points
     float dist = 0;         // centre distance at the end
     bool standing = false;  // speed 0 at the end
@@ -60,8 +57,8 @@ struct Run {
 
 std::string describe(const Run& r) {
     char b[200];
-    std::snprintf(b, sizeof b, "acquired %d (seen %d), shots %d, hits taken %d, %.1f px off, standing %d, aiming %d",
-                  r.acquired, int(r.seenAtAcquire), r.shots, r.hits, r.dist, int(r.standing), int(r.aiming));
+    std::snprintf(b, sizeof b, "acquired %d (seen %d), shots %d, dealt %ld, hits taken %d, %.1f px off, standing %d, aiming %d",
+                  r.acquired, int(r.seenAtAcquire), r.shots, r.dealt, r.hits, r.dist, int(r.standing), int(r.aiming));
     return b;
 }
 
@@ -109,6 +106,8 @@ Run fight(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, bool attackMove) {
         r.shots += u->firedWeapons != 0;
         r.hits += u->hp < hp;
         hp = u->hp;
+        r.dealt += 30000 - t->hp.floorInt();
+        w.unit(foe)->hp = sim::Fixed::fromInt(30000);
         r.dist = std::hypot((t->x - u->x).toFloat(), (t->z - u->z).toFloat());
         r.standing = u->speed.v == 0;
         r.aiming = (u->weaponAim[size_t(u->weaponSlot)].flags & 0xe0) != 0;
@@ -128,13 +127,10 @@ int main(int argc, char** argv) {
 
     const Run am = fight(vfs, reg, true);
     std::printf("  attack-move: %s\n", describe(am).c_str());
-    check(am.acquired >= 0 && !am.seenAtAcquire, "the attack-move acquires the Archer while her player cannot see it",
+    check(am.acquired >= 0 && am.seenAtAcquire, "the attack-move takes the Archer only once her player sees it",
           describe(am));
-    // The Archer no longer hits her: idle on Hold Position its Standby attack
-    // is refused (4d7de0) and its sweep takes only what its player sees, and
-    // she stands past its sight. The stall itself is unchanged.
-    check(am.standing && am.aiming && am.dist <= 400.5f && am.shots == 0,
-          "known limit: she stands in reach aiming and never fires (0.9.3 notes)", describe(am));
+    check(am.shots > 0 && am.dealt > 0, "kirenna_attack_move_fires: she fires and the Archer loses hit points",
+          describe(am));
 
     const Run mv = fight(vfs, reg, false);
     std::printf("  plain move: %s\n", describe(mv).c_str());

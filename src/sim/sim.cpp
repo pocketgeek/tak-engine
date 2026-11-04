@@ -2076,11 +2076,11 @@ int World::flightGround(const Unit& u) const {
 }
 
 // A flyer's move, fight-move or patrol leg: VTOL_Move (VTOL_Move_Formation
-// for a formation leg) or VTOL_Patrol, run by tickFlightPatrol. Retail has no
-// fight-move: a fight-move leg (attackMove) flies VTOL_Move as a move does,
-// and World's target acquisition puts its attacks ahead of it. Every flyer's
-// patrol is VTOL_Patrol, armed or a builder: its stage-2 scan and job search
-// are World's acquisition and tickPatrolRepair.
+// for a formation leg) or VTOL_Patrol, run by tickFlightPatrol. A fight-move
+// leg (attackMove) flies VTOL_Move with response mode -1 (markFightLeg), as
+// retail's MoveFight order does: its stage-2 scan puts the attacks ahead of
+// it. Every flyer's patrol is VTOL_Patrol, armed or a builder: its stage-2
+// scan (41a24d) and job search (tickPatrolRepair).
 static bool plainFlightPatrol(const Unit& u) {
     if (!u.type || !u.type->canFly || u.orders.empty()) return false;
     const auto& order=u.orders.front();
@@ -4960,6 +4960,21 @@ bool World::tickTransport(Unit& u, float dt) {
     return advanceCarrier();
 }
 
+// Retail's fight-move order (UnitCommand MoveFight, 4b0e40: game+0x17633 |=
+// 0x400; the order code 5214b0 then gives Move_Ground, VTOL_Move or QMove
+// response mode -1, 521bf4..521c5b, 521867..521892): the move scans (4d8370)
+// at its wake on every stance, falls back to the stored attacker, and puts
+// an automatic leashed chase ahead of itself with its origin where the unit
+// stood; after it the Move returns there and goes on (Move_Ground stage 3,
+// VTOL_Move stage 5). A patrol leg also carries attackMove but scans in its
+// own mission, so it keeps mode 0.
+void World::markFightLeg(Order& o) {
+    o.attackMove = true;
+    if (o.patrol) return;
+    o.groundResponse.mode = -1;
+    o.groundResponse.goal = {int16_t(o.x.floorInt()), int16_t(o.z.floorInt())};
+}
+
 void World::attackMove(int unitId, float x, float z, bool queue) {
     Unit* u = unit(unitId);
     // isStructure(), NOT canMove: the Keep and both Taros/Veruna walls declare
@@ -4969,15 +4984,16 @@ void World::attackMove(int unitId, float x, float z, bool queue) {
     if (!u || !u->alive() || !u->type) return;
     if (u->type->isStructure() || u->repeatType) {
         Order o{Fixed::fromFloat(x), Fixed::fromFloat(z), 0};
-        o.attackMove = true;
+        markFightLeg(o);
         setRally(*u, o, queue);
         return;
     }
     size_t before = queue ? u->orders.size() : 0;
     order(unitId, x, z, queue, ConvoyClass::Fight);
-    // A flyer's leg keeps order()'s VTOL_Move (flightMoveMission): retail
-    // has no fight-move, so it flies the move's mission, check and all.
-    for (size_t i = before; i < u->orders.size(); ++i) u->orders[i].attackMove = true;
+    // A flyer's leg keeps order()'s VTOL_Move (flightMoveMission), the
+    // fight-move's mission with response mode -1, as a ground leg's
+    // Move_Ground.
+    for (size_t i = before; i < u->orders.size(); ++i) markFightLeg(u->orders[i]);
 }
 
 void World::patrol(int unitId, float x, float z) {
@@ -6442,12 +6458,11 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
     // rescan less often -- the acquisition cost scales sub-linearly instead of O(n).
     const bool acqTurn = missionPoll || (uint32_t(u.id) + tickCounter_) % acqStride_ == 0;
     // A patrol (whose legs carry attackMove too) scans in its own mission
-    // (Patrol 403600, VTOL_Patrol 419db0).
+    // (Patrol 403600, VTOL_Patrol 419db0), a fight-move leg in its move's
+    // response (mode -1, markFightLeg).
     const bool acquireGate = u.fireState == 2 && acqTurn && !isNeutralPlayer(u.player) &&
         u.type->weapon.damage > 0 &&
-        (groundResponse || u.orders.empty() ||
-         (u.orders.front().targetId == 0 && u.orders.front().attackMove && !u.orders.front().patrol) ||
-         u.orders.front().guard) &&
+        (groundResponse || u.orders.empty() || u.orders.front().guard) &&
         u.buildSiteId == 0 && u.repairId == 0 && u.reclaimId == 0 &&
         (u.type->isStructure() || (u.buildQueue.empty() && !u.repeatType));
     TAK_PROBE(if (acquireGate) ++probe::tl.acqGateWalks;
@@ -6462,9 +6477,7 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
                                   hasQueuedWork(u) ||
                                   (!u.type->isStructure() && (!u.buildQueue.empty() || u.repeatType));
         const bool acquiringBefore = !busyBuilding && u.fireState == 2 &&
-                                     (groundResponse || u.orders.empty() ||
-                                      (u.orders.front().targetId == 0 && u.orders.front().attackMove && !u.orders.front().patrol) ||
-                                      u.orders.front().guard);
+                                     (groundResponse || u.orders.empty() || u.orders.front().guard);
         if ((acquiringBefore && !isNeutralPlayer(u.player) && u.type->weapon.damage > 0 && acqTurn) != acquiring)
             throw std::runtime_error("findTarget: reordered acquisition gates disagree with the original order");
     }
@@ -16737,9 +16750,9 @@ void World::finishProduction(int producerId,Unit& finished) {
                 const size_t before=nu->orders.size();
                 order(id,ro.x.toFloat(),ro.z.toFloat(),true);
                 for (size_t i=before;i<nu->orders.size();++i) {
-                    nu->orders[i].attackMove=ro.attackMove;
                     nu->orders[i].patrol=ro.patrol;
                     nu->orders[i].patrolOpen=ro.patrolOpen;
+                    if (ro.attackMove) markFightLeg(nu->orders[i]);
                 }
             } else {
                 nu->orders.push_back(ro);

@@ -381,6 +381,9 @@ void queuedMoves(PathfindingMode mode) {
     }
     {   // Fight-move, then Shift-patrol: engage en route, reach the fight point, then patrol from there.
         World w;setup(w,mode);auto type=armed(),enemy=soldier();enemy.maxVel=Fixed();
+        // Upright, as combatResume's: the fight-move's scan (Move response
+        // mode -1, 4d8370) takes only an enemy its player sees.
+        type.upright=enemy.upright=true;
         const int id=w.spawn(&type,320,640,0,0),target=w.spawn(&enemy,700,640,0,1);
         send(w,Cmd::AttackMove,id,1200,640,false);send(w,Cmd::Patrol,id,1200,1400,true);
         const int reached=visits(w,id,{{1200,640},{1200,1400},{1200,640},{1200,1400}},12000);

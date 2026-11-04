@@ -26,6 +26,16 @@
 //                   an armed wanderer's Standby_Wander scan (4078e0) leashes
 //                   its attack to its post on Maneuver and not on Roam.
 //
+//   attack_move     A fight-move leg is retail's MoveFight order (D1, AM-1): a
+//                   Move with response mode -1 (World::markFightLeg), whose
+//                   scan (4d8370) runs on every stance. The walker stops for
+//                   an enemy its player sees in range with an automatic
+//                   chase leashed by maneuverleashlength from where it stood
+//                   (fight_move_stops_for_seen), Hold Position included; an
+//                   enemy it does not see is walked past
+//                   (fight_move_unseen_walked_past); after the kill the leg
+//                   goes on to its goal (fight_move_continues).
+//
 // The other scenarios of the plan join as their steps land.
 //
 // A dev harness; not shipped in a game.
@@ -295,6 +305,91 @@ void missionPorts(const sim::TypeRegistry& reg) {
         check(!hold.attacked, "Standby_Wander on Hold Position: no scan");
     }
 }
+struct Fight {
+    int picked = -1;          // tick of the first attack order on the foe
+    bool automatic = false, leashed = false, leashIsType = false;
+    bool legBehind = false;   // the fight-move leg behind it, mode -1, origin = the attack's
+    bool killed = false;
+    float endFromGoal = 1e9f;
+};
+
+// A walker of `type` (player 0) fight-moves from (150, 300) to (900, 300)
+// past a foe at (500, 300 + off) of player 1 that never fights back; with
+// `spotter`, a passive unit of player 0 stands beside the foe.
+Fight fightMove(const sim::UnitType& type, const sim::UnitType& foeType, float off, int stance, bool spotter,
+                bool killable, int ticks) {
+    Flat flat;
+    sim::World w;
+    flat.into(w);
+    Fight r;
+    const int me = w.spawn(&type, 150, 300, 1.5707963f, 0);
+    w.unit(me)->moveState = stance;
+    const int foe = w.spawn(&foeType, 500, 300 + off, -1.5707963f, 1);
+    sim::Unit& f = *w.unit(foe);
+    f.fireState = 0;
+    f.moveState = 0;
+    if (!killable) f.hp = sim::Fixed::fromInt(30000);
+    const int other = w.spawn(&foeType, spotter ? 500 : 150, spotter ? 300 + off + 60 : 900, 0.f, 0);
+    w.unit(other)->fireState = 0;
+    w.unit(other)->moveState = 0;
+    for (int i = 0; i < 30; ++i) w.tick(kTick);
+    w.attackMove(me, 900, 300, false);
+    for (int i = 0; i < ticks; ++i) {
+        w.tick(kTick);
+        const sim::Unit* a = w.unit(me);
+        if (!a) break;
+        const sim::Unit* t = w.unit(foe);
+        if (!t || !t->alive()) r.killed = true;
+        if (r.picked < 0 && !a->orders.empty() && a->orders.front().targetId == foe) {
+            const sim::Order& o = a->orders.front();
+            r.picked = i;
+            r.automatic = o.autoTarget;
+            r.leashed = o.chaseLeashed;
+            r.leashIsType = o.chaseLeash == uint16_t(std::clamp(type.leash, 0, 65535));
+            for (size_t k = 1; k < a->orders.size(); ++k) {
+                const sim::Order& leg = a->orders[k];
+                if (!leg.groundMission || !leg.goal) continue;
+                r.legBehind = leg.attackMove && leg.groundResponse.mode == -1 &&
+                              leg.groundResponse.origin.x == o.chaseOrigin.x &&
+                              leg.groundResponse.origin.z == o.chaseOrigin.z;
+                break;
+            }
+        }
+        r.endFromGoal = std::hypot(a->x.toFloat() - 900, a->z.toFloat() - 300);
+    }
+    return r;
+}
+
+void attackMoves(const sim::TypeRegistry& reg) {
+    const sim::UnitType* archer = reg.find("araarch");
+    if (!archer || archer->weapons.empty()) { check(false, "shipped araarch loads"); return; }
+    const float range = float(archer->weapons[0].range);
+    auto describe = [](const Fight& f) {
+        return "picked " + std::to_string(f.picked) + " auto " + std::to_string(f.automatic) + " leashed " +
+               std::to_string(f.leashed) + " leash " + std::to_string(f.leashIsType) + " leg " +
+               std::to_string(f.legBehind) + " killed " + std::to_string(f.killed) + " from goal " +
+               std::to_string(int(f.endFromGoal));
+    };
+    // Sight 60: it never sees the foe, which stays inside the bow's range
+    // as it walks past 0.6 R off the path.
+    sim::UnitType blind = *archer;
+    blind.id = "blind";
+    blind.sight = 60;
+    for (int stance : {1, 2, 0}) {
+        const Fight seen = fightMove(blind, *archer, 0.6f * range, stance, true, false, 600);
+        check(seen.picked >= 0 && seen.automatic && seen.leashed && seen.leashIsType && seen.legBehind,
+              "fight_move_stops_for_seen (stance " + std::to_string(stance) +
+                  "): an automatic chase leashed by maneuverleashlength, the mode -1 leg behind it with its origin",
+              describe(seen));
+    }
+    const Fight unseen = fightMove(blind, *archer, 0.6f * range, 1, false, false, 900);
+    check(unseen.picked < 0 && unseen.endFromGoal < 64.f,
+          "fight_move_unseen_walked_past: no attack on an enemy its player cannot see; it reaches the goal",
+          describe(unseen));
+    const Fight kill = fightMove(*archer, *archer, 0.6f * range, 1, true, true, 3600);
+    check(kill.picked >= 0 && kill.killed && kill.endFromGoal < 64.f,
+          "fight_move_continues: after the kill the leg goes on to its goal", describe(kill));
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -311,6 +406,7 @@ int main(int argc, char** argv) {
     std::printf("[%s pathfinding] %s\n", mode == sim::PathfindingMode::Legion ? "Legion" : "Retail", part.c_str());
     if (part == "idle_coverage") idleCoverage(reg);
     else if (part == "mission_ports") missionPorts(reg);
+    else if (part == "attack_move") attackMoves(reg);
     else { std::fprintf(stderr, "unknown part %s\n", part.c_str()); return 2; }
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;

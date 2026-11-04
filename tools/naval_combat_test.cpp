@@ -52,7 +52,11 @@ int main(int argc,char**argv) {
             victim.maxHp=30000;victim.healTime=0;victim.weapon.damage=0;
             victim.weapons.clear();victim.maxVel={};
             const float tx=shore?4160.f:3800.f,tz=1800.f;
-            const float initial=order==0?distance:float(type->weapon.range)+300.f;
+            // A fight-move (order 1) takes only what its player sees (Move
+            // response mode -1, 4d8370), so it starts 300 px past the nearer
+            // of its range and its sight; an explicit attack past its range.
+            const float initial=order==0?distance:order==1?
+                float(std::min<int>(type->weapon.range,type->sight))+300.f:float(type->weapon.range)+300.f;
             const int a=w.spawn(type,tx-initial,tz,0,0),b=w.spawn(&victim,tx,tz,0,1);
             w.player(0).mana=30000;
             if (order==1) w.attackMove(a,shore?4048.f:tx,tz,false);
@@ -69,6 +73,12 @@ int main(int argc,char**argv) {
             // take only an enemy its player sees (4d8370, 40f330: list +5): a
             // submarine whose sight falls short of the target leaves it alone.
             if (order==0 && !seen) { ++cases;check(!fired,"an idle ship leaves an enemy its player cannot see");continue; }
+            // So does a fight-move's scan: a submarine whose sight (cresubm:
+            // 80) never reaches past its minimum range (180) never fires.
+            if (order==1 && (!seen || type->sight<=type->weapon.minRange)) {
+                ++cases;check(!fired,"a fight-moving ship takes only an enemy its player sees outside its minimum range");
+                continue;
+            }
             ++cases;check(fired,"ship acquires, attack-moves, and attacks across open water/shore");
             if (order==0) check(actual>=distance-20,"in-range ship turns and fires without charging the target");
             if (legion && order>0) check(routed,"Legion routes the ship's approach");

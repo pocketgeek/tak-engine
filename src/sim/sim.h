@@ -3582,6 +3582,9 @@ private:
     }
     std::pair<int,int> cellHeightRange(size_t cell) const;
     bool acquireTarget(Unit& u, bool missionPoll);
+    // A fight-move leg: attackMove, and off a patrol Move response mode -1
+    // with the leg's point as its goal (retail's MoveFight order, 5214b0).
+    static void markFightLeg(Order& o);
     bool combatLineOfSight(const Unit& from, const Unit& to) const;
     bool canCaptureTarget(int player, const Unit& target) const;
     bool canAttackTarget(const Unit& from, const Unit& target) const;
