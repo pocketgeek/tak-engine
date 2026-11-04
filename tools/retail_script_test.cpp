@@ -12,6 +12,7 @@
 #include "sim/retailanimationqueries.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <iostream>
 #include <fstream>
 #include <cstdlib>
@@ -41,6 +42,15 @@ struct RetailReplayProbe {
     static void clearScriptEvents(World& world) {world.scriptEmissions_.clear();}
 
     static void shoot(World& world,int from,int target) {world.fire(*world.unit(from),*world.unit(target),0);}
+    static float manaShotCost(const Unit& u,int slot) {return World::manaShotCost(u,slot);}
+    static void manaFallback(World& world,Unit& u,int slot) {world.manaFallback(u,slot);}
+    static bool switchWeapon(World& world,Unit& u,int slot) {return world.switchWeaponSlot(u,slot,false);}
+    // The release (530220, script-triggered) at a point, then 52af72's
+    // fallback: tools/re/check_mana_fallback.py.
+    static void release(World& world,Unit& u,int slot) {
+        world.fire(u,World::WeaponTarget{nullptr,{300*65536,0,200*65536}},slot,true);
+        world.manaFallback(u,slot);
+    }
     static void flameTick(World& world,uint32_t tick) {
         world.tickCounter_=tick;const auto aircraft=world.updateAirOccupancy();world.tickFlames(aircraft);
     }
@@ -127,6 +137,29 @@ struct Host {
 };
 
 int main(int argc,char** argv) {
+    if (argc==2 && std::string(argv[1])=="--mana-fallback") {
+        // Rows: selector (3 = every slot), three manapershot costs, mana
+        // before the release, the vetOverride (+0xf4) and noveteran. Prints
+        // the selector and the mana after the release in 1/1024 units.
+        using namespace tak::sim;
+        int selected,noVeteran;float c0,c1,c2,vet;double mana;
+        while(std::cin>>selected>>c0>>c1>>c2>>mana>>vet>>noVeteran) {
+            UnitType type;type.maxHp=100;type.maxMana=1000;type.noVeteran=noVeteran!=0;
+            type.weaponSwitching=selected<3;
+            Weapon gun;gun.range=400;gun.damage=1;gun.projVel=300;gun.reload=1;
+            for(const float cost:{c0,c1,c2}) {gun.manaCost=cost;type.weapons.push_back(gun);}
+            type.weapon=type.weapons.front();
+            World world;
+            world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+            Unit& u=*world.unit(world.spawn(&type,200,200,{},0));
+            u.weaponSlot=selected<3 ? selected : 0;u.vetOverride=vet;u.mana=mana;
+            // A non-switcher releases every slot it holds (52ae90's selector 3).
+            for(int slot=type.weaponSwitching ? u.weaponSlot : 0;slot<=(type.weaponSwitching ? u.weaponSlot : 2);++slot)
+                RetailReplayProbe::release(world,u,slot);
+            std::cout<<(type.weaponSwitching ? u.weaponSlot : 3)<<' '<<std::llround(u.mana*1024)<<'\n';
+        }
+        return 0;
+    }
     if (argc==3 && std::string(argv[1])=="--features") {
         using namespace tak::sim;
         auto vfs=tak::hpi::mountRetailRoot(argv[2]);
@@ -1960,6 +1993,79 @@ int main(int argc,char** argv) {
             timers.setWeapon(id,0);timers.tick(1.f/30);
             require(unit->reloads[0]==(switching?12:1) && unit->reloads[1]==(switching?12:2) &&
                 unit->reloads[2]==(switching?12:3),"returning to a weapon replaces its saved countdown with switch reload");
+        }
+        {
+            // 52af72..52af9a (emulated, probe_mana_fallback.py): after a
+            // release a switcher steps down from the fired slot while the
+            // slot's cost (531ea0: manapershot / 5193c0) is above the mana
+            // left, and selects what it lands on.
+            struct Row {int selected;std::array<float,3> cost;double mana;int slot;float vet;bool noVet;};
+            const Row rows[]={
+                {2,{0,10,30},40,1,0,false},{2,{0,10,30},35,0,0,false},{2,{0,10,30},60,2,0,false},
+                {2,{0,10,30},59.5,1,0,false},{2,{0,10,30},25,1,0,false},{2,{5,50,30},40,0,0,false},
+                {2,{50,50,30},40,0,0,false},{1,{50,30,0},40,0,0,false},{0,{30,0,0},40,0,0,false},
+                {2,{0,0,0},0,2,0,false},{2,{0,10,30},40,2,2.f,false},{2,{0,10,30},40,1,2.f,true}};
+            for(const Row& row:rows) {
+                UnitType type=shooter;type.weaponSwitching=true;type.maxMana=100;type.noVeteran=row.noVet;
+                type.weapons.assign(3,weapon);
+                for(int s=0;s<3;++s)type.weapons[size_t(s)].manaCost=row.cost[size_t(s)];
+                World table;
+                table.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+                const int id=table.spawn(&type,200,200,{},0);auto* unit=table.unit(id);
+                unit->weaponSlot=row.selected;unit->vetOverride=row.vet;
+                // The mana left after the release paid the fired slot.
+                const float paid=RetailReplayProbe::manaShotCost(*unit,row.selected);
+                unit->mana=double(paid)<=row.mana ? row.mana-paid : row.mana;
+                RetailReplayProbe::manaFallback(table,*unit,row.selected);
+                require(unit->weaponSlot==row.slot,"mana fallback lands where the native release does");
+                require(row.slot==row.selected || unit->reloads[size_t(row.slot)]==type.weapons[size_t(row.slot)].switchReloadTicks,
+                    "the fallback slot starts its switch reload");
+            }
+            // Live: the script's SET 23 releases on slot 2 and the unit ends on
+            // slot 1. A release it cannot pay still leaves (mana 25 < 30: the
+            // shot is made, nothing is taken) and still falls back.
+            for(bool unpaid:{false,true}) {
+                UnitType type=shooter;type.weaponSwitching=true;type.maxMana=100;
+                type.weapons.assign(3,weapon);
+                type.weapons[0].manaCost=0;type.weapons[1].manaCost=10;type.weapons[2].manaCost=30;
+                World live;
+                live.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+                const int from=live.spawn(&type,200,200,{},0),target=live.spawn(&targetType,300,200,{},1);
+                live.setStance(from,2);live.setWeapon(from,2);
+                auto* unit=live.unit(from);unit->mana=40;unit->reloads[2]=0;
+                live.attack(from,target,false);
+                bool callback=false,released=false;
+                for(int tick=0;tick<40 && !released;++tick) {
+                    live.tick(1.f/30);unit=live.unit(from);
+                    if(unit->fireAnimations && !callback) {callback=true;if(unpaid)unit->mana=25;}
+                    released=unit->justFired;
+                }
+                require(callback && released && live.projectiles().size()==1,"the switcher releases one shot");
+                require(unit->mana==(unpaid?25:10),"the release pays only a cost the mana covers");
+                require(unit->weaponSlot==1 && unit->reloads[1]==type.weapons[1].switchReloadTicks,
+                    "the release falls back to the cheaper weapon in the same update");
+                bool cleared=false,switched=false;
+                for(unsigned i=0;i<unit->weaponAnimations.count;++i) {
+                    cleared|=unit->weaponAnimations.at(i).kind==tak::RetailWeaponAnimation::Clear && unit->weaponAnimations.at(i).slot==2;
+                    switched|=unit->weaponAnimations.at(i).kind==tak::RetailWeaponAnimation::Switch && unit->weaponAnimations.at(i).slot==1;
+                }
+                require(cleared && switched,"the fallback clears the fired slot and starts SwitchWeapon on the new one");
+                require(!(unit->missionEvents&0x40u),"a walker's unit attack is not given the 0x40 event");
+            }
+            // The 0x40 event reaches a flyer's unit attack (AirToGround's
+            // and the other air heads' readers).
+            {
+                UnitType type=shooter;type.weaponSwitching=true;type.canFly=true;type.canMove=true;
+                type.maxVel=Fixed::fromInt(2);type.weapons.assign(3,weapon);
+                World air;
+                air.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+                const int from=air.spawn(&type,200,200,{},0),target=air.spawn(&targetType,300,200,{},1);
+                air.attack(from,target,false);
+                auto* unit=air.unit(from);unit->missionEvents=0;
+                require(RetailReplayProbe::switchWeapon(air,*unit,1) && (unit->missionEvents&0x40u),
+                    "a flyer's unit attack hears the switch");
+            }
+            std::cout<<"PASS: a switcher short of mana after a release falls back to a cheaper weapon\n";
         }
 
     }

@@ -3232,8 +3232,10 @@ private:
                       int& x, int& z) const;
     void leaveFactoryYard(int helperId);
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
-    void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false) { fire(u,WeaponTarget{&target},slot,scriptTriggered); }
-    void fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered=false);
+    // False when no shot left (a charm it cannot take, or a non-script shot
+    // it cannot pay for).
+    bool fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false) { return fire(u,WeaponTarget{&target},slot,scriptTriggered); }
+    bool fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered=false);
     bool tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept=false,const WeaponAimSolution* given=nullptr) {
         return tickScriptWeapon(u,WeaponTarget{&target},slot,swept,given);
     }
@@ -3830,6 +3832,11 @@ private:
     // 51a8b0 (SwitchWeapon): the command and AI paths share it. fromCommand
     // routes the clear/switch animations through pendingWeaponAnimations.
     bool switchWeaponSlot(Unit& u,int slot,bool fromCommand);
+    // 531ea0: a slot's manapershot over the veteran multiplier (5193c0).
+    static float manaShotCost(const Unit& u,int slot);
+    // 52af72..52af9a: after a release, a switcher that cannot pay for its
+    // weapon again drops to a cheaper slot.
+    void manaFallback(Unit& u,int slot);
     // 40f411..40fb92: a computer-owned switcher's per-visit weapon choice.
     void retailAiWeaponSwitch(Unit& u);
     // 409a50: the victim's response to a hit -- the AI Monarch block, the

@@ -5728,9 +5728,8 @@ void World::setWeapon(int unitId, int slot) {
 }
 
 // 51a8b0: drop the old slot's target (TargetCleared only when one was set),
-// select the new slot, give it its switchreloadtime and start COB
-// SwitchWeapon(slot). The +0xd0 0x40 event bit it also sets has no known
-// gameplay reader and is not modelled.
+// select the new slot, give it its switchreloadtime, raise the 0x40 event
+// and start COB SwitchWeapon(slot). The new slot inherits no target or point.
 bool World::switchWeaponSlot(Unit& u,int slot,bool fromCommand) {
     const int n=int(u.type->weapons.size());
     if (!u.type->weaponSwitching || slot<0 || slot>=std::min(n,3) || slot==u.weaponSlot) return false;
@@ -5738,11 +5737,21 @@ bool World::switchWeaponSlot(Unit& u,int slot,bool fromCommand) {
     dropSlotTarget(u,u.weaponSlot);
     u.weaponSlot=slot;
     u.reloads[size_t(slot)]=u.type->weapons[size_t(slot)].switchReloadTicks;
-    // The 0x40 event: SUPPRESS and a flyer's attack at a point are its
-    // ported readers (they restart from stage 0), so only a unit on one
-    // gets it.
-    if (!u.orders.empty() && (u.orders[currentLeg(u.orders)].suppress || u.orders.front().airPoint))
-        u.missionEvents|=0x40u;
+    // The 0x40 event (+0xd0 |= 0x40 on every switch). Its ported readers
+    // sleep a tick and restart from stage 0: SUPPRESS (stage 4) and a
+    // flyer's attack at a point or on a unit (AirToGround 41c122,
+    // AirToGroundHover 41da9d, AirStrike 41b728, AirToAir 41ccc4). Only a
+    // unit on one gets it: a walker's unit attack (Attack_Chase,
+    // Attack_Melee) answers it in the same dispatch, and World runs that
+    // attack per tick (tickCombat on u.weaponSlot) with no mission to take
+    // the bit, which would otherwise linger and wake a later order.
+    if (!u.orders.empty()) {
+        const Order& front=u.orders.front();
+        const bool flyerAttack=u.type->canFly && !u.type->isStructure() && front.targetId && !front.guard &&
+            !front.seekAttack && !front.seekGuard;
+        if (u.orders[currentLeg(u.orders)].suppress || front.airPoint || flyerAttack)
+            u.missionEvents|=0x40u;
+    }
     if (const auto script=unitScripts_.find(u.id);script!=unitScripts_.end()) {
         const auto& file=*u.type->script();
         script->second.state().startArguments(file,file.scriptIndex("SwitchWeapon"),{uint32_t(slot),0,0,0},1);
@@ -5750,6 +5759,27 @@ bool World::switchWeaponSlot(Unit& u,int slot,bool fromCommand) {
         else u.weaponAnimations.add(tak::RetailWeaponAnimation::Switch,slot);
     }
     return true;
+}
+
+float World::manaShotCost(const Unit& u,int slot) {
+    return u.type->weapons[size_t(slot)].manaCost/(u.type->noVeteran ? 1.0f : u.vetMul());
+}
+
+// 52af6c..52afa1, after the release (530220) has paid: from the slot that
+// fired, step down while the slot's cost is above the mana left; a lower
+// slot that differs is selected (51a8b0). It lands on the highest cheaper
+// slot it can afford, or on slot 0 when none is (a dearer slot in between
+// is skipped, an unaffordable slot 0 is still taken), and slot 0 never
+// switches. It reads no mission and no owner: a player's switcher falls
+// back as an AI's does, at a point or a unit. A unit firing all its slots
+// (no weaponswitching, 511a4f's selector 3) never switches. No mana pool:
+// World's readiness lets such a unit fire for free (tickScriptWeapon), so it
+// has nothing to fall back from.
+void World::manaFallback(Unit& u,int slot) {
+    if (!u.type->weaponSwitching || slot!=u.weaponSlot || u.type->maxMana<=0) return;
+    int s=slot;
+    while (s>0 && double(manaShotCost(u,s))>u.mana) --s;
+    if (s!=slot) switchWeaponSlot(u,s,false);
 }
 
 void World::setStance(int unitId, int stance) {
@@ -6263,15 +6293,20 @@ static void leadAim(const Unit& shooter, const Unit& tgt, const Weapon& w,
 // place of the unit's position or led SweetSpot, and a shot that carries no
 // target unit (51a9a0 gives 0): it flies to the point and bursts where it
 // lands or on what it strikes on the way.
-void World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) {
+bool World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) {
     const Weapon& w = u.type->weapons[size_t(slot)];
     Unit* const tu = t.unit;
-    if (w.mindControl && tu && !canCaptureTarget(u.player,*tu)) return;
-    // manapershot: a caster spends personal mana to fire; if it can't pay, the
-    // shot doesn't happen (reload not consumed, so it fires the moment it can).
+    if (w.mindControl && tu && !canCaptureTarget(u.player,*tu)) return false;
+    // manapershot over the veteran multiplier (531ea0). The release (530220)
+    // pays through 4010d0, which subtracts only a cost it can cover and whose
+    // result is ignored: the shot leaves either way and mana never goes
+    // negative (readiness, 52fff0, already asked for the cost). A shot with
+    // no script has no readiness, so it waits here (reload not consumed, so it
+    // fires the moment it can).
     if (w.manaCost > 0 && u.type->maxMana > 0) {
-        if (!scriptTriggered && u.mana < w.manaCost) return;
-        u.mana -= w.manaCost;
+        const float cost=manaShotCost(u,slot);
+        if (!scriptTriggered && u.mana < cost) return false;
+        if (double(cost) <= u.mana) u.mana -= cost;
     }
     // Every shot keeps the shooter visible for 600 ticks (icd 0x52af41, set just
     // before the release 0x530220).
@@ -6388,7 +6423,7 @@ void World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
                 break;
         }
         pendingEffects_.push_back(e);
-        return;
+        return true;
     }
     // Wandering: spawn a roaming storm at the aim point. It drifts for `duration`,
     // grinding whatever it passes over, instead of landing one tap.
@@ -6421,11 +6456,11 @@ void World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
         }
         s.wanderSeed=uint32_t(heading)|(uint32_t(pitch)<<16);
         storms_.push_back(s);
-        return;
+        return true;
     }
     if(w.flameKind>=0) {
         const int32_t raw=int32_t(double(w.projVel)*2184.5333333333333);
-        if(raw<=0)return;
+        if(raw<=0)return true;
         FlameShot flame;flame.weapon=&w;flame.owner=u.player;flame.fromId=u.id;flame.slot=slot;
         flame.targetId=tu ? tu->id : 0;
         flame.position=queryUnitScriptPoint(u.id,false,slot);
@@ -6445,11 +6480,11 @@ void World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
             retailScaledCosine(heading,horizontal)};
         flame.start=tickCounter_+1;flame.end=flame.start+uint32_t(w.emitTime);
         flames_.push_back(std::move(flame));
-        return;
+        return true;
     }
     if(w.kind==Weapon::Kind::Guided && w.projVel>0) {
         const int32_t raw=int32_t(double(w.projVel)*2184.5333333333333);
-        if(raw<=0)return;
+        if(raw<=0)return true;
         Projectile p;p.guided3d=true;p.wsrc=&w;p.fromId=u.id;p.fromPlayer=u.player;
         p.targetId=tu ? tu->id : 0;p.slot=slot;p.fx=w.fx;
         p.position=queryUnitScriptPoint(u.id,false,slot);p.muzzle=p.position;
@@ -6475,13 +6510,13 @@ void World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
         p.end=p.start+lifetime;p.life=int32_t(lifetime);p.flight=int32_t(lifetime);
         p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
         projectiles_.push_back(p);
-        return;
+        return true;
     }
     // The status classes (mind control, stone, freeze) share this launch
     // (52c540); tickStraightProjectiles flies them with their own update.
     if((w.straight || w.lightning || w.losStatus!=Weapon::LosStatus::None) && w.projVel>0) {
         const int32_t raw=int32_t(double(w.projVel)*2184.5333333333333);
-        if(raw<=0)return;
+        if(raw<=0)return true;
         Projectile p;p.straight=true;p.wsrc=&w;p.fromId=u.id;p.fromPlayer=u.player;
         p.targetId=tu ? tu->id : 0;p.slot=slot;p.fx=w.fx;
         p.position=queryUnitScriptPoint(u.id,false,slot);
@@ -6507,7 +6542,7 @@ void World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
         p.end=p.start+((uint32_t(quotient)<<16)+perTick)/perTick;
         p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);p.life=1;
         projectiles_.push_back(p);
-        return;
+        return true;
     }
     if (w.melee || w.beam || w.projVel <= 0) {
         // Legacy delivery: melee, and a Line-of-Sight weapon with no
@@ -6529,7 +6564,7 @@ void World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
             hits_[event].fromPosition=muzzle;
             hits_[event].position=aimPoint;
         }
-        return;
+        return true;
     }
     // Dropped: the bomb is RELEASED, not fired. Native
     // DroppedBallistic::initShot uses the QueryWeapon muzzle, solves horizontal
@@ -6554,7 +6589,7 @@ void World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
         // for malformed terrain that prevents all impacts.
         b.life=std::numeric_limits<int32_t>::max();
         projectiles_.push_back(b);
-        return;
+        return true;
     }
     Projectile p;
     p.x = u.x;
@@ -6585,7 +6620,7 @@ void World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
             const uint32_t steps = std::max(1u, (uint32_t(raw) + 0xfffffu) >> 20);
             const auto aim = scriptTriggered ? std::optional<WeaponAimSolution>{} :
                                                queryWeaponAim(u, t, slot);
-            if (aim && aim->unreachable) return;   // no arc: no flat shell (queryWeaponAim)
+            if (aim && aim->unreachable) return true;   // no arc: no flat shell (queryWeaponAim)
             const uint16_t heading = scriptTriggered ? u.weaponAim[size_t(slot)].heading :
                 aim ? aim->heading : u.weaponAim[size_t(slot)].heading;
             const uint16_t pitch = scriptTriggered ? u.weaponAim[size_t(slot)].pitch :
@@ -6627,6 +6662,7 @@ void World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
     if (p.ballistic3d) p.life = std::numeric_limits<int32_t>::max();
     p.flight = int32_t(dist / vel * kTick + 0.5f);
     projectiles_.push_back(p);
+    return true;
 }
 
 // Retail melee ignores its TDF `range` entirely: MeleeWeapon::inRange (icd
@@ -7648,7 +7684,7 @@ void World::tickSlotWeapons(Unit& u) {
         const Weapon& w=u.type->weapons[size_t(s)];
         if (u.reloads[size_t(s)]>0) continue;
         if (facing && std::abs(bamDiff(desired,u.heading))>std::max(512,int(uint16_t(w.aimTol)))) continue;
-        fire(u,*t,s);
+        if (fire(u,*t,s)) manaFallback(u,s);
     }
     if (!aiming) { u.faceRequest=-1;return; }
     // 4d9b6a: the request turns the body only while the navigator is idle.
@@ -7878,7 +7914,7 @@ void World::fireBehindStepOut(Unit& u) {
         if (tickScriptWeapon(u,*target,sl)) return;
         if (u.reloads[size_t(sl)]>0) return;
         if (sw.kind!=Weapon::Kind::Dropped && std::abs(diff)>=std::max(sw.aimTol,int32_t(0.03f/kCobAngle))) return;
-        fire(u,*target,sl);
+        if (fire(u,*target,sl)) manaFallback(u,sl);
     };
     if (allWeapons) for (int sl=0;sl<int(u.type->weapons.size());++sl) tryFire(sl);
     else tryFire(slot);
@@ -8325,11 +8361,17 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
         // a hovering flyer with momentum could otherwise almost never satisfy).
         if (!u.type->isStructure() && sw.kind != Weapon::Kind::Dropped &&
             std::abs(diff) >= std::max(sw.aimTol, int32_t(0.03f / kCobAngle))) return;
-        fire(u, *target, sl);
+        if (fire(u, *target, sl)) manaFallback(u, sl);
     };
     if (aimHeld) return;
     // 52ae90 runs the weapons before the missions and the mover.
     forEachSlot(tryFire);
+    // A mana fallback (manaFallback) may have switched the slot: the
+    // missions' heads read 519ac0 on this dispatch.
+    if (u.type->weaponSwitching && slot!=u.weaponSlot && u.weaponSlot<int(u.type->weapons.size())) {
+        slot=u.weaponSlot;
+        sel=&u.type->weapons[size_t(slot)];
+    }
     if (airRun && !u.orders.empty() && u.orders.front().targetId==target->id) {
         tickAirToGround(u,target,sel);
         groundMovementHandled=true;
@@ -8432,7 +8474,7 @@ void World::tickPointWeapons(Unit& u) {
         const Weapon& w=u.type->weapons[size_t(s)];
         if (u.reloads[size_t(s)]>0) continue;
         if (facing && std::abs(bamDiff(desired,u.heading))>std::max(512,int(uint16_t(w.aimTol)))) continue;
-        fire(u,t,s);
+        if (fire(u,t,s)) manaFallback(u,s);
     }
 }
 
@@ -16884,7 +16926,7 @@ bool World::tickScriptWeapon(Unit& u,const WeaponTarget& t,int slot,bool swept,c
         it->state().startArguments(file,aimScript,{aimHeading,aimPitch,uint32_t(slot),0},3);
     }
     const bool available=u.reloads[slot]==0 &&
-        (u.type->maxMana<=0 || u.mana>=weapon.manaCost);
+        (u.type->maxMana<=0 || u.mana>=manaShotCost(u,slot));
     if(isLegionPathfinding(pathfindingMode_) && !u.type->canFly && !u.type->isStructure())
         legionAimStall(u,slot,available);
     // Native readiness (52fff0) compares the body heading with the mover's
@@ -16922,6 +16964,8 @@ bool World::tickScriptWeapon(Unit& u,const WeaponTarget& t,int slot,bool swept,c
     if(aim.flags&16) {
         fire(u,t,slot,true);
         aim.projectileCreated();
+        // 52af72: the fallback follows every release, shot or no shot.
+        manaFallback(u,slot);
     }
     return true;
 }

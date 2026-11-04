@@ -192,6 +192,15 @@ their validation reports; both live in [`docs/`](docs/).
 - **A homing shot with a model points along its flight every tick.** It used to do so
   only on a tick it turned, so a mod's spinning homing shot kept spinning once its
   target died. As in the original game, the model now faces the way it flies.
+- **A unit short of mana after a shot falls back to a cheaper weapon.** As in the
+  original game, a unit that switches weapons (every Monarch and dragon) and has too
+  little mana left for another shot of its weapon now switches at once to the best
+  cheaper one it can afford, or to its first, whether it is yours or the computer's.
+  Your units used to wait on the dear weapon until their mana came back, and the
+  computer's switched only later. A shot the unit cannot quite pay for still leaves
+  without taking mana, so mana no longer drops below zero, and veterans pay less per
+  shot, as in the original game. A flyer attacking a unit now restarts its attack on
+  the new weapon at once.
 - **Fedora 45 packages.** Fedora 45 now has its own x86-64 and ARM64 RPMs, beside
   Fedora 44's.
 - **Investigated, no change needed:**

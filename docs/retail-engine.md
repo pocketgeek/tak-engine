@@ -6495,9 +6495,38 @@ Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
 - I: a slot's point (`Unit::slotPoint`) is dropped, with TargetCleared, as soon
   as the SUPPRESS that aimed it is not the current leg, including when the
   order has gone to the back behind another kind of order.
-- I: the 0x40 event (`51a8b0`'s weapon switch) is raised only for a unit on
-  SUPPRESS, and a commandfire shot's 0x40000 only for a point target; no
-  unit-target mission reads either.
+- E (`probe_mana_fallback.py`, 2026-11-04), the mana fallback after a shot:
+  in `52ae90` (`52af6c..52afa1`), after the release `530220` of a slot whose
+  record holds SET 23 (flag 0x10), whether or not a shot could be allocated
+  and whatever the reload, a switcher steps down from the fired slot while
+  the slot's cost (`531ea0`: manapershot `+0xd4` over `5193c0`, 1.0 for
+  noveteran, else `+0xf4` when set, else 1 + 0.1 x level) is above the mana
+  left, and `51a8b0` selects the slot it lands on: the highest cheaper slot it
+  can afford, or slot 0 when none is (a dearer slot in between is skipped);
+  slot 0 never switches. A unit without weaponswitching has selector 3
+  (`511a4f..511ab0`) and never switches. It reads no mission (`+0x60`) and no
+  owner (`+0xb8`): a player's switcher falls back as an AI's does, at a point
+  or on a unit. The release pays through `4010d0`, which subtracts only a cost
+  the mana covers and whose result is ignored: the shot leaves unpaid and mana
+  never goes negative (readiness `52fff0` asks for the cost). World's
+  `manaFallback` follows the script release (`tickScriptWeapon`) and every
+  non-script shot; `fire` pays as `4010d0` and uses the divided cost, as does
+  readiness. `tools/re/check_mana_fallback.py` compares 614 fixtures with the
+  native routine. Until 2026-11-04 World had no fallback (a player's switcher
+  waited for mana, an AI's dropped only when the weapon sweep `40f411` next
+  visited it), a script release took mana below zero and the cost ignored the
+  veteran multiplier.
+- E, `51a8b0` raises 0x40 (`+0xd0`) on every switch and no other bit. Its
+  readers sleep a tick and restart at stage 0: SUPPRESS (stage 4), and
+  AirToGround (`41c122`), AirToGroundHover (`41da9d`), AirStrike (`41b728`)
+  and AirToAir (`41ccc4`) at a point or on a unit; Attack_Chase (stage 1,
+  mask 0x1f40068) and Attack_Melee (0x40068) take it in the same dispatch
+  (missions run after `52ae90`) and aim the new slot. I: World raises it for
+  a unit on SUPPRESS or on a flyer's attack only. A walker's unit attack
+  runs per tick on the selected slot (`tickCombat`), which aims the new slot
+  on the next tick as Attack_Chase does, with no mission to take the bit; set
+  there it would linger and wake a later order. A commandfire shot's 0x40000
+  is passed only for a point target.
 - I: the group check `51d1e0(unit,1,4)` and its Move_Ground_Formation are not
   ported (as in AirToGround).
 - E, as retail (`tools/re/probe_guided_projectile.py`, 2026-11-04): a Guided
@@ -6561,8 +6590,9 @@ null target; `Order::airPoint`):
 - I: the slots' point is held only while the attack is the front order: a
   step-out ahead of it drops it (TargetCleared), and the mission's restart at
   stage 1 aims it again.
-- I: the weapon-switch event 0x40 is raised for a flyer on an attack at a
-  point, as for SUPPRESS (it restarts the mission), not on a unit attack.
+- The weapon-switch event 0x40 is raised for a flyer on an attack at a
+  point or on a unit, as for SUPPRESS (it restarts the mission); see the
+  SUPPRESS port.
 - I: the group check (`51d1e0`) is as on the unit-target missions: ported
   for the hover, not for AirToGround and AirStrike.
 
