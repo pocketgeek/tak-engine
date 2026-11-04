@@ -194,6 +194,40 @@ void packing() {
               out[1].order->members == std::vector<int32_t>{5, 6} && out[2].order && out[2].order->members == std::vector<int32_t>{5} &&
               out[3].kind == Cmd::Train && !out[3].order,
           "runs split on target and on a repeated unit; other verbs pass through");
+    // A mixed click (GameView::issueClickPlan, one run per order kind): an enemy
+    // right-clicked by soldiers, builders and a scout -- Attack, then the Move
+    // fallback -- is two orders, the Move one Offsets order at the click.
+    cmds.clear();
+    for (int id : {12, 4}) cmds.push_back(unit(verb(Cmd::Attack, 0, 0, 77), id));
+    for (int id : {8, 5}) cmds.push_back(unit(verb(Cmd::Move, 300 + float(id), 400), id));
+    serial = 1;
+    tak::net::ClickShape click;
+    click.moveOffsets = true; click.x = 300; click.z = 400;
+    out = packClick(cmds, click, serial);
+    check(out.size() == 2 && out[0].order && out[0].order->tmpl.kind == Cmd::Attack &&
+              out[0].order->tmpl.targetId == 77 && out[0].order->members == std::vector<int32_t>{4, 12} &&
+              out[0].order->shape == OrderShape::Shared && out[1].order && out[1].order->tmpl.kind == Cmd::Move &&
+              out[1].order->members == std::vector<int32_t>{5, 8} && out[1].order->shape == OrderShape::Offsets &&
+              out[1].order->tmpl.x == 300,
+          "a mixed click: Attack and the Move fallback are one order each");
+    // A right-drag box (GameView::issueBoxPlan): one Attack per box enemy per
+    // attacker, nearest first (the first replaces, the rest queue), then the
+    // clearers' ReclaimArea. Each enemy's run packs; ReclaimArea is no order verb.
+    cmds.clear();
+    for (int id : {3, 6}) cmds.push_back(unit(verb(Cmd::Attack, 0, 0, 90, 0), id));
+    for (int id : {3, 6}) cmds.push_back(unit(verb(Cmd::Attack, 0, 0, 91, 1), id));
+    for (int id : {10, 11}) {
+        Command c = unit(verb(Cmd::ReclaimArea, 100, 200), id);
+        c.x2 = 300; c.z2 = 400;
+        cmds.push_back(c);
+    }
+    serial = 1;
+    out = packClick(cmds, {}, serial);
+    check(out.size() == 4 && out[0].order && out[0].order->tmpl.targetId == 90 && !out[0].order->tmpl.queue &&
+              out[1].order && out[1].order->tmpl.targetId == 91 && out[1].order->tmpl.queue == 1 &&
+              out[1].order->members == std::vector<int32_t>{3, 6} && !out[2].order && out[2].kind == Cmd::ReclaimArea &&
+              out[2].unitId == 10 && !out[3].order && out[3].unitId == 11,
+          "a right-drag box: one order per enemy, queued after the first; the clears go per unit");
     // kOrderMaxMembers.
     cmds.clear();
     for (int id = 0; id < int(tak::net::kOrderMaxMembers) + 10; ++id) cmds.push_back(unit(verb(Cmd::Stop), id));

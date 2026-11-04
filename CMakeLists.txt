@@ -2483,6 +2483,17 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/reclaim-fanout.png")
       set_tests_properties(reclaim_fanout PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: reclaim fan-out to every selected reclaimer")
+      # What a click orders through the real input() (client/clickrules.h): right-click
+      # per unit on release, right-drag and armed boxes, armed clicks gated by their
+      # cursor, the minimap's orders and placement, the picker and select rules.
+      add_test(NAME click_input COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_CLICK_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/click-input-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/click-input-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/click-input.png")
+      set_tests_properties(click_input PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: clicks all")
       add_test(NAME area_drag_input COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_AREA_DRAG_TEST=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/area-drag-profile

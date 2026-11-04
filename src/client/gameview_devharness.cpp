@@ -1924,6 +1924,300 @@
             std::fprintf(stderr,"PASS: diplomacy hotkey, roster, defaults, checkboxes, voice column, volume sliders, eligibility, gift and selection cleanup\n");
             return;
         }
+        // What a click orders, through the real input() (client/clickrules.h, PLAN
+        // 2.1-2.11): per-unit right-clicks on release, the right-drag and armed boxes,
+        // P4 (an armed click obeys its cursor), the one picker, the minimap's orders
+        // and placement, and the left-click select rules.
+        if (tak::devFlag("TAK_CLICK_TEST")) {
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("clicks: "+what);
+                std::fprintf(stderr,"PASS: clicks: %s\n",what.c_str());
+            };
+            constexpr int W=1000,H=700;
+            winW_=W;winH_=H;noFog_=true;edgeScrollOn_=false;uiScale_=1.0f;
+            writableWorld().setPlayerCount(2);
+            const float cx=float(mapView_.map().blocksX)*16.0f,cz=float(mapView_.map().blocksY)*16.0f;
+            const tak::sim::UnitType *flyerType=nullptr,*transportType=nullptr;
+            for (const auto& [id,t]:registry_.types()) {
+                if (!flyerType && t.canFly && t.canMove && !t.canTransport && !t.isBuilder && t.canGuard) flyerType=&t;
+                if (!transportType && t.canTransport && t.canFly && t.canMove && !t.hasPrimaryWeaponBlock) transportType=&t;
+            }
+            check(flyerType && transportType,"fixture has a flyer and a weaponless flying transport");
+            const tak::sim::UnitType* masonType=nullptr;
+            for (const auto& [id,t]:registry_.types())
+                if (t.isBuilder && !t.isStructure() && t.canReclaim && !t.hasPrimaryWeaponBlock && !t.canFly &&
+                    t.canGuard && !t.canResurrect && !registry_.buildable(id).empty() &&
+                    (!masonType || id<masonType->id)) masonType=&t;
+            check(masonType!=nullptr,"fixture mason: a ground builder that reclaims, with no weapon");
+            std::fprintf(stderr,"clicks: mason %s, flyer %s, transport %s\n",masonType->id.c_str(),
+                         flyerType->id.c_str(),transportType->id.c_str());
+            const int archer=spawn("araarch",cx-60,cz,0,localPlayer_);
+            const int mason=spawn(masonType->id,cx-60,cz+60,0,localPlayer_);
+            const int sword=spawn("arasword",cx-120,cz+30,0,localPlayer_);
+            const int enemy1=spawn("tararch",cx+120,cz-20,0,1);
+            const int enemy2=spawn("tararch",cx+160,cz+40,0,1);
+            const int flyerA=spawn(flyerType->id,cx-200,cz-120,0,localPlayer_);
+            const int flyerB=spawn(flyerType->id,cx-260,cz-120,0,localPlayer_);
+            const int carrier=spawn(transportType->id,cx-300,cz+150,0,localPlayer_);
+            for (int id:{archer,mason,sword,enemy1,enemy2,flyerA,flyerB,carrier}) check(id>=0 && world_.unit(id),"fixture unit spawned");
+            mapView_.setZoom(1);mapView_.setOffset(cx-500,cz-300);
+            const auto publish=[&] {captureFrame();beginFrame();cosmeticStep(0);};
+            const auto savedMod=SDL_GetModState();SDL_SetModState(KMOD_NONE);
+            const auto event=[&](uint32_t kind,uint8_t button,float x,float y) {
+                SDL_Event e{};e.type=kind;
+                if (kind==SDL_MOUSEMOTION) {e.motion.x=int(x);e.motion.y=int(y);}
+                else {e.button.button=button;e.button.x=int(x);e.button.y=int(y);e.button.clicks=1;}
+                input(e,W,H);
+            };
+            const auto at=[&](int id) {return unitScreen(frameUnit(id));};
+            const auto stopAll=[&] {
+                for (int id:{archer,mason,sword,flyerA,flyerB,carrier}) {writableWorld().stop(id);writableWorld().unit(id)->orders.clear();}
+            };
+            // The commands one gesture issues (captured, not applied).
+            const auto capture=[&](auto&& gesture) {
+                std::vector<tak::net::Command> cmds;
+                ClickScope outer(*this);
+                gesture();
+                cmds=click_->cmds;
+                click_->cmds.clear();
+                return cmds;
+            };
+            const auto count=[](const std::vector<tak::net::Command>& cmds,int unit,tak::net::Cmd kind,int target=-999) {
+                int n=0;
+                for (const auto& c:cmds) n+=c.unitId==unit && c.kind==kind && (target==-999 || c.targetId==target);
+                return n;
+            };
+            const auto clickAt=[&](float x,float y,uint8_t button) {
+                event(SDL_MOUSEMOTION,0,x,y);event(SDL_MOUSEBUTTONDOWN,button,x,y);event(SDL_MOUSEBUTTONUP,button,x,y);
+            };
+            const auto dragTo=[&](float x0,float y0,float x1,float y1,uint8_t button) {
+                event(SDL_MOUSEMOTION,0,x0,y0);event(SDL_MOUSEBUTTONDOWN,button,x0,y0);
+                event(SDL_MOUSEMOTION,0,x1,y1);
+            };
+            bool tint=false;
+            stopAll();publish();
+
+            // 2.1 right-click an enemy: the archer attacks, the mason (no weapon) walks
+            // there; the order waits for the release (P3).
+            selection_={archer,mason};publish();
+            {
+                const auto p=at(enemy1);
+                std::vector<tak::net::Command> pressCmds;
+                const auto cmds=capture([&] {
+                    event(SDL_MOUSEMOTION,0,p.x,p.y);event(SDL_MOUSEBUTTONDOWN,SDL_BUTTON_RIGHT,p.x,p.y);
+                    pressCmds=click_->cmds;
+                    event(SDL_MOUSEBUTTONUP,SDL_BUTTON_RIGHT,p.x,p.y);
+                });
+                check(pressCmds.empty(),"P3 a right press orders nothing until the release");
+                check(count(cmds,archer,tak::net::Cmd::Attack,enemy1)==1,"2.1 right-click an enemy: the archer attacks it");
+                check(count(cmds,mason,tak::net::Cmd::Move)==1 && cmds.size()==2,"2.1 right-click an enemy: the mason moves there");
+            }
+            // 2.1 right-click an own unit: the archer guards it.
+            selection_={archer,mason};publish();
+            {
+                const auto p=at(sword);
+                const auto cmds=capture([&] {clickAt(p.x,p.y,SDL_BUTTON_RIGHT);});
+                check(count(cmds,archer,tak::net::Cmd::Guard,sword)==1,"2.1 right-click an own unit: the archer guards it");
+            }
+            // 2.2 the right-drag box over both enemies: the archer attacks each, nearest
+            // first, the mason clears the box; the cursor says Attack while dragging.
+            selection_={archer,mason};publish();
+            {
+                const auto p1=at(enemy1),p2=at(enemy2);
+                const float x0=std::min(p1.x,p2.x)-40,y0=std::min(p1.y,p2.y)-40,x1=std::max(p1.x,p2.x)+40,y1=std::max(p1.y,p2.y)+40;
+                tak::CursorId boxCursor=tak::CursorId::Hourglass;
+                const auto cmds=capture([&] {
+                    dragTo(x0,y0,x1,y1,SDL_BUTTON_RIGHT);
+                    boxCursor=desiredCursor(tint);
+                    event(SDL_MOUSEBUTTONUP,SDL_BUTTON_RIGHT,x1,y1);
+                });
+                check(boxCursor==tak::CursorId::Attack,"2.2 the box cursor over enemies with an archer: Attack");
+                int first=-1,firstQueue=-1,second=-1,secondQueue=-1;
+                for (const auto& c:cmds)
+                    if (c.unitId==archer && c.kind==tak::net::Cmd::Attack) {
+                        if (first<0) {first=c.targetId;firstQueue=c.queue;}
+                        else {second=c.targetId;secondQueue=c.queue;}
+                    }
+                check(first==enemy1 && second==enemy2 && firstQueue==0 && secondQueue==1,
+                      "2.2 the archer attacks both enemies, nearest first, the second queued");
+                check(count(cmds,mason,tak::net::Cmd::ReclaimArea)==1,"2.2 the mason (no attack order) clears the box");
+                // An empty box with only an attacker: Normal, and nothing.
+                selection_={archer};publish();
+                const auto p=at(sword);
+                tak::CursorId emptyCursor=tak::CursorId::Hourglass;
+                const auto none=capture([&] {
+                    dragTo(p.x-200,p.y-150,p.x-100,p.y-80,SDL_BUTTON_RIGHT);
+                    emptyCursor=desiredCursor(tint);
+                    event(SDL_MOUSEBUTTONUP,SDL_BUTTON_RIGHT,p.x-100,p.y-80);
+                });
+                check(emptyCursor==tak::CursorId::Normal && none.empty(),"2.2 an empty box with only an attacker: Normal, nothing");
+            }
+            // 2.2 step L: a lone weaponless transport loads the own units in the box.
+            selection_={carrier};publish();
+            {
+                const auto p1=at(sword),p2=at(mason);
+                const float x0=std::min(p1.x,p2.x)-40,y0=std::min(p1.y,p2.y)-40,x1=std::max(p1.x,p2.x)+40,y1=std::max(p1.y,p2.y)+40;
+                tak::CursorId boxCursor=tak::CursorId::Hourglass;
+                const auto cmds=capture([&] {
+                    dragTo(x0,y0,x1,y1,SDL_BUTTON_RIGHT);
+                    boxCursor=desiredCursor(tint);
+                    event(SDL_MOUSEBUTTONUP,SDL_BUTTON_RIGHT,x1,y1);
+                });
+                check(boxCursor==tak::CursorId::Load,"2.2 the box cursor for a lone transport: Load");
+                check(count(cmds,sword,tak::net::Cmd::Load,carrier)==1 && count(cmds,mason,tak::net::Cmd::Load,carrier)==1,
+                      "2.2 a lone transport picks up the units in the box");
+            }
+            // C5: a loaded transport moves on a right-click; Alt+right-click unloads.
+            {
+                auto& t=*writableWorld().unit(carrier);
+                auto& p=*writableWorld().unit(sword);
+                t.cargo.push_back(sword);p.inTransport=carrier;
+                selection_={carrier};publish();
+                const auto q=at(archer);
+                const float gx=q.x-150,gy=q.y+120;
+                auto cmds=capture([&] {clickAt(gx,gy,SDL_BUTTON_RIGHT);});
+                check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::Move,"C5 a loaded transport moves on a right-click");
+                SDL_SetModState(KMOD_LALT);
+                cmds=capture([&] {clickAt(gx,gy,SDL_BUTTON_RIGHT);});
+                SDL_SetModState(KMOD_NONE);
+                check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::Unload,"C5 Alt+right-click unloads it");
+                t.cargo.clear();p.inTransport=0;publish();
+            }
+            // P4 / C3: armed GUARD, a ground unit over an own flyer: Normal, nothing,
+            // still armed; with a flyer selected too every unit guards.
+            selection_={archer};pendingCmd_='g';publish();
+            {
+                const auto p=at(flyerA);
+                event(SDL_MOUSEMOTION,0,p.x,p.y);
+                check(desiredCursor(tint)==tak::CursorId::Normal,"C3 armed G, ground unit over a flyer: Normal");
+                const auto cmds=capture([&] {clickAt(p.x,p.y,SDL_BUTTON_LEFT);});
+                check(cmds.empty() && pendingCmd_=='g',"P4 / C3 the click does nothing and G stays armed");
+                selection_={archer,flyerB};publish();
+                event(SDL_MOUSEMOTION,0,p.x,p.y);
+                check(desiredCursor(tint)==tak::CursorId::Defend,"C3 a flyer in the selection: Defend");
+                const auto both=capture([&] {clickAt(p.x,p.y,SDL_BUTTON_LEFT);});
+                check(count(both,archer,tak::net::Cmd::Guard,flyerA)==1 && count(both,flyerB,tak::net::Cmd::Guard,flyerA)==1 &&
+                      pendingCmd_==0,"C3 every unit guards the flyer, and G disarms");
+            }
+            // C1 staged: armed ATTACK over an own unit attack-moves, under an Attack cursor.
+            selection_={archer};pendingCmd_='a';publish();
+            {
+                const auto p=at(mason);
+                event(SDL_MOUSEMOTION,0,p.x,p.y);
+                check(desiredCursor(tint)==tak::CursorId::Attack,"C1 armed A over an own unit: Attack, not TooFar");
+                const auto cmds=capture([&] {clickAt(p.x,p.y,SDL_BUTTON_LEFT);});
+                check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::AttackMove,"C1 armed A over an own unit attack-moves");
+            }
+            // 2.9 the armed ATTACK box: the enemies in it, no clear.
+            selection_={archer,mason};pendingCmd_='a';publish();
+            {
+                const auto p1=at(enemy1),p2=at(enemy2);
+                const float x0=std::min(p1.x,p2.x)-40,y0=std::min(p1.y,p2.y)-40,x1=std::max(p1.x,p2.x)+40,y1=std::max(p1.y,p2.y)+40;
+                tak::CursorId boxCursor=tak::CursorId::Hourglass;
+                const auto cmds=capture([&] {
+                    dragTo(x0,y0,x1,y1,SDL_BUTTON_LEFT);
+                    boxCursor=desiredCursor(tint);
+                    event(SDL_MOUSEBUTTONUP,SDL_BUTTON_LEFT,x1,y1);
+                });
+                check(boxCursor==tak::CursorId::Attack,"2.9 the armed A box cursor: Attack");
+                check(count(cmds,archer,tak::net::Cmd::Attack)==2 && count(cmds,mason,tak::net::Cmd::ReclaimArea)==0 &&
+                      pendingCmd_==0,"2.9 the armed A box attacks both, the mason does not clear, A disarms");
+                check(selection_==std::vector<int>({archer,mason}),"2.9 the armed box leaves the selection");
+            }
+            // 2.3 armed MOVE over a damaged own unit: the mason repairs it.
+            selection_={mason};pendingCmd_='m';
+            writableWorld().unit(sword)->hp=tak::sim::Fixed::fromInt(10);publish();
+            {
+                const auto p=at(sword);
+                event(SDL_MOUSEMOTION,0,p.x,p.y);
+                check(desiredCursor(tint)==tak::CursorId::Repair,"2.3 armed M over a damaged unit with a mason: Repair");
+                const auto cmds=capture([&] {clickAt(p.x,p.y,SDL_BUTTON_LEFT);});
+                check(count(cmds,mason,tak::net::Cmd::Repair,sword)==1,"2.3 armed M over a damaged unit: the mason repairs it");
+            }
+            // 2.10 the minimap: a right-click on an enemy dot attacks it, the camera stays.
+            selection_={archer};pendingCmd_=0;publish();
+            {
+                const SDL_FRect r=minimapRect(W,H);
+                const float mapW=float(mapView_.map().blocksX)*32,mapH=float(mapView_.map().blocksY)*32;
+                const auto* e=frameUnitP(enemy2);
+                const float mx=r.x+e->x/mapW*r.w,my=r.y+e->z/mapH*r.h;
+                const float ox=mapView_.offX();
+                auto cmds=capture([&] {clickAt(mx,my,SDL_BUTTON_RIGHT);});
+                check(mapView_.offX()==ox,"2.10 a right press on the minimap leaves the camera");
+                check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::Attack,"2.10 a minimap right-click on an enemy dot attacks it");
+                cmds=capture([&] {clickAt(r.x+2,r.y+r.h-2,SDL_BUTTON_RIGHT);});
+                check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::Move,"2.10 a minimap right-click on ground moves");
+                pendingCmd_='a';
+                cmds=capture([&] {clickAt(mx,my,SDL_BUTTON_LEFT);});
+                check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::Attack && mapView_.offX()==ox,
+                      "2.10 armed A on an enemy dot attacks it");
+                // C2b placement: the mason places a building at a valid minimap point.
+                const tak::sim::UnitType* site=nullptr;
+                for (const auto& id:registry_.buildable(masonType->id))
+                    if (const auto* t=registry_.find(id); t && t->isStructure() && !t->onMana) {site=t;break;}
+                check(site!=nullptr,"fixture: the mason builds a structure");
+                selection_={mason};pendingCmd_=0;placing_=site;publish();
+                float px=-1,py=-1;
+                for (float fy=0.3f;fy<0.8f && px<0;fy+=0.05f)
+                    for (float fx=0.3f;fx<0.8f;fx+=0.05f) {
+                        float wx,wz;
+                        if (!minimapToWorld(r.x+r.w*fx,r.y+r.h*fy,W,H,wx,wz) || !canPlaceLocked(site,wx,wz)) continue;
+                        px=r.x+r.w*fx;py=r.y+r.h*fy;break;
+                    }
+                check(px>=0,"fixture: a valid minimap site");
+                event(SDL_MOUSEMOTION,0,px,py);
+                check(desiredCursor(tint)==tak::CursorId::FindSite,"C2 placement over a valid minimap point: FindSite");
+                cmds=capture([&] {clickAt(px,py,SDL_BUTTON_LEFT);});
+                check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::Build && !placing_ && mapView_.offX()==ox,
+                      "C2 a minimap click places the building there; the camera stays");
+                placing_=nullptr;
+            }
+            // C4: a passenger right-clicking its own transport boards it.
+            selection_={sword};publish();
+            {
+                const auto p=at(carrier);
+                const auto cmds=capture([&] {clickAt(p.x,p.y,SDL_BUTTON_RIGHT);});
+                check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::Load && cmds[0].unitId==sword &&
+                      cmds[0].targetId==carrier,"C4 a passenger that fits boards its own transport");
+            }
+            // P1 / 2.11: the click picks the smallest unit under the pointer, here a
+            // swordsman standing in the middle of a keep.
+            {
+                const int keep=spawn("arakeep",cx+250,cz-120,0,localPlayer_);
+                check(keep>=0,"fixture keep spawned");
+                writableWorld().unit(sword)->x=writableWorld().unit(keep)->x;
+                writableWorld().unit(sword)->z=writableWorld().unit(keep)->z;
+                publish();
+                const auto p=at(sword);
+                float dk=0,ds=0,sk=0,ss=0;
+                const bool overK=unitUnderCursor(*frameUnitP(keep),p.x,p.y,&dk,&sk);
+                const bool overS=unitUnderCursor(*frameUnitP(sword),p.x,p.y,&ds,&ss);
+                check(overK && overS && ss<sk,"fixture: the pointer is over both, the swordsman smaller");
+                check(hoveredUnitAt(tak::client::PointerArea::World,p.x,p.y)==frameUnitP(sword),
+                      "P1 the hovered unit is the smallest under the pointer");
+                selection_.clear();publish();
+                clickAt(p.x,p.y,SDL_BUTTON_LEFT);
+                check(selection_==std::vector<int>{sword},"P1 a click over overlapping units selects the smallest");
+            }
+            // 2.11 / C6 / C7: left-click select rules.
+            selection_={archer};publish();
+            {
+                const auto e=at(enemy1);
+                clickAt(e.x,e.y,SDL_BUTTON_LEFT);
+                check(selection_.empty(),"C6 a left-click on an enemy with a selection deselects all");
+                clickAt(e.x,e.y,SDL_BUTTON_LEFT);
+                check(selection_==std::vector<int>{enemy1},"C6 with nothing of ours selected it is selected to inspect");
+                const auto a=at(archer);
+                selection_={archer,mason};publish();
+                SDL_SetModState(KMOD_LSHIFT);
+                clickAt(a.x,a.y,SDL_BUTTON_LEFT);
+                SDL_SetModState(KMOD_NONE);
+                check(selection_==std::vector<int>{mason},"C7 Shift-click on a selected unit removes it");
+            }
+            SDL_SetModState(savedMod);
+            std::fprintf(stderr,"PASS: clicks all\n");
+            return;
+        }
         // Clear orders go to EVERY selected reclaimer (retail 5214b0 resolves each
         // selected unit through 4de530): a right-drag box, a right-click on a feature
         // and the armed CLEAR click each give the three builders one command apiece,
