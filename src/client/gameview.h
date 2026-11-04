@@ -59,6 +59,7 @@
 #include "util/png.h"
 #include "version.h"
 #include "client/cursors.h"
+#include "client/cursorrules.h"
 #include "client/selportraits.h"   // info-bar multi-selection strip
 #include "client/dirpicker.h"   // first-run data-dir folder picker
 #include "client/distantmodels.h"
@@ -956,16 +957,18 @@ private:
     tak::sim::ScenarioScript::TraceSink scenarioTrace_;
     // Which cursor to show this frame, from the current UI/order state and what is under
     // the pointer -- the retail two-level scheme (an armed order beats plain hover).
-    // `fightTint` is set when the cursor is the fight-move ('f') Attack glyph, which the
-    // caller draws tinted so it reads apart from a real attack order.
+    // The decisions themselves are pure functions in client/cursorrules.h.
+    // `fightTint` is always false: retail draws fight-move with the plain Move cursor
+    // (kept as an out-parameter for the render study and the dev harness).
     tak::CursorId desiredCursor(bool& fightTint);
 
-    // Plain-hover cursor: classify what is under the world point, mirroring the priority
-    // in rightClickOrder() so the pointer previews the order a right-click would issue.
-    tak::CursorId hoverCursor(float wx, float wz, bool ignoreAirstrikeWeapons = false);
+    // Plain-hover cursor (nothing armed) over world point (wx,wz) with `hovered` the
+    // unit under the pointer (or null): retail's right-click interface.
+    tak::CursorId hoverCursor(float wx, float wz, const UnitR* hovered);
+    tak::client::PointerArea pointerArea() const;
+    const UnitR* hoveredUnit(tak::client::PointerArea area);
+    tak::client::HoverKind cursorHoverKind(const UnitR* u) const;
     bool isCursorAttacker(const UnitR& u) const;
-    bool attackerCanHitEnemy(const UnitR& attacker, const UnitR& target,
-                             bool ignoreAirstrikeWeapons = false) const;
     // Screen-space sprite hit test: the unit's projected model bounds at its
     // DRAWN position (terrain lift + flyer altitude), floored for tiny units --
     // the same region click-select uses, so the hover cursor and a click always

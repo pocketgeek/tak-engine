@@ -39,45 +39,7 @@ enum class CursorId {
     Count
 };
 
-// Map an armed map command to the cursor it can actually issue. Retail's UI
-// command parser maps LOAD to selector mode 6 / cursorload, and UNLOAD to mode
-// 5 / cursorunload. The armed Load glyph is shown only when selection includes
-// exactly one transport and the world hover resolves to an eligible passenger. Empty ground
-// uses the normal pointer (native selector mode 6's point-target branch).
-inline CursorId cursorForArmedCommand(char cmd, bool hasSingleLoadTransport = false,
-                                     bool hasEligibleLoadTarget = false) {
-    switch (cmd) {
-        case 'm': return CursorId::Move;
-        case 'f': case 'a': return CursorId::Attack;
-        case 'p': return CursorId::Patrol;
-        case 'g': return CursorId::Defend;
-        case 'c': return CursorId::Reclaim;
-        case 'r': return CursorId::Repair;
-        case 'l': return hasSingleLoadTransport && hasEligibleLoadTarget ? CursorId::Load : CursorId::Normal;
-        case 'u': return CursorId::Unload;
-        default:  return CursorId::Normal;
-    }
-}
-
-// Native 0x521cd0 reduces selected-unit cursor slots with a numeric minimum:
-// Attack beats Airstrike, while Airstrike beats TooFar. With no target-specific
-// result, a pure Airstrike selection keeps slot 2; any ordinary selected unit
-// returns the default Attack slot 1.
-inline CursorId cursorForArmedAttack(CursorId ordinaryCursor,
-                                     bool hasAirstrikeWeapon,
-                                     bool allSelectedAirstrike) {
-    if (ordinaryCursor == CursorId::Attack) return CursorId::Attack;
-    if (ordinaryCursor == CursorId::TooFar || ordinaryCursor == CursorId::Red)
-        return hasAirstrikeWeapon ? CursorId::Airstrike : ordinaryCursor;
-    return hasAirstrikeWeapon && allSelectedAirstrike
-        ? CursorId::Airstrike : CursorId::Attack;
-}
-
-// Retail action mode 14 is armed by selecting a build item. Its per-unit cursor
-// selector returns FindSite for a live selected builder with a build-option list.
-inline CursorId cursorForBuildPlacement(bool placementArmed,bool selectedBuilderWithBuildList) {
-    return placementArmed && selectedBuilderWithBuildList ? CursorId::FindSite : CursorId::Normal;
-}
+// Which cursor shows when: client/cursorrules.h.
 
 // Sequence registered for a cursor in retail's cursors.gaf loader. Kept public so the
 // complete ID/name table can be checked without opening a renderer.

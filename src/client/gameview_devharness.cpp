@@ -2089,7 +2089,9 @@
                 selection_={caster,mason,soldier};publish();
                 mouseX_=-1000;mouseY_=-1000;
                 check(raiseTargetAt(bx,bz)==dead,"the body picks as a raise target under its centre");
-                check(hoverCursor(bx,bz,false)==tak::CursorId::Revive,"the cursor over it is Revive");
+                // Right-click interface: a body a selected unit can raise shows the green
+                // gem; Revive is the armed command's cursor.
+                check(hoverCursor(bx,bz,nullptr)==tak::CursorId::Green,"the cursor over it is Green");
                 const auto raised=[&](const std::vector<tak::net::Command>& cmds,const char* what) {
                     int resurrect=0,reclaim=0,other=0;
                     for (const auto& c:cmds) {
@@ -2862,7 +2864,7 @@
             return;
         }
         if (tak::devFlag("TAK_CURSOR_TEST")) {
-            noFog_=true;edgeScrollOn_=false;
+            noFog_=true;edgeScrollOn_=false;winW_=1000;winH_=700;   // the pointer must be in the main view
             writableWorld().setPlayerCount(8);
             const int builder=spawn("araking",1800,2100,0,0);
             const int soldier=spawn("arasword",1650,2100,0,0);
@@ -2887,7 +2889,9 @@
             publish();point(site);selection_={soldier};
             expect(tak::CursorId::Green,"non-builder cannot assist unfinished construction");
             selection_={builder};
-            expect(tak::CursorId::Repair,"unrestricted builder can assist own construction");
+            // Retail's right-click interface: the site keeps the green gem even for the
+            // builder that is building it (the owner's report; 0x4de03b).
+            expect(tak::CursorId::Green,"a builder over the construction it can build shows Green, not Repair");
             winW_=1000;winH_=700;drawPanel(winW_,winH_);
             if (iconRects_.empty() || selectedBuilder()->id!=builder)
                 throw std::runtime_error("single builder lost its build controls");
@@ -2898,7 +2902,7 @@
             // Put unfinished construction directly behind a real build icon.
             mapView_.setOffset(offX+mouseX_-ix,offY+mouseY_-iy);point(site);
             const auto strip=buildMenuRect_;buildMenuRect_={};
-            expect(tak::CursorId::Repair,"construction remains pickable beneath the build strip");
+            expect(tak::CursorId::Green,"construction remains pickable beneath the build strip");
             buildMenuRect_=strip;
             expect(tak::CursorId::Normal,"build icon hides the construction cursor behind it");
             placing_=buildType;
@@ -3112,14 +3116,14 @@
             pendingCmd_='r';expect(tak::CursorId::Normal,"armed repair refuses unavailable construction");
             pendingCmd_=0;writableWorld().unit(builder)->type=original;publish();point(site);
             rightClickOrder(2000,2000,false);
-            if (world_.unit(builder)->buildSiteId!=site) throw std::runtime_error("assist cursor click did not assist");
+            if (world_.unit(builder)->buildSiteId!=site) throw std::runtime_error("right-click on the site did not assist");
             writableWorld().cancelBuilds(builder);writableWorld().stop(builder);
             writableWorld().unit(site)->underConstruction=false;writableWorld().unit(site)->hp=tak::sim::Fixed::fromInt(10);
             publish();point(site);
-            expect(tak::CursorId::Repair,"damaged friendly advertises repair");
+            expect(tak::CursorId::Select,"a damaged own unit is Select (the click still repairs)");
             rightClickOrder(2000,2000,false);
             if (world_.unit(builder)->orders.empty() || world_.unit(builder)->orders.back().repairTarget!=site)
-                throw std::runtime_error("repair cursor click did not repair");
+                throw std::runtime_error("right-click on the damaged unit did not repair");
             writableWorld().stop(builder);selection_.clear();
             expect(tak::CursorId::Select,"unselected building uses its displayed bounds");
             selection_={soldier};pendingCmd_='r';

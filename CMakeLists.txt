@@ -2433,6 +2433,12 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(cursor_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(cursor_test PRIVATE tak-formats ${_tak_sdl2})
     add_test(NAME cursor_roster COMMAND cursor_test)
+    # Which cursor shows when (client/cursorrules.h), row by row against retail's selector.
+    add_executable(cursor_rules_test tools/cursor_rules_test.cpp src/client/cursors.cpp)
+    target_include_directories(cursor_rules_test PRIVATE src)
+    target_compile_definitions(cursor_rules_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(cursor_rules_test PRIVATE tak-formats ${_tak_sdl2})
+    add_test(NAME cursor_rules COMMAND cursor_rules_test)
     if(TAK_TEST_DATA AND CMAKE_BUILD_TYPE STREQUAL "Debug")
       add_test(NAME build_controls COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_CURSOR_TEST=1

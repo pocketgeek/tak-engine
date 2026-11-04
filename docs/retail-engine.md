@@ -4793,6 +4793,12 @@ pointer (unit+8):
 - **Immobile** (no mover): the same immunity gates, then minrange `0x52adf0`
   (`0x5306a0`) and damage+inRange `0x52ad60`: TooFar unless in range.
 
+This mode-1 re-entry is the LEFT-click interface's (options+5 = 1, the code
+default set at `0x499940`); with `UseLeftClickIface=0`, the shipped setting,
+options+5 = 0 jumps to `0x4de03b` before the attack test and default hover over
+an enemy is Red for any selection (see "The pointer cursor" below). Mode 3 itself
+-- the armed ATTACK -- is as described here.
+
 The selector is display-only: order dispatch (`0x5214b0`) does not call it. Our
 HUD had applied the range test to every unit, so a selected archer or swordsman
 showed TooFar over any enemy out of reach. `tools/re/probe_cursor_enemy_hover.py`
@@ -4872,9 +4878,9 @@ The hover cursor for that mode (`0x4dd780`, right-click interface branch
 (slot 15) for an own selectable unit, else Grn (18); slots follow the
 `cursors` GAF order at `0x4bdc0e` (1 attack, 2 airstrike, 3 toofar, 4 capture,
 5 defend, 6 repair, 7 patrol, ..., 14 move, 15 select, 17 red, 18 grn, 19
-normal). Our hover shows Repair over a site or damaged unit a selected builder
-can work on (the left-click interface's order cursors), Select over another own
-unit and Green over an ally's; a guard keeps Select, as retail's does.
+normal). Since 2026-11-03 ours matches: see "The pointer cursor" below (before,
+our hover showed the left-click interface's Repair over a site or damaged unit a
+selected builder could work on).
 
 Ours, by `src/client/friendlyorder.h` (`friendly_order` test): per unit,
 repair when a mobile builder (not repeating production) and the target is
@@ -4882,6 +4888,42 @@ damaged, else Guard when `canguard`. Differences kept: a unit that can neither
 repair nor guard does nothing (retail moves it to the point), a non-builder over
 an unfinished unit does nothing (retail guards it), and an ally's unit is
 offered the guard but `World::guard` accepts only its own side's units.
+
+## The pointer cursor: the right-click interface's four hover cursors (icd + emulation, 2026-11-03)
+
+Once a frame `0x528040` sorts the pointer (`0x528430`: main view, minimap, or
+neither) and `0x525d30` decides: build placement (mode 14) in the main view
+draws the ghost and sets Normal -- an invalid site shows only on the ghost; any
+interface area outside the main view and the minimap is Normal; otherwise
+`0x521260` picks ONE hovered unit (the nearest drawn sprite, or on the minimap
+the nearest dot within 2 px) and the aggregator `0x521cd0` runs the selector
+`0x4dd780` for each selected unit of the local player except the hovered one,
+keeping the lowest slot. With that list empty: Select over an own selectable
+unit, else Normal. Neither stage reads Shift, Ctrl or Alt.
+
+In the right-click interface (`UseLeftClickIface=0`, what shipped installs
+run, and what our right-click orders follow) nothing-armed hover (`0x4de03b`)
+has four results: Select over an own finished selectable unit; Red over an
+enemy, whatever is selected; Green over an ally's unit or one of ours that is
+not selectable -- under construction, the site the selected builder is building
+included (emulated), or carried; Green over ground holding a body a selected
+unit can resurrect/animate or a feature a selected reclaimer can reclaim;
+Normal elsewhere. Attack, TooFar, Repair, Load, Unload, Revive, Reclaim and
+Move appear only with a command armed. Fight-move is MOVE plus a flag the
+selector never reads, so it shows Move.
+
+Ours (`src/client/cursorrules.h`, test `cursor_rules`): those rules for hover
+and placement, the interface/minimap split, armed ATTACK per unit with the
+lowest slot (a mobile attacker over a friendly unit is TooFar), armed CLEAR
+showing Reclaim over a reclaimable feature, and fight-move as an untinted Move.
+Kept ours: the watcher's Select over units, the right-drag box's Reclaim (our
+box only reclaims), a rally holder's Attack, armed MOVE showing Move over
+friendly units (retail's mode 2 shows Repair/Load/Defend there because its
+MOVE button does those; ours only moves), armed GUARD not testing the flyer
+rule (ours guards a flyer from the ground), CLEAR's Revive over a body that is
+not a reclaimable feature, and Normal for placement over the minimap (our
+minimap click moves the camera; retail's selector gives FindSite there). The
+left-click interface is not offered.
 
 ## Drag boxes: world-anchored corners and the 32-pixel test (icd, 2026-10-21)
 

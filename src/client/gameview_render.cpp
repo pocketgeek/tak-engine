@@ -7915,8 +7915,8 @@
                 else if (o.guard)           marker = tak::CursorId::Defend;
                 else if (o.targetId)        marker = tak::CursorId::Attack;
                 else if (o.patrol)          marker = tak::CursorId::Patrol;
-                // Fight-move: the cursor its armed command shows
-                // (cursorForArmedCommand 'f').
+                // Fight-move: its waypoint is marked with the Attack glyph (ours;
+                // the armed pointer itself is Move, as retail's).
                 else if (o.attackMove)      marker = tak::CursorId::Attack;
                 if (haveMarker) {
                     // Draw the marker where the PLAYER CLICKED, not where the
