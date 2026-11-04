@@ -16,8 +16,17 @@
 //                   default mission, the World host that runs it, and how the
 //                   unit engaged.
 //
-// The other scenarios of the plan (unseen_in_range_not_picked, ...) join as
-// the mission hosts move to the ported scan.
+//   mission_ports   The mission hosts on the ported scan: an idle ranged unit
+//                   takes an enemy in range only when its player sees it
+//                   (unseen_in_range_not_picked, seen_by_own_scout_picked);
+//                   one past its range is not taken
+//                   (ranged_seen_out_of_range_ignored); Hold Position gets no
+//                   Standby attack, and its patrol's scan a forced leashed
+//                   attack with a return move (hold_position_patrol, 403600);
+//                   an armed wanderer's Standby_Wander scan (4078e0) leashes
+//                   its attack to its post on Maneuver and not on Roam.
+//
+// The other scenarios of the plan join as their steps land.
 //
 // A dev harness; not shipped in a game.
 
@@ -72,7 +81,7 @@ const char* fbiMission(const sim::UnitType& t) {
 }
 const char* worldHost(const sim::UnitType& t) {
     if (t.isStructure()) return "Guard_NoMove";
-    if (t.wanders) return "stroll (no mission)";
+    if (t.wanders) return "Standby_Wander";
     if (t.canFly && !t.vtolStandby) return "none";
     return t.canFly ? "VTOL_Standby" : "Standby";
 }
@@ -187,6 +196,105 @@ void idleCoverage(const sim::TypeRegistry& reg) {
     std::printf("  %d armed mobile types, %d engaged, %d skipped\n", armed, engaged, skipped);
     for (const auto& [host, n] : byHost) std::printf("    host %-20s %d types\n", host.c_str(), n);
 }
+// An idle unit of `type` (player 0) at (250, 400) and an Archer of player 1
+// `d` px east, Hold Fire and Hold Position, run `ticks`: the first order the
+// unit put in on the Archer, if any. `spotter`: a passive unit of player 0
+// beside the Archer, so the player sees it.
+struct Idle {
+    bool attacked = false, swept = false, leashed = false, automatic = false, returnMove = false;
+    sim::RetailGroundPoint origin{};
+};
+Idle idleNear(const sim::UnitType& type, const sim::UnitType& foeType, float d, bool spotter, int moveState,
+              bool patrol, int ticks) {
+    Flat flat;
+    sim::World w;
+    flat.into(w);
+    const float sx = 250, sz = 400;
+    const int me = w.spawn(&type, sx, sz, 1.5707963f, 0);
+    w.unit(me)->fireState = 2;
+    w.unit(me)->moveState = uint8_t(moveState);
+    const int foe = w.spawn(&foeType, sx + d, sz, -1.5707963f, 1);
+    w.unit(foe)->fireState = 0;
+    w.unit(foe)->moveState = 0;
+    w.unit(foe)->hp = sim::Fixed::fromInt(30000);
+    // A second unit of the player far off (the sweep skips a player's only
+    // unit), or beside the foe as its spotter.
+    static sim::UnitType quiet;
+    quiet = foeType; quiet.id = "quiet"; quiet.weapons.clear(); quiet.weapon = {}; quiet.sight = 200;
+    const int other = spotter ? w.spawn(&quiet, sx + d, sz + 64, 0.f, 0) : w.spawn(&quiet, 900, 900, 0.f, 0);
+    w.unit(other)->moveState = 0;
+    if (patrol) w.patrol(me, sx, sz + 300);
+    Idle out;
+    for (int i = 0; i < ticks && !out.attacked; ++i) {
+        w.tick(kTick);
+        const sim::Unit* a = w.unit(me);
+        if (!a || !w.unit(foe)) break;
+        out.swept = out.swept || std::find(a->slotTarget.begin(), a->slotTarget.end(), foe) != a->slotTarget.end();
+        if (!a->orders.empty() && a->orders.front().targetId == foe) {
+            const auto& o = a->orders.front();
+            out.attacked = true;
+            out.leashed = o.chaseLeashed;
+            out.automatic = o.autoTarget;
+            out.origin = o.chaseOrigin;
+            out.returnMove = a->orders.size() > 1 && !a->orders[1].targetId && a->orders[1].groundMission &&
+                             a->orders[1].groundResponse.mode == 1;
+        }
+    }
+    return out;
+}
+
+void missionPorts(const sim::TypeRegistry& reg) {
+    const sim::UnitType* archer = reg.find("araarch");
+    const sim::UnitType* boar = reg.find("monboar");
+    if (!archer || !boar || archer->weapons.empty()) { check(false, "shipped araarch and monboar load"); return; }
+    // A short-sighted gunner: the Archer's bow (range R) with sight 60, so an
+    // enemy at 0.8 R is in range and out of its own sight.
+    sim::UnitType gunner = *archer;
+    gunner.id = "gunner";
+    gunner.sight = 60;
+    const float range = float(gunner.weapons[0].range);
+    {
+        const Idle unseen = idleNear(gunner, *archer, 0.8f * range, false, 1, false, 120);
+        check(!unseen.attacked && !unseen.swept, "unseen_in_range_not_picked: Standby and the sweep leave it");
+        const Idle seen = idleNear(gunner, *archer, 0.8f * range, true, 1, false, 120);
+        check(seen.attacked && seen.automatic && seen.leashed && seen.returnMove,
+              "seen_by_own_scout_picked: Maneuver's Standby attack, leashed, with a return move");
+        const Idle roam = idleNear(gunner, *archer, 0.8f * range, true, 2, false, 120);
+        check(roam.attacked && roam.automatic && !roam.leashed && !roam.returnMove,
+              "Roam's Standby attack is plain (4d7de0: no leash)");
+    }
+    {
+        // Sight 500 past the bow's range: a seen enemy beyond the range is
+        // not taken by a ranged slot (52ad60).
+        sim::UnitType sighted = *archer;
+        sighted.id = "sighted";
+        sighted.sight = int32_t(range) + 200;
+        const Idle past = idleNear(sighted, *archer, range + 100.f, false, 2, false, 120);
+        check(!past.attacked, "ranged_seen_out_of_range_ignored: a seen enemy past the range is left");
+    }
+    {
+        const Idle hold = idleNear(gunner, *archer, 0.8f * range, true, 0, false, 120);
+        check(!hold.attacked && hold.swept, "hold_position: no Standby attack, the sweep takes it");
+        const Idle patrol = idleNear(gunner, *archer, 0.8f * range, true, 0, true, 240);
+        check(patrol.attacked && patrol.leashed && patrol.returnMove,
+              "hold_position_patrol: the patrol's scan puts a forced leashed attack and a return move in",
+              "attacked " + std::to_string(patrol.attacked) + " leashed " + std::to_string(patrol.leashed) +
+                  " return " + std::to_string(patrol.returnMove) + " auto " + std::to_string(patrol.automatic));
+    }
+    {
+        // Standby_Wander (4078e0): Maneuver keeps a pick inside the leash of
+        // the post and leashes the attack there; Roam's attack is plain.
+        const float d = std::min(0.7f * float(boar->sight), 0.7f * float(std::max<int32_t>(boar->leash, 1)));
+        const Idle maneuver = idleNear(*boar, *archer, std::max(d, 40.f), true, 1, false, 120);
+        check(maneuver.attacked && maneuver.automatic && maneuver.leashed && !maneuver.returnMove &&
+              maneuver.origin.x == 250 && maneuver.origin.z == 400,
+              "Standby_Wander on Maneuver: an automatic attack leashed to the post, no return move");
+        const Idle roam = idleNear(*boar, *archer, std::max(d, 40.f), true, 2, false, 120);
+        check(roam.attacked && !roam.automatic && !roam.leashed, "Standby_Wander on Roam: a plain attack (mode 0)");
+        const Idle hold = idleNear(*boar, *archer, std::max(d, 40.f), true, 0, false, 120);
+        check(!hold.attacked, "Standby_Wander on Hold Position: no scan");
+    }
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -202,6 +310,7 @@ int main(int argc, char** argv) {
     sim::setupRegistry(reg, vfs, false);
     std::printf("[%s pathfinding] %s\n", mode == sim::PathfindingMode::Legion ? "Legion" : "Retail", part.c_str());
     if (part == "idle_coverage") idleCoverage(reg);
+    else if (part == "mission_ports") missionPorts(reg);
     else { std::fprintf(stderr, "unknown part %s\n", part.c_str()); return 2; }
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;

@@ -100,14 +100,16 @@ int main(int argc,char** argv) {
                 [](const auto& w){return w.melee || w.damage<=0;}) || type->weaponSwitching;
             // Animals, monsters and townsfolk roam on their own; for them only
             // the orders and the damage say anything.
-            bool roams=false;
-            {
+            // A Standby_Wander type (`wanders`) is one whatever this sample
+            // shows: its stroll's radius is random and can be a few px.
+            bool roams=type->wanders;
+            if (!roams) {
                 Field f(registry);
                 const int id=f.w.spawn(type,1000,1000,0,0);
                 f.run(300);
                 roams=std::hypot(f.w.unit(id)->x.toFloat()-1000,f.w.unit(id)->z.toFloat()-1000)>2.f;
-                wanderers+=roams;
             }
+            wanderers+=roams;
             // An attack ordered (under the flyer, then 120 px off it) and an idle
             // unit 120 px off it. The flyer is airborne and held still.
             for (int setup=0;setup<3;++setup) {

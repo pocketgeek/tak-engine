@@ -56,6 +56,42 @@ int retailStandby(RetailMissionState& m, uint32_t tick, bool hasMover,
     }
 }
 
+// 4078e0: Standby_Wander, the default mission of wildlife and villagers.
+// Stage 0 (407c3c): no mover ends it (7); 519b10(3), and the post
+// (+0x2e/+0x30) is where the unit stands; a tick's sleep. Stage 1 (407962):
+// off Hold Position (+0x130 & 0x30000) the target scan (4d8370); a hit that
+// becomes an attack (Scan returns true) clears the wait mask and returns 3
+// with the stage left at 1. Then the wander itself and a sleep of 2 +
+// rand(30) waiting on 0x700 (407c13). Stage 2 (40790f): a tick's sleep, back
+// to stage 1. Not ported: the wander movement (stage 1's point controller
+// round the post or the unit, 407a24..407c06; stage 2's arrival and
+// rand(3)/rand(20)/rand(50) pause handling): World keeps its own stroll
+// order, so the moving flag +0x4e and the pause count +0x52 stay 0 here and
+// stage 2 is the timer wake alone.
+template<class Random,class Initialize,class Scan>
+int retailStandbyWander(RetailMissionState& m,uint32_t tick,bool hasMover,bool holdPosition,
+                        Random random,Initialize initialize,Scan scan) {
+    switch (m.stage) {
+    case 0:
+        if (!hasMover) return 7;
+        initialize();
+        m.waitMask|=0x20;
+        m.sleep(tick,1);
+        return 1;
+    case 1:
+        if (!holdPosition && scan()) { m.waitMask=0; return 3; }
+        m.waitMask|=0x700;
+        m.sleep(tick,random(30)+2);
+        return 1;
+    case 2:
+        m.sleep(tick,1);
+        m.stage=1;
+        return 4;
+    default:
+        return 7;
+    }
+}
+
 // 4175c8..417741: ordinary VTOL_Standby after boundary recovery/diversion.
 // Landing and target-order installation remain explicit host operations.
 template<class Random,class Initialize,class TryOrder,class TryLand>

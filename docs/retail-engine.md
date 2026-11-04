@@ -5390,12 +5390,12 @@ mapped to its handler through the mission registry's rows):
 | `402e2e` | Move_Ground (`402b00`) | response mode < 0 on every stance; mode > 0 off Hold Position; mode 0 never | an attack built in place (below) (E) |
 | `40395e` | Patrol (`403600`) | a timer wake (no controller event `0x700`, no `0x2000`) | `4d7de0(u, t, 0, &pos, 1, 1)`: forced leash and return move |
 | `404075` | Attack_Chase (`403bb0`) | stage 2, an automatic chase (mode >= 100), off Hold Position, rand(mode % 100 + 1) != 0 | a different hit becomes the target (`5199f0`), stage 0 (E) |
-| `4049a0` | Attack_Melee (`404690`) | stage 2, automatic (`+0x52` != 0), no event, off Hold Position, rand(2) == 0 | a different hit, kept only within `+0x56` of the origin when a leash is set |
+| `4049a0` | Attack_Melee (`404690`) | stage 2's timer wake (stage 1 far from the target sleeps 4 + rand(5) + rand(5)), automatic (`+0x52` != 0), off Hold Position, rand(2) == 0 | a different hit, kept only within `+0x56` of the origin when a leash is set, and then only on rand(10) == 0 (`4049fc`): `5199f0`, stage 0 (S) |
 | `407839` | Standby (`407770`) | stage 1 | `4d7de0(u, t, 0, &pos, 1, 0)`; none: sleep 7 + rand(7) |
-| `40797e` | Standby_Wander (`4078e0`) | off Hold Position | Maneuver: only within the leash of the post `+0x2e/+0x30` |
+| `40797e` | Standby_Wander (`4078e0`) | stage 1, off Hold Position, then a sleep of 2 + rand(30) on `0x700` | Maneuver: only within the leash of the post `+0x2e/+0x30`; then `4de530` kind 3 and `4d6c40(kind, t, 0, 0, Maneuver, Maneuver ? leash : 0)`, origin the post, put ahead: no return move, mode 0 on Roam (S) |
 | `4176bc` | VTOL_Standby (`417350`) | every scan wake | `4d7de0(u, t, 0, 0, 1, 0)`: stage 0, return 3 |
-| `4179f0` | VTOL_Move_Formation(/Standby) (`417750`) | after its group tests (`50c140`, `50bd20`, `50b900`) | `4d7de0(u, t, 0, 0, 1, 0)` |
-| `4181b1` | VTOL_Move (`417c20`) | as Move_Ground: mode < 0 always, > 0 off Hold Position (`418193..4181b0`) | the same `+0xf8` fallback follows (`4181c1`); the tail not read |
+| `4179f0` | VTOL_Move_Formation(/Standby) (`417750`) | only in the `+0x5a & 0x4000000` standby branch (`41797e`), after its group tests (`50c140`, `50bd20`, `50b900`) | `4d7de0(u, t, 0, 0, 1, 0)`, stage 0, return 3 (S) |
+| `4181b1` | VTOL_Move (`417c20`) | stage 2's timer wake, as Move_Ground: mode < 0 always, > 0 off Hold Position (`418193..4181b0`) | the same `+0xf8` fallback (`4181c1..4184a5`) and Maneuver goal leash (`4184ab..41850f`); the attack is Move_Ground's (mode 1, leash `def+0x232`); mode < 0: origin the unit, kept in the Move's `+0x2e/+0x30`, stage 5 (`4186f5`: a return move when past the origin by more than leash/3, as Move_Ground's stage 3); mode > 0: origin the goal, stage 0 (S) |
 | `41962a` | VTOL_SeekAttack (`4192f0`) | stage 1 | `4d7de0(u, t, 0, 0, 1, 0)`: an attack put ahead ends it |
 | `41a24d` | VTOL_Patrol (`419db0`) | stage-2 wake | `4d7de0(u, t, 0, 0, 1, 1)` |
 | `41baf0` | AirStrike (`41b5e0`) | an automatic attack's rescan, rand(2) == 0 (see its section) | `4d7de0(u, t, 0, 0, 1, 0)` |
@@ -5566,7 +5566,7 @@ missions, and only structures name Guard_NoMove:
 |---|---|---|---|
 | Standby (mobile) | 98 | 11 | Standby (`standbyEligible`) |
 | VTOL_Standby (every flyer) | 19 | 8 | VTOL_Standby (`standbyEligible`, `vtolStandby`) |
-| Standby_Wander (mobile) | 9 | 7 | none: a stroll order every 240 ticks (`wanders`), no mission |
+| Standby_Wander (mobile) | 9 | 7 | Standby_Wander's scan (`retailStandbyWander`, step 4; the wander movement is still World's 240-tick stroll order) |
 | Guard_NoMove (structures) | 15 | 0 | Guard_NoMove (`tickGuardNoMove`, any structure) |
 | none (structures) | 0 | 36 | Guard_NoMove (unarmed: it only sleeps) |
 
@@ -5583,6 +5583,32 @@ flyers from VTOL_Standby's own scan call, the 107 others from the stride scan
 before their Standby has run (and the wanderers have no host at all). The
 ported `retailMissionScan` takes the same enemy for all 126 two list rebuilds
 in. The test prints the table per type.
+
+**The hosts on the port** (fx-tsearch steps 3 and 4). Standby, VTOL_Standby,
+the air missions' retargets, the Legion lift (VTOL_Standby's rule) and
+Move_Ground's response pick through `retailHostScan` (the host guards, then
+`4d8370`) and hand the pick to `4d7de0` as their call site does. Move_Ground's
+`+0xf8` fallback is retail's (`retailMoveFallback`, sharing the hit
+response's reach and weapon tests), and the attack it builds is an automatic
+chase leashed by maneuverleashlength on every stance (`retailBuiltAttack`).
+Step 4 adds Patrol's (`40395e`) and VTOL_Patrol's (`41a24d`) scans with the
+forced leash (World's stride scan no longer runs for a patrol leg),
+Standby_Wander's scan (above; World's post is the unit's home, since its
+stroll orders end the mission and start it again), Move_Ground_Formation's
+(`40296c`: off Hold Position, the formation point's leash on Maneuver, no
+fallback), VTOL_Move's response and its stage 5, and Attack_Melee's retarget
+(`retailMeleeRetarget`, on a ground walker's automatic melee attack while it
+closes in; the wake tick rides on the order's `airRunCount`, which a flyer's
+attack alone uses otherwise). Not ported: Attack_Chase's retarget (`404075`)
+needs the chase's approach sub-state in `+0x52 % 100`, which stage 2's steps
+(`4041af`, `40428b`, `4042ec`) advance as the walker closes in band by band;
+World's chase has no such steps, so its mode stays at 100, where the retarget
+never fires (rand(1) is 0). VTOL_Move_Formation's scan sits in the
+FormationStandby branch World does not run. `target_search_test
+mission_ports` guards the rules: no pick of an unseen enemy in range, a pick
+once an own spotter sees it, none past the range, no Standby attack on Hold
+Position while its patrol gets the forced leashed attack and return move,
+and Standby_Wander's leash on Maneuver and plain attack on Roam.
 
 ## Mission order strings (icd 0x513fb0, 2026-10-30)
 

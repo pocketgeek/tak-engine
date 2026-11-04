@@ -891,7 +891,11 @@ struct alignas(64) Order {
     // which run on `mission`): AirToGround's is 1 once a run has brought the
     // flyer within half its range of the target, and its stage 7 counts
     // wakes off the map on it; AirToGroundHover's counts its step-outs. A
-    // step-out order's D.
+    // step-out order's D. On a ground walker's automatic melee attack
+    // (Attack_Melee 404690, which a flyer never runs) it is the tick of the
+    // next stage-2 timer wake instead (stage 1's 4 + rand(5) + rand(5)
+    // sleep), where the walker may take another target (4049a0); 0 until
+    // the approach starts (retailMeleeRetarget). Hashed with a tag then.
     int32_t airRunCount = 0;
     // A ground attack (Attack_Chase, 403bb0; tickCombat): whether the unit
     // has walked toward its target under this order (`attackChased`, beside
@@ -3711,6 +3715,13 @@ public:
     // inserted: the caller inserts it once its own mission state is safe.
     std::optional<Order> retailBuiltAttack(const Unit& u,int targetId,bool automatic,uint16_t leash,
                                            RetailGroundPoint origin) const;
+    // Standby_Wander's scan (40797e): 4d8370, the Maneuver post's leash on
+    // the pick, then the attack it builds (no return move). Whether it went in.
+    bool retailWanderScan(Unit& u);
+    // Attack_Melee's retarget (4049a0) for a ground melee walker closing on
+    // an automatic attack's target: at each stage-2 timer wake. True when the
+    // front order took another target (the caller returns).
+    bool retailMeleeRetarget(Unit& u);
     // Port of 4f7210 (LosOn): `player` sees `u` when it owns it; otherwise
     // never when u is cloaked, carried or dead, else when any of the four
     // projected bounding-box corners lies on a cell `player`'s current-view

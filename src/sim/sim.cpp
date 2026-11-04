@@ -2199,7 +2199,54 @@ void World::tickFlightPatrol(Unit& u) {
                 }
                 if (m.stage==2) {
                     if (events&0x700) return 1;
+                    // 418193..4185fe: Move_Ground's response (402e2e) on a
+                    // flyer: the scan when the response mode is below 0, or
+                    // above 0 off Hold Position; the +0xf8 fallback; mode > 0
+                    // on Maneuver drops a hit at or beyond the leash from the
+                    // goal (+0x24/+0x2c). The attack (mode 1, leash
+                    // maneuverleashlength) has its origin where the flyer is
+                    // (mode < 0: the move keeps it, stage 5) or the goal
+                    // (mode > 0: stage 0). 4d4d40(0) drops the controller.
+                    auto& response=order.groundResponse;
+                    if (response.mode<0 || (response.mode>0 && u.moveState)) {
+                        int found=w.retailHostScan(u);
+                        if (!found) found=w.retailMoveFallback(u);
+                        const Unit* enemy=found ? w.unit(found) : nullptr;
+                        const uint16_t leash=uint16_t(std::clamp(u.type->leash,0,65535));
+                        const RetailGroundPoint position{int16_t(u.x.floorInt()),int16_t(u.z.floorInt())};
+                        const RetailGroundPoint goalPoint{int16_t(order.x.floorInt()),int16_t(order.z.floorInt())};
+                        if (enemy && !(response.mode>0 && u.moveState==1 &&
+                                retailGroundDistance({int16_t(enemy->x.floorInt()),int16_t(enemy->z.floorInt())},
+                                                     goalPoint)>=leash)) {
+                            if (auto attack=w.retailBuiltAttack(u,found,true,leash,
+                                    response.mode<0 ? position : goalPoint)) {
+                                if (response.mode<0) { response.origin=position; response.goal=goalPoint; m.stage=5; }
+                                else m.stage=0;
+                                order.flightGoal.reset();order.mission.pending&=~0x3700u;
+                                u.orders.insert(u.orders.begin(),*attack);
+                                return 4;
+                            }
+                        }
+                    }
                     m.waitMask=0x700;m.sleep(w.tickCounter_,random(10)+5);return 2;
+                }
+                if (m.stage==5) {
+                    // 4186f5: after the attack, a return move to the origin
+                    // when the flyer is past it by more than a third of the
+                    // leash (retailGroundReturnNeeded, as Move_Ground's
+                    // stage 3); then the move again from stage 0.
+                    const auto response=order.groundResponse;
+                    const uint16_t leash=uint16_t(std::clamp(u.type->leash,0,65535));
+                    const RetailGroundPoint position{int16_t(u.x.floorInt()),int16_t(u.z.floorInt())};
+                    m.stage=0;
+                    if (retailGroundReturnNeeded(position,response,leash)) {
+                        Order back{Fixed::fromInt(response.origin.x),Fixed::fromInt(response.origin.z),0};
+                        back.goal=back.flightMoveMission=true;back.mission.flags=0x1000000u;
+                        back.groundResponse.mode=1;back.groundResponse.goal=response.origin;
+                        back.issuedTick=w.tickCounter_;
+                        u.orders.insert(u.orders.begin(),back);
+                    }
+                    return 4;
                 }
                 if (m.stage==3) {
                     if (u.orders.size()>1) return 5;
@@ -2243,6 +2290,16 @@ void World::tickFlightPatrol(Unit& u) {
             }
             if (m.stage==2) {
                 if (events&0x700) { m.stage=1; return 6; }
+                // 41a24d: 4d8370, then 4d7de0(unit, found, 0, 0, 1, 1); an
+                // attack put in clears the wait mask and returns 3. The
+                // dispatcher's sleep is taken here, before the insert
+                // invalidates m (4: the dispatcher touches m no more).
+                if (const int found=w.retailHostScan(u);found && w.retailIssueAutoAttackAllowed(u,found,true)) {
+                    m.waitMask=0;
+                    m.sleep(w.tickCounter_,random(30)+15);
+                    w.retailMissionAttack(u,found,MissionAttack::VtolPatrol);
+                    return 4;
+                }
                 m.waitMask|=0x700;
                 m.sleep(w.tickCounter_,random(10)+5);
                 return 2;
@@ -3218,7 +3275,7 @@ const World::LegionFlightStation* World::legionFlightStation(const Unit& u) cons
 // scatters a packed flyer formation's touchdowns (legion_flyerfront 56 -> 171px).
 bool World::standbyEligible(const Unit& u) const {
     return u.standbyAllowed && u.type && (!u.type->canFly || u.type->vtolStandby) && !u.type->isStructure() &&
-           !u.type->wanders && !u.buildSiteId && !u.repairId && !u.reclaimId &&
+           !(u.type->wanders && u.type->canFly) && !u.buildSiteId && !u.repairId && !u.reclaimId &&
            u.buildQueue.empty() && !u.repeatType && u.orders.empty() &&
            (!u.retainedFlightGoal || u.retainedFlightControllerActive);
 }
@@ -3226,7 +3283,9 @@ bool World::standbyEligible(const Unit& u) const {
 void World::beginStandby(Unit& u) {
     if (!standbyEligible(u)) return;
     u.standbyState = {};
-    if (!u.type->canFly) u.standbyState.flags=0x5012000u;
+    // Standby's registry flags; Standby_Wander's row (5eb826) differs from
+    // Standby's (5eb7f4) only in its last flag byte, 0 for 5 (I: 0x0012000).
+    if (!u.type->canFly) u.standbyState.flags=u.type->wanders ? 0x0012000u : 0x5012000u;
     u.standbyActive = true;
 }
 
@@ -3309,6 +3368,9 @@ void World::tickGroundMission(Unit& u) {
                         const int found=w.retailHostScan(u);
                         return found && w.retailMissionAttack(u,found,MissionAttack::Vtol);
                     },[&]{u.landing.emplace();return true;});
+            if (&m==&u.standbyState && u.type->wanders)
+                return retailStandbyWander(m,w.tickCounter_,true,u.moveState==0,[&](int n) { return random(n); },
+                    [&] { w.setSlotsAuto(u); },[&] { return w.retailWanderScan(u); });
             if (&m == &u.standbyState)
                 return retailStandby(m,w.tickCounter_,true,[&](int n) { return random(n); },
                     [&] { w.cancelPath(u); }, [&] {
@@ -3418,7 +3480,7 @@ void World::tickGroundMission(Unit& u) {
             if (goal.formationLevel) {
                 const int level=goal.formationLevel;
                 const bool all=(m.flags&0x4000000u)!=0;
-                return retailGroundFormation(m,w.tickCounter_,level,u.embarked(),response.mode,
+                const int result=retailGroundFormation(m,w.tickCounter_,level,u.embarked(),response.mode,
                     [&] { return group && (level>0
                         ? retailGroupOutOfSlot(*group,w.retailGroupMember(u),false,level,all)
                         : retailGroupOutOfSlot(*group,w.retailGroupMember(u),true,-level,all)); },
@@ -3436,7 +3498,31 @@ void World::tickGroundMission(Unit& u) {
                         goal.x=Fixed::fromInt(int16_t(c.x));goal.z=Fixed::fromInt(int16_t(c.z));
                         goal.missionTarget=std::pair{goal.x,goal.z};
                     },
-                    [&] { resetGoal(4); },[] { return false; },[&](int n) { return random(n); });
+                    [&] { resetGoal(4); },[&] {
+                        // 40296c: off Hold Position, 4d8370; mode > 0 on
+                        // Maneuver drops a hit at or beyond the leash from
+                        // the formation point (+0x24/+0x2c); the attack is
+                        // Move_Ground's (mode 1, leash maneuverleashlength,
+                        // origin the formation point), with no fallback.
+                        if (u.moveState==0) return false;
+                        const int found=w.retailHostScan(u);
+                        if (!found) return false;
+                        const Unit* enemy=w.unit(found);
+                        const RetailGroundPoint point{int16_t(goal.x.floorInt()),int16_t(goal.z.floorInt())};
+                        if (response.mode>0 && u.moveState==1 &&
+                            retailGroundDistance({int16_t(enemy->x.floorInt()),int16_t(enemy->z.floorInt())},
+                                                 point)>=leash) return false;
+                        auto attack=w.retailBuiltAttack(u,found,true,leash,point);
+                        if (!attack) return false;
+                        auxiliary=std::move(attack);
+                        w.cancelPath(u);u.routeStamp=-1;
+                        goal.controller=0;m.pending&=~0x3700u;
+                        return true;
+                    },[&](int n) { return random(n); });
+                // Inserting invalidates m and goal; the template set the
+                // stage first (0 after an attack).
+                if (auxiliary) u.orders.insert(u.orders.begin(),*auxiliary);
+                return result;
             }
             if (group && w.pathfindingMode_==PathfindingMode::Retail && !goal.park) {
                 const auto member=w.retailGroupMember(u);
@@ -3472,8 +3558,9 @@ void World::tickGroundMission(Unit& u) {
             // (see the Move mask below); Legion owns its arrival.
             if (goal.patrol && w.legion_ && isLegionPathfinding(w.pathfindingMode_) && w.legion_->supports(u))
                 events&=~0x2600u;
-            if (goal.patrol)
-                return retailGroundPatrol(m,goal.missionRadius,w.tickCounter_,events,
+            if (goal.patrol) {
+                int patrolAttack=0;
+                const int result=retailGroundPatrol(m,goal.missionRadius,w.tickCounter_,events,
                     int16_t(u.type->footX),true,[&](int n){return random(n);},
                     [&] {
                         // Initialize: a Shift-queued patrol that starts with no
@@ -3486,7 +3573,26 @@ void World::tickGroundMission(Unit& u) {
                         for (size_t i=current+1;i<u.orders.size();++i)
                             loop|=u.orders[i].goal && u.orders[i].patrol && !u.orders[i].patrolOpen;
                         if (!loop) {patrolReturn=std::pair{u.x,u.z};patrolReturnIdentity=goal.identity();}
-                    },resetGoal,[]{return 0;});
+                    },resetGoal,[&] {
+                        // 40395e: 4d8370, then 4d7de0(unit, found, 0, &pos,
+                        // 1, 1): a forced leash and return move, Hold
+                        // Position included. Put in once the patrol's own
+                        // state is done with (below).
+                        const int found=w.retailHostScan(u);
+                        if (!found || !w.retailIssueAutoAttackAllowed(u,found,true)) return 0;
+                        patrolAttack=found;
+                        return 3;
+                    });
+                if (patrolAttack) {
+                    // The dispatcher's sleep for 3 (15 + rand(30)) on the
+                    // patrol, then the attack ahead of it; inserting
+                    // invalidates m, so the dispatcher gets 4 (no access).
+                    m.sleep(w.tickCounter_,random(30)+15);
+                    w.retailMissionAttack(u,patrolAttack,MissionAttack::Patrol);
+                    return 4;
+                }
+                return result;
+            }
             // Retail relaxes the goal radius after failed searches. Legion
             // waits/retries the same plain Move instead: a blocked army must
             // never "arrive" because repeated failures enlarged its circle.
@@ -6334,11 +6440,12 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
     // stride widens with the crowd (acqStride_, set at tick start) so massive battles
     // rescan less often -- the acquisition cost scales sub-linearly instead of O(n).
     const bool acqTurn = missionPoll || (uint32_t(u.id) + tickCounter_) % acqStride_ == 0;
+    // A patrol (whose legs carry attackMove too) scans in its own mission
+    // (Patrol 403600, VTOL_Patrol 419db0).
     const bool acquireGate = u.fireState == 2 && acqTurn && !isNeutralPlayer(u.player) &&
         u.type->weapon.damage > 0 &&
         (groundResponse || u.orders.empty() ||
-         (u.orders.front().targetId == 0 &&
-          (u.orders.front().attackMove || u.orders.front().patrol)) ||
+         (u.orders.front().targetId == 0 && u.orders.front().attackMove && !u.orders.front().patrol) ||
          u.orders.front().guard) &&
         u.buildSiteId == 0 && u.repairId == 0 && u.reclaimId == 0 &&
         (u.type->isStructure() || (u.buildQueue.empty() && !u.repeatType));
@@ -6355,8 +6462,7 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
                                   (!u.type->isStructure() && (!u.buildQueue.empty() || u.repeatType));
         const bool acquiringBefore = !busyBuilding && u.fireState == 2 &&
                                      (groundResponse || u.orders.empty() ||
-                                      (u.orders.front().targetId == 0 &&
-                                       (u.orders.front().attackMove || u.orders.front().patrol)) ||
+                                      (u.orders.front().targetId == 0 && u.orders.front().attackMove && !u.orders.front().patrol) ||
                                       u.orders.front().guard);
         if ((acquiringBefore && !isNeutralPlayer(u.player) && u.type->weapon.damage > 0 && acqTurn) != acquiring)
             throw std::runtime_error("findTarget: reordered acquisition gates disagree with the original order");
@@ -7253,6 +7359,61 @@ std::optional<Order> World::retailBuiltAttack(const Unit& u,int targetId,bool au
     return attack;
 }
 
+bool World::retailWanderScan(Unit& u) {
+    // 40797e: 4d8370; on Maneuver (+0x130 & 0x30000 == 0x10000) a hit at or
+    // beyond maneuverleashlength from the post is dropped (4079a2..4079e8).
+    // Then 4de530 kind 3 and 4d6c40(kind, target, 0, 0, Maneuver, Maneuver ?
+    // leash : 0) with origin the post, put ahead (407aac..407b7f): no return
+    // move. World's post is the unit's home: its stroll orders end the
+    // mission, so stage 0 runs again after each, while home stays where the
+    // unit was placed, as retail's post does.
+    const int found=retailHostScan(u);
+    if (!found) return false;
+    const bool maneuver=u.moveState==1;
+    const uint16_t leash=uint16_t(std::clamp(u.type->leash,0,65535));
+    const RetailGroundPoint post{int16_t(u.homeX.floorInt()),int16_t(u.homeZ.floorInt())};
+    const Unit* t=unit(found);
+    if (maneuver && retailGroundDistance({int16_t(t->x.floorInt()),int16_t(t->z.floorInt())},post)>=leash)
+        return false;
+    auto attack=retailBuiltAttack(u,found,maneuver,maneuver ? leash : 0,post);
+    if (!attack) return false;
+    // 4d4d40(0), then the attack ahead; its stage 0 makes the slots manual.
+    cancelPath(u);u.routeStamp=-1;
+    u.orders.insert(u.orders.begin(),*attack);
+    setSlotsManual(u,kSlotsAttack);
+    noteOrders(u.id);
+    return true;
+}
+
+bool World::retailMeleeRetarget(Unit& u) {
+    Order& o=u.orders.front();
+    if (!o.autoTarget || u.type->canFly || u.type->isStructure() || !u.type->canMove) return false;
+    // Stage 1 far from the target: sleep 4 + rand(5) + rand(5) (404c2e).
+    const auto nap=[&]{ const uint32_t a=pathRand(5),b=pathRand(5); return tickCounter_+4+a+b; };
+    if (!o.airRunCount) { o.airRunCount=int32_t(nap()); return false; }
+    if (tickCounter_<uint32_t(o.airRunCount)) return false;
+    // Stage 2's timer wake on an automatic attack (+0x52 != 0, 40496a..):
+    // off Hold Position, rand(2) == 0, 4d8370, a hit other than the target,
+    // inside +0x56 of the origin when a leash is set, then rand(10) == 0:
+    // 5199f0 makes it the target and the mission starts again (stage 0).
+    int to=0;
+    if (u.moveState!=0 && pathRand(2)==0) {
+        if (const int found=retailHostScan(u);found && found!=o.targetId) {
+            const Unit* t=unit(found);
+            const bool inLeash=!o.chaseLeashed || !o.chaseLeash ||
+                retailGroundDistance({int16_t(t->x.floorInt()),int16_t(t->z.floorInt())},o.chaseOrigin)<o.chaseLeash;
+            if (inLeash && pathRand(10)==0) to=found;
+        }
+    }
+    if (!to) { o.airRunCount=int32_t(nap()); return false; }
+    if (u.scriptAimTarget) clearScriptWeaponTarget(u);
+    o.targetId=to;o.airRunCount=0;o.attackAimTick=Order::kAttackUnaimed;
+    if (o.buildRectangle) { o.buildRectangle.reset();o.controller=0;o.navigationExhausted=o.navigationConsumed=false; }
+    cancelPath(u);u.routeStamp=-1;
+    noteOrders(u.id);
+    return true;
+}
+
 // 40f330's slot part, for one player: a budget of N/30+1 counted units per
 // call from a cursor that walks the player's slot range and wraps. A dead or
 // dying unit, or one with construction left (40f3a1..40f3c9: the same test as
@@ -7873,6 +8034,7 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     if (!airRun && !airToAir && !hovering && !strike && ((sel && sel->melee) ? !adj
                             : (!inReach || (approachNeedsLine && !los && mayChase) || (mayChase && arcShort())))) {
         if (chaseMission) u.orders.front().attackChased = true;
+        if (sel && sel->melee && retailMeleeRetarget(u)) return;
         // Attack_Melee (404690) stage 0: a melee weapon's target with no
         // mover (a structure) is approached on 4d4e80's rectangle round its
         // footprint, not at its centre: each attacker walks to its own
@@ -19424,6 +19586,9 @@ uint64_t World::stateHash() const {
             if (order.chaseLeashed) {
                 mix(0x434841534555ull);mix(order.chaseLeash);
                 mix(uint16_t(order.chaseOrigin.x));mix(uint16_t(order.chaseOrigin.z));
+            }
+            if (order.airRunCount && u.type && !u.type->canFly && order.targetId) {
+                mix(0x4d454c4545574bull);mix(uint32_t(order.airRunCount));
             }
             if (order.stationFree || order.stationRefTick) {
                 mix(0x53544e52454cull);mix(order.stationFree);
