@@ -19,6 +19,79 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+*protocol 312 · replay format 15 · does not play with 0.9.19 or earlier, nor their replays*
+
+- **A unit no longer ignores an enemy for good after its shots hit a rock.** A unit
+  that wrote off an enemy because three shots in a row struck a hill or rock used to
+  keep skipping it, even after that enemy walked into the open, until you gave it an
+  attack or move order. Now the write-off lapses as soon as either unit moves off its
+  spot, and the unit opens fire as the original game would. A target that keeps
+  moving behind cover no longer makes your unit walk to a clear spot; it fires on, as
+  in the original game.
+- **Idle ships make way at a Navy Yard's door.** Your own idle ships parked in front of
+  a Navy Yard now move aside while a new ship is leaving, and an idle ship on the
+  yard's pad moves off it, so a crowd of Iron Clads no longer stops the yard (it used
+  to finish two ships of six, or none with a ship on the pad). The original game moves
+  no idle ship. A ship leaving a door that faces a shore still sails out slowly: that
+  is the original game's own behaviour.
+- **Idle units make way at a land factory's door too.** Your own idle units standing in
+  front of a land factory (a Barracks, a Keep, a Dungeon, an Academy and the rest) now
+  step aside while a new unit is leaving, and one on the factory's pad steps off it, so
+  they no longer stop the factory: one idle unit on the pad used to stop it before its
+  first unit, and a crowd at a Creon Academy's door let it finish one of six. Your
+  guards step aside for the factory's new units too, at land factories and at a Navy
+  Yard, keep their Guard order and go back to guarding afterwards, once for each new
+  unit (a dozen guards at a Legion Academy's door used to let none of six out); a guard
+  that is fighting stays where it is. Units with other orders of their own and your
+  allies' units stay put, as in the original game, which moves no idle unit. When a
+  factory cannot start its next unit, units standing where that unit would appear,
+  just outside the factory's pad, step aside as well. A factory's own new units, parked
+  round it, now move again only when they stand on its pad or hold up the next one out;
+  at a Navy Yard too.
+  A factory whose rally point is on its own pad no longer stalls: its new unit steps
+  off the pad. A unit guarding or building beside its own factory moves nobody.
+- **Reclaimed trees and rocks fade out.** As in the original game, a reclaimed tree or
+  rock turns into a white silhouette of itself that fades away over about a second,
+  instead of vanishing at once.
+- **Trees and scenery destroyed by damage play their death first.** A tree, hut,
+  wall or other scenery knocked down by weapons now plays its falling or collapsing
+  animation (two-thirds of a second for a tree) before its stump or rubble appears,
+  as in the original game, instead of changing at once. While it falls it still
+  blocks its ground, takes no more damage, cannot catch fire and cannot be reclaimed.
+  A burning tree takes no weapon damage either, as in the original game; it burns
+  down instead of being knocked into its stump. Rocks, which have no death animation,
+  still go at once.
+- **Flyers on Hold Position hold their post.** An idle flyer on Hold Position used to
+  take off after an enemy that came into range and fly attack runs at it, hundreds of
+  pixels from where you left it. Now it stays where it is and shoots what it can reach
+  from there, as in the original game. The Thirsha, the Ghost Ship, the Dirigible and
+  the Dark and Darkest Priests start on Hold Position, so idle ones now stay put: set
+  them to Maneuver to have them go after enemies.
+- **Units stand where the ground is painted.** Every unit, tree, effect and the fog
+  used to be drawn too far down the screen by half the height of the map's most common
+  ground: 110 pixels on a map whose ground is high, such as INDUSTRIAL Zone, enough to
+  draw units on a road beside lava in the lava itself. Now everything is drawn at its
+  own height, as in the original game, on every map. Ships and wading units ride at
+  the water surface over deep water, with their health bars and markers on them, and
+  an order clicked on water sends a ship to where you clicked. The camera centres on
+  where a unit is drawn.
+- **The result screen's buttons click.** The two buttons on the victory and defeat
+  screen now play their clicks when pressed, as in the original game (the left one
+  its cancel click, the right one its OK click), like the title menu's buttons. The
+  SETTINGS, LOAD REPLAY, BENCHMARK and server pages click too, with the clicks the
+  original game gives the same kinds of button. Menu clicks now also follow the
+  Options MASTER and SOUND EFFECTS volumes; at the default full volumes they sound as
+  before.
+- **Investigated, no change needed:**
+  - A computer's Sea Dragon on Hold Position with an enemy just outside Tsunami's range
+    keeps switching weapons and never fires: the original game does exactly the same.
+  - A Prismatic Mirror holding a target without firing (0.9.3) was a Mirror still being
+    built; this was fixed in 0.9.12, and the original game does the same as now.
+  - Kirenna on an attack-move can stand in range aiming and not fire at an enemy her
+    side cannot see. The attack-move is not in the original game; this stays a known
+    limit for now.
+
 ## 0.9.19
 *2026-11-03 · protocol 311 · replay format 15 · does not play with 0.9.18 or earlier, nor their replays*
 

@@ -364,6 +364,7 @@ struct FeatDef { bool mana = false; bool glowy = false; int blocking = 0; int fx
                  // Burning chain (see World::tickBurning).
                  bool flamable = false; bool hasBurnAnim = false; uint32_t burnTicks = 0;
                  int spreadChance = 0; int sparkTicks = 0; std::string burnt;
+                 uint32_t dieTicks = 0;   // seqnamedie playback (World::damageFeature)
                  // Corpse lifecycle (features/corpses).
                  int decomposeTicks = 0; bool resurrectable = false; bool animatable = false;
                  bool isStone = false; bool isFrozen = false;
@@ -404,6 +405,7 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
                     d.flamable = node.numberOr("flamable", 0) != 0;
                     d.burnTicks = burnTiming.duration(node);
                     d.hasBurnAnim = d.burnTicks != 0;
+                    d.dieTicks = burnTiming.dieDuration(node);
                     d.spreadChance = int(node.numberOr("spreadchance", 0));
                     d.sparkTicks = int(node.numberOr("sparktime", 0) * 30);
                     d.burnt = node.valueOr("featureburnt", "");
@@ -443,6 +445,7 @@ struct FeatTypeInterner {
         t.flamable = di->second.flamable;
         t.hasBurnAnim = di->second.hasBurnAnim;
         t.burnTicks = di->second.burnTicks;
+        t.dieTicks = di->second.dieTicks;
         t.spreadChance = di->second.spreadChance;
         t.sparkTicks = di->second.sparkTicks;
         t.energy = di->second.energy;

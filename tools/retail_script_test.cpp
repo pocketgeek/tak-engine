@@ -160,7 +160,7 @@ int main(int argc,char** argv) {
         }
         World world;world.setTerrain(map.heights,map.width,map.height,0);
         registerMapFeatures(world,map,vfs);
-        int destructible=0,protectedCount=0,damageOnly=0;
+        int destructible=0,protectedCount=0,damageOnly=0,dying=0;
         for(size_t i=0;i<names.size();++i) {
             const auto& node=defs.at(names[i]);const int id=ids[i];
             const auto* f=world.feature(id);
@@ -179,6 +179,14 @@ int main(int argc,char** argv) {
                 ++destructible;
                 if(!node.numberOr("reclaimable",0) && !node.numberOr("flamable",0))++damageOnly;
                 if(world.featGeneration()==generation)throw std::runtime_error("outer hit did not destroy: "+names[i]);
+                // A seqnamedie plays first (494ce0 mode 0); the stage follows its end.
+                if(f->dieLeft) {
+                    if(f->type<0 || world.featureTypes()[f->type].name!=names[i] || !f->alive)
+                        throw std::runtime_error("dying feature left its stage early: "+names[i]);
+                    ++dying;
+                    for(uint32_t left=f->dieLeft;left;--left)world.tick(1.0f/30);
+                    if(f->dieLeft)throw std::runtime_error("death playback did not end: "+names[i]);
+                }
                 std::string dead=node.valueOr("featuredead","");
                 std::transform(dead.begin(),dead.end(),dead.begin(),::tolower);
                 if(dead.empty() || !defs.contains(dead)) {
@@ -188,7 +196,8 @@ int main(int argc,char** argv) {
             }
         }
         std::cout<<"PASS: "<<destructible<<" authored destructible scenery types ("<<damageOnly
-                 <<" damage-only), "<<protectedCount<<" indestructible types; outer-footprint hits and destruction stages\n";
+                 <<" damage-only, "<<dying<<" with a death playback), "<<protectedCount
+                 <<" indestructible types; outer-footprint hits and destruction stages\n";
         return 0;
     }
     if (argc==5 && std::string(argv[1])=="--gate-timeline") {

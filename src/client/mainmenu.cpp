@@ -21,6 +21,7 @@
 #include "client/resultscreen.h"
 #include "client/cursors.h"
 #include "client/menumusic.h"
+#include "client/menusfx.h"
 #include "client/hotkeys.h"
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
@@ -113,18 +114,6 @@ struct Button {
     bool hover = false;
 };
 
-// A menu gadget's click sound is the first ".wav" entry in its gui state strings
-// (the others are "Default" or empty). Case-insensitive on the extension.
-inline std::string clickSound(const gui::Gadget& g) {
-    for (const auto& s : g.states) {
-        if (s.size() < 4) continue;
-        std::string ext = s.substr(s.size() - 4);
-        for (char& c : ext) c = char(std::tolower((unsigned char)c));
-        if (ext == ".wav") return s;
-    }
-    return {};
-}
-
 }  // namespace
 
 struct MainMenu::Impl {
@@ -139,11 +128,8 @@ struct MainMenu::Impl {
     std::vector<Button> buttons;
     std::unordered_map<std::string, std::string> bikByLower;   // lowercased name -> path
 
-    // Click SFX: one queue-driven device (all menu click WAVs share a format,
-    // u8/11025/mono), and each sound's volume-scaled PCM keyed by filename. This is
-    // separate from the shared MenuMusic device so a click mixes over the music.
-    SDL_AudioDeviceID sfxDev_ = 0;
-    std::unordered_map<std::string, std::vector<uint8_t>> sfxPcm_;
+    // Click SFX: each door/button's .gui-bound click (client/menusfx.h).
+    MenuSfx sfx_;
 
     // The Options overlay, opened from the SETTINGS menu (see run()).
     std::unique_ptr<OptionsScreen> options_;
@@ -196,69 +182,27 @@ struct MainMenu::Impl {
     bool cursorsInit_ = false;
 
     Impl(SDL_Renderer* r, const hpi::Vfs& v, std::string in)
-        : ren(r), vfs(v), install(std::move(in)) {}
+        : ren(r), vfs(v), install(std::move(in)), sfx_(v) {}
     ~Impl() {
         if (bg) gpuvram::destroy(bg);
         for (auto& d : doors) { if (d.gaf) gpuvram::destroy(d.gaf);
                                 if (d.vtex) gpuvram::destroy(d.vtex); }
         for (auto& b : buttons) for (auto* t : b.tex) if (t) gpuvram::destroy(t);
-        if (sfxDev_) SDL_CloseAudioDevice(sfxDev_);
     }
 
     // ---- click SFX ------------------------------------------------------------
 
-    // Load one click WAV from sounds/ and cache its PCM. Opens the shared SFX
-    // device from the first WAV (all four share u8/11025/mono, so no conversion).
-    void loadSfx(const std::string& name) {
-        if (name.empty() || sfxPcm_.count(name)) return;
-        std::vector<uint8_t> raw;
-        try { raw = vfs.read("sounds/" + name); } catch (...) { return; }
-        if (raw.empty()) return;
-        SDL_RWops* rw = SDL_RWFromConstMem(raw.data(), int(raw.size()));
-        SDL_AudioSpec spec{}; Uint8* buf = nullptr; Uint32 len = 0;
-        if (!rw || !SDL_LoadWAV_RW(rw, 1, &spec, &buf, &len)) return;
-        if (!sfxDev_) {
-            SDL_InitSubSystem(SDL_INIT_AUDIO);
-            SDL_AudioSpec want = spec, have{};
-            want.callback = nullptr;   // queue-driven
-            // Small buffer so a queued click plays with minimal latency. The whole
-            // click is queued at once (never a partial fill), so a short device
-            // period can't underrun it. ~128/11025 ~= 12ms vs ~46ms at 512.
-            want.samples = 128;
-            sfxDev_ = tak::openAudioDevice(0, &want, &have, 0);
-            if (sfxDev_) SDL_PauseAudioDevice(sfxDev_, 0);
-        }
-        // Scale to a UI level that sits above the (soft, ~45/128) menu music.
-        // These WAVs are unsigned 8-bit (silence == 128), so scale around 128.
-        std::vector<uint8_t> pcm(len);
-        for (Uint32 i = 0; i < len; ++i) {
-            int s = 128 + (int(buf[i]) - 128) * 100 / 128;
-            pcm[i] = uint8_t(s < 0 ? 0 : s > 255 ? 255 : s);
-        }
-        SDL_FreeWAV(buf);
-        sfxPcm_[name] = std::move(pcm);
-    }
-
-    void playSfx(const std::string& name) {
-        if (!sfxDev_ || name.empty()) return;
-        auto it = sfxPcm_.find(name);
-        if (it == sfxPcm_.end()) return;
-        SDL_ClearQueuedAudio(sfxDev_);   // retrigger cleanly on rapid clicks
-        SDL_QueueAudio(sfxDev_, it->second.data(), Uint32(it->second.size()));
-    }
-
     // Play the click sound of whatever door/button is currently hovered.
     void playHoveredSound() {
-        for (auto& d : doors) if (d.hover) { playSfx(d.sound); return; }
-        for (auto& b : buttons) if (b.hover) { playSfx(b.sound); return; }
+        for (auto& d : doors) if (d.hover) { sfx_.play(d.sound); return; }
+        for (auto& b : buttons) if (b.hover) { sfx_.play(b.sound); return; }
     }
 
     // A click that transitions away destroys this MainMenu (closing the SFX
     // device), so let the short click finish first -- keep rendering so the menu
     // doesn't freeze. Bounded well above the longest click (~140ms).
     void flushSfx(int winW, int winH) {
-        if (!sfxDev_) return;
-        for (int i = 0; i < 30 && SDL_GetQueuedAudioSize(sfxDev_) > 0; ++i) {
+        for (int i = 0; i < 30 && sfx_.busy(); ++i) {
             render(winW, winH);
             SDL_RenderPresent(ren);
             SDL_Delay(10);
@@ -464,9 +408,9 @@ struct MainMenu::Impl {
                 d.hotspot = *hit;
             d.vbase = s.vbase;
             d.action = s.act;
-            d.sound = clickSound(*g);
+            d.sound = menuclick::soundOf(*g);
             d.tip = g->cmd;   // gui cmd doubles as the hover help caption
-            loadSfx(d.sound);
+            sfx_.load(d.sound);
             if (!g->imgs.empty()) d.gaf = gafTex(g->imgs[0].gaf, g->imgs[0].seq, g->imgs[0].frame);
             doors.push_back(std::move(d));
         }
@@ -484,11 +428,11 @@ struct MainMenu::Impl {
             bt.name = b.gadget;
             bt.rect = {g->x, g->y, g->w, g->h};
             bt.action = b.act;
-            bt.sound = clickSound(*g);
+            bt.sound = menuclick::soundOf(*g);
             bt.tip = g->cmd;   // gui cmd doubles as the hover help caption
             if (b.act == Choice::Exit) bt.tip = "Exit";   // retail's cmd is "Exit to Windows"
             if (b.act == Choice::Options) bt.tip = "Settings";   // opens the SETTINGS menu now
-            loadSfx(bt.sound);
+            sfx_.load(bt.sound);
             for (int i = 0; i < 3 && i < int(g->imgs.size()); ++i)
                 bt.tex[i] = gafTex(g->imgs[size_t(i)].gaf, g->imgs[size_t(i)].seq,
                                    g->imgs[size_t(i)].frame, &bt.texFac[i]);
@@ -786,7 +730,7 @@ struct MainMenu::Impl {
             case FailTo::CampaignPicker:
                 if (settings)
                     campaign_ = std::make_unique<CampaignScreen>(ren, vfs, *settings, 0,
-                        [this](const std::string& sound) { loadSfx(sound); playSfx(sound); },
+                        [this](const std::string& sound) { sfx_.play(sound); },
                         tak::u8path(install));
                 break;
             case FailTo::Notice: case FailTo::Exit: break;
@@ -1311,6 +1255,7 @@ void MainMenu::setVoice(VoiceEngine* voice) { d_->voice_ = voice; }
 MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverOut,
                                MenuMusic* music, Settings* settings, Streaming* streaming) {
     if (settings) d_->applyArtSettings(*settings);
+    d_->sfx_.settings = settings;   // clicks follow the MASTER / SOUND EFFECTS levels
     int w = 0, h = 0;
     SDL_GetRendererOutputSize(d_->ren, &w, &h);
 
@@ -1549,7 +1494,8 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     SDL_Keycode k = e.key.keysym.sym;
                     const bool shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
                     if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
-                        if (connect()) return Choice::Multiplayer;
+                        d_->sfx_.play(menuclick::kOk);
+                        if (connect()) { d_->flushSfx(w, h); return Choice::Multiplayer; }
                     }
                     // UP/DOWN still walk the server list; TAB walks the text fields,
                     // which is what a keyboard user reaches for between name and
@@ -1558,6 +1504,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     if (k == SDLK_DOWN) d_->setServerSel(d_->serverSel + 1);
                     if (k == SDLK_TAB) d_->cycleField(shift ? -1 : 1);
                     if (k == SDLK_ESCAPE) {
+                        d_->sfx_.play(menuclick::kBack);
                         d_->serverSelect = false;
                         tak::crypto::wipe(d_->loginPass);
                         SDL_StopTextInput();
@@ -1581,9 +1528,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     if (in(d_->loginUserRect)) d_->field = 2;
                     if (in(d_->loginPassRect)) d_->field = 3;
                     if (in(d_->serverConnectRect)) {
-                        if (connect()) return Choice::Multiplayer;
+                        d_->sfx_.play(menuclick::kOk);
+                        if (connect()) { d_->flushSfx(w, h); return Choice::Multiplayer; }
                     }
                     if (in(d_->serverBackRect)) {
+                        d_->sfx_.play(menuclick::kBack);
                         d_->serverSelect = false;
                         tak::crypto::wipe(d_->loginPass);
                         SDL_StopTextInput();
@@ -1608,12 +1557,19 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 continue;
             }
             if (d_->settingsMenu_) {   // the SETTINGS menu (OPTIONS / CONTROLS) is up
-                if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) { d_->settingsMenu_ = false; }
+                if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+                    d_->sfx_.play(menuclick::kBack);
+                    d_->settingsMenu_ = false;
+                }
                 else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                     float fx = float(e.button.x), fy = float(e.button.y);
                     auto hit = [&](const SDL_FRect& r) { return fx >= r.x && fx <= r.x + r.w && fy >= r.y && fy <= r.y + r.h; };
                     SDL_Renderer* ren = d_->ren;
+                    // Each opens a page: the menu-button click (menuclick.h).
+                    for (int i = 0; i < 6; ++i)
+                        if (hit(d_->setBtnRect_[i]) && (i != 5 || streaming)) d_->sfx_.play(menuclick::kForward);
                     if (hit(d_->menuBackRect_)) {          // BACK -> the title screen, as Esc
+                        d_->sfx_.play(menuclick::kBack);
                         d_->settingsMenu_ = false;
                     } else if (hit(d_->setBtnRect_[0])) {          // OPTIONS -> the audio/display screen
                         d_->settingsMenu_ = false;
@@ -1652,6 +1608,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             }
             if (d_->replayMenu_) {   // replay picker
                 if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+                    d_->sfx_.play(menuclick::kBack);
                     d_->replayMenu_ = false;
                     d_->settingsMenu_ = true;   // back to SETTINGS, not out of the menu
                 } else if (e.type == SDL_MOUSEWHEEL) {
@@ -1663,6 +1620,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         return r.w > 0 && fx >= r.x && fx <= r.x + r.w && fy >= r.y && fy <= r.y + r.h;
                     };
                     if (hit(d_->menuBackRect_)) {   // BACK -> SETTINGS, as Esc
+                        d_->sfx_.play(menuclick::kBack);
                         d_->replayMenu_ = false;
                         d_->settingsMenu_ = true;
                         continue;
@@ -1671,6 +1629,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         if (hit(d_->replayBtnRect_[i])) {
                             const size_t k = size_t(d_->replayScroll_ + i);
                             if (k >= d_->replayFiles_.size()) break;
+                            d_->sfx_.play(menuclick::kOk);
                             d_->chosenReplay_ = d_->replayFiles_[k];
                             d_->replayError_.clear();
                             d_->replayMenu_ = false;
@@ -1683,6 +1642,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
 
             if (d_->benchMenu_) {   // benchmark submenu (PATHFINDING, LOW..EXTRA ABSURD)
                 if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+                    d_->sfx_.play(menuclick::kBack);
                     d_->benchMenu_ = false;
                     d_->settingsMenu_ = true;   // back to SETTINGS, not out of the menu
                 }
@@ -1690,13 +1650,15 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     float fx = float(e.button.x), fy = float(e.button.y);
                     auto hit = [&](const SDL_FRect& r) { return fx >= r.x && fx <= r.x + r.w && fy >= r.y && fy <= r.y + r.h; };
                     if (hit(d_->menuBackRect_)) {   // BACK -> SETTINGS, as Esc
+                        d_->sfx_.play(menuclick::kBack);
                         d_->benchMenu_ = false;
                         d_->settingsMenu_ = true;
                         continue;
                     }
-                    if (d_->pickBenchPath(fx, fy, settings)) continue;
+                    if (d_->pickBenchPath(fx, fy, settings)) { d_->sfx_.play(menuclick::kToggle); continue; }
                     for (int i = 0; i < 6; ++i)
                         if (hit(d_->benchBtnRect_[i])) {
+                            d_->sfx_.play(menuclick::kOk);
                             d_->chosenBenchmark_ = i + 1;   // 1=Low .. 6=Extra Absurd
                             d_->benchMenu_ = false;
                             d_->flushSfx(w, h);
@@ -1760,7 +1722,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     // Open the campaign / mission picker in place; a picked mission
                     // returns Choice::Campaign (handled by the campaign_ router above).
                     d_->campaign_ = std::make_unique<CampaignScreen>(d_->ren, d_->vfs, *settings,0,
-                        [this](const std::string& sound){d_->loadSfx(sound);d_->playSfx(sound);},
+                        [this](const std::string& sound){d_->sfx_.play(sound);},
                         tak::u8path(d_->install));
                 }
                 else if (c != Choice::None && c != Choice::Campaign) {

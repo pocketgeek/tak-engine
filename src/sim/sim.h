@@ -1272,14 +1272,16 @@ struct alignas(64) Unit {
     // Blocked shots (engine deviation, see World::noteShotImpact): the target
     // whose last shots from here struck terrain or scenery this unit cannot
     // destroy, short of the target; how many in a row; the whole-pixel spot
-    // they were fired from; how many firing spots it has walked to against
-    // that target since it last hit it; and whether the last spot search
-    // from here found nothing. Hashed with a tag when blockedTarget is set.
+    // they were fired from and the one the target stood on; how many firing
+    // spots it has walked to against that target since it last hit it; and
+    // whether the last spot search from here found nothing. Hashed with a
+    // tag when blockedTarget is set.
     int32_t blockedTarget = 0;
     uint8_t blockedShots = 0;
     uint8_t repositions = 0;
     uint8_t searchFailed = 0;
     int16_t blockedX = 0, blockedZ = 0;
+    int16_t blockedTX = 0, blockedTZ = 0;
     bool workScriptWorking = false; // repair/reclaim requested StartBuilding
     bool buildBegun = false;   // construction site: true once the builder arrived
     Fixed conjureRate = Fixed();  // site: hp/TICK the last builder added; drives decay
@@ -1464,6 +1466,30 @@ struct alignas(64) Unit {
     // World::productionOwnerOf, which checks the producer still holds it, so a
     // stale value is harmless and it is not hashed.
     int productionOwner = 0;
+    // On a building's finished output: the factory that made it (set at
+    // completion, never cleared). World::clearYardDoor takes one with orders in
+    // front of its factory as the door's traffic, and moves a parked one only
+    // off the pad or off a later output it holds up. Set once, from hashed state
+    // (the completion), and read only there, so not hashed.
+    int builtBy = 0;
+    // On a guard: the factory whose door it last stepped out of
+    // (World::clearYardDoor) and that factory's doorSerial then. It steps aside
+    // there again only once the serial has moved on (a newer output or a new
+    // refusal), not each time its guard walks it back in. Cleared by a fresh
+    // guard order. Hashed with a tag when set.
+    int doorYieldFactory = 0;
+    uint32_t doorYieldSerial = 0;
+    // On a factory: grows by one for each refusal episode of its next output's
+    // site (odd) and to the next even number for each finished output, so a
+    // guard's step aside is keyed on this factory alone and never goes back.
+    // Hashed with a tag when set.
+    uint32_t doorSerial = 0;
+    // A factory's refused output site (BUILD stage 2's point, world px), while
+    // productionRetryTick lies ahead: clearYardDoor clears it with the pad (a
+    // pad point on the yard's edge puts part of the site outside the yard).
+    // Set at each refusal from hashed state (the script's point) and read only
+    // while that refusal lasts, so not hashed (as builtBy).
+    int32_t refusedSiteX = 0, refusedSiteZ = 0;
     // A campaign mission's fixed veterancy multiplier (SetMission/InitialMission
     // `v F`, unit +0xf4, set by icd 0x5148e1). Not 0: getMult (0x5193c0) answers
     // it instead of 1 + level/10 and getLevel (0x519310) answers 10, so the unit
@@ -1598,6 +1624,10 @@ struct FeatType {
     bool flamable = false;   // TDF flamable=1: can be ignited / spread to
     bool hasBurnAnim = false;// TDF seqnameburn present (retail StartBurning requires it)
     uint32_t burnTicks = 1; // full-quality authored burn/overlay lifetime
+    // TDF seqnamedie's length in ticks (each frame max(1, delay), 5373d0): how
+    // long a feature destroyed by damage stays before featuredead replaces it.
+    // 0 = no seqnamedie, replaced at once (494ce0 -> 494ee3).
+    uint32_t dieTicks = 0;
     int  spreadChance = 0;   // TDF spreadchance (percent)
     int  sparkTicks = 0;     // TDF sparktime * 30 (retail stores seconds*30)
     int  burntType = -1;     // TDF featureburnt -> index into the same table
@@ -1665,6 +1695,11 @@ struct Feature {
     int32_t dmg = 0;       // accumulated weapon damage (dies at FeatType.hp)
     int   spreadIn = 0;    // ticks until the single spread event (sparktime-derived)
     uint32_t burnLeft = 0;    // ticks until burn-out (swap to burntType / die)
+    // Destroyed by damage, playing seqnamedie (494ce0 mode 0): ticks until its
+    // featuredead stage replaces it. Meanwhile it keeps its cells and blocking
+    // but takes no damage, cannot catch fire and is not a reclaim target.
+    // Hashed.
+    uint32_t dieLeft = 0;
 };
 
 struct Projectile {
@@ -2310,7 +2345,7 @@ public:
     SinCos steerGround(Unit& subject,RetailSteeringPoint start,RetailSteeringPoint end,
                        RetailSteeringPoint next,Fixed maximum);
     bool featureReclaimable(const Feature& f) const {
-        return f.alive && !f.fadeLeft && (f.type<0 ||
+        return f.alive && !f.fadeLeft && !f.dieLeft && (f.type<0 ||
             (size_t(f.type)<featTypes_.size() && featTypes_[size_t(f.type)].reclaimable));
     }
     const Feature* feature(int id) const;                 // by id, nullptr if none
@@ -3056,6 +3091,12 @@ private:
     // unit walks out of the area the output may be made in. (x,z) is a scripted
     // producer's pad; the unscripted search has no point of its own.
     void clearProductionRoom(Unit& producer, const UnitType* type, Fixed x, Fixed z);
+    // A factory's output waits in or just out of its yard (or its next site is
+    // refused): the player's own idle units in front of the yard, on the
+    // output's plane, move aside, out of the door's way (engine deviation,
+    // user-requested; retail moves no idle body, see clearYardDoor).
+    void clearYardDoor(const Unit& factory);
+    bool doorGuard(const Unit& k) const;
     bool pointOutside(const Unit& k, int left, int right, int top, int bottom, int rx, int rz,
                       const std::array<bool,4>& avoid, const std::vector<std::array<int,4>>& taken,
                       int& x, int& z) const;
@@ -3861,7 +3902,9 @@ private:
     // it was ordered as depends on the two types alone, which do not change.
     bool reclaimTargetValid(int target,bool revive=false) const;
     void swapFeature(Feature& f, int newType);   // chain stage swap (burnt/dead)
+    void destroyFeature(Feature& f);   // weapon damage reached its `damage` (494ce0 mode 0)
     void tickBurning();
+    void tickFeatureDeaths();   // seqnamedie playback ends: featuredead (495ef7)
     std::unordered_map<int, size_t> featureIdx_;   // feature id -> index in features_
     std::vector<Projectile> projectiles_;
     std::vector<FlameShot> flames_;
@@ -3951,9 +3994,14 @@ private:
     // fadingMarks_ (finishReclaim); a stale mark (a swap put the fire or the
     // fade out) is dropped when the walk reaches it. burningMarked_ counts the
     // set bits, so a tick without fire visits nothing.
-    std::vector<uint64_t> burningMarks_, fadingMarks_;
-    uint32_t burningMarked_ = 0;
-    void clearFeatureMarks() { burningMarks_.clear(); fadingMarks_.clear(); burningMarked_ = 0; }
+    // dyingMarks_ likewise holds every feature with dieLeft != 0
+    // (destroyFeature); dyingMarked_ counts its set bits.
+    std::vector<uint64_t> burningMarks_, fadingMarks_, dyingMarks_;
+    uint32_t burningMarked_ = 0, dyingMarked_ = 0;
+    void clearFeatureMarks() {
+        burningMarks_.clear(); fadingMarks_.clear(); dyingMarks_.clear();
+        burningMarked_ = dyingMarked_ = 0;
+    }
     std::vector<BenchStage> benchPlan_;   // benchmark staged spawns (executed in tick)
     size_t benchCursor_ = 0;              // next unexecuted stage
     uint32_t benchEndTick_ = 0;           // 0 = not a benchmark run

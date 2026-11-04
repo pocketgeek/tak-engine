@@ -947,7 +947,9 @@ namespace {
             // +Radar power code shows them all here, on the minimap only (retail's
             // one reader of the flag is the minimap dot pass, 0x4f9561).
             if (radarCode_ ? !u.alive() || u.embarked() || !u.type : !radarVisible(u)) continue;
-            SDL_FPoint p = toMini(u.x, u.z);
+            // 0x4f95c5: the dot sits at the unit's projected row, z - (y >> 1), on
+            // the same tile art the minimap shows.
+            SDL_FPoint p = toMini(u.x, u.z - float((u.worldPosition[1] >> 16) >> 1));
             SDL_Color tc = playerColor(u.player);
             pushQuad(overlayBatch_, p.x - 1.5f, p.y - 1.5f, 3, 3, tc);
         }

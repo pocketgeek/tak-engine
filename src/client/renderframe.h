@@ -190,8 +190,9 @@ struct UnitR {
     // Split the authoritative height for the existing body/shadow/effect paths.
     // While taking off below a nearby hill's clearance datum, that datum must
     // not lift the rendered body above the actual flight position.
-    std::pair<float,float> flightRenderHeight(float datum, float reference) const {
-        const float height=std::max(0.0f,flightY-reference);
+    // Both are absolute heights: the body draws flightY/2 up, as retail's z - y/2.
+    std::pair<float,float> flightRenderHeight(float datum) const {
+        const float height=std::max(0.0f,flightY);
         const float ground=std::min(std::max(0.0f,datum),height);
         return {ground,height-ground};
     }

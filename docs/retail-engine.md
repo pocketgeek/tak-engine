@@ -296,6 +296,16 @@ weapon slots is **auto** or **manual**:
   after the AI-Monarch threat roll, the attacker check and the armed check)
   skips both parts; before 0.9.12 an unfinished site under fire took its
   attacker as an attack order it could not carry out until finished.
+  (Re-read 2026-11-03: `409b56` loads `+0x108`, compares it with the rdata
+  float at `0x5eb524`, 0.0, and `409b67` jumps to the exit `409f6f` unless it
+  is equal.) This was the 0.9.3 notes' unexplained hold: on duel seed
+  `0x6666` (Creon against Aramon, Edmont's Field) a Prismatic Mirror still
+  being conjured was shelled by an Aramon Trebuchet 1469 px away, took it as
+  an auto target from the hit response and held it 176 s without a shot,
+  until it was finished; with the 0.9.12 gate applied to 0.9.3 the site takes
+  no target, and 16 seeds on 0.9.19 show no hold of 60 s or more by any unit.
+  Pinned by `structure_combat_site` (the real pair at that distance) and
+  `fire_sweep_retaliation` case 5.
 
 Deviations: auto slots of ranged ground weapons whose shot flies the line
 (not a plain Ballistic shell, `Weapon::needsClearLine`) keep our 2D clear-shot
@@ -401,6 +411,91 @@ HP > 0. Found on the way and left alone: the picker's paralyzer immunity
 test (`4128e1..4128ff`: a paralyzer class skips an `immunetoparalyzer` type)
 is not in `retailSelectTarget`.
 
+### A computer's Sea Dragon on Hold Position never fires at 472 px (2026-11-03)
+
+The 0.9.12 attack sweep found a computer-owned Sea Dragon on Hold Position,
+fire at will, that takes an enemy 472 px off (inside Fire Breath's 525 and
+Water Ball's 800, outside the Tsunami's 450) and never fires at it, unit or
+building. Retail does the same; the engine is unchanged.
+
+The AI weapon switch (`40f411..40fb92`) looks at no range: its only calls
+are the slot target `51a9a0`, the mana cost `531ea0`, the class tests
+(vtable +0x1c/+0x20/+0x24), the enemy and ally counts `411ae0`/`411dd0`,
+`rand` `535cc0` and the switch `51a8b0`. With Fire Breath holding a lone
+enemy that it cannot half-kill, it takes the Tsunami (aoe 180: enemies 1 >
+5 x allies 0) before it reaches the Water Ball. The Tsunami's own sweep finds
+nothing in 450, and a costly slot with no target goes back to the primary on
+`rand(10) == 0`. Fire Breath takes the enemy again in that same visit and
+gives it up for the Tsunami on the next one. `51a8b0` gives the new slot its
+`switchreloadtime` (weapon +0x9e at `51a978`; the FBI parser sets it at
+`530817..53082b` and defaults it to `reloadtime` x 30, 90 ticks for Fire
+Breath). Each return to Fire Breath therefore restarts its reload, and a
+sweep visits each unit at least once every 30 ticks, so Fire Breath is never
+selected long enough to fire. A player's Sea Dragon runs no AI switch and
+fires Fire Breath. So does a computer's that cannot afford the Tsunami (it
+takes the Water Ball, which reaches) or whose Fire Breath does at least half
+the target's HP.
+
+`tools/re/probe_seadragon_switch.py` runs `40f330`, `51a8b0` and `51a7f0`
+natively for the Sea Dragon's slots, 3000 visits on a fixed seed: the
+Tsunami is taken with no range call, Fire Breath comes back 273 times, never
+stays selected for more than one visit, and gets a reload of 90 each time.
+With 600 mana the block takes the Water Ball (7 observations). The engine's
+`seadragon_hold` test is the guard: 0 shots from the computer's Sea Dragon
+against an Archer and a lodestone, about 85 returns to Fire Breath in 900
+ticks, each with a full reload; the player's Sea Dragon fires Fire Breath 10
+times.
+
+### A flyer on Hold Position does not leave its post (2026-11-03)
+
+Established (static, `4d7de0` and its callers): `4d7de0(unit, target,
+explicit, point, auto, forced)` first refuses a unit's own target, then
+returns 0 on Hold Position (`+0x130 & 0x30000 == 0`) unless `explicit`
+(arg 3) or `forced` (arg 6) is set (`4d7e0a..4d7e19`), and on Hold Fire
+(`& 0xc0000`) unless `explicit` (`4d7e24..4d7e2d`). VTOL_Standby's stage 1
+(`4176bb`) scans with `4d8370` and calls `4d7de0(unit, found, 0, 0, 1, 0)`
+(`4176cc`); refused, it falls to `417736` (return 1) and stage 2 lands an
+airborne flyer whose type can land (UnitDef `+0x260 & 0x800`, layer 2,
+`4175e4..417605`). So an idle flyer on Hold Position gets no attack mission:
+no attack run, no hover ring, no dogfight. Its auto slots stay with the
+fire-at-will sweep (`40f330`), which takes a seen enemy in the slot's range and
+fires from where the flyer stands by. The other callers: ground Standby
+(`40784e`, args `0, &pos, 1, 0`) refuses the same way; VTOL_Patrol
+(`41a25e`, forced 1) and the guards' alarm (`4081e0`, `418c46`, explicit 1)
+are not held; the air attack missions' retargets (`41963d`, `41bb08`,
+`41c440`, `41ce80`, `41d125`, `41e046`: `0, 0, 1, 0`) refuse on Hold
+Position, which `retailIssueAutoAttack` already did.
+
+Ours before: VTOL_Standby's `tryOrder` (and the Legion lift's poll and
+`tickCombat`'s idle acquisition) called `World::acquireTarget`, which
+inserted the auto attack with no Hold Position test; `findTarget` only held a
+Hold unit to targets already in reach, so a Hold Position flyer took a target
+in range and flew its attack mission off its post (190-960 px in
+`hold_flyer_test`). Now `acquireTarget` returns false for an idle flyer
+(`orders.empty()`) on Hold Position. `hold_flyer_test` runs every armed
+shipped flyer with a seen enemy in weapon range (450 px where the weapon
+reaches), on the ground and hovering: on Hold Position none takes an attack
+or moves, 31 of 37 fire from their post (the six that do not: the Taros
+priests' selected Lightning reaches 275 px, and the Fallen Angel takes no auto target
+on Maneuver either); on Maneuver 35 of 37 take the attack. Inferred, not
+emulated: that the sweep's fire from a landed flyer matches retail shot for
+shot.
+
+This is the shipped default for some flyers: `standingunitorder = 1` (the
+Thirsha `zonhunt`, the Ghost Ship `tarship`, the Dirigible `verball`, both Taros
+priests) sets UnitDef `+0x260` move bits to 0 (`4c005d..4c00a1`: 2 -> move 1
+fire 2, 1 -> move 0 fire 2, 0 -> move 0 fire 0), and the unit takes them into
+`+0x130 & 0x30000` (`511c2a..511c3e`). So an idle Thirsha, as built, stands by
+and shoots from where it is. `flyer_combat_test` now expects no automatic
+attack for those types, and `blocked_shot_test`'s Thirsha is put on Maneuver
+so it is still hovering in when its order comes.
+
+Ground Standby is not changed: ours inserts an auto attack that a Hold unit
+may not chase (`tickCombat`'s `mayChase`, `findTarget`'s reach test), where
+retail leaves the target to the sweep. Both stand and shoot what is in reach;
+the target choice (nearest vs the sweep's sampled score) and the order state
+differ. Left for the target-search port.
+
 ## Blocked shots: retail fires on, the engine walks to a clear shot (2026-10-19)
 
 Retail has no line-of-fire test and no reposition. The common weapon update
@@ -432,7 +527,14 @@ none of them can stop on scenery:
   flamable feature as destructible) that lies short of the target and outside
   its body plus one body plus half the weapon's splash counts against the
   target. A hit on the target, or a miss beside or past it, clears the count;
-  so does moving more than 16 px from where the count started. Lobbers are
+  so does the shooter or the target moving more than 16 px from where the
+  last counted shot was fired from or aimed at (`blockedSpotLeft`; the
+  target's spot is `Unit::blockedTX/TZ`, hashed). Retail
+  keeps no such memory, so the write-off is of the line between the two
+  spots and never of the target: before, only the shooter's spot was kept, so
+  a unit standing still and choosing its own targets skipped an enemy it once
+  found blocked even after it walked into the open (`blocked_shot_test`'s
+  walk-out case: 0 hits before, hits after). Lobbers are
   included: an arc that clears never counts. The body is a circle of its
   footprint's half-extent; a building longer one way (a castle, a gate) is
   also held to its footprint rectangle (`nearBody`, since 2026-10-30), since
@@ -1876,11 +1978,101 @@ Port: `sim/retailreclaim.h` (rectangle, countdown, work wake) driven by
 Ours, not retail: a MobileBuild retry treats a fading feature on its site like
 a mobile unit (the engine's own placement-clearing queues reclaims ahead of a
 build); a fading feature or corpse takes no weapon damage and cannot catch
-fire (otherwise a hit could swap it into a stage that outlives the fade); the
-fade is not drawn (the feature simply goes at its end). Not emulated: the turn
+fire (otherwise a hit could swap it into a stage that outlives the fade); a
+reclaimed corpse's fade is not drawn (it simply goes at its end). Not emulated: the turn
 child and the COB time to INBUILDSTANCE (both add to the table above), what
 else raises 0x400, and retail's per-wake lookup by cell (a new feature on the
 same cell would be carried on with; ours follows the feature id).
+
+**How the fade is drawn** (static analysis, 2026-11-03). Reclaim is the only
+fade: `494ce0` is called with mode 1 only from `494fd0` (the reclaim removal)
+and from net event 3 (`4e9c2c`); damage (`49630a`, `496339`) and net event 1
+(`4e9c60`) pass mode 0. Mode 1 takes a feature object slot (0x60 bytes at
+gameState+0x19e74, 0x800 of them; with none free it calls `494f00` and the
+feature goes at once) and sets +0x2e = 1, alpha +0x30 = 1.0f. The object tick
+`4959c0` subtracts 0.03f (`5f03cc`) at `495b3c` and at <= 0 calls `494f00`
+(`495b6f`): 34 steps, the last drawn alpha 0.0100004f. The feature draw
+`4fd430` (Glide is driven through the renderer vtable `5f67c0`) takes, for a
+sprite feature (type+0x13c bit 0) whose object fades, the current frame
+(`536400`, animating) or seqname frame 0 (`5367a0`), copies it, sets every
+texel that is not the frame's transparent index to 0xff (`4fd5fe`), makes a
+paletted texture of it (vtable +0x7c, `5b8400`), and draws one quad with
+vertex colour `(ftol(alpha * 255.0f) << 24) | 0xffffff` (`4fd688`,
+255.0f at `5ee95c`) under renderer state 6 (`5b77b0`: blending from the
+vertex alpha; `5b7f70` sets render states 0x13 = 5 and 0x14 = 6, source
+alpha / inverse source alpha in Direct3D's numbering -- inferred from the
+numbers) and state 8 (render state 0x29 = 1, colour key, with the
+transparent index set through vtable +0x58). Palette index
+255 is white in every shipped palette (`palettes/*.pal`, `*.pcx`, but for
+`veruna_newpalette`), so a reclaimed tree or rock turns into a white
+silhouette that fades out over 34 ticks. That path jumps past the shadow,
+flame and smoke draws (`4fd7c7` -> `4fda73`). TDF `seqnamereclamate` is not a
+string in the icd: retail never reads it. Port: `client/reclaimfade.h`, drawn
+in the feature body pass from `Feature::fadeLeft` (display only). Area reclaim
+and the placement clearing both reclaim, so they fade the same way.
+
+Not a fade: a feature DESTROYED by damage (`494ce0` mode 0) with a
+`seqnamedie` plays that animation (object +0x4, its shadow `seqnamedieshad`
+at +0x10) and at its end (`495ef7`) calls `494f00` with 0, which places the
+`featuredead` stage (type+0x12c, `494f50`); without a `seqnamedie` it swaps at
+once (`494ee3`). A burn plays seqnameburn and swaps through `495300`. 3DO
+features (statues, corpses) hand +0x2e and +0x30 to the model draw
+(`4fd850`/`4fd85c` -> `4ee700`; `4ec9ba` picks draw mode 2 when +0x13 is
+set); ours does not draw that one yet.
+
+**The death playback** (static analysis, 2026-11-03; established unless
+marked). The loader resolves `seqnamedie` (string `611520`, read at `493ed3`)
+and `seqnamedieshad` (`611510`, `493f23`) in the feature's own `filename` GAF
+through `493700`, as it does `seqnameburn`, and forces both nonlooping
+(`493eff`, `493f4f`: sequence byte +2 = 0); they sit at type+0xe8 and +0xec.
+`494ce0` mode 0 takes that path only for a sprite feature (type+0x13c bit 0;
+a 3DO one swaps at once, `494e00`) whose cell has no object yet (`494d78`:
+cell+0xd bit 8 -- a burning, fading or already dying feature ignores it), and
+only when an object slot is free (`4949c0` < 0x800; with none it returns and
+the feature stays, not ported: ours has no slot limit). The slot gets the
+feature type (+0x2c), the cell (+0x28/+0x2a), the clock `537390(+0x4, die, 0)`,
+the shadow clock at +0x10 only with a `seqnamedieshad` (+0x5d bit 4), and the
+cell gets bit 8 and the slot index in its word +0xa (the damage counter until
+then). The cell keeps the feature (word +8): it still blocks and still owns
+its footprint. Each tick `4959c0` steps the clock (`495edf` -> `5373d0`: a
+frame is held for max(1, delay) ticks, its duration the low word at +0x2c of
+the frame entry, `5367e0`) and the tick the last frame's hold runs out the
+clock's sequence pointer is cleared and `495ef7` calls `494f00(x, z, 0)`:
+`496380` removes the feature and `495360` places `featuredead` (none when the
+object's burn bit +0x5d&2 is set, which mode 0 clears). The same clock times a
+burn-out, so ours counts the death like `Feature::burnLeft`: `dieLeft` starts
+at the sequence's length and the feature is replaced on the tick it would
+reach 0. While it dies:
+- **No damage.** `4961a0` skips a sprite feature whose cell has an object
+  (`4962b6` -> `4962bc`), fire or not: a dying -- and a burning -- feature
+  takes no weapon damage and is not lit (that path is also how a firestarter
+  ignites, `4962ac`).
+- **No fire.** StartBurning `494b40` returns for a cell with an object
+  (`494b6d`), and BurnSpread `495110` passes such a cell over before its
+  rand(100) roll (`49515d`, and `49525c` for the downwind sparks).
+- **Not a reclaim target.** `496ea0` wants the type's reclaimable flag (0x40)
+  and, with an object, that object's +0x5d bit 0x10, which `4949c0` clears and
+  mode 0 never sets. A reclaimer already on it quits on its next wake.
+- **Drawn** (`4fd430`): with an object the body is the clock's current frame
+  (`4fd821` -> `536400`) and the shadow only the `seqnamedieshad` clock's
+  (`4fd7cc`); no shipped feature has one, so a dying feature casts no shadow.
+
+Shipped data (the extracted feature TDFs and GAFs): 382 feature sections
+carry a non-empty `seqnamedie`, every one with a `featuredead`, all sprites,
+none with a `seqnamedieshad`: every tree (Aramon, Creon, Taros, Veruna, Zhon)
+and its dead stage, and buildings, huts, walls, towers, crops, fences,
+inventions and other props. Rocks have none (`zhon/zonrock.tdf`), so they go
+at once. Lengths: 298 are 10 frames of 2 ticks (20 ticks, the trees), 55 are
+3 frames (6), the rest 4 to 38 ticks, and one 10 frames of 10 (100 ticks).
+So an Aramon tree hit for its 1000 falls for 20 ticks, becomes AraTree01a, and
+a further 600 plays AraTreek01a (20) and leaves AraSmudge01.
+
+Port: `World::destroyFeature`/`tickFeatureDeaths` and `Feature::dieLeft`
+(hashed) in the sim, `FeatType::dieTicks` from
+`gaf::FeatureBurnTiming::dieDuration` (also in the gameplay-data hash), and
+`client/featuredie.h` for the drawn frame; `tools/featdie_test.cpp`. Inferred,
+not checked: the order of a burn-out, a death's end and a fade in one tick
+(retail walks one object list; ours takes burns, then deaths, then fades).
 
 ## A factory's output: rally, else PARK (icd `0x402220`, emulated 2026-10-25)
 
@@ -3884,6 +4076,108 @@ production sooner than the exit step did. A factory with a rally on its pad is
 unchanged: retail's rule, nothing moves the body. `production_test` pins all of
 this.
 
+**A Navy Yard's door (a deliberate deviation, user request after 0.9.19).** How
+retail moves a finished ship out of a Navy Yard (established, icd): GetBuilt
+(`0x402220`) gives it the yard's QMove/QPatrol rally or else PARK (`0x407ca0`'s
+ground branch, ships are not canfly) round the yard, exactly as a land factory's
+output; the ring's point lies along the ship's own bearing from the yard, which for
+the Creon Navy Yard (the only shipped one; its pad is 25 px south of its centre) is
+straight out of its south door. Its boat scan (`4dba80`, `retailGroundScan`,
+protocol 143) probes ahead in 16 px steps to `(footprintX+1)*16 + sightdistance`: a
+shore cell or a body (grade below 4) within the probe counter's 160 (176 px ahead)
+runs it at a third of its speed, a later obstacle, grade 4 or unexplored water at
+two thirds. Nothing moves an idle body (BUGGER_OFF is never acted on, BUILD stage
+2's footprint test holds the next site, above). So a ship leaving a door that opens
+partly onto a shore crawls out at a third of its speed until its probe clears the
+land: `navyyard_exit_test` measures a median 120 (Iron Clad) and 152 (Stern Wheeler)
+ticks to clear the yard in Retail mode with two of the door's five columns facing
+land, against 74 and 78 on open water (Legion: 31 and 46, against 35 and 81). That
+time comes from the ported boat scan and is kept. Inferred, not observed in the
+running original: a crowd of idle ships a few cells off the door holds the yard in
+retail too, since nothing moves them. Observed in ours: the first 3x3 output wedges
+against the crowd just out of the yard, the next is born behind it, and the yard
+stops; an idle ship on the pad stops it before the first. On 0.9.19 eight idle Iron
+Clads parked a body's gap apart 40 px off the door let the yard build 2 of 6 Iron
+Clads or Stern Wheelers in 7 of the 8 combinations of mode and layout (Legion on
+open water got all six Iron Clads out; Submersibles 5 or 6 of 6), and one Iron Clad
+on the pad left the yard building nothing in all 12 combinations of mode, layout and
+ship. Now `World::clearYardDoor` runs for every scripted production building every
+15 ticks: while one of its ships is on its way out (in front of the yard on its PARK
+round it, or still in the yard on any order) or its next ship's site was refused,
+the owner's idle ships whose footprint is in front of the yard (its rectangle grown
+8 cells on every side) move to just outside that area across the door's axis (the
+axis from the yard's centre to the leaving ship), on their own side, the door's side
+last (`pointOutside`: free, reachable, not where another mover was sent), tagged
+`productionExit` so a held-up move ends once clear of where it stood. Only
+water-domain ships of the yard's owner move, and only idle ones: other players'
+ships, ships with any order (guards too), land units and flyers stay as before, and
+a land factory is unchanged. The crowd at the door now costs the yard at most 3.4%
+of its build time for six ships at four times the worker time (clear-door runs:
+1,483-2,201 ticks), the ship on the pad at most 8.4%. `navyyard_exit_test` (both
+modes; open water and a door facing a shore; Submersible, Iron Clad, Stern Wheeler;
+no crowd, eight at the door, one on the pad) fails 42 of its 60 checks without the
+change.
+
+**A land factory's door (the same deviation, user request after 0.9.19).** Retail
+treats a land factory's door exactly as a Navy Yard's (established, icd, re-read
+2026-11-03): BUILD stage 2 (`0x401c20` stage 2, the call at `0x401deb`) admits the
+next site only through `0x507d10(type, self 0, origin, factory +0x130 & 3,
+allowMoving 0)`, and a refusal (`0x401df2`) sleeps the mission `rand(15)+7` ticks
+(`0x401df4..0x401e01`) and sets mission flag 2; nothing is moved. BUGGER_OFF's setter
+(`0x50d50e`) masks bit 3 of unit `+0x12f` in and out; of the 42 accesses to that byte
+only GET 19 (`0x50d1fd`) and save/load (`0x513528`, `0x513cf8`) read it (the masked
+tests at `0x4d4b9b`, `0x4d4bcb`, `0x506355`, `0x5139ec` and `0x5206e1` are bits 0, 1
+and 2). The finished unit gets GetBuilt's rally or PARK (`0x402220`, the same ground
+branch of `0x407ca0`), and a body in its way only clamps and slows it
+(`0x4dbe2c`). So in retail a new unit waits on the pad for the body there, and once
+out presses on, or re-rolls its PARK point, round a crowd; no idle body ever steps
+aside. Inferred, not observed in the running original: one idle unit on a land
+factory's pad stops it for good there too. Observed in ours on fixes-0920 before the
+change (`landdoor_exit_test`: Aramon Barracks, Veruna Keep, Taros Dungeon, Creon
+Academy; a small and a large output, six each; both modes): one idle unit on the pad
+left every factory building nothing in all 16 combinations; a dozen idle units two
+rows deep 24 px off the door held the Academy to one or two of six in all four of its
+combinations, while the other factories' outputs found a way round. `clearYardDoor`
+now serves every scripted production building: the outputs' plane decides who moves
+(ships at a yard, ground and hover units at a land factory), and at a land factory
+only the half of the area on the leaving output's side of the factory's centre is
+cleared, so units parked behind it stay (at a yard the half area kept a Legion Stern
+Wheeler out of a door onto a shore for 300 ticks, so a yard keeps the whole area).
+Each finished output now remembers its factory (`Unit::builtBy`, unhashed: set once
+at completion, from hashed state): an output in front of its factory on its way out (on its PARK round it, on a
+plain move such as its rally, or still on the pad) is the door's traffic; an older
+output guarding, building, patrolling or attacking there is not, or it would clear
+the area for as long as it stayed; and the factory's own parked outputs move only off the pad, or,
+under the Retail navigator, when one stands in the cells round a later output of the
+factory (2 deep) that is held up by a body (refusal streak 2) on its PARK. That rule
+moves any other idle unit of the owner there too, past the area: crowd ships moved
+just outside the area held an Iron Clad there, and the yard's own parked Stern
+Wheelers wedged the next one off a shore. Legion gives each output a spot of its own
+out of the door's lane and has no such rule: moving its parked outputs put them
+back in the lane (`legion_park`). The first Navy Yard rule moved every own parked
+unit in the area each time the next one left: 87 re-orders of parked outputs over
+`navyyard_exit_test`'s 36 runs and 127 over `landdoor_exit_test`'s 64; now 2 and
+26. Owner only, allies
+included: nothing in the sim orders another player's units, as `clearBuildSite` and
+`clearProductionRoom` move only the builder's own. Units with any other order,
+units with production of their own (a Zhon builder), flyers and other players'
+units stay; a Zhon producer itself is mobile and keeps `clearProductionRoom`. A
+crowd of guards at the door held a factory (Legion: the Academy built none of six,
+its guards standing on the refused site just outside the pad), so by the owner's
+decision the owner's guards now step aside too, at land factories and the yard,
+unless fighting (`World::doorGuard`): the move goes ahead of the guard, which
+resumes after it, once per factory event (`Unit::doorSerial`: next even number per
+finished output, odd per refusal episode; the guard keeps the factory and serial it
+stepped aside for, so a key earned at one factory never skips it at another), and a
+refused site's own footprint is cleared with the pad (`Unit::refusedSiteX/Z`). With
+guards the Legion Academy lets all six out. With the change the crowd costs the factory at most 13%
+of its clear-door build time and the unit on the pad at most 14% (six outputs at four
+times the worker time, 576-1,306 ticks clear-door); medians to clear the factory with
+no crowd, Retail / Legion, small then large output: Barracks 57/61 and 92/124, Keep
+42/45 and 83/99, Dungeon 33/43 and 62/80, Academy 25/27 and 20/35 ticks.
+`landdoor_exit_test` (quick label, 128 checks) fails 40 of them on the code before
+the change.
+
 Two false starts worth recording, because both are easy to repeat: thread counts
 do NOT work as the test observable. A factory legitimately keeps a thread open
 while active (Creon's `Go` ends with `START_SCRIPT FactoryFun`, the machinery
@@ -5132,6 +5426,79 @@ chases), the hold also follows the single step an order takes when the
 fire-at-will sweep switches her weapon on its first tick, and she stalls in 26
 attack-sweep cases that she fires in now (all of them that step, 14 against the
 castle or the lodestone); retail's automatic slot would aim during that walk.
+
+## Kirenna on an attack-move (icd static + emulation, 2026-11-03)
+
+The 0.9.3 known limit "a Vermage on attack-move with Maneuver dealt no
+damage" reproduces on 0.9.19: Kirenna attack-moving past an Archer 1100 px
+off acquires it about 680 px off (inside 690), walks in, stands 400 px off aiming (her slot's
+aim flags 0xe0) and never fires while it hits her (`vermage_fight_test`,
+Retail and `--legion`). It is the Attack_Chase race above, reached through
+an order retail does not have:
+
+- **Retail has no fight-move** (see "Fight-move legs" above). Its nearest
+  order, a move with fire at will, fires through the automatic slots: the
+  sweep (`40f330`) picks only enemies on the player's visible list (`412620`,
+  `fire_sweep_test vision`). World does that on a plain move too: past the
+  same Archer she walks on until she sees it (sight 215), the sweep aims her
+  slot while she walks, and she fires (the same test).
+- **World's attack-move acquisition is not retail's scan.** `findTarget`
+  takes an enemy within the longest weapon's range + 90 px (Water Burst 600:
+  690 px) whether or not the player sees it; retail's scan (`4d8370` ->
+  `412620`) takes visible enemies within max(sight, the selected slot's
+  range). So she starts an Attack_Chase on an Archer she cannot see, stops in
+  reach of Water Ball (400) before seeing it, and the sweep never aims for
+  her. Her AimWeapon then waits on static 7 for ever, as retail's does in the
+  stalled cases of the grid above.
+
+**Attack_Chase's approach, read (static, `403bb0`).** Stage 2's new
+approach is picked by mission `+0x52` (the mode) through the byte table at
+`404620` (106 entries) into the jump table at `404608`: modes 0-1 and
+100-101 case 0, 2 and 102 case 1, 3/103 case 2, 4/104 case 3, 5/105 case 4,
+any other mode case 5 (`403c47`, return 7: the mission ends). With R =
+`52aba0` (range), r = `52abd0` (minimum range), span = R - r and d the whole
+pixel distance from the unit to the goal (`+0x22`):
+
+- case 0 (`4040dd`): r = 0 ? circle(goal, R) (`4d4da0` -> `4e2500`) :
+  ring(goal, R, r) (`4d4e10` -> `4e28f0`; an inner radius at or past the
+  outer widens the outer to 2 x inner + 100, `4e2906`);
+- case 1 (`40410c`): outer = R - rand(span/3) - rand(span/3), inner =
+  rand(span/8) + r; if inner <= d <= outer and rand(3) != 0 the mode steps
+  on; r = 0 ? circle(goal, outer) : outer - inner >= 50 ? ring(goal, outer,
+  inner) : ring(goal, span >= 75 ? R - span/3 : R, r);
+- case 2 (`404208`): outer = R - 3 x span/4 - rand(span/4), the same band
+  test against r, then circle(goal, outer) or ring(goal, outer, r) when 50
+  apart, else ring(goal, span < 100 ? R : R - span/2, r);
+- case 3 (`4042dc`): the mode steps on; a circle of 16 px on the point d'
+  from the target toward the unit (heading `51b340`(target, unit) +
+  rand(0x5555) - 0x2aaa; d' = rand(span/2) + r, or rand(span) + r, or
+  rand(span/2) + span/2 + r on two rand(2) draws; offsets `5360bf`/`5360f3`
+  negated);
+- case 4 (`4041fc`): keeps the controller it has.
+
+Stage 1 (`404406`) out of reach steps the mode on when rand(2) != 0 and
+mode % 100 < 4 (`4044ba`), adds 1000 and runs stage 2 at once, which takes
+the 1000 off and installs the case's approach; an arrival at mode 5 steps it
+back to 4 (`403f3e`). Stage 2 on a wake re-reads the target only when its
+footprint origin left the goal's (`403f62`), and then goes to stage 1 if the
+target is in reach and rand(mode % 100 + 1) == 0 (`404011`, a sixth of those
+also drop the mode to its hundred). The chase's slots are left alone until
+stage 1 (`519b70` is called only at `404483`, for the selected slot whose
+target differs). Emulated (`probe_attack_chase_stop.py`, 1100 px, sweep
+every 4 ticks): the first circle accepts 403.5 px off, out of reach; stage 1
+runs at +2, the re-installed circle reports at once, stage 1 at +4 steps to
+mode 2 and the narrower ring walks her to 242.5 px; in reach while walking,
+the sweep aims her slot at 400 px and she fires at once.
+
+**Not changed.** A port of that approach and of the automatic chase slots
+was tried on `fx-vermage` and kept out: it does not make Kirenna fire here
+(the sweep still cannot see the Archer), and on a plain-approach grid of
+explicit attacks with hold fire (620-760 px, one per pixel, this World's
+geometry) she fired in 59 of 141 with it and 72 without, against retail's 34
+of 141 in the emulator's own geometry; where the circle accepts depends on
+the cell alignment, so the two grids are not the same cases. Matching retail
+here means a retail-faithful fight-move acquisition (visible enemies, the
+selected slot's reach), not this mission alone.
 
 ## Mission order strings (icd 0x513fb0, 2026-10-30)
 

@@ -11,6 +11,7 @@
 #include "client/hidpi.h"
 #include "client/font.h"
 #include "client/guiart.h"
+#include "client/menuclick.h"
 #include "client/gpuvram.h"
 #include "client/settings.h"
 #include "client/artscale.h"
@@ -146,11 +147,7 @@ struct CampaignScreen::Impl {
     }
     void click(const char* name) {
         if(!playSound)return;
-        if(const auto* g=gadget(name))for(const auto& state:g->states) {
-            std::string value=state;
-            std::transform(value.begin(),value.end(),value.begin(),[](unsigned char c){return char(std::tolower(c));});
-            if(value.ends_with(".wav")){playSound(value);return;}
-        }
+        if(const auto* g=gadget(name))if(auto sound=menuclick::soundOf(*g);!sound.empty())playSound(sound);
     }
     void choose() {
         if(camps.empty() || !count())return;

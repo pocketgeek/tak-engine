@@ -152,6 +152,7 @@
 #include "client/fogupload.h"
 #include "client/shadowmask.h"
 #include "client/appglobals.h"   // kProjY/kProjZ, kSortZ/kSortY
+#include "client/terrainlift.h"  // the retail height lift (h / 2)
 #include "client/hudcorner.h"    // the top-left overlays' shared column
 
 class GameView {
@@ -1536,7 +1537,9 @@ private:
     // instances (shoreline waves and the like) have none, and the snapshot's fallback
     // deliberately reports them alive so they keep RENDERING. That must not be confused
     // with "reclaimable" -- see hoverCursor.
-    struct FeatSim { int type; bool burning; bool alive; int fx, fz; bool hasSim; uint32_t burnStarted = 0; bool reclaimable = false; bool blocking = false; };
+    struct FeatSim { int type; bool burning; bool alive; int fx, fz; bool hasSim; uint32_t burnStarted = 0; bool reclaimable = false; bool blocking = false;
+                     uint32_t fadeEnd = 0;   // reclaimfade::fadeEnd
+                     uint32_t dieEnd = 0; }; // tick its featuredead replaces it (0: not dying)
     std::vector<FeatSim> featSimState_;
     uint32_t lastFeatGen_ = UINT32_MAX;   // != any real generation, so the first sync runs
 
@@ -2724,9 +2727,12 @@ private:
 
     // Height-aware 2.5D: the world-pixel lift for a point, from the terrain height
     // under it, so a unit (and its shadow/health bar/selection/effects) sits on
-    // the elevation the tile art shows instead of the flat grid cell. Zero at the
-    // map's ground level; water and flat ground are unaffected.
-    int heightRef_ = -1;                          // map ground level (modal height)
+    // the elevation the tile art shows instead of the flat grid cell. The lift is
+    // the ABSOLUTE height / 2, as retail's (client/terrainlift.h). It used to be
+    // taken above the map's modal height, which drew every unit modal/2 px south
+    // of where retail does -- 110px on a map whose ground is at 220.
+    bool liftReady_ = false;                      // debug scales read (heightAbove)
+    int modalHeight_ = 0;                         // F7 overlay only: the commonest height
     // Screen-Y lift per terrain height unit (also used by occlusion + picking).
     // RETAIL'S VALUE IS 0.5, and it is not a guess: 0x511140 returns byte +4 of
     // a cell record -- the terrain height -- and its caller at 0x426820 forms
@@ -2736,23 +2742,26 @@ private:
     // 1.1 here, which is 2.2x too much: at height 120 that is 132px of lift
     // against retail's 60, so a unit on raised ground was drawn most of four
     // tiles too far up-screen and appeared to stand on terrain beside it.
-    float kHeightScale_ = 0.5f;
+    float kHeightScale_ = tak::client::lift::kScaleY;
     // Screen-X lift per height unit. Zero, and retail agrees: its screen X is
     // (x << 4) - cameraX with no height term (0x426820). Tunable via TAK_HSCALEX
     // for experiments only.
     float kHeightScaleX_ = 0.0f;
     int kOccScan_ = 12;                            // cells to scan south for a wall
-    // Height above ground at a world point, bilinearly sampled so lifts ramp
-    // smoothly across a slope. Lazily initialises the modal ground reference and
-    // reads the tunable scales / debug flag from the environment.
+    // Absolute terrain height at a world point with retail's corner-anchored,
+    // truncating bilinear sampler (client/terrainlift.h). Lazily reads the
+    // tunable scales / debug flag from the environment.
     float heightAbove(float wx, float wz);
-    float rawHeight(float wx, float wz);   // unclamped bilinear height (waterline sink)
-    // Screen-Y sink for a wading (canhover) or floating (floater) unit standing in
-    // water, from FBI `waterline`. Zero on land and for every other unit.
+    float rawHeight(float wx, float wz);   // the same sample, without the lazy setup
+    // Screen-Y offset (down positive) of a wading (canhover) or floating (floater)
+    // unit from the terrain lift: retail stands it at the sea minus its FBI
+    // `waterline` (client/terrainlift.h bodyHeight), so over deep water it rises
+    // above the seabed and a floater on a shoal sinks into it. Zero on land.
     float waterSink(const tak::sim::UnitType* t, float wx, float wz);
     // Screen-space displacement of a world point's surface from its flat grid cell,
     // baked into the tile art by the tilted 2.5D view: up (Y) AND sideways (X).
-    float terrainLift(float wx, float wz) { return heightAbove(wx, wz) * kHeightScale_; }
+    // Retail's z - (y >> 1): whole pixels, odd heights rounding down.
+    float terrainLift(float wx, float wz) { return std::floor(heightAbove(wx, wz) * kHeightScale_); }
     // ---- the datum a FLYER holds its altitude above --------------------------
     // Retail does not fly over the per-pixel heightmap. It precomputes, at map
     // load, one byte per 128x128-world-unit sector holding the MAXIMUM terrain
@@ -2772,7 +2781,7 @@ private:
     int flyGroundW_ = 0, flyGroundH_ = 0;    // sectors
     const void* flyGroundMap_ = nullptr;     // which map it was built for
     float terrainLiftX(float wx, float wz) {
-        if(heightRef_>=0 && kHeightScaleX_==0)return kHeightScaleX_;
+        if(liftReady_ && kHeightScaleX_==0)return kHeightScaleX_;
         return heightAbove(wx, wz) * kHeightScaleX_;
     }
     // The terrain-relief lift is for MOBILE units standing on painted slopes. A
@@ -2803,13 +2812,19 @@ private:
     // units, buildings, AND the feature decals (mana deposits, trees) -- so a mana
     // deposit sits at the height its heightmap claims and a lodestone/units built on
     // it stack right on top instead of the decal being flat while units float above.
-    float uLiftY(const tak::sim::Unit& u) { return terrainLift(u.x.toFloat(), u.z.toFloat()); }
+    // The Y lift is of the BODY, so a wading or floating unit's waterline sink is
+    // folded in: over deep water it rides at sea - waterline, and every overlay
+    // (health bar, squad marker, cull, camera centring) has to follow it there.
+    float uLiftY(const tak::sim::Unit& u) {
+        const float x = u.x.toFloat(), z = u.z.toFloat();
+        return terrainLift(x, z) - waterSink(u.type, x, z);
+    }
     float uLiftX(const tak::sim::Unit& u) { return terrainLiftX(u.x.toFloat(), u.z.toFloat()); }
     // Snapshot overloads. A FLYER rides the coarse dilated datum, not the relief
     // under its nose -- see flyerGround.
     float uLiftY(const UnitR& u) {
         if (u.type && u.type->canFly) return flyerDatum(u) * kHeightScale_;
-        return terrainLift(u.x, u.z);
+        return terrainLift(u.x, u.z) - waterSink(u.type, u.x, u.z);
     }
     float uLiftX(const UnitR& u) {
         if (u.type && u.type->canFly) return flyerDatum(u) * kHeightScaleX_;
@@ -2960,13 +2975,16 @@ private:
 #endif
     // The sprite a feature shows this frame (burn playback, animation frame, wind
     // sway), in screen space: what the body pass draws and the cover tests read.
+    struct FeatArt;   // defined with the feature art below
     struct FeatureSprite {
         SDL_Texture* tex = nullptr;
         const tak::hiddenunits::AlphaMask* mask = nullptr;
         SDL_FRect dst{};
         float shear = 0;   // top edge shifted sideways by this much (sway)
         bool sway = false;      // drawn as a sheared quad (Trees Sway In Wind)
-        bool burning = false;   // the burn playback (never sways)
+        bool burning = false;   // the burn or death playback (never sways)
+        const FeatArt* art = nullptr;   // the standing art and frame drawn (not the burn)
+        size_t frame = 0;
     };
     FeatureSprite featureSprite(const FeatureInst& f, float zm);
 #ifndef NDEBUG
@@ -3003,7 +3021,7 @@ private:
     // surface of the tallest wall BETWEEN this unit and the camera (i.e. to its
     // south, larger z). Units are then clipped to above that line and the hidden
     // part re-drawn as a faint silhouette. Returns a huge value when nothing
-    // occludes the unit. kHeightScale_/heightRef_ are lazily set by terrainLift.
+    // occludes the unit. kHeightScale_ is lazily set by terrainLift.
     float wallOcclusionY(float wx, float wz);
     uint32_t netTick_ = 0;
     uint32_t netStopTick_ = UINT32_MAX;   // see setNetStopTick
@@ -3489,7 +3507,6 @@ private:
     // minimap location (F + minimap = fight-move there). Returns true if handled.
     bool minimapArmedOrder(float mx, float my, int winW, int winH);
 
-    struct FeatArt;   // defined just below; FeatureInst only needs the pointer type
     struct FeatureInst {
         SDL_Texture* tex = nullptr;
         const std::vector<SDL_Texture*>* frames = nullptr;
@@ -3504,6 +3521,14 @@ private:
         const EffectAnim* backFlame = nullptr;
         uint32_t burnStarted = 0; // simulation ignition tick
         uint8_t burnVis = 0; // sim says burning: draw burnArt + emit smoke
+        // Reclaimed, fading out: the tick it leaves the plane (client/reclaimfade.h),
+        // 0 when not fading. Snapshotted with aliveVis.
+        uint32_t fadeEnd = 0;
+        // Destroyed by damage, playing seqnamedie: the tick the sim replaces it
+        // with featuredead (Feature::dieLeft), 0 when not dying; dieArt is that
+        // playback, loaded on the death edge.
+        uint32_t dieEnd = 0;
+        const FeatArt* dieArt = nullptr;
         // Snapshotted once per frame in syncBurningFeatures, under simMutex_. The
         // draw loop used to ask world_.featureAliveAt() per feature with no lock,
         // and addFeature() does a push_back that can REALLOCATE the feature vector
@@ -3554,7 +3579,7 @@ private:
     std::vector<uint32_t> unitQuery_;
     std::vector<uint32_t> unitAll_;       // 0, 1, 2, ... (whole-list answers)
     struct LiftBoundsKey { const void* map = nullptr; const void* heights = nullptr; size_t size = 0;
-                           int ref = -2; float scale = 0, scaleX = 0; };
+                           float scale = 0, scaleX = 0; };
     LiftBoundsKey unitLiftKey_;
     tak::render::LiftBounds unitLift_;
     bool unitFullScan_ = false;           // read once per frame
@@ -3592,6 +3617,10 @@ private:
         std::vector<tak::hiddenunits::AlphaMask> masks;
         std::vector<int> tickEnd;   // cumulative end tick per frame
         int totalTicks = 0;         // full loop length in 30Hz ticks
+        // White silhouettes of the frames for the reclaim fade, parallel to frames
+        // and made on first use (fadeSilhouette): most art never fades.
+        mutable std::vector<SDL_Texture*> fadeFrames;
+        void destroyTextures();   // frames, shadowFrames and fadeFrames
     };
     std::map<std::string, tak::tdf::Node> featureDefs_;
     std::map<std::string, tak::gaf::Palette> featurePals_;
@@ -3612,6 +3641,7 @@ private:
                            const char* shadKey = "seqnameshad");
     void swapFeatureArt(FeatureInst& fi, const std::string& name);
     void syncBurningFeatures();
+    SDL_Texture* fadeSilhouette(const FeatArt& art, size_t frame);
 
     // Place one feature instance by definition name; returns success.
     bool addFeature(const std::string& rawName, int cx, int cz);

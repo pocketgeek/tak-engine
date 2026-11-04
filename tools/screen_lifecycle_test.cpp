@@ -12,6 +12,13 @@
 #include <cstdio>
 #include <stdexcept>
 
+// The result screen's clicks (client/menusfx.h) open their device through Options'
+// device routing; this test links no Options, so the system default stands in.
+namespace tak {
+SDL_AudioDeviceID openAudioDevice(int iscapture,const SDL_AudioSpec* want,SDL_AudioSpec* got,int allowed) {
+    return SDL_OpenAudioDevice(nullptr,iscapture,want,got,allowed);
+}
+}
 static void check(bool ok,const char* message) { if(!ok)throw std::runtime_error(message); }
 int main(int argc,char** argv) try {
     if(argc!=2)return 2;
