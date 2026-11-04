@@ -10,18 +10,18 @@
 // racing the audio callback or depending on physical audio hardware.
 struct SoundBankTestAccess {
     static bool prepare(SoundBank& bank) {
-        SDL_AudioSpec want{};want.freq=11025;want.format=AUDIO_S16SYS;
+        SDL_AudioSpec want{};want.freq=SoundBank::kMixRate;want.format=AUDIO_S16SYS;
         want.channels=1;want.samples=256;
         bank.dev_=SDL_OpenAudioDevice(nullptr,0,&want,&bank.spec_,0);
         bank.chan_=1;
         bank.index_["quiet"]="quiet";bank.index_["cry"]="cry";
-        bank.cache_["quiet"]=std::vector<int16_t>(64,20);
-        bank.cache_["cry"]=std::vector<int16_t>(64,400);
+        bank.cache_["quiet"]={std::vector<int16_t>(64,20)};
+        bank.cache_["cry"]={std::vector<int16_t>(64,400)};
         return bank.dev_!=0;
     }
     static int sample(SoundBank& bank) {int16_t value=0;bank.mix(&value,1);return value;}
     static bool decodes(SoundBank& bank,const std::vector<uint8_t>& data) {
-        auto pcm=bank.decodeWav(data.data(),data.size());return pcm && !pcm->empty();
+        auto pcm=bank.decodeWav(data.data(),data.size());return pcm && pcm->frames()>0;
     }
 };
 

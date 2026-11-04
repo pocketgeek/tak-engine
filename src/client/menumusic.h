@@ -8,14 +8,17 @@
 
 #include <SDL.h>
 
+#include <algorithm>
 #include <atomic>
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
 #include "hpi/hpi.h"
-#include "client/options.h"   // tak::openAudioDevice (routes to the chosen device)
+#include "util/audiolayout.h"
+#include "client/options.h"   // tak::openAudioDevice / tak::detectOutputChannels
 
 namespace tak {
 
@@ -26,8 +29,8 @@ public:
     MenuMusic(const MenuMusic&) = delete;
     MenuMusic& operator=(const MenuMusic&) = delete;
 
-    // The stream mixer accepts 11025 Hz signed PCM. Tap the volume-scaled
-    // device buffer, converting the menu WAV's native format/rate as needed.
+    // The stream mixer accepts 44100 Hz signed PCM in any layout (it folds it to
+    // stereo). Tap the volume-scaled device buffer, resampled from the track's rate.
     void setAudioTap(void* context, void (*tap)(void*, const int16_t*, int, int)) {
         if (dev_) SDL_LockAudioDevice(dev_);
         tapContext_ = context; tap_ = tap;
@@ -43,29 +46,10 @@ public:
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return;
         std::vector<uint8_t> raw;
         try { raw = vfs.read("music/track" + std::to_string(track) + ".wav"); } catch (...) { return; }
-        SDL_RWops* rw = raw.empty() ? nullptr : SDL_RWFromConstMem(raw.data(), int(raw.size()));
-        SDL_AudioSpec wav{}; Uint8* buf = nullptr; Uint32 len = 0;
-        if (!rw || !SDL_LoadWAV_RW(rw, 1, &wav, &buf, &len)) return;
-        // Keep the unscaled source so the BGM/master volume can be re-applied live.
-        src_.assign(buf, buf + len);
-        fmt_ = wav.format;
-        SDL_FreeWAV(buf);
-        // Callback-driven, NOT queue-driven: the audio thread pulls chunks itself, so a
-        // long synchronous load on the main thread (map + texture atlases when a
-        // game starts) can't starve the queue and stutter the BGM the way a poll()
-        // did. Matches SoundBank's model.
-        SDL_AudioSpec want = wav, have{};
-        want.samples = 2048;             // ~46ms device buffer at 44.1kHz
-        want.callback = &MenuMusic::mixThunk;
-        want.userdata = this;
+        if (!decode(raw)) return;
         pos_ = 0;                        // set before the device unpauses (callback reads it)
-        openWant_ = want;                // kept so reopen() can re-open on a new device
-        dev_ = tak::openAudioDevice(0, &want, &have, 0);   // flags 0 => have == want
-        if (!dev_) { src_.clear(); return; }
-        silence_ = have.silence;
+        if (!openDevice()) { src_.clear(); return; }
         track_ = track;
-        resetTapConverter();
-        playing_.store(true);
         SDL_PauseAudioDevice(dev_, 0);   // the callback starts pulling
     }
 
@@ -77,12 +61,7 @@ public:
         SDL_CloseAudioDevice(dev_);      // stops + joins the callback thread; pos_ is preserved
         dev_ = 0;
         playing_.store(false);
-        SDL_AudioSpec have{};
-        dev_ = tak::openAudioDevice(0, &openWant_, &have, 0);
-        if (!dev_) { src_.clear(); track_ = -1; return; }
-        silence_ = have.silence;
-        resetTapConverter();
-        playing_.store(true);
+        if (!openDevice()) { src_.clear(); track_ = -1; return; }
         SDL_PauseAudioDevice(dev_, 0);
     }
 
@@ -113,40 +92,94 @@ public:
 
 private:
     friend struct MenuMusicTestAccess;
+    // The track as S16 at its own rate (only a rate above 44100 is converted down)
+    // and its own channel count, so a mod's 44.1 kHz stereo or 5.1 replacement keeps
+    // its quality. fill() lays it onto the device's speakers.
+    bool decode(const std::vector<uint8_t>& raw) {
+        SDL_RWops* rw = raw.empty() ? nullptr : SDL_RWFromConstMem(raw.data(), int(raw.size()));
+        SDL_AudioSpec wav{}; Uint8* buf = nullptr; Uint32 len = 0;
+        if (!rw || !SDL_LoadWAV_RW(rw, 1, &wav, &buf, &len)) return false;
+        const int rate = std::min(wav.freq, audio::kMixRate);
+        SDL_AudioCVT cvt;
+        if (wav.channels < 1 || wav.channels > 8 || wav.freq <= 0 ||
+            SDL_BuildAudioCVT(&cvt, wav.format, wav.channels, wav.freq,
+                              AUDIO_S16SYS, wav.channels, rate) < 0) { SDL_FreeWAV(buf); return false; }
+        std::vector<Uint8> work(size_t(len) * size_t(std::max(cvt.len_mult, 1)));
+        std::memcpy(work.data(), buf, len);
+        SDL_FreeWAV(buf);
+        cvt.buf = work.data(); cvt.len = int(len);
+        if (cvt.needed && SDL_ConvertAudio(&cvt) != 0) return false;
+        const size_t bytes = cvt.needed ? size_t(cvt.len_cvt) : len;
+        src_.assign(bytes / 2 / size_t(wav.channels) * size_t(wav.channels), 0);
+        std::memcpy(src_.data(), work.data(), src_.size() * 2);
+        rate_ = rate; srcChannels_ = wav.channels;
+        return !src_.empty();
+    }
+    // Open on the current device at the track's rate, in the device's own speaker
+    // layout (tak::detectOutputChannels, as SoundBank uses): S16, flags 0, so the
+    // device takes exactly what fill() writes and SDL converts nothing more.
+    bool openDevice() {
+        SDL_AudioSpec want{}, have{};
+        want.freq = rate_;
+        want.format = AUDIO_S16SYS;
+        want.channels = Uint8(std::clamp(tak::detectOutputChannels(), 1, 8));
+        // Callback-driven, NOT queue-driven: the audio thread pulls chunks itself, so a
+        // long synchronous load on the main thread (map + texture atlases when a
+        // game starts) can't starve the queue and stutter the BGM the way a poll()
+        // did. Matches SoundBank's model.
+        want.samples = 2048;             // ~46ms device buffer at 44.1kHz
+        want.callback = &MenuMusic::mixThunk;
+        want.userdata = this;
+        openWant_ = want;
+        dev_ = tak::openAudioDevice(0, &want, &have, 0);   // flags 0 => have == want
+        if (!dev_) return false;
+        setLayout(want.channels);
+        resetTapConverter();
+        playing_.store(true);
+        return true;
+    }
+    void setLayout(int channels) {
+        channels_ = channels;
+        matrix_ = audio::musicMatrix(srcChannels_, channels_);
+    }
     void resetTapConverter() {
         if (tapConverter_) SDL_FreeAudioStream(tapConverter_);
         tapConverter_ = tap_ && !src_.empty()
-            ? SDL_NewAudioStream(fmt_, openWant_.channels, openWant_.freq,
-                                 AUDIO_S16SYS, 2, 11025) : nullptr;
+            ? SDL_NewAudioStream(AUDIO_S16SYS, Uint8(channels_), rate_,
+                                 AUDIO_S16SYS, Uint8(channels_), audio::kMixRate) : nullptr;
     }
     static void SDLCALL mixThunk(void* userdata, Uint8* stream, int len) {
         static_cast<MenuMusic*>(userdata)->fill(stream, len);
     }
 
-    // Fill one device buffer by mixing the volume-scaled source at pos_, wrapping at the
-    // end for a seamless loop. Runs on the AUDIO thread. Offsets stay frame-aligned
-    // because the source length and every mix step are.
+    // Fill one device buffer from the volume-scaled source at pos_, laid onto the
+    // device's speakers (audio::musicMatrix: the game's stereo music bed, or a
+    // multichannel track channel for channel), wrapping at the end for a seamless
+    // loop. Runs on the AUDIO thread.
     void fill(Uint8* stream, int len) {
-        if (src_.empty()) { SDL_memset(stream, silence_, size_t(len)); return; }
-        int vol = 128 * bgm_.load(std::memory_order_relaxed) / 256
-                      * master_.load(std::memory_order_relaxed) / 256;   // SDL_MIX_MAXVOLUME=128
-        SDL_memset(stream, silence_, size_t(len));   // silence -> MixAudioFormat scales onto it
-        size_t need = size_t(len);
-        Uint8* out = stream;
-        while (need > 0) {
-            size_t avail = src_.size() - pos_;
-            size_t take = std::min(need, avail);
-            SDL_MixAudioFormat(out, src_.data() + pos_, fmt_, Uint32(take), vol);
-            pos_ += take;
-            if (pos_ >= src_.size()) pos_ = 0;       // loop
-            out += take;
-            need -= take;
+        SDL_memset(stream, 0, size_t(len));
+        const size_t sc = size_t(srcChannels_), frames = size_t(len) / 2 / size_t(channels_);
+        if (src_.empty() || frames == 0) return;
+        const float vol = float(bgm_.load(std::memory_order_relaxed)) / 256.f
+                        * float(master_.load(std::memory_order_relaxed)) / 256.f;
+        auto* out = reinterpret_cast<int16_t*>(stream);
+        const size_t total = src_.size() / sc;
+        for (size_t f = 0; f < frames; ++f) {
+            const int16_t* in = src_.data() + pos_ * sc;
+            for (int o = 0; o < channels_; ++o) {
+                float v = 0;
+                for (size_t k = 0; k < sc; ++k) v += matrix_[size_t(o)][k] * float(in[k]);
+                out[f * size_t(channels_) + size_t(o)] = int16_t(std::clamp(v * vol, -32768.f, 32767.f));
+            }
+            if (++pos_ >= total) pos_ = 0;   // loop
         }
         if (tap_ && tapConverter_ && SDL_AudioStreamPut(tapConverter_, stream, len) == 0) {
-            std::array<int16_t, 2048> pcm;
+            std::array<int16_t, 4096> pcm;
+            const int frameBytes = channels_ * int(sizeof(int16_t));   // whole frames only (5.1: 12)
+            const int want = int(sizeof pcm) / frameBytes * frameBytes;
             int bytes;
-            while ((bytes = SDL_AudioStreamGet(tapConverter_, pcm.data(), int(sizeof pcm))) > 0)
-                tap_(tapContext_, pcm.data(), bytes / (2 * int(sizeof(int16_t))), 2);
+            while ((bytes = SDL_AudioStreamGet(tapConverter_, pcm.data(), want)) > 0)
+                tap_(tapContext_, pcm.data(), bytes / (channels_ * int(sizeof(int16_t))), channels_);
         }
     }
 
@@ -155,11 +188,12 @@ private:
     SDL_AudioStream* tapConverter_ = nullptr;
     std::atomic<bool> playing_{false}; // also read by the game's streaming audio callback
     SDL_AudioDeviceID dev_ = 0;
-    SDL_AudioSpec openWant_{};    // spec used to open dev_, kept so reopen() can switch devices
-    std::vector<uint8_t> src_;    // unscaled source, kept so volume can re-apply live
-    SDL_AudioFormat fmt_ = 0;
-    Uint8 silence_ = 0;          // device silence byte (have.silence)
-    size_t pos_ = 0;             // play cursor into src_ (bytes, frame-aligned); audio thread only
+    SDL_AudioSpec openWant_{};    // spec dev_ was opened with
+    std::vector<int16_t> src_;    // unscaled source, kept so volume can re-apply live
+    int rate_ = audio::kMixRate, srcChannels_ = 2;   // the track's own rate and channels
+    int channels_ = 2;            // the device's speaker count
+    audio::Matrix matrix_ = audio::musicMatrix(2, 2);   // src_ -> device speakers
+    size_t pos_ = 0;             // play cursor into src_ (frames); audio thread only
     std::atomic<int> master_{256}, bgm_{128};   // read by the audio thread, set from the main thread
     int track_ = -1;
 };
