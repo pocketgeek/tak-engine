@@ -127,9 +127,17 @@ int main(int argc, char** argv) {
             dying->frozenFor=special==15 ? 100 : 0;
             dying->hp=sim::Fixed();
             const auto hp=quiet.unit(neighbor)->hp;
-            quiet.tick(1.f/30);
-            check(!quiet.unit(source)->alive(),"special death control reached the death transition");
-            check(quiet.hits().empty() && quiet.unit(neighbor)->hp==hp,
+            // The death weapon fires at retirement (512ae0), once Dying is over:
+            // watch every tick until then.
+            bool hit=false;
+            for(int t=0;t<600;++t) {
+                quiet.tick(1.f/30);
+                hit=hit || !quiet.hits().empty();
+                if(!quiet.unit(source)->deathPending)break;
+            }
+            check(!quiet.unit(source)->alive() && !quiet.unit(source)->deathPending,
+                  "special death control reached the death transition");
+            check(!hit && quiet.unit(neighbor)->hp==hp,
                   special==14 ? "stone death emits no death blast or damage" :
                   special==15 ? "frozen death emits no death blast or damage" :
                                 "self-destruct does not reuse the ordinary death weapon");
@@ -148,10 +156,14 @@ int main(int argc, char** argv) {
         const auto hp=explicitWeapon.unit(neighbor)->hp;
         explicitWeapon.unit(source)->deathType=sim::Unit::kDeathSelfDestruct;
         explicitWeapon.unit(source)->hp=sim::Fixed();
-        explicitWeapon.tick(1.f/30);
-        check(std::any_of(explicitWeapon.hits().begin(),explicitWeapon.hits().end(),
-                         [&](const auto& hit){return hit.weapon==&custom.selfDestructAs;}),
-              "self-destruct publishes its own authored weapon effect");
+        // It bursts at retirement, when its Dying is over (512ae0).
+        bool published=false;
+        for(int t=0;t<600 && !published;++t) {
+            explicitWeapon.tick(1.f/30);
+            published=std::any_of(explicitWeapon.hits().begin(),explicitWeapon.hits().end(),
+                                  [&](const auto& hit){return hit.weapon==&custom.selfDestructAs;});
+        }
+        check(published,"self-destruct publishes its own authored weapon effect");
         check(explicitWeapon.unit(neighbor)->alive() && explicitWeapon.unit(neighbor)->hp<hp &&
               explicitWeapon.unit(neighbor)->hp>hp-sim::Fixed::fromInt(150),
               "self-destruct uses its separate low damage, not the ordinary lethal blast");
