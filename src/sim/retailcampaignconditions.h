@@ -21,6 +21,16 @@ inline bool retailCampaignRadius(int32_t x,int32_t z,int32_t centerX,int32_t cen
     const int32_t squared=int32_t(uint32_t((dx*dx)>>32)+uint32_t((dz*dz)>>32));
     return squared<=int32_t((int64_t(radius)*radius)>>32);
 }
+// The unit MoveUnitToRadius (523eb0, after its owner and type tests) and
+// AllUnitsKilled (5243f0) count: retail's selection predicate. Live
+// (+0x130 0x1000000), not dying (0x1000), selectable (0x20: no mission's
+// orders still running), finished (+0x108 == 0), no transfer countdown
+// (+0x104) and, when carried (+0xa8), a carrier with the holder bit
+// (0x4000000). The last two are never set in lockstep.
+constexpr bool retailCampaignReady(bool live,bool dying,bool selectable,bool finished,
+                                   bool transferring,bool carried,bool holder) {
+    return live && !dying && selectable && finished && !transferring && (!carried || holder);
+}
 // 4d2b20: a SetTrigger rectangle holds the unit's footprint-origin cell
 // (+0x74/+0x76) inclusively, the corners as given (an inverted one never hits).
 constexpr bool retailTriggerRect(int x,int z,int x1,int z1,int x2,int z2) {

@@ -85,7 +85,9 @@ void MissionScript::wireVm() {
     vm_->onPlaySound = [this](int32_t nameIdx,int32_t flags) {
         if (!world_) return;
         const std::string& n = cob_.name(size_t(nameIdx));
-        if (!n.empty()) world_->requestSound(n,flags);
+        if (n.empty()) return;
+        if (holdSounds_) heldSounds_.push_back({n, flags});
+        else world_->requestSound(n,flags);
     };
 }
 
@@ -107,15 +109,35 @@ void MissionScript::start(World& w) {
     for (const auto& [id, orders] : initialOrders_) applyOrders(w, id, orders, true);
     initialOrders_.clear();
     placements_.clear();
-    if (vm_) vm_->start("Start");
+    // 4d2dc0 starts Start with its run-now flag (56c640 -> 56c680 -> 56c870):
+    // it runs at once, up to its first sleep, before the first game tick, so
+    // the units it makes take their first update (and their MakeSelectable)
+    // before the first outcome check.
+    if (vm_ && vm_->start("Start")) {
+        holdSounds_ = true;
+        vm_->tick(0.0f);
+        holdSounds_ = false;
+    }
 }
 
 void MissionScript::step(World& w, float dt) {
     world_ = &w;
-    if (vm_) vm_->tick(dt);
+    // Retail's game tick (5262xx..5264c0, S): the units' updates (51d3e0),
+    // then the outcome check (4f6c70: the condition manager), then the
+    // scenario's slot 3 (5264c0: the god script's VM, 56c870). So the
+    // conditions see what the units did this tick but not what the script
+    // does after them: a unit the script makes with orders (unselectable
+    // until its MakeSelectable runs in its next update) is never caught
+    // without its selectable bit. The trigger sweep (4d33a0) runs at the
+    // start of each unit's next update (51de93) and runs its handlers there;
+    // sweeping after the script here runs them in that same next tick, after
+    // the units rather than among them.
+    for (auto& [name, flags] : heldSounds_) w.requestSound(std::move(name), flags);
+    heldSounds_.clear();
     ++clock_;
-    sweepTriggers(w);
     if (outcome_ == 0) evalConditions(w, dt);
+    if (vm_) vm_->tick(dt);
+    sweepTriggers(w);
 }
 
 int32_t MissionScript::value(const std::string& name) const {
@@ -736,7 +758,10 @@ void MissionScript::emitConditionSound(World& w, Cond& condition) {
 }
 
 void MissionScript::evalConditions(World& w, float) {
-    auto ready=[](const Unit& u){return u.alive() && u.hp>Fixed() && u.type && !u.underConstruction && !u.embarked();};
+    // 523eb0 / 5243f0: a unit whose mission orders still run (not selectable)
+    // neither reaches a radius nor keeps its owner from AllUnitsKilled.
+    auto ready=[](const Unit& u){return u.type && retailCampaignReady(u.alive(),u.hp<=Fixed(),u.selectable,
+        !u.underConstruction,false,u.embarked(),false);};
     bool victory=std::any_of(conds_.begin(),conds_.end(),[](const Cond& c){return c.victory;});
     bool defeat=false;
     for(Cond& c:conds_) {

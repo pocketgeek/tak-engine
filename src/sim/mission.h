@@ -179,6 +179,11 @@ private:
     int32_t clock_ = 0;       // mission time in TICKS, for timer conditions
     int outcome_ = 0;         // 0 / +1 / -1
     bool started_ = false;
+    // Start runs before the first tick (4d2dc0); the lines it plays wait for
+    // the first step, so a paused opening briefing does not hear them.
+    // Presentation only, not hashed.
+    bool holdSounds_ = false;
+    std::vector<std::pair<std::string, int32_t>> heldSounds_;
 };
 
 }  // namespace tak::sim

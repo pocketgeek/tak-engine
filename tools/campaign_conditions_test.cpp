@@ -20,6 +20,10 @@ int main(int argc,char** argv) {
         while(std::cin>>mode) {
             if(mode=='A') {int cell,line;std::cin>>cell>>line;std::cout<<sim::retailCampaignAxis(cell,line)<<'\n';}
             if(mode=='R') {int32_t x,z,cx,cz,r;std::cin>>x>>z>>cx>>cz>>r;std::cout<<sim::retailCampaignRadius(x,z,cx,cz,r)<<'\n';}
+            if(mode=='P') {int which,owner,live,dying,selectable,finished,transferring,carried,holder;
+                std::cin>>which>>owner>>live>>dying>>selectable>>finished>>transferring>>carried>>holder;
+                const bool ready=sim::retailCampaignReady(live,dying,selectable,finished,transferring,carried,holder);
+                std::cout<<(which ? int(!ready) : int(owner==0 && ready))<<'\n';}
             if(mode=='D') {int kind,owner,match,commander,mobile,survivor,met;sim::RetailCampaignConditionState c;
                 std::cin>>kind>>owner>>match>>commander>>mobile>>survivor>>met>>c.remaining;c.met=met;
                 sim::retailCampaignDeath(sim::RetailCampaignConditionState::Kind(kind),c,owner,match,commander,mobile,survivor);
@@ -85,6 +89,21 @@ int main(int argc,char** argv) {
         check(m->outcome()==0,"disabled boolean/timer conditions do not complete; own building prevents all-units defeat");
     }
     {
+        // 523eb0 / 5243f0 count a unit only by retail's selection predicate:
+        // one whose mission orders still run (selectable clear) neither
+        // reaches the radius nor keeps its owner alive for AllUnitsKilled
+        // (E: check_campaign_conditions.py, the P rows).
+        sim::World w;int walker=w.spawn(soldier,160,160,0,0);const int home=w.spawn(soldier,900,100,0,0);
+        w.spawn(soldier,900,900,0,1);w.unit(walker)->selectable=false;
+        auto m=make("MoveUnitToRadius=soldier,10,10,1;");m->start(w);m->step(w,1.f/30);
+        check(m->outcome()==0,"a unit still on its mission orders does not reach the radius");
+        w.unit(walker)->selectable=true;m->step(w,1.f/30);
+        check(m->outcome()==1,"it does once its orders are done");
+        w.unit(walker)->selectable=false;w.unit(home)->selectable=false;
+        auto n=make("VictoryTimerRunsOut=100;AllUnitsKilled=1;");n->start(w);n->step(w,1.f/30);
+        check(n->outcome()==-1,"a side left only with units on mission orders meets AllUnitsKilled");
+    }
+    {
         sim::World w;w.spawn(soldier,100,100,0,0);int enemy=w.spawn(soldier,100,100,0,1);
         auto m=make("CaptureUnitType=soldier;");m->start(w);m->unitCaptured(w,enemy);w.unit(enemy)->player=0;m->step(w,1.f/30);
         check(m->outcome()==1,"capture condition latches matching enemy conversion");
@@ -133,6 +152,8 @@ int main(int argc,char** argv) {
         w.unit(enemy)->xp=5*soldier->experiencePoints;w.unit(enemy)->veteran=w.unit(enemy)->veteranLevel();
         tdf::Node header;header.values["captureunittype"]="soldier";
         sim::MissionScript m(commandScript("Capture",uint32_t(enemy),uint32_t(next)),header,registry,0,"capture fixture");
+        // Start runs at once (4d2dc0's run-now flag), so its capture is
+        // judged by the first tick's outcome check.
         m.start(w);m.step(w,1.f/30);
         check(m.outcome()==(next==0?1:0) && w.unit(enemy)->player==next,
             next==0?"scripted ownership transfer satisfies capture objective":"same-owner scripted Capture is a no-op");

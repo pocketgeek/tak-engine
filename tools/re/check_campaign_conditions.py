@@ -75,6 +75,25 @@ def main():
         put(unit+0x108,0);put(unit+0x104,0);put(unit+0xa8,0);p.uc.mem_write(unit+0xfd,b'\0')
         call(0x523e70)
         rows.append(f'R {x} {z} {cx} {cz} {r}');expected.append([get(condition+4)])
+    # The unit predicate of MoveUnitToRadius (523eb0, its scan callback, any
+    # type) and of AllUnitsKilled (5243f0, which clears the survivor flag the
+    # caller set): retail's selection predicate, every bit varied.
+    carrier=HEAP+0x37000
+    for n in range(2048):
+        which=rng.randrange(2);own=rng.randrange(2);bits=[rng.randrange(2) for _ in range(7)]
+        live,dying,selectable,finished,transferring,carried,holder=bits
+        p.uc.mem_write(condition,b'\0'*128)
+        put(unit+0x130,(0x1000000 if live else 0)|(0x1000 if dying else 0)|(0x20 if selectable else 0)|rng.choice((0,0x4000000)))
+        p.uc.mem_write(unit+0x108,struct.pack('<f',0.0 if finished else rng.choice((0.25,30.0))))
+        put(unit+0x104,150 if transferring else 0);put(unit+0xa8,carrier if carried else 0)
+        put(carrier+0x130,0x1000020|(0x4000000 if holder else 0));p.uc.mem_write(unit+0xfd,bytes([own]))
+        if which:
+            put(condition,1);actual,error=p.call(0x5243f0,(unit,),ecx=condition+8)
+            if error:raise RuntimeError(error)
+            got=get(condition)
+        else:
+            call(0x523eb0,(unit,),condition+0xc);got=get(condition+4)
+        rows.append('P %d %d '%(which,own)+' '.join(map(str,bits)));expected.append([got])
     kinds={1:0x523670,9:0x524310,5:0x523d60,12:0x524540,
            3:0x523870,4:0x523c00,11:0x524660}
     for n in range(4096):
@@ -97,5 +116,5 @@ def main():
     actual=[list(map(int,line.split())) for line in result.stdout.splitlines()]
     if actual!=expected:
         raise AssertionError(next(((rows[i],a,b) for i,(a,b) in enumerate(zip(actual,expected)) if a!=b),(len(actual),len(expected))))
-    print('PASS: 7205 native campaign cases: manager AND/OR, axis tolerance, fixed radius, commander/type death events and survivor filters')
+    print('PASS: 9253 native campaign cases: manager AND/OR, axis tolerance, fixed radius, the radius and AllUnitsKilled unit predicate, commander/type death events and survivor filters')
 if __name__=='__main__':main()
