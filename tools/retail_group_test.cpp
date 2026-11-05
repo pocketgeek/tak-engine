@@ -350,6 +350,43 @@ void flyerPatrol() {
     std::printf("scenario=flyerPatrol legs=%zu\n",after.size());
 }
 
+// A formation's patrolling walker left behind (Patrol 403600: the same two
+// checks as Move_Ground's 402b00 at 40361c / 4037e9, E: check_retail_group.py
+// patrol): Move_Ground_Formation goes ahead of its leg, and when it retires
+// the patrol goes on along the same leg.
+void groundPatrol() {
+    World world;setup(world,PathfindingMode::Retail);auto t=mover(0);
+    std::vector<int> ids;
+    for (int i=0;i<3;++i) ids.push_back(world.spawn(&t,640,1900+float(i)*48,std::nullopt,0));
+    const int outlier=world.spawn(&t,2600,3400,std::nullopt,0);ids.push_back(outlier);
+    for (int id:ids) world.setSquad(id,-1);
+    known(world);
+    for (int id:ids) world.patrol(id,1600,1960);
+    const auto legs=[&] {
+        std::vector<std::pair<Fixed,Fixed>> v;
+        for (const auto& o:world.unit(outlier)->orders) if (!o.formationLevel) v.emplace_back(o.x,o.z);
+        return v;
+    };
+    const auto before=legs();
+    bool pushed=false,retired=false,ahead=false;
+    std::vector<std::pair<Fixed,Fixed>> during;
+    for (int tick=0;tick<3000 && !retired;++tick) {
+        world.tick(1.f/30);
+        const auto& o=world.unit(outlier)->orders;
+        const bool lead=!o.empty() && o[0].formationLevel!=0;
+        if (lead && !pushed) { pushed=true;during=legs();ahead=o.size()>1 && o[1].patrol; }
+        if (pushed && !lead) retired=true;
+    }
+    require(pushed,"a patrolling walker out of its slot got no Move_Ground_Formation");
+    require(ahead,"the formation did not go ahead of the ground patrol leg");
+    require(during==before,"the formation changed the ground patrol's legs");
+    require(retired,"the ground patrol's formation never retired");
+    const auto after=legs();
+    require(!after.empty() && after.size()==before.size() && after.front()==before.front(),
+            "the ground patrol did not resume its leg once the formation retired");
+    std::printf("scenario=groundPatrol legs=%zu\n",after.size());
+}
+
 // The standbys' group check (Standby 407779, VTOL_Standby 417527): an idle
 // formation member out of its slot (51d1e0(unit, 1, 2)) gets the
 // FormationStandby (Move_Ground_FormationStandby with response mode -1:
@@ -479,7 +516,7 @@ void transports() {
 int main() {
     try {
         geometry();attackHead();airHeads();slowest();plain();aiSquads();replayReset();
-        flyerMove();flyerPatrol();groundGuard();transports();standbys(false);standbys(true);
+        flyerMove();flyerPatrol();groundPatrol();groundGuard();transports();standbys(false);standbys(true);
         straggler(PathfindingMode::Retail);
     } catch(const std::exception& error) {std::fprintf(stderr,"FAIL: %s\n",error.what());return 1;}
     std::puts("retail group pacing: PASS");
