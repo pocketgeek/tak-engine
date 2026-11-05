@@ -3052,7 +3052,17 @@ uint32_t World::retailOrderFlags(const Unit& u,const Order& o) const {
             return o.mission.flags|(strike ? 0x1000600u : 0x1000200u);
         }
     }
+    // A walker's guard is Follow_Ground (row 0x5eb89f: 0x3000200, so it is
+    // paced too) and its attack on a unit Attack_Chase or Attack_Melee (rows
+    // 0x5eb8d1 / 0x5eb8ea: 0x1000280), each with its live target (S, the
+    // rows' +0x11).
+    if (retailGroundUnitMission(u,o)) return o.mission.flags|(o.guard ? 0x3000200u : 0x1000280u);
     return o.mission.flags;
+}
+
+bool World::retailGroundUnitMission(const Unit& u,const Order& o) {
+    return u.type && !u.type->canFly && !u.type->isStructure() && o.targetId && !o.load && !o.scripted &&
+           !o.waitAttack && !o.repairTarget && !o.buildType;
 }
 
 uint32_t World::retailNextMissionFlags(const Unit& u,size_t index) const {
@@ -3115,6 +3125,12 @@ uint32_t World::retailMissionFlags(Unit& u) {
         if (u.orders[leg].suppress) return retailOrderFlags(u,u.orders[leg]);
         if (u.orders[leg].suppressApproach && leg+1<u.orders.size() && u.orders[leg+1].suppress)
             return retailOrderFlags(u,u.orders[leg+1]);
+        // Follow_Ground, Attack_Chase and Attack_Melee: the walker's guard or
+        // attack leg (retailOrderFlags). World's mission flags of these orders
+        // only carry the group check's 0x8000000, so without the rows' bits
+        // a grouped guard or attacker was never a moving member, and a guard
+        // never paced.
+        if (retailGroundUnitMission(u,u.orders[leg])) return retailOrderFlags(u,u.orders[leg]);
         if (u.type->canFly && !u.type->isStructure()) {
             // AirToGround, AirStrike, AirToGroundHover, AirToAir (and
             // VTOL_Evade ahead of it), the seeks and VTOL_Follow.
@@ -12425,16 +12441,58 @@ void World::tickGuardHelp(Unit& u) {
     // Stage 1 sleeps on wait mask 0x718: the guarded unit's event 0x10 wakes
     // the look at once, and the look answers it first.
     const bool alarm=guardAlarm(u,*g);
+    // The group check at the head of every dispatch (40800c..40810e,
+    // retailGuardGroupCheck: 51d1e0(unit, 1, 4), VTOL_Follow's): out of the
+    // slot Move_Ground_Formation at level -3 (response mode 0) goes ahead and
+    // the guard starts again when it retires; flagged and out again, rand(4)
+    // == 0 drops the guard from the group's moving centre and every order.
+    // A dispatch is a look (the sleep below) or the ward's event 0x10. Only
+    // a unit in a group record takes the looks' sleep when not a builder:
+    // the check is all its look runs.
+    const bool grouped=retailGroupOf(u)!=nullptr;
+    if ((u.type->isBuilder || grouped) && (alarm || tickCounter_>=u.guardHelpTick)) {
+        bool formation=false;
+        const int result=retailGuardGroupCheck(u.orders[end].mission.flags,retailAttackOutOfSlot(u,4),
+            [&](int n) { return int(pathRand(uint32_t(n))); },
+            [&] { leaveRetailGroupCentre(u);cancelPath(u);u.orders.clear();u.routeStamp=-1; },
+            [&] { return formation=true; });
+        if (result==2) return;                    // the guard has gone with the orders
+        if (result>=0) {
+            if (alarm) u.guardHeard=g->attackedTick;
+            pushGuardFormation(u);
+            u.guardHelpTick=tickCounter_+1;
+            return;
+        }
+    }
     if (alarm) {
         u.guardHeard=g->attackedTick;
         if (guardDefend(u,*g)) { u.guardHelpTick=tickCounter_+1; return; }
     }
-    if (!u.type->isBuilder || (!alarm && tickCounter_<u.guardHelpTick)) return;
+    if (!alarm && tickCounter_<u.guardHelpTick) return;
+    if (!u.type->isBuilder) {
+        if (grouped) u.guardHelpTick=tickCounter_+15+pathRand(15);
+        return;
+    }
     int help=0,mend=0;
     guardHelpPick(u,*g,help,mend);
     if (!help && !mend) { u.guardHelpTick=tickCounter_+15+pathRand(15); return; }
     u.guardHelpTick=tickCounter_+1;
     guardInsertJob(u,help,mend);
+}
+
+// 408066..4080c6: Move_Ground_Formation (row 0x604d70), level -3, response
+// mode 0, ahead of the guard: the moving members' centre until back within
+// level 3 (tickGroundMission, this dispatch). The guard's walk goes with
+// its route; it is set up again when the formation retires.
+void World::pushGuardFormation(Unit& u) {
+    guardStandAside(u);
+    cancelPath(u);
+    Order formation;
+    formation.x=u.x;formation.z=u.z;formation.goal=formation.groundMission=true;
+    formation.formationLevel=-3;formation.mission.flags=0x11000000u;
+    formation.issuedTick=tickCounter_;
+    u.orders.insert(u.orders.begin(),formation);
+    noteOrders(u.id);
 }
 
 // The guard's look for a job, Follow_Ground's and VTOL_Follow's alike (see

@@ -114,6 +114,16 @@ int main() {
                 [&](int n){calls+="rand"+std::to_string(n)+",";return draw;},
                 [&]{calls+="leave,";retailGroupLeave(r,u);},[&]{calls+="formation,";return true;});
             std::printf("%d %u %s\n",result,flags,calls.empty()?"-":calls.c_str());writeRecord(r);
+        } else if (op=="followhead") {
+            // Follow_Ground's group check (40800c..40810e): retailGuardGroupCheck
+            // (51d1e0(unit, 1, 4), cancel on rand(4), clear on rand(10)).
+            bool m;auto r=readRecord(std::cin,m);auto u=readMember(std::cin);uint32_t flags;int draw;
+            std::cin>>flags>>draw;
+            std::string calls;
+            const int result=retailGuardGroupCheck(flags,retailGroupOutOfSlot(r,u,true,4,(flags&0x4000000u)!=0),
+                [&](int n){calls+="rand"+std::to_string(n)+",";return draw;},
+                [&]{calls+="leave,cancel,";retailGroupLeave(r,u);},[&]{calls+="formation,";return true;});
+            std::printf("%d %u %s\n",result,flags,calls.empty()?"-":calls.c_str());writeRecord(r);
         } else if (op=="standbyhead") {
             // The standbys' group check (retailStandbyGroupCheck): the
             // result, and the FormationStandby's response mode (+0x52) and

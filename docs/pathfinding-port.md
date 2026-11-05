@@ -666,7 +666,7 @@ Legion keep the `squad < 0` code below unchanged. Ported, static reading
   Check 2: `51d1e0(unit,0,4)` -> level 4 (cancel the controller, wait). The
   formation mission retires (5) once back in slot; stages 0..3 as `402880`;
   the stage-3 target scan (`40296c`) runs only for a non-zero response mode
-  and is not ported (plain moves have mode 0).
+  (plain moves have mode 0; ported since, see below).
 - Groups: the console's `CreateSquad N` (`48e170` -> `522170` -> `50b4f0` at
   `5221ce`) rebuilds group N from the selection; a plain selection is never
   grouped, and issuing orders creates no group. Record `+8` is the FORMATION
@@ -720,15 +720,16 @@ first cycle's centre, and the controller reset (`resetGroundSegment`,
 to a stale point. Retargeting `missionTarget` fixes it: the scenario now
 completes (tick 3,703) with the straggler re-forming and its mission retiring.
 
-Not ported: Move_Ground_Formation's stage-3 target scan (`40296c`, attack
-via `4d8370`/`4de530`). It runs only when the parent move carries a response
-mode; human moves and fight-moves have mode 0, only an auxiliary
-return-to-origin order (mode 1) can reach it. The other construction sites
-are Attack_Chase (`403e78`), Attack_Melee (`4048e1`), Suppress (`404ead`) and
-Follow_Ground (`4080a0`), missions this World does not run as retail
-handlers. The formation goal's y terms are zero in the `402b00` comparison
+Move_Ground_Formation's stage-3 target scan (`40296c`, attack via
+`4d8370`/`4de530`) is ported since fx-tsearch (`retail-engine.md`, "The
+hosts on the port"; this note said otherwise until 2026-11-05). It runs only
+when the parent carries a response mode; human moves and fight-moves have
+mode 0. The other construction sites are Attack_Chase (`403e78`),
+Attack_Melee (`4048e1`), Suppress (`404ead`, ported) and Follow_Ground
+(`4080a0`, ported, mode 0). The formation goal's y terms are zero in the `402b00` comparison
 (the helper takes them; the host passes 0). Mission flags of orders the
-ground host does not model (attack/build) read as 0. The classic AI's
+ground host does not model read as 0, but a walker's guard and attack on a
+unit carry their rows' flags (below). The classic AI's
 strike and VTOL squads are group members (`Unit::aiGroup`); the restored
 retail AI of the save-replay probes (`players_[].retailAi`) is not. The human UI's click offsets
 are retail's `0x5214b0` (traced 2026-10-30, `retail-engine.md` "Group move
@@ -842,11 +843,37 @@ navigator never gets the formation bit, as in retail. The classic AI's
 no AI reader looks at the bits that changed. A flyer's guard and AirToAir
 now count in the moving aggregate (`retailMissionFlags`).
 
-Not ported, the ground missions of the same family, which this World runs
-inside its combat and guard code rather than as retail handlers:
-Attack_Chase (`403dce`: `51d1e0(unit, 1, 5)`, `rand(3)`, Move_Ground_Formation
-at -4), Attack_Melee (`404837`: the same with `rand(2)`) and Follow_Ground
-(`40801c`: as VTOL_Follow's, Move_Ground_Formation at -3) (S).
+**Follow_Ground's group check (gap round 1, 2026-11-05, protocol 312).**
+Follow_Ground (`407f90`) runs VTOL_Follow's check at the head of every
+dispatch, after its exits (ward gone or dying: 5; `+0xa8`: 7; a flyer: 8) and
+only for a unit with a mover (`40800c..40810e`): `51d1e0(unit, 1, 4)`;
+flagged and out again, `rand(4) == 0` runs `50c480` and `4d6a50(unit, 0)`
+(2); otherwise out of the slot it flags the mission and pushes
+Move_Ground_Formation (row `604d70`) at level -3 with response mode 0 (0);
+in the slot `rand(10)` clears the flag. Emulated: `check_retail_group.py`
+`follow` (4,000 heads against `retailGuardGroupCheck`, E). Ported in
+`World::tickGuardHelp` (`pushGuardFormation`). A dispatch there is a look:
+the look's sleep (`15 + rand(15)`, `4087d2`) or the ward's event 0x10. World
+does not wake the look on the ring controller's events (0x700), as before;
+a guard that is no builder takes the looks' sleep only while it is in a
+group record (its look is then only the check).
+
+The rows (`.rdata`, flags at `+0x11`, S): Follow_Ground `0x3000200`,
+Attack_Chase and Attack_Melee `0x1000280`. World kept none of them in the
+orders' mission flags, so a grouped walker guarding or attacking a unit was
+no moving member of its group (`51b890`'s `0x1000000`) and a guard was never
+paced (`0x2000000`). `retailOrderFlags` now gives them
+(`World::retailGroundUnitMission`); `retail_group_test` `groundGuard`.
+
+Not ported, the ground attacks' check, which this World runs inside its
+combat code rather than as retail handlers: Attack_Chase (`403dce`:
+`51d1e0(unit, 1, 5)`, `rand(3)`, `rand(15)`, Move_Ground_Formation at -4
+with response mode 1 for an automatic attack with a leash, -1 for one
+without, 0 for an order: `403e39..403e56`) and Attack_Melee (`404837`: the
+same with `rand(2)`) (S). Their head runs on every dispatch, and World has
+no dispatch cadence for these missions: Attack_Chase's approach waits on
+its controller's events in sub-states World does not model (the same gap
+as its retarget `404075`).
 
 **The attacks' single check (fx-groupcheck, 2026-11-04, protocol 312).**
 SUPPRESS (`404e12`) and the flyer attacks AirToGround (`41c19f`), AirStrike

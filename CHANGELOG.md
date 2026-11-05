@@ -200,7 +200,10 @@ their validation reports; both live in [`docs/`](docs/).
   on the ground or in the air, that ends up away from its formation goes back to it
   by itself, and a flyer that lands, or waits, does so with its formation. A flyer
   that has caught up while the formation is still moving circles near it, attacking
-  what it finds, until the formation stops.
+  what it finds, until the formation stops. Ground units in a formation do the same
+  while guarding: one left behind walks back to its formation first and then guards
+  on, and one that keeps falling behind may give up guarding. A formation's guards
+  and attackers now count as moving with it, and its guards keep to its pace.
 - **An armed factory from a mod gets no Attack Ground order**, as in the original
   game, which takes the attack command away from any factory. It never attacks an
   enemy unit itself either, ordered or on its own (an Attack on a unit still sends

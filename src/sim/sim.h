@@ -2237,6 +2237,12 @@ public:
     const RetailGroupRecord* retailGroupRecord(int unitId) const {
         const Unit* u=unit(unitId);return u?retailGroupOf(*u):nullptr;
     }
+    // Whether the last group tick paced the unit (its mission's 0x2000000).
+    bool retailGroupPaced(int unitId) const {
+        const Unit* u=unit(unitId);if(!u)return false;
+        const size_t index=size_t(u-units_.data());
+        return index<retailGroupPaced_.size() && retailGroupPaced_[index];
+    }
     LegionNavigator::Stats legionStats() const {return legion_?legion_->stats():LegionNavigator::Stats{};}
     LegionNavigator* legionNavigator() {return legion_.get();}
     uint32_t legionSwapTick(int unitId) const {return legion_?legion_->swapTick(unitId):UINT32_MAX;}
@@ -3399,6 +3405,7 @@ private:
     void tickFlyingGuard(Unit& u);
     void guardHelpPick(Unit& u, const Unit& g, int& help, int& mend);
     void guardInsertJob(Unit& u, int help, int mend);
+    void pushGuardFormation(Unit& u);
     RetailRingGoal guardRing(const Unit& u, const Unit& g) const;
     Order& guardStandAside(Unit& u);
     bool guardAlarm(const Unit& u, const Unit& g) const {
@@ -4435,6 +4442,9 @@ private:
     // Order::mission.flags, with the row's own flags for SUPPRESS and the
     // flyer attacks, which World does not keep there.
     uint32_t retailOrderFlags(const Unit& u,const Order& o) const;
+    // A walker's guard (Follow_Ground) or attack on a unit (Attack_Chase,
+    // Attack_Melee): the orders retailOrderFlags gives those rows' flags.
+    static bool retailGroundUnitMission(const Unit& u,const Order& o);
     // The next mission's flags (+0x66's +0x5a) behind orders[index]; 0 for none.
     uint32_t retailNextMissionFlags(const Unit& u,size_t index) const;
     // 51d1e0(unit, 1, level) for an attack's group check (its flags lack 0x4000000).

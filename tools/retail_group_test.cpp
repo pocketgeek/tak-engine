@@ -380,10 +380,67 @@ void standbys(bool air) {
 }
 }
 
+// A walker's guard and attack in a formation (rows 0x5eb89f Follow_Ground
+// 0x3000200, 0x5eb8d1 Attack_Chase 0x1000280): both are group movers, so
+// 51b890 counts them in the moving aggregate. A guard out of its slot runs
+// Follow_Ground's group check (40800c..40810e, VTOL_Follow's:
+// tools/re/check_retail_group.py follow): Move_Ground_Formation at level -3
+// goes ahead of the guard, and the guard goes on when it retires.
+void groundGuard() {
+    World world;setup(world,PathfindingMode::Retail);world.setPlayerCount(2);auto t=mover(0),armed=mover(0);
+    armed.weapon.damage=10;armed.weapon.range=120;armed.weapons={armed.weapon};
+    std::vector<int> ids;
+    for (int i=0;i<2;++i) ids.push_back(world.spawn(&t,640,1900+float(i)*48,std::nullopt,0));
+    const int ward=world.spawn(&t,2600,3400,std::nullopt,0);
+    const int guard=world.spawn(&t,2600,3460,std::nullopt,0);
+    const int attacker=world.spawn(&armed,700,1700,std::nullopt,0);
+    const int enemy=world.spawn(&t,1400,1700,std::nullopt,1);
+    for (int id:ids) world.setSquad(id,-1);
+    world.setSquad(guard,-1);world.setSquad(attacker,-1);
+    known(world);
+    world.guard(guard,ward,false);world.attack(attacker,enemy,false);
+    world.tick(1.f/30);world.tick(1.f/30);
+    const auto* record=world.retailGroupRecord(guard);
+    require(record && record->active && record->moving[size_t(RetailGroupClass::Ground)].count==2,
+            "a walker's guard and attack are not the group's movers");
+    {   // In its slot (the ward beside the group) the guard is paced.
+        World near;setup(near,PathfindingMode::Retail);
+        const int a=near.spawn(&t,640,1900,std::nullopt,0),b=near.spawn(&t,640,1948,std::nullopt,0);
+        const int w=near.spawn(&t,700,1924,std::nullopt,0);
+        near.setSquad(a,-1);near.setSquad(b,-1);known(near);near.guard(b,w,false);
+        near.tick(1.f/30);near.tick(1.f/30);
+        require(!formationMission(*near.unit(b)),"a guard in its slot re-formed");
+        require(near.retailGroupPaced(b),"a walker's guard (0x2000000) is not paced");
+    }
+    // Back in the slot the formation retires and the guard goes on (to its
+    // far ward, so out again: flagged, rand(4) == 0 then drops every order,
+    // as in retail).
+    bool pushed=false,ahead=false,resumed=false,dropped=false;
+    for (int tick=0;tick<3000 && !resumed;++tick) {
+        const bool led=[&]{const auto& o=world.unit(guard)->orders;return !o.empty() && o[0].formationLevel!=0;}();
+        world.tick(1.f/30);
+        const auto& o=world.unit(guard)->orders;
+        const bool lead=!o.empty() && o[0].formationLevel!=0;
+        if (lead && !led && !pushed) {
+            pushed=true;
+            ahead=o[0].formationLevel==-3 && o[0].mission.flags==0x11000000u && o.size()>1 && o.back().guard &&
+                  o.back().targetId==ward;
+        }
+        if (led && !lead) {
+            if (!o.empty() && o.front().guard && o.front().targetId==ward) resumed=true;
+            else if (o.empty()) dropped=true;
+        }
+    }
+    require(pushed,"a guard out of its slot got no Move_Ground_Formation");
+    require(ahead,"the guard's formation is not Move_Ground_Formation at -3 ahead of the guard");
+    require(resumed,"the guard did not go on after its formation retired");
+    std::printf("scenario=groundGuard tick=%u dropped=%d\n",world.tickCount(),int(dropped));
+}
+
 int main() {
     try {
         geometry();attackHead();airHeads();slowest();plain();aiSquads();replayReset();
-        flyerMove();flyerPatrol();standbys(false);standbys(true);
+        flyerMove();flyerPatrol();groundGuard();standbys(false);standbys(true);
         straggler(PathfindingMode::Retail);
     } catch(const std::exception& error) {std::fprintf(stderr,"FAIL: %s\n",error.what());return 1;}
     std::puts("retail group pacing: PASS");

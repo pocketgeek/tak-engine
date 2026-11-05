@@ -35,6 +35,10 @@ helpers in src/sim/retailgroup.h and retailGroundFormation:
              the next mission's flags, the Move_Ground_Formation push at
              level -3 with no target scan, rand(15)), stopped at its stage
              jump table
+  follow     407f90's head (40800c..40810e): Follow_Ground's group check
+             (retailGuardGroupCheck: 51d1e0(unit, 1, 4), rand(4) -> 50c480
+             and 4d6a50(unit, 0), the Move_Ground_Formation push at level -3
+             with response mode 0, rand(10)), stopped at its stage switch
 
 Observation only: nothing from the binary is copied into the engine.
 
@@ -254,6 +258,8 @@ def main():
     h.uc.hook_add(1 << 2, lambda uc, address, size, _: (h.events.append(('stages',)), uc.emu_stop()),
                   begin=0x404f1b, end=0x404f1b)
     h.uc.hook_add(1 << 2, lambda uc, address, size, _: h.events.append(('leave',)), begin=0x50c480, end=0x50c480)
+    h.uc.hook_add(1 << 2, lambda uc, address, size, _: (h.events.append(('stages',)), uc.emu_stop()),
+                  begin=0x40810e, end=0x40810e)
     stats = dict(notified=0, slowed=0, reform=0, wait=0, cancel=0)
     # 51b890 tick
     for case in range(a.cases):
@@ -611,6 +617,42 @@ def main():
         key = {-1: 'sin', 8: 'sleave', 0: 'sform'}.get(want[0], 's%d' % want[0])
         stats[key] = stats.get(key, 0) + 1
         counts['suppress'] += 1
+    # 407f90's head: Follow_Ground's group check, then its stages (stopped at 40810e).
+    counts['follow'] = 0
+    for case in range(a.cases * 10):
+        rec = random_record(rng, spread=rng.choice([100, 400, 1500])); rec['active'] = rng.random() < 0.95
+        g = rng.randrange(1, 99); h.load_record(g, rec)
+        u = random_unit(rng, g, spread=400); u['mover'] = rng.random() < 0.97; u['mission'] = True
+        u['flags'] = 0x3000200 | (0x8000000 if rng.random() < 0.5 else 0); u['ustate'] = 0x1000000
+        u['tflags'] = rng.choice([0, 0, 0, 0x80000]); u['fixed'] = (u['fixed'][0], 0, u['fixed'][2])
+        addr = h.load_unit(0, u); ms = MISSIONS
+        ward = h.load_unit(1, dict(random_unit(rng, 0), ustate=0x1000000, tflags=0))
+        h.put('I', ms + 0x16, ward); h.put('I', addr + 0xa8, 0)
+        h.uc.mem_write(ms + 5, bytes([rng.randrange(3)]))
+        draw = rng.randrange(4); h.draws = [draw]; h.events.clear()
+        ret, err = h.p.call(0x407f90, (addr, ms, rng.choice([0, 0x10, 0x700])), allow_early_stop=True)
+        if err and 'UC_ERR_OK' not in err: raise AssertionError(err)
+        calls = ''
+        for e in h.events:
+            if e[0] == 'rand': calls += 'rand%d,' % e[1]
+            elif e[0] == 'leave': calls += 'leave,'
+            elif e[0] == 'cancel':
+                if e[2:] != (addr, 0): raise AssertionError(('follow cancel args', case, e))
+                calls += 'cancel,'
+            elif e[0] == 'formation':
+                if e[1:] != (0, -3): raise AssertionError(('follow formation args', case, e))
+                calls += 'formation,'
+        kinds = [e[0] for e in h.events]
+        if 'formation' in kinds and 'push' not in kinds: raise AssertionError(('follow push', case, h.events))
+        want = (-1 if 'stages' in kinds else ret, h.get('I', ms + 0x5a)[0], calls or '-')
+        rec_after = h.read_record(g)
+        out = ask('followhead %s %s %d %d' % (record_text(rec), member_text(u), u['flags'], draw), 2)
+        r, f, c = out[0].split(); rmine = [int(v) for v in out[1].split()]
+        if (int(r), int(f), c) != want or rmine != rec_after:
+            raise AssertionError(('follow', case, want, (r, f, c), rec_after, rmine))
+        key = {-1: 'fin', 2: 'fcancel', 0: 'fform'}.get(want[0], 'f%d' % want[0])
+        stats[key] = stats.get(key, 0) + 1
+        counts['follow'] += 1
     ours.stdin.close(); ours.wait()
     print('PASS: %s; %s' % (', '.join('%s %d' % kv for kv in counts.items()),
                             ', '.join('%s %d' % kv for kv in stats.items())))
