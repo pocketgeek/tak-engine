@@ -490,7 +490,8 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
                     d.sparkTicks = int(node.numberOr("sparktime", 0) * 30);
                     d.burnt = node.valueOr("featureburnt", "");
                     std::transform(d.burnt.begin(), d.burnt.end(), d.burnt.begin(), ::tolower);
-                    d.decomposeTicks = int(node.numberOr("decomposetime", 0) * 30);
+                    // 494337..494353: _ftol(decomposetime * 30.0), its low 16 bits.
+                    d.decomposeTicks = int(node.numberOr("decomposetime", 0) * 30) & 0xffff;
                     d.resurrectable = node.numberOr("resurrectable", 0) != 0;
                     d.animatable = node.numberOr("animatable", 0) != 0;
                     d.object = node.valueOr("object", "");

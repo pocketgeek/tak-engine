@@ -12713,13 +12713,18 @@ void World::tickReclaim(Unit& b) {
     // (Reclaim 0x406576, VTOL_Reclaim 0x420b02).
     if (work.reclaimCountdown>0) blockCloak(b,300);
     if (target<0) {
-        // 4065xx: a corpse being reclaimed does not decay (object+0x3c reset
-        // to decomposetime*30 on every wake).
+        // 406615: a corpse being reclaimed does not decay (object +0x3c
+        // reloaded with decomposetime*30 on every wake; retailCorpseDecayHold).
+        // A water grave at rest left the update list, so the reload never
+        // counts; one still sinking or fading keeps World's lifetime (I: the
+        // reload would start a decay there too; not modelled).
         Unit* c=unit(-target);
         const int ct=corpseFootprints_.at(c->id).type;
         const int decompose=featTypes_[size_t(ct)].decomposeTicks;
-        if (decompose>0 && c->corpseUntil!=INT32_MAX)
-            c->corpseUntil=int32_t(std::min(int64_t(INT32_MAX),int64_t(c->deadFor)+decompose));
+        if (decompose>0 && c->corpseUntil!=INT32_MAX && !corpseInWater(*c)) {
+            const int32_t left=retailCorpseDecayHold(c->corpseUntil-c->deadFor,decompose);
+            c->corpseUntil=left<0 ? INT32_MAX : int32_t(std::min(int64_t(INT32_MAX),int64_t(c->deadFor)+left));
+        }
     }
 }
 
@@ -18227,12 +18232,13 @@ void World::updateCorpseWindow(Unit& u) {
     const int ct=u.corpseStatue>=0 ? u.corpseStatue : corpseTypeOf(u.type);
     if (ct<0) return;
     const bool water=corpseInWater(u);
-    // A water grave (a statue's too; not an isfeature type's, which 512fcd
-    // leaves unmoved) sinks from the body's height and has no decomposition:
-    // it stays on its bed, or fades out on the way down to a bed of 0
-    // (retailWaterGraveLife). Only the land branch loads the type's
-    // decomposition (513027..513034).
-    int duration=featTypes_[size_t(ct)].decomposeTicks;
+    // On land the type's decomposition runs, then the 60-update sink
+    // (retailCorpseDecayLife). A water grave (a statue's too; not an
+    // isfeature type's, which 512fcd leaves unmoved) sinks from the body's
+    // height and has no decomposition: it stays on its bed, or fades out on
+    // the way down to a bed of 0 (retailWaterGraveLife). Only the land branch
+    // loads the type's decomposition (513027..513034).
+    int duration=std::max(retailCorpseDecayLife(featTypes_[size_t(ct)].decomposeTicks),0);
     if (water) {
         int life=-1;
         if (!u.type->classicFbi.isFeature) {

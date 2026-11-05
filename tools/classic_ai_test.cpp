@@ -1311,7 +1311,9 @@ static void classicWaves(const char* root) {
 // unit started with retail's empty mana pool, 511990, after which the default
 // Creon v Aramon seed is an even war Creon wins at 120.7 minutes -- at most
 // one caster a side stands on a slot it cannot pay yet, and over eight seeds of each of the two pairs 15 of 16 end
-// within 120 minutes, as 15 of 16 did with full pools) (TAK_DUEL_MAP /
+// within 120 minutes, as 15 of 16 did with full pools; Creon v Aramon's seed is 0xd0e4 since a land
+// corpse lasts its decomposition plus the 58-update sink, 4959c0, after which 0xd0e3 is the one even war
+// of those 16 that runs past 150 minutes, as 0xd0e8 was before: 15 of 16 end within 150 both ways) (TAK_DUEL_MAP /
 // TAK_DUEL_MINUTES pick another map or cap; on Abnar's Terrace the same pairs take 59 to 227 minutes, its terraces leaving
 // many members' reachability walks without a target). By hand: TAK_DUEL_PAIRS
 // ("0v2,1v3", factions 0-4) picks the pairs, TAK_DUEL_LEVEL gives the second
@@ -1327,7 +1329,7 @@ static void classicDuels(const char* root) {
     const auto map=hpi::findMap(vfs,mapName);
     static const char* const kNames[5]={"Aramon","Taros","Veruna","Zhon","Creon"};
     struct Pair { int a,b;uint32_t seed; };
-    std::vector<Pair> pairs={{0,2,0xd0e1u},{1,3,0xd0e2u},{4,0,0xd0e3u}};
+    std::vector<Pair> pairs={{0,2,0xd0e1u},{1,3,0xd0e2u},{4,0,0xd0e4u}};
     const char* chosen=std::getenv("TAK_DUEL_PAIRS");
     if (chosen) {
         pairs.clear();

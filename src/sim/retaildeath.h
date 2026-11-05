@@ -20,6 +20,33 @@ inline uint16_t retailDeadlyWaterDamage(uint32_t tick, int32_t height, int seaLe
     return uint16_t(amount);
 }
 
+// A corpse on land, as the feature update 4959c0 (495aaf..495af1) runs it
+// after 513027..513034 loaded its decomposition +0x3c (the feature type's
+// +0x130: decomposetime x 30, truncated, low 16 bits): each update counts
+// +0x3c down; the update that empties it starts +0x40 at 1 and every update
+// from that one on adds 1 to it (the body sinks into the ground meanwhile),
+// and the one that takes it past 60 removes the feature (496380). The
+// placement's own tick runs the first update, so a corpse with a
+// decomposition D goes D + 58 updates after it; with none (0) it rests for
+// good (494a80). (E: tools/re/check_corpse_decay.py.)
+inline int32_t retailCorpseDecayLife(int32_t decompose) {
+    return decompose > 0 ? decompose + 58 : -1;
+}
+
+// A reclaim wake on a decaying corpse (406615 / VTOL 420ba4) reloads +0x3c
+// with the decomposition D and leaves +0x40 alone. `remaining` is the updates
+// left until the removal, counted as retailCorpseDecayLife does: 59 or more
+// while +0x3c still counts (it holds remaining - 58), fewer once +0x40 runs
+// (the removal comes when it passes 60 whatever +0x3c holds). The reload
+// starts the count again unless +0x40 runs out first: when +0x3c empties
+// before or on the removal update, +0x40 starts again at 1. Returns the
+// updates left after the wake. (E: tools/re/check_corpse_decay.py.)
+inline int32_t retailCorpseDecayHold(int32_t remaining, int32_t decompose) {
+    if (decompose <= 0) return remaining >= 59 ? -1 : remaining;
+    if (remaining >= 59 || decompose - 1 <= remaining) return decompose + 58;
+    return remaining;
+}
+
 // A water grave's feature, as the feature update 4959c0 (495b81..495c8d)
 // moves it after 512ee0 placed it with velocity (0, -0x2ccc, 0) at the dying
 // body's 16.16 height `y`. Each update, in order: a fading feature loses its

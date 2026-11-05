@@ -291,8 +291,10 @@ int main(int argc,char**) {
             auto* u=w.unit(dead);
             const auto* work=reclaimLeg(w,id);
             if (end<0 && work && work->mission.stage>=3 && !shortened) {
-                // About to rot away: each work wake resets the decay instead.
-                u->corpseUntil=u->deadFor+3;shortened=true;
+                // Three updates before it starts sinking into the ground (its
+                // decay +0x3c at 3, retailCorpseDecayLife): each work wake
+                // reloads the decay instead.
+                u->corpseUntil=u->deadFor+58+3;shortened=true;
             }
             if (end<0 && work) decayHeld&=u->deadFor<u->corpseUntil;
             if (end<0 && !work) end=tick;

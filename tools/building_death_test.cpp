@@ -68,9 +68,12 @@ int main(int argc,char** argv) {
         for (const auto& [name,type]:registry.types()) {
             if (!type.explosionCorpse || type.instantCorpse) continue;
             const int ct=definitions.corpseTypeOf(&type);
+            int decomposeOverride=-1;
             auto lifetime=[&](const std::vector<uint8_t>& heights,int32_t x,int32_t z,int32_t y=-1) {
                 sim::World w;w.setTerrain(heights,64,64,20);
-                w.setFeatureTypes(definitions.featureTypes());w.mapCorpse(&type,ct);
+                auto features=definitions.featureTypes();
+                if (decomposeOverride>=0) features[size_t(ct)].decomposeTicks=decomposeOverride;
+                w.setFeatureTypes(features);w.mapCorpse(&type,ct);
                 const int id=w.spawn(&type,512,512,std::nullopt,0);
                 w.unit(id)->x=sim::Fixed::raw(x);w.unit(id)->z=sim::Fixed::raw(z);
                 if (y>=0) w.unit(id)->groundY=sim::Fixed::raw(y);
@@ -82,7 +85,16 @@ int main(int argc,char** argv) {
             };
             const int decompose=definitions.featureTypes()[size_t(ct)].decomposeTicks;
             const int64_t land=lifetime(std::vector<uint8_t>(64*64,100),512<<16,512<<16);
-            check(decompose>0 ? land==decompose : land>=INT32_MAX-3000,"a wreck on land decomposes as its feature type says");
+            // 4959c0 (E, check_corpse_decay.py): the decomposition, then 60
+            // updates sinking into the ground. Before: the decomposition alone.
+            check(decompose>0 ? land==decompose+58 : land>=INT32_MAX-3000,
+                  "a wreck on land decomposes, then sinks into the ground");
+            decomposeOverride=90;
+            check(lifetime(std::vector<uint8_t>(64*64,100),512<<16,512<<16)==90+58,
+                  "a wreck with a decomposition of 90 ticks goes 148 ticks after it is laid");
+            check(lifetime(std::vector<uint8_t>(64*64,5),512<<16,512<<16,18<<16)>=INT32_MAX-3000,
+                  "a water grave has no decomposition");
+            decomposeOverride=-1;
             check(lifetime(std::vector<uint8_t>(64*64,20),512<<16,512<<16)>=INT32_MAX-3000,
                   "a body on ground level with the sea is a water grave at rest at once: it stays");
             std::vector<uint8_t> corner(64*64,100);corner[32*64+32]=0;

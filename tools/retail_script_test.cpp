@@ -463,6 +463,24 @@ int main(int argc,char** argv) {
         while (std::cin>>y>>bed>>sea) std::cout<<tak::sim::retailWaterGraveLife(y,bed,sea)<<'\n';
         return 0;
     }
+    // tools/re/check_corpse_decay.py: decomposition, the update after the
+    // placement one before which a reclaim reloads +0x3c (-1: none), the
+    // reload -> the updates after the placement one until the removal (-1:
+    // it stays).
+    if (argc==2 && std::string(argv[1])=="--corpse-decay") {
+        int32_t decompose,wake,reload;
+        while (std::cin>>decompose>>wake>>reload) {
+            int32_t life=tak::sim::retailCorpseDecayLife(decompose);
+            // A corpse at rest left the update list at its first update: a
+            // reload never counts there.
+            if (wake>=0 && life>=0 && wake<=life) {
+                const int32_t left=tak::sim::retailCorpseDecayHold(life-wake,reload);
+                life=left<0 ? -1 : wake+left;
+            }
+            std::cout<<life<<'\n';
+        }
+        return 0;
+    }
     // tools/re/check_kill_credit.py: deadly water on a unit carried at a host
     // height (the attach point World commits for its cargo) -> the damage.
     if (argc==2 && std::string(argv[1])=="--carried-water") {
