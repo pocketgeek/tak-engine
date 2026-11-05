@@ -2959,7 +2959,7 @@ std::pair<int,int> World::cellHeightRange(size_t cell) const {
 // N; our separate formation squads (-N) become groups 10+N, since retail has
 // a single kind of group (522170 assigns Ctrl+N from the selection).
 int World::retailGroupIndex(const Unit& u) {
-    return u.squad>0 ? u.squad : u.squad<0 ? 10-u.squad : 0;
+    return retailGroupSlot(u.squad).group;
 }
 
 RetailGroupMember World::retailGroupMember(const Unit& u) const {
@@ -3089,9 +3089,10 @@ void World::tickRetailGroups() {
     for (size_t i=0;i<units_.size();++i) {
         Unit& u=units_[i];
         if (!u.alive() || !u.type || u.player<0 || u.player>=kMaxPlayers) continue;
-        const int g=retailGroupIndex(u);
+        const auto slot=retailGroupSlot(u.squad);
+        const int g=slot.group;
         if (g<1 || g>=100) continue;
-        members[size_t(u.player)][size_t(g)]=true;
+        members[size_t(u.player)][size_t(g)]|=slot.formation;
         RetailGroupUnit entry;
         entry.group=g;
         entry.eligible=!u.underConstruction && !u.embarked() && !u.type->isStructure();

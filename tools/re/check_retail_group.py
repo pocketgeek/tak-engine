@@ -7,6 +7,9 @@ helpers in src/sim/retailgroup.h and retailGroundFormation:
 
   tick       51b890 group tick incl. straggler pass and the changed-flag
              notification (game+0x3070 bit 0, navigator vt+0x30/vt+0x38)
+  world      the World's squad -> record mapping (retailGroupSlot): a Ctrl
+             group +N is a plain record N (+8 clear), a formation -N record
+             N with +8 set; 51b890 then 51d1e0 / 51c700 per grouped unit
   query      51c700 centre, 51ce40 radius, 51d1e0 out-of-slot
   check      402b00 head: Move_Ground's two group checks (+50c480 on cancel)
   formation  402880 Move_Ground_Formation, all four stages
@@ -113,7 +116,7 @@ class Harness:
     def load_record(self, group, rec):
         base = TABLE + group * 0xc4
         self.uc.mem_write(base, b'\0' * 0xc4)
-        self.put('I', base + 8, rec['members'])
+        self.put('I', base + 8, rec['formation'])
         for cls in range(3):
             names = SETTERS[cls]
             for part, (cnt, area, centre) in enumerate((rec['all'][cls], rec['moving'][cls])):
@@ -169,17 +172,17 @@ def member_text(u):
 
 
 def record_text(r):
-    parts = [r['members'] != 0, r['active'], r['changed'], r['gs'], r['bs']]
+    parts = [r['formation'] != 0, r['active'], r['changed'], r['gs'], r['bs']]
     for cls in range(3):
         for cnt, area, c in (r['all'][cls], r['moving'][cls]): parts += [cnt, area] + list(c)
     return ' '.join(str(int(v)) for v in parts)
 
 
-def random_record(rng, members=True, spread=600):
+def random_record(rng, formation=True, spread=600):
     def part():
         n = rng.choice([0, 1, 2, 3, 5, 9]); return (n, rng.randrange(0, 40) if n else rng.choice([0, 3]),
                                                  tuple(rng.randrange(0, spread) for _ in range(3)))
-    return dict(members=int(members), active=rng.random() < 0.85, changed=rng.random() < 0.3,
+    return dict(formation=int(formation), active=rng.random() < 0.85, changed=rng.random() < 0.3,
                 gs=rng.choice([0, rng.randrange(1, 300000)]), bs=rng.choice([0, rng.randrange(1, 300000)]),
                 all=[part() for _ in range(3)], moving=[part() for _ in range(3)])
 
@@ -225,9 +228,9 @@ def main():
         notify = rng.random() < 0.5; kindp = rng.choice([1, 2, 3])
         h.put('I', GAME + 0x3070, int(notify)); h.uc.mem_write(PLAYER + 0xea, bytes([kindp, 0]))
         groups = rng.sample(range(1, 100), 4)
-        recs = {g: random_record(rng, members=rng.random() < 0.8) for g in range(1, 100)}
+        recs = {g: random_record(rng, formation=rng.random() < 0.8) for g in range(1, 100)}
         for g in range(1, 100):
-            if g not in groups: recs[g] = dict(recs[g], members=0)
+            if g not in groups: recs[g] = dict(recs[g], formation=0)
             h.load_record(g, recs[g])
         n = rng.randrange(1, 14)
         units = [random_unit(rng, rng.choice(groups + [0])) for _ in range(n)]
@@ -256,6 +259,64 @@ def main():
         if notified != mine_notified: raise AssertionError(('notify', case, notified, mine_notified))
         counts['tick'] += 1; stats['notified'] += len(notified)
         stats['slowed'] += sum(1 for g in groups if theirs[g - 1][2] not in (0, recs[g]['gs']))
+    # The World's mapping from engine squads to records: a Ctrl group +N is
+    # CreateSquad N (record N, +8 clear: never paced), a formation -N is
+    # CreateSquad N f (record N, +8 set). Retail is loaded as those commands
+    # leave it (48e170 -> 50b700 / 522170 -> 50b4f0); the driver derives the
+    # record and +8 from the squads itself (retailGroupSlot). Records start
+    # inactive, as created; then 51b890 and each grouped unit's queries.
+    # Its own random stream, so the other modes' cases stay as they were.
+    wrng = random.Random(0x50b700)
+    counts['world'] = 0; stats['plain'] = 0
+    for case in range(a.cases):
+        h.put('I', GAME + 0x3070, 0); h.uc.mem_write(PLAYER + 0xea, bytes([1, 0]))
+        numbers = wrng.sample(range(1, 11), 3)
+        kinds = {g: wrng.choice([1, -1]) for g in numbers}          # +N plain, -N formation
+        n = wrng.randrange(2, 14)
+        units = []
+        for _ in range(n):
+            g = wrng.choice(numbers + [0])
+            u = random_unit(wrng, g); u['squad'] = g * kinds[g] if g else 0
+            if wrng.random() < 0.7: u['flags'] = wrng.choice([0x3000400, 0x3000400, 0x15000400]); u['mission'] = True
+            units.append(u)
+        for u in units[: n // 2]: u['fixed'] = tuple(((300 + wrng.randrange(40)) << 16) for _ in range(3))
+        recs = {}
+        for g in range(1, 100):
+            r = random_record(wrng); r['active'] = False; r['changed'] = False
+            r['formation'] = int(any(u['squad'] == -g for u in units))
+            recs[g] = r; h.load_record(g, r)
+        for i, u in enumerate(units): h.load_unit(i, u)
+        h.put('I', PLAYER + 0x74, UNITS); h.put('I', PLAYER + 0x78, UNITS + (n - 1) * STRIDE)
+        h.events.clear(); h.call(0x51b890, ())
+        theirs = [h.read_record(g) for g in range(1, 100)]
+        fb = {e[1]: e[2] for e in h.events if e[0] == 'fb'}
+        want_units = []
+        for i, u in enumerate(units):
+            if not u['group']: want_units.append('-'); continue
+            addr = UNITS + i * STRIDE
+            s3 = h.p.call(0x51d1e0, (addr, 1, 3))[0]; s4 = h.p.call(0x51d1e0, (addr, 0, 4))[0]
+            h.call(0x51c700, (HEAP + 0xb0000, addr, 0, 1))
+            cx, _, cz = (s16(v >> 16) for v in h.get('3i', HEAP + 0xb0000))
+            want_units.append('%d %d %d %d' % (s3, s4, cx, cz))
+            if u['squad'] > 0:
+                # Retail itself: a plain group gets no check and no pacing bit.
+                if s3 or s4 or fb.get(i, 0): raise AssertionError(('retail paced a plain group', case, i))
+                stats['plain'] += 1
+        text = 'world\n' + '\n'.join(record_text(recs[g]) for g in range(1, 100))
+        text += '\n%d\n' % n + '\n'.join('%d %d %s %d %d' % (u['squad'], int(eligible(u)), member_text(u),
+                                          u['flags'] if u['mission'] else 0, scaled(u)) for u in units)
+        out = ask(text, 100 + n)
+        mine = [[int(v) for v in line.split()] for line in out[:99]]
+        for g in range(99):
+            if theirs[g] != mine[g]:
+                raise AssertionError(('world record', case, g + 1, kinds.get(g + 1), theirs[g], mine[g]))
+        paced = [int(v) for v in out[99].split()]
+        if [fb.get(i, 0) for i in range(n)] != paced:
+            raise AssertionError(('world paced', case, [u['squad'] for u in units],
+                                  [fb.get(i, 0) for i in range(n)], paced))
+        if out[100:] != want_units:
+            raise AssertionError(('world queries', case, [u['squad'] for u in units], want_units, out[100:]))
+        counts['world'] += 1
     # 51c700 / 51ce40 / 51d1e0
     for case in range(a.cases * 10):
         rec = random_record(rng, spread=500); rec['active'] = rng.random() < 0.9

@@ -9,9 +9,9 @@
 
 using namespace tak::sim;
 
-static RetailGroupRecord readRecord(std::istream& in,bool& members) {
+static RetailGroupRecord readRecord(std::istream& in,bool& formation) {
     RetailGroupRecord r;int m,a,c;
-    in>>m>>a>>c>>r.groundSpeed>>r.boatSpeed;members=m;r.active=a;r.changed=c;
+    in>>m>>a>>c>>r.groundSpeed>>r.boatSpeed;formation=m;r.active=a;r.changed=c;
     for (int k=0;k<3;++k) for (auto* g:{&r.all[size_t(k)],&r.moving[size_t(k)]})
         in>>g->count>>g->area>>g->centre.x>>g->centre.y>>g->centre.z;
     return r;
@@ -33,13 +33,13 @@ int main() {
     while (std::cin>>op) {
         if (op=="tick") {
             int notify,n;std::cin>>notify;
-            std::array<RetailGroupRecord,100> records{};std::array<bool,100> members{};
-            for (int g=1;g<100;++g) {bool m;records[size_t(g)]=readRecord(std::cin,m);members[size_t(g)]=m;}
+            std::array<RetailGroupRecord,100> records{};std::array<bool,100> formation{};
+            for (int g=1;g<100;++g) {bool m;records[size_t(g)]=readRecord(std::cin,m);formation[size_t(g)]=m;}
             std::cin>>n;std::vector<RetailGroupUnit> units(static_cast<size_t>(n));
             for (auto& u:units) {int e;std::cin>>u.group>>e;u.eligible=e;u.member=readMember(std::cin);
                 std::cin>>u.missionFlags>>u.typeMaximum;}
             std::vector<uint8_t> paced;
-            retailGroupTick(units,members,records,paced);
+            retailGroupTick(units,formation,records,paced);
             std::vector<size_t> notified;
             if (notify) notified=retailGroupNotify(units,records);
             for (int g=1;g<100;++g) writeRecord(records[size_t(g)]);
@@ -47,6 +47,33 @@ int main() {
             std::printf("\n");
             for (auto i:notified) std::printf("%zu ",i);
             std::printf("\n");
+        } else if (op=="world") {
+            // The World's own mapping (retailGroupSlot): each unit's engine
+            // squad picks its record and whether that record paces (+8);
+            // the records' own +8 inputs are ignored. Then 51b890 and, per
+            // grouped unit, 51d1e0(u,1,3), 51d1e0(u,0,4) and 51c700(u,0,1).
+            int n;
+            std::array<RetailGroupRecord,100> records{};std::array<bool,100> formation{};
+            for (int g=1;g<100;++g) {bool m;records[size_t(g)]=readRecord(std::cin,m);}
+            std::cin>>n;std::vector<RetailGroupUnit> units(static_cast<size_t>(n));
+            for (auto& u:units) {int squad,e;std::cin>>squad>>e;
+                const auto slot=retailGroupSlot(squad);
+                u.group=slot.group;
+                if (slot.group>0 && slot.group<100) formation[size_t(slot.group)]|=slot.formation;
+                u.eligible=e;u.member=readMember(std::cin);std::cin>>u.missionFlags>>u.typeMaximum;}
+            std::vector<uint8_t> paced;
+            retailGroupTick(units,formation,records,paced);
+            for (int g=1;g<100;++g) writeRecord(records[size_t(g)]);
+            for (auto p:paced) std::printf("%d ",int(p));
+            std::printf("\n");
+            for (const auto& u:units) {
+                if (u.group<1 || u.group>=100) { std::printf("-\n");continue; }
+                const auto& r=records[size_t(u.group)];
+                const bool all=(u.missionFlags&0x4000000u)!=0;
+                const auto c=retailGroupCentre(r,u.member,false,true);
+                std::printf("%d %d %d %d\n",int(retailGroupOutOfSlot(r,u.member,true,3,all)),
+                            int(retailGroupOutOfSlot(r,u.member,false,4,false)),c.x,c.z);
+            }
         } else if (op=="query") {
             bool m;auto r=readRecord(std::cin,m);auto u=readMember(std::cin);int a,b,level,all;
             std::cin>>a>>b>>level>>all;

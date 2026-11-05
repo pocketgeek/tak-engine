@@ -166,6 +166,15 @@ struct RetailGroupUnit {
     int32_t typeMaximum=0;
 };
 
+// The record a unit belongs to (unit+0xc8) and whether that record paces
+// (record +8). squad is Unit::squad: +N a Ctrl group, -N a formation.
+struct RetailGroupSlot { int group=0; bool formation=false; };
+constexpr RetailGroupSlot retailGroupSlot(int squad) {
+    if (squad>0) return {squad,true};
+    if (squad<0) return {10-squad,true};
+    return {};
+}
+
 // 51b890 for one player: groups with members (record+8) are rebuilt from
 // their eligible units in unit order, then paced members out of slot at
 // level 4 apply the straggler slowdown. paced receives each unit's
