@@ -18089,6 +18089,23 @@ void World::updateCorpseWindow(Unit& u) {
     u.corpseUntil=duration>0 ? int32_t(std::min(int64_t(INT32_MAX),int64_t(starts)+duration)) : INT32_MAX;
 }
 
+// 512860's passengers (51291d..512990), before the carrier's Killed: each
+// carried unit, whoever owns it, gets the carrier's death packet as death
+// kind 8 with severity 0 -- the carrier's hitter while it lives (+0xf8) and
+// its player (+0xfc) whatever -- so it runs no Killed and no Dying, retires at
+// once (512ac8) and is detached there (512b57). Kind 8 credits that hitter at
+// retirement. (E: check_kill_credit.py cargo.)
+void World::killPassengers(Unit& carrier) {
+    for (const int id:std::vector<int>(carrier.cargo)) {
+        Unit* c=unit(id);
+        if (!c || !c->alive() || c->inTransport!=carrier.id) continue;
+        c->lastHitBy=carrier.lastHitBy;c->lastHitPlayer=carrier.lastHitPlayer;c->deathType=8;
+        c->inTransport=0;
+        std::erase(carrier.cargo,id);
+        sweepDeath(*c);
+    }
+}
+
 // 512610 as World runs it: the unit at hp <= 0 starts dying (Killed,
 // corpse admission, the losses column) and leaves the ground word, its
 // orders and its search body. The per-unit update runs it at its start for
@@ -18104,6 +18121,7 @@ void World::sweepDeath(Unit& u) {
     // kill itself is credited at retirement (retireDeath).
     if (!retailHitter(u.lastHitBy,u.lastHitPlayer)) u.lastHitBy=0;
     if (mission_ || scenario_) justDied_.push_back(u.id);
+    killPassengers(u);
     const bool selfDestruct=u.deathType==Unit::kDeathSelfDestruct;
     // Killed decides corpse admission; Dying controls when the original
     // body retires. Only then does decomposition or water sinking begin.
@@ -21909,6 +21927,7 @@ void World::removeScenarioUnits(int player) {
         u.hp = Fixed();
         u.lastHitBy = 0; u.lastHitPlayer = -1;
         u.deathType = 10; u.severity = 0; u.corpseStatue = -1;
+        killPassengers(u);
         beginUnitDeath(u);
         if (u.type->isStructure())
             blockFoot(*u.type,u.x.toFloat(),u.z.toFloat(),false);

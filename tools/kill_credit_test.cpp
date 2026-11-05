@@ -240,6 +240,32 @@ int main(int argc,char** argv) try {
             check(w.unit(e)->alive(),"the commander rule took another player's unit");
         }
     }
+    {
+        // 512860 (check_kill_credit.py cargo): a carrier's death takes its
+        // passengers, whoever owns them, at once with death kind 8 and the
+        // carrier's hitter, who is credited for each at retirement.
+        auto boat=fighter("boat");boat.canTransport=true;boat.transportCap=4;boat.transportSizeCap=16;
+        for (const bool shooterLives:{true,false}) {
+            World w;terrain(w);
+            const int ship=w.spawn(&boat,400,400,0,0),a=w.spawn(&t,410,400,0,0),b=w.spawn(&t,420,400,0,2);
+            const int s=w.spawn(&t,800,800,0,1);
+            check(w.embarkInto(a,ship) && w.embarkInto(b,ship),"the passengers did not board");
+            if (!shooterLives) killNow(w,s);
+            w.unit(ship)->hp=Fixed();w.unit(ship)->deathType=1;
+            w.unit(ship)->lastHitBy=s;w.unit(ship)->lastHitPlayer=1;
+            w.tick(1.f/30);
+            for (const int p:{a,b}) {
+                const Unit& c=*w.unit(p);
+                check(!c.alive() && !c.deathPending && c.deathType==8 && !c.embarked(),
+                      "a passenger did not die at once with its carrier");
+                check(c.lastHitPlayer==1 && c.lastHitBy==(shooterLives ? s : 0),
+                      "a passenger did not take its carrier's hitter");
+            }
+            check(w.player(1).kills==3 && w.player(1).score==300,"the carrier's killer was not credited for its passengers");
+            if (shooterLives) check(w.unit(s)->xp==300,"the carrier's killer did not earn its passengers' experience");
+            check(w.unit(ship)->cargo.empty(),"the dead carrier kept its passengers");
+        }
+    }
     if (argc==2) {
         // The death weapon at retirement: the Bomb Sprinkler's Dying runs for
         // a while before 512ae0 fires its [EXPLODEAS].

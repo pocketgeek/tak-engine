@@ -1126,6 +1126,18 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   takes each body off the ground word, the air and its production. Ours
   looks at every carried unit (the chain never holds a retired one here).
   Test: `kill_credit_test`.
+- **A carrier's passengers** (gap hunt 3, E: `check_kill_credit.py` cargo).
+  The carrier's death packet handler `512860` walks its cargo (+0xac, then
+  +0xb0) before its own Killed and hands each passenger, whoever owns it,
+  the packet as death kind 8 with severity 0 (`51291d..51294f`): +0xf8 the
+  carrier's hitter while that lives, else 0, and +0xfc its player either
+  way; no Killed, no Dying, so it retires at once (`512ac8`), which detaches
+  it (`512b57`) and, kind 8 being a credit kind, counts it for that player
+  and gives that unit its experience. Only a passenger still attached after
+  that would take `51a140(hitter, passenger, 30000, 8, 0)` (`51295e`). Ours
+  (before): the passengers' update found the carrier dead and ended them
+  silently, a tick on, with no kill, no experience and no loss. Now
+  `World::killPassengers` from `sweepDeath` and from the `5131b0` port.
 - **Self-destruct** (gap hunt 3, E: `check_kill_credit.py` self-destruct,
   natively `4d85e0` and `4017e0`). Ctrl+D (`48e2b1..48e309`) removes the
   SelfDestruct mission from every selected unit that has one (`4d69d0`,

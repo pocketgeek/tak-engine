@@ -4633,6 +4633,7 @@ private:
     void notifyTurnDirection(Unit& u,UnitScript& script);
     void beginUnitDeath(Unit& unit);
     void sweepDeath(Unit& unit);
+    void killPassengers(Unit& carrier);
     void updateCorpseWindow(Unit& unit);
     // Enabled by setupMatch; a bare test World leaves it off.
     bool pathService_ = false;

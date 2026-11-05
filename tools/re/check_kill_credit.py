@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Who gets the credit for a hit and a kill in retail, natively.
 
-Nine pieces, each run on synthetic units:
+Ten pieces, each run on synthetic units:
 
   * the hitter gate of the damage routine 51a140 -> 51a240: a hitter whose
     object lives (+0x130 & 0x1000000, a dying one too) is stored at +0xf8 and
@@ -38,6 +38,9 @@ Nine pieces, each run on synthetic units:
     one, calls 5131b0 for its player with CommanderDeath on, outside a
     campaign mission; 5131b0 kills that player's every unit (kind 10) and
     retires them at once.
+
+  * a carrier's passengers: 512860 retires each at once with kind 8 and the
+    carrier's hitter, before the carrier's own Killed.
 
 The deadly-water rows are answered by `retail_script_test --deadly-water`
 and `--carried-water`.
@@ -552,11 +555,52 @@ def commander():
             'and retires a dying one at once')
 
 
+def cargo():
+    """512860 on a dying carrier with two passengers (one another player's),
+    natively with its recursion: before the carrier's own Killed, each
+    passenger in chain order gets the carrier's packet as kind 8, severity 0:
+    +0xf8 the carrier's hitter while it lives (else 0), +0xfc its player
+    either way, +0x116 0x80 (kind 8, no corpse), no Killed, and retires at
+    once (512ae0, which detaches it); no 51a140."""
+    f = Fixture()
+    for name, n in (('4d6a50', 2), ('50b4f0', 2), ('52ae30', 2), ('519a60', 1), ('56c640', 8), ('51a140', 5)):
+        f.record(name, n)
+    f.p.hooks[0x4e67c0] = lambda uc, sp: (1, struct.unpack('<I', uc.mem_read(sp, 4))[0] & 0xff)
+    f.p.hooks[0x56c4a0] = lambda uc, sp: (1, 0xffffffff)   # no Dying
+
+    def retire(uc, sp):
+        u = struct.unpack('<I', uc.mem_read(sp, 4))[0]
+        f.calls.append(('512ae0', u, f.get(u + 0xf8), f.get(u + 0xfc, 'B'), f.get(u + 0x116, 'B'),
+                        f.get(u + 0x115, 'b')))
+        carrier = f.get(u + 0xa8)
+        if carrier:   # 512b57: 51b4f0 detaches it
+            f.put(carrier + 0xac, f.get(u + 0xb0)); f.put(u + 0xa8, 0)
+        return 1, 0
+    f.p.hooks[0x512ae0] = retire
+    for lives in (True, False):
+        t = f.unit(1, player=2); k = f.unit(2, flags=ALIVE if lives else 0, player=5)
+        a = f.unit(3, player=2); b = f.unit(4, player=6)
+        for x in (t, a, b):
+            f.put(x + 0xc0, f.units + 0x6000 + (x & 0xfff))
+        f.put(t + 0xac, a); f.put(a + 0xb0, b); f.put(a + 0xa8, t); f.put(b + 0xa8, t)
+        pkt = f.units + 0x7000
+        f.p.uc.mem_write(pkt, struct.pack('<BHIHbB', 9, 1, 5, 2, 40, 0x11))   # the carrier's packet: kind 1
+        f.calls.clear()
+        f.call(0x512860, (pkt, 0))
+        retired = [c[1:] for c in f.calls if c[0] == '512ae0']
+        hitter = k if lives else 0
+        assert retired == [(a, hitter, 5, 0x80, 0), (b, hitter, 5, 0x80, 0), (t, hitter, 5, 0x11, 40)], retired
+        names = [c[0] for c in f.calls]
+        assert '51a140' not in names and names.index('56c640') > names.index('512ae0'), names
+    return ('cargo: a carrier\'s passengers die before its Killed, kind 8 and severity 0, with its hitter '
+            '(while it lives) and player, and retire at once')
+
+
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else 'build-o2/retail_script_test'
     for line in (hitter_gate(), attack_multiplier(), death_weapon_shot(), retirement(), mission_kill(),
                  water_hit(), water_death(), deadly_water(binary), carried_water(binary),
-                 self_destruct(), self_destruct_hit(), self_destruct_death(), commander()):
+                 self_destruct(), self_destruct_hit(), self_destruct_death(), commander(), cargo()):
         print(line)
 
 
