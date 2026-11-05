@@ -577,21 +577,31 @@ its group with Standby's group check (`407779`, `51d1e0(unit, 1, 2)`,
 Move_Ground_FormationStandby; docs/pathfinding-port.md). Legion's counterpart
 returns it to its own slot instead of the group centre, since every member of a
 formation's move has one:
+* *The formations* are Retail's (`legionFormationGroup`, `retailGroupSlot` with
+  the formation flag): Alt+N (`squad < 0`) and a classic AI squad while the AI
+  flags it one (`aiGroup` / `aiFormation`: a strike squad while it attacks),
+  groups 1..99. Ctrl groups and unflagged AI squads are not formations.
 * *The slot* (`World::legionFormationSlots_`, hashed, folded only while any
-  member has one): for each ground or boat member of an Alt+N formation, the
-  footprint it stood on when its move's settled arrival began
+  member has one): for each ground or boat member, the footprint it stood on
+  when the settled arrival of its last *formation move* began
   (`LegionNavigator::anchorGoal` names the arrival): its own place on the
   formation's point, or the place short of it where Legion settled it. It is
   never the goal itself: a member Legion settled short of its goal (a slot
   walled in by two settled arrivals, `legion_slotwedge`) was not to press on to
   it, and a first cut that walked members to their goals wedged mixed2's body
-  there for good. Kept each tick before the unit loop
-  (`updateLegionFormationSlots`, one walk of the units, map writes only on a
-  new arrival). A plain move under way drops it (its arrival gives the next
-  one; a formation the player stops short keeps none to walk on to or back
-  to); any other order -- an attack, a step-out, a build, a factory door
-  clearing -- leaves it, so the member comes back from wherever that order
-  left it.
+  there for good. A formation move is one at least two members of the
+  formation walk (one order identity: one click, one convoy) or arrive on (one
+  requested point, `arrivalPoint`). It drops the old slots under way (a
+  formation the player stops short keeps none to walk on to or back to) and
+  gives the new ones on arrival. A member moved on its own keeps its slot, as
+  Retail keeps it in its group record (Retail's reference is the group centre;
+  ours is the member's place in the group), and walks back to it once idle out
+  of it. Any other order -- an attack, a step-out, a build, a factory door
+  clearing -- leaves the slot too. A slot whose point no other slot of the
+  formation shares any more (the formation moved on without the member, or it
+  is alone; `legionSlotDests_`) is not walked back to. Kept each tick before
+  the unit loop (`updateLegionFormationSlots`: one walk of the units, map writes
+  only on a new arrival).
 * *The trigger* runs where Retail's does, at each wake of the member's ground
   Standby (every 7 + rand(7) ticks; no new draws), with Retail's tolerance
   measured from the slot (`legionStandbyOutOfSlot`, `src/sim/retailgroup.h`):
@@ -605,15 +615,21 @@ formation's move has one:
   of its slot (Legion settled it short, or the way is shut) gives that slot up
   until it carries another order: one walk, never a to-and-fro.
 * Flyers keep their flight stations over the ground and are never re-ordered
-  (the W6 rule); Ctrl groups are not formations; the AI's squads are Retail
-  group records only and not Legion formations. A member with a slot is left to
-  the re-form instead of the rest-time rejoin above, which still gathers the
-  members that never moved together (a fresh Alt+N, a factory's joiner).
+  (the W6 rule). An Alt+N member with a slot is left to the re-form instead of
+  the rest-time rejoin above, which still gathers the Alt+N members that never
+  moved together (a fresh Alt+N, a factory's joiner); the rejoin stays Alt+N
+  only.
+* In AI games it rarely acts: a 20-minute Legion game against the classic AI
+  (Inner Circle, seed 1) flags a strike squad from tick 31,200 on, and its
+  members are always walking or fighting at the samples -- no walk back; the
+  --mpai gates are unchanged.
 * `legion_formationreform`: a member shoved 12 cells (past the 9.8-cell
   tolerance, inside the W6 reach) walks back once and settles in its slot (the
   parent never moved it: walks 0, 192 px off); a Ctrl member shoved alike stays;
-  a body on the slot holds it back until it leaves; a formation stopped short
-  of its point stays put; walled off, it walks once and gives up.
+  a body on the slot holds it back until it leaves; a member moved 20 cells on
+  its own walks back once idle; a formation stopped short of its point stays
+  put; walled off, it walks once and gives up. `legion_formationreformai`: a
+  flagged AI squad's member shoved alike walks back, an unflagged one's stays.
 
 The in-game right-click in Legion mode sends one shared point for ground
 units, boats and hovercraft with footprints up to 8 whose order is not
