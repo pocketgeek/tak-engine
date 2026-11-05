@@ -926,9 +926,11 @@ Retail's system, read statically and partly emulated:
   (3,543 capped), covering owner kinds, inactive groups, boats, road/water and
   speed modes.
 
-Differences from our port: retail paces any grouped unit on a `0x2000000`
+Differences from our port (as audited then): retail paces any grouped unit on a `0x2000000`
 mission, so ordinary Ctrl-groups included, not only a separate "formation"
-squad. Retail uses terrain-scaled type speeds, not individual base speeds, with
+squad. (Superseded 2026-11-04, E: `51b890` aggregates only a record with `+8`
+set, so a Ctrl group, retail's plain "CreateSquad N", is never paced; only a
+formation is. See the fx-groups notes above.) Retail uses terrain-scaled type speeds, not individual base speeds, with
 a 25% floor. It slows the group for stragglers instead of speeding up the
 straggler. It also re-forms through slot standby missions. A faithful port
 needs `51b890`, `51c700`/`51ce40` and the `402880` mission together. Porting

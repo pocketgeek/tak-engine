@@ -1755,7 +1755,7 @@ the unbound `UnitCommand MoveFight`, is a Move_Ground / VTOL_Move / QMove with
 response mode -1: "Mission target scan", 2026-11-03): a flyer's leg of one
 is VTOL_Move (`Order::flightMoveMission` kept beside `attackMove`), the
 move's mission with its air-traffic check, its coarse and refining
-controllers and, for a Ctrl group in Retail mode, its group checks;
+controllers and, for a formation in Retail mode, its group checks;
 since fx-tsearch step 6 it carries MoveFight's response mode -1
 (`World::markFightLeg`), so VTOL_Move's own scan puts its attacks ahead of
 it, as Move_Ground's does on the ground. Every
@@ -1776,8 +1776,8 @@ patrol step the move's 0x3000400, so a Ctrl group's patrolling flyers left
 its moving aggregate on the way out (the group check reads 0x1000000 and
 0x4000000; `retailMissionFlags`). Every flyer patrol leg now carries the
 row's flags (`kVtolPatrolFlags`); `suppress_test` checks the legs and the
-group's moving count. (VTOL_Patrol's own group checks, `419fa0` / `41a162`,
-are still not ported: docs/pathfinding-port.md.) A flyer output's rally steps are
+group's moving count. (VTOL_Patrol's own group checks, `419f9b..41a21b`,
+are ported since fx-groups, protocol 312: docs/pathfinding-port.md.) A flyer output's rally steps are
 VTOL_Move and VTOL_Patrol too: GetBuilt resolves each QMove and QPatrol for
 the output (`4de530` actions 2 and 9, `0x4022ec` / `0x402319`); they used to
 fly with no mission. The group spread (`0x5214b0`, "Group move spread"
@@ -5743,8 +5743,9 @@ differences are in [the 0.9.7 notes](release-0.9.7-notes.md).
   (event 0x10) is ported since protocol 302 (next section), its air-traffic
   step-out and its lost ward (`0x4191d7`: the last mission goes on as
   VTOL_SeekGuard round the guarded unit's last position) since protocol 307
-  ("Air traffic"). Not ported: the group check (`0x51d1e0(unit, 1, 4)`, which
-  this note used to call an attack scan) and the optional leash.
+  ("Air traffic"), and its group check (`0x51d1e0(unit, 1, 4)`, which this
+  note used to call an attack scan) since protocol 312
+  (`retailGuardGroupCheck`). Not ported: the optional leash.
   Our draws come from the sim's RNG over the same ranges, not retail's stream.
 
 ## A guard answers its guarded unit's attacker (icd, 2026-10-27)
@@ -5785,8 +5786,9 @@ Ours (protocol 302): `World::retailHitResponse` stamps the victim's
 guard, `tickFlyingGuard` as event `0x10` in the wait mask), and
 `World::guardDefend` takes `lastHitBy` as `+0xf8`. The attack is
 `retailIssueAutoAttack(..., forced)`, not an auto target, so it chases until
-the attacker dies, and the guard order under it resumes. The attack scan
-(`0x51d1e0`) stays unported; it is our target acquisition.
+the attacker dies, and the guard order under it resumes. (`0x51d1e0` in
+VTOL_Follow is its group check, not an attack scan; ported since protocol
+312, `retailGuardGroupCheck`.)
 
 ## Helping and repairing on the ground: the approach (icd, 2026-10-30, protocol 305)
 
@@ -6560,7 +6562,7 @@ comes from):
 | Patrol, VTOL_Patrol | `40395e`, `41a24d` | ported (forced leash) | S, E (host) | `check_ground_patrol`, `check_flight_patrol` |
 | Move_Ground / VTOL_Move response, `+0xf8` fallback | `402e2e`, `4181b1` | ported; the fallback skips a carried attacker (engine guard: retail takes it and its attack's head drops it, 402e40..402e9b, 403c9c, 404778) | E (`probe_move_ground_response`), S | `attack_move` |
 | Move_Ground_Formation | `402988` | ported | S | `mission_ports` |
-| VTOL_Move_Formation | `4179f0` | not ported: FormationStandby branch not run | S | -- |
+| VTOL_Move_Formation | `4179f0` | ported: the FormationStandby branch's scan (`4179ef`, protocol 312) | E | `check_retail_group` vtolform |
 | Air retargets | `41962a`, `41baf0`, `41c428`, `41ce68`/`41d10d`, `41e02e` | ported | E (hosts) | the air oracles |
 | Attack_Melee retarget | `4049a0` | ported | S | `mission_ports` |
 | Attack_Chase retarget | `404075` | not ported: needs the approach sub-states; never fires at mode 100 | E (`probe_attack_chase_mode`) | -- |
@@ -7130,7 +7132,7 @@ Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
   at stage 0, as from an approach); result 6 rotates only SUPPRESS, which
   never runs while the leg leads. `retailMissionFlags` reports 0x1000410 for
   SUPPRESS and for its approach leg (the approach is its own controller in
-  retail). `suppress_test` checks a spread Ctrl group: a turret outlier
+  retail). `suppress_test` checks a spread formation: a turret outlier
   fires on the walk back and again once back, a shot due on the tick the
   formation retires leaves then and once, the outlier counts as a moving
   member, one that must face holds fire on the move and turns once stopped
@@ -7260,7 +7262,7 @@ null target; `Order::airPoint`):
   not. The leg is dispatched from `tickCombat` after the weapons
   (`tickAttackWalk`), as SUPPRESS's is, so a shot due on the tick it retires
   leaves before `4d6da0` drops the aim (TargetCleared on a unit target's
-  slots). `suppress_test`: an all-flyer Ctrl group's outlier flies back on
+  slots). `suppress_test`: an all-flyer formation's outlier flies back on
   VTOL_Move_Formation and attacks again, at a point and at a unit, for each
   of the three; one left behind after it has aimed fires on the way back
   (AirToGround at either, the hover at a point), and a shot due as the

@@ -254,7 +254,7 @@ their validation reports; both live in [`docs/`](docs/).
   scenario keeps its health and the way it faces, but is a new unit to its new
   owner: its mana pool starts empty, it is no longer paralysed, cloaked by order or
   set to its old owner's stance (it takes its type's), its weapons start with no
-  reload, it loses a mission-given name, and its animations start over. Its old
+  reload, and it loses a mission-given name. Its old
   owner loses the unit: missions and map scenarios count it as a loss for the old
   owner (a mission's "kill N of these" goal counts a converted enemy, and the last
   player to hit it is credited in a scenario's tallies), but no one is credited a
