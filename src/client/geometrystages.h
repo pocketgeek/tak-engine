@@ -122,7 +122,7 @@ inline bool bodyVertexCountStable(std::span<const uint64_t> before, LocalKeyLayo
 // ---- material stage key ----------------------------------------------------
 enum MaterialWord : size_t {
     kMaterialVeteran, kMaterialGhost, kMaterialConjuring, kMaterialEmote, kMaterialEmoteColour,
-    kMaterialEmoteMix, kMaterialOpacity, kMaterialClock, kMaterialWords
+    kMaterialEmoteMix, kMaterialOpacity, kMaterialClock, kMaterialFade, kMaterialWords
 };
 using MaterialKey = std::array<uint64_t, kMaterialWords>;
 
@@ -194,8 +194,11 @@ struct BodyMaterial {
     SDL_Color emoteColour{};
     float emoteMix = 0;
     bool spectral = false;      // FBI ghost: 55% alpha
+    // A sinking grave's fade (4ec7b0, 4ed04a..4ed067: ftol(alpha * 255.0f) as
+    // the vertex alpha of the body under blending state 6): 255 = opaque.
+    Uint8 fade = 255;
     Uint8 alpha() const { return Uint8(progress * 255.0f); }
-    bool identity() const { return !(vetGold > 0) && !conjuring && !emote && !spectral; }
+    bool identity() const { return !(vetGold > 0) && !conjuring && !emote && !spectral && fade == 255; }
 };
 
 // The collector's base colour for every textured triangle; a material over an
@@ -227,6 +230,7 @@ inline void applyMaterial(SDL_Vertex& v, const BodyMaterial& m) {
         v.color.b = Uint8(int(v.color.b) + int((int(c.b) - int(v.color.b)) * mix));
     }
     if (m.spectral) v.color.a = Uint8(int(v.color.a) * 55 / 100);
+    if (m.fade != 255) v.color.a = Uint8(int(v.color.a) * int(m.fade) / 255);
 }
 
 // Colours of every body vertex from the base colours (`base` empty = all white).

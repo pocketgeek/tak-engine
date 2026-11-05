@@ -1087,7 +1087,11 @@
         // its feature's height.
         if (const auto* sink=u.alive() ? nullptr : world_.corpseSink(u.id)) {
             s.corpseSinking=true;s.corpseSinkY=float(sink->y)/65536.0f;
-        } else s.corpseSinking=false;
+            // The record's own fade (+0x2f) is drawn: the feature draw hands
+            // +0x2f and the alpha to the model instance (4fd844..4fd85f), and
+            // the model draw blends the body at ftol(alpha * 255.0f) (4ed04a).
+            s.corpseSinkAlpha=sink->fading ? tak::sim::retailFadeByte(sink->alpha) : uint8_t(255);
+        } else {s.corpseSinking=false;s.corpseSinkAlpha=255;}
         if (!u.alive() && s.corpseFeat>=0 && size_t(s.corpseFeat)<world_.featureTypes().size()) {
             const auto& corpse=world_.featureTypes()[size_t(s.corpseFeat)];
             s.corpseReclaimable=corpse.reclaimable && !u.corpseFading;

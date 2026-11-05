@@ -1125,11 +1125,37 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   fades out as it reaches it (the fade ends the tick it lands or the next;
   in 5 of 3,000 cases it landed with alpha left and went the tick after).
   The float step agrees with the x87's for every y below `256 << 16`
-  (checked exhaustively against 64-bit and 53-bit rounding). Display: the
-  model draw gets `+0x2f` as its `+0x12` and the reclaim fade's `+0x2e` as
-  `+0x13`, which alone picks the blended mode (`4fd844..4fd85f`, `4ec9ba`),
-  so the sinking fade is not seen as a fade (I, not traced further); the
-  body is drawn at its feature height. Ours removed every water corpse 75
+  (checked exhaustively against 64-bit and 53-bit rounding). Display (S):
+  the feature draw (`4fd82b..4fd935`) loads the record into the renderer's
+  stand-in unit (`game+0x19e78`: position `+0x68` from the record, model
+  instance `+0xc0` = the record's `+4`) and copies `+0x2f` to the instance's
+  `+0x12`, `+0x2e` to `+0x13` and the alpha to `+0x18`, then draws it
+  through `4ee700` -> the unit model draw `4ec7b0`. There `+0x12` picks
+  renderer state 6 (`4ecfdc..4ecff2`, blending from the vertex alpha; 4
+  otherwise) and the body's rendered image (`+0x24`, `+0x78`) is drawn by
+  `4ebce0` with vertex colour `(ftol(alpha * 255.0f) << 24) | 0xffffff`
+  (`4ed04a..4ed067`, `4ebda2..4ebdb1`); `+0x13` is read only at `4ece6d`
+  (against `+0x3d`, the image cache) -- `4ec9ba`'s `+0x13` is a settings
+  object's (`[62d558]+0x18`), not the instance's. So the sinking fade IS
+  drawn (the body fades out over the rest of its fall) and a 3DO feature's
+  reclaim fade is not. Ours draws the body at its feature height and, while
+  the record fades, at that vertex alpha (`BodyMaterial::fade`,
+  `UnitR::corpseSinkAlpha`; display only).
+- **A reclaim of a sinking grave** (E: `check_corpse_sink.py`, 661 reclaims
+  at random ticks). `494ce0` mode 1 on a 3DO feature (`494e08..494ed8`)
+  takes a NEW record (`4949c0`: `+0x2e`, `+0x2f`, `+0x3c`, `+0x40` reset,
+  the velocity not), sets `+0x2e` = 1 and alpha 1.0, copies position and
+  model from the old record and frees the old one (`494a80` to the free
+  list). With a slot whose velocity is 0 the body stops where it is, its
+  own fade ends, and the reclaim's 34 passes (`495b35`, then `494f00`) take
+  it away. Ours kept it sinking (and could take it away by its own fade
+  first); `World::finishReclaim` now stops it (`retailFeatureSinkReclaim`).
+  Test: `reclaim_test`. Not ported: the new slot keeps the velocity its last
+  user left (no record pool in World, which takes 0). A slot freed while it
+  moved -- a grave that faded out, or one reclaimed while sinking -- still
+  holds (0, -0x2ccc, 0), and the next 3DO record to take it moves: in 234
+  such cases the reclaimed body sank on in 86, and in 5, over a bed of 0,
+  its sink fade started again at alpha 1.0 on top of the reclaim's (E). Ours removed every water corpse 75
   ticks after its handoff and kept a statue in water for good. Port:
   `src/sim/retailfeaturesink.h`, `World::tickCorpseSinks` at the end of the
   tick (hashed: position, velocity, fade and settled state; corpses in
@@ -2267,9 +2293,10 @@ Not a fade: a feature DESTROYED by damage (`494ce0` mode 0) with a
 at +0x10) and at its end (`495ef7`) calls `494f00` with 0, which places the
 `featuredead` stage (type+0x12c, `494f50`); without a `seqnamedie` it swaps at
 once (`494ee3`). A burn plays seqnameburn and swaps through `495300`. 3DO
-features (statues, corpses) hand +0x2e and +0x30 to the model draw
-(`4fd850`/`4fd85c` -> `4ee700`; `4ec9ba` picks draw mode 2 when +0x13 is
-set); ours does not draw that one yet.
+features (statues, corpses) hand +0x2f, +0x2e and +0x30 to the model draw
+(`4fd844..4fd85f` -> `4ee700`), which fades the body by +0x2f only (a
+sinking grave, "The sinking" above): a 3DO feature's reclaim fade is not
+drawn.
 
 **The death playback** (static analysis, 2026-11-03; established unless
 marked). The loader resolves `seqnamedie` (string `611520`, read at `493ed3`)

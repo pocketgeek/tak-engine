@@ -212,6 +212,7 @@ struct UnitR {
     bool corpseFading = false;                 // a reclaim finished it: neither raised nor reclaimed
     bool corpseSinking = false;                // a water grave: the body is drawn at corpseSinkY
     float corpseSinkY = 0;                     // its feature height (4959c0), world px
+    uint8_t corpseSinkAlpha = 255;            // its fade, ftol(alpha * 255.0f) (4ed056): 255 = none
     int corpseCellX=0,corpseCellZ=0,corpseFootX=0,corpseFootZ=0;
     bool corpseStatue = false;                 // petrified/frozen: the body stays UPRIGHT,
                                                // unlike a normal corpse which lies flat

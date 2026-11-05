@@ -267,8 +267,9 @@ their validation reports; both live in [`docs/`](docs/).
   in water, and now also a unit turned to stone or ice there, sinks slowly to the
   sea bed and stays there to be raised or reclaimed, where before every body in
   water vanished after two and a half seconds and a statue stood on the water for
-  good. Over the deepest water (a sea bed at the very bottom) it fades away as it
-  reaches the bottom instead.
+  good. Over the deepest water (a sea bed at the very bottom) it fades from view as
+  it reaches the bottom instead. A sinking body that is reclaimed stops where it is
+  until the reclaim takes it away.
 - **Deadly water hurts once a second**, as in the original game: the map's whole
   water damage each second to anything standing at or below the water line that
   cannot hover, ships included, and troops carried on a ship too (a flyer's
