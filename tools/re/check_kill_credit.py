@@ -172,12 +172,16 @@ def retirement():
     def blast(uc, sp):
         unit = struct.unpack('<I', uc.mem_read(sp, 4))[0]
         alive_at_blast.append(f.get(unit + 0x130) & ALIVE)
+        f.calls.append(('52ac00', unit))
         return 2, 0
     f.p.hooks[0x52ac00] = blast
     cases = []
-    for severity, finished, suppressed, kind in itertools.product((0, 1, 60), (0, 1), (0, 1), (1, 3, 5, 7)):
+    ordered = 0
+    for severity, finished, suppressed, kind, corpse in itertools.product((0, 1, 60), (0, 1), (0, 1), (1, 3, 5, 7),
+                                                                          (0, 1, 2)):
         u = f.unit(1, flags=ALIVE | DYING | DEATH_RUNS)
-        f.put(u + 0x115, severity, 'B'); f.put(u + 0x116, kind << 4, 'B')
+        f.put(u + 0x115, severity, 'B'); f.put(u + 0x116, kind << 4 | corpse, 'B')
+        f.calls.clear()
         f.put(u + 0x108, 0.0 if finished else 0.5, 'f'); f.put(u + 0xfc, 10, 'B')
         f.put(f.game + 0x19f94, 2 if suppressed else 0)
         alive_at_blast.clear()
@@ -186,9 +190,17 @@ def retirement():
         assert fired == (severity > 0 and finished and not suppressed), (severity, finished, suppressed, kind)
         assert all(alive_at_blast), 'the object was freed before its death weapon'
         assert not f.get(u + 0x130) & ALIVE, 'retirement left the object alive'
+        # The corpse (512ee0, for a corpse kind in +0x116's low nibble) comes
+        # after the death weapon: the blast never reaches its own corpse.
+        names = [c[0] for c in f.calls]
+        assert ('512ee0' in names) == (corpse > 0), (corpse, names)
+        if fired and corpse:
+            assert names.index('52ac00') < names.index('512ee0'), names
+            ordered += 1
         cases.append(fired)
     return ('retirement: 512ae0 fires the death weapon (%d of %d cases) while the object lives, for '
-            'severity > 0 on a finished unit, then frees it' % (sum(cases), len(cases)))
+            'severity > 0 on a finished unit, then frees it; the corpse (512ee0) after the blast in all %d '
+            'cases with both' % (sum(cases), len(cases), ordered))
 
 
 def mission_kill():

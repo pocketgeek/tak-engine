@@ -237,7 +237,8 @@ their validation reports; both live in [`docs/`](docs/).
   bursts once its death animation is over, as in the original game (the Bomb
   Sprinkler about five seconds after it falls), not the moment it is killed. The burst
   belongs to nobody: its kills earn no player a kill or score and no unit experience,
-  and it is not stronger for a veteran.
+  and it is not stronger for a veteran. It bursts before its own body is left behind,
+  so it never damages that body.
 - **Deadly water hurts once a second**, as in the original game: the map's whole
   water damage each second to anything standing at or below the water line that
   cannot hover, ships included, and troops carried on a ship too (a flyer's

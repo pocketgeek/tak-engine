@@ -173,6 +173,36 @@ int main(int argc,char** argv) try {
         const int handoff=w.unit(b)->corpseAnimationTicks();
         std::printf("crebomb: handoff %d, blast on tick %d after death\n",handoff,at);
         check(handoff>1 && at==handoff,"the death weapon did not wait for retirement");
+        // 512ae0 fires the death weapon (512d97) before it places the corpse
+        // (512ee0, check_kill_credit.py): the blast never reaches its own
+        // corpse. Shipped corpses mostly take no weapon damage (no damage=),
+        // so shipped walkers whose Killed leaves one get a destructible
+        // corpse and a death weapon here; killed alone on open ground, the
+        // corpse has taken no damage.
+        World definitions;registerMapFeatures(definitions,tak::tnt::Map{},vfs,&registry);
+        int reached=0;
+        for (const auto& [id,shipped]:registry.types()) {
+            if (reached>=4) break;
+            const int ct=definitions.corpseTypeOf(&shipped);
+            if (shipped.canFly || shipped.isStructure() || ct<0 || !shipped.script()) continue;
+            UnitType type=shipped;type.hasExplodeAs=true;type.explodeAs=Weapon{};
+            type.explodeAs.damage=100;type.explodeAs.aoe=96;type.explodeAs.edge=1;
+            auto feats=definitions.featureTypes();
+            feats[size_t(ct)].hp=1000;feats[size_t(ct)].indestructible=false;
+            World d;d.setPlayerCount(2);d.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+            d.setFeatureTypes(feats);d.mapCorpse(&type,ct);
+            const int u=d.spawn(&type,512,512,std::nullopt,0);
+            d.tick(1.f/30);
+            d.unit(u)->hp=Fixed();d.unit(u)->deathType=1;
+            for (int i=0;i<600 && (d.unit(u)->deathPending || d.unit(u)->alive());++i) d.tick(1.f/30);
+            const int32_t damage=d.corpseDamage(u);
+            if (damage<0 || !d.unit(u)->severity) continue;   // no corpse, or no blast
+            ++reached;
+            if (damage!=0) throw std::runtime_error(id+": its death blast reached its own corpse");
+        }
+        std::printf("own corpse spared: %d shipped walkers\n",reached);
+        check(reached>0,"no shipped walker leaves a corpse to check");
+
     }
     std::cout<<"PASS: kill credit, death weapon, mission Kill and deadly water\n";
     return 0;

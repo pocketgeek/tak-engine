@@ -1126,7 +1126,9 @@ ids are never reused, so that credit is dropped). A carried unit is not
 hurt by deadly water here (fixed since: see below). A deadly-water death is
 swept on the next tick, not in the same update (`51e36c`). The blast is
 queued after the corpse is placed, where retail fires it before (`512d97`
-before `512dbb`), so a blast could reach its own corpse feature here.
+before `512dbb`; E: `check_kill_credit.py` retirement, all 16 cases with
+both): the drain spares the blast's own corpse (`World::sparedCorpse_`), so
+it no longer reaches it (fixed 2026-11-05, `kill_credit_shipped`).
 
 ### A dying unit takes no more hits
 

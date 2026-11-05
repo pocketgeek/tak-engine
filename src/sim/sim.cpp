@@ -6402,6 +6402,8 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         const auto damageCorpse = [&](int anchor, bool direct) {
             const auto owner=corpseAnchors_.find(anchor);
             if (owner==corpseAnchors_.end()) return false;
+            // A death blast's own corpse did not exist yet when it landed.
+            if (sparedCorpse_ && owner->second==sparedCorpse_) return true;
             auto& footprint=corpseFootprints_.at(owner->second);
             if (const Unit* fading=unit(owner->second);fading && fading->corpseFading) return true;
             const auto& ft=featTypes_[size_t(footprint.type)];
@@ -9454,7 +9456,7 @@ void World::retireDeath(Unit& u) {
         : (u.type->hasExplodeAs ? &u.type->explodeAs : nullptr);
     if (deathWeapon)
         deathBlasts_.push_back({deathWeapon, {u.x.v, (u.type->canFly ? u.flightY : u.groundY).v, u.z.v},
-                                u.player, 0});
+                                u.player, 0, u.id});
 }
 
 // Retail's mission Kill (0x4d36eb -> 513130) ignores its arguments. Every
@@ -20394,8 +20396,10 @@ void World::tick(float dt) {
     // pathological chain can't spin forever. Fully deterministic (id-ordered).
     for (size_t i = 0; i < deathBlasts_.size() && i < 4096; ++i) {
         const DeathBlast b = deathBlasts_[i];
+        sparedCorpse_=b.source;
         if (b.w) applyHit(*b.w, Fixed::raw(b.position[0]).toFloat(), Fixed::raw(b.position[2]).toFloat(),
                           b.player, b.fromId, nullptr, {}, b.position);
+        sparedCorpse_=0;
     }
     deathBlasts_.clear();
 

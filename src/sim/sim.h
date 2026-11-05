@@ -2513,6 +2513,11 @@ public:
         clearFeatureMarks();
     }
     const std::vector<FeatType>& featureTypes() const { return featTypes_; }
+    // The weapon damage a dead unit's installed corpse has taken (-1: none installed).
+    int32_t corpseDamage(int unitId) const {
+        const auto found=corpseFootprints_.find(unitId);
+        return found==corpseFootprints_.end() ? -1 : found->second.damage;
+    }
     bool featureAliveAt(float x, float z) const;          // viewer decal sync
     // Order a mobile builder to reclaim feature `featureId` (negative = a corpse;
     // queue = append to its orders, for an area drag). Retail Reclaim (406250).
@@ -4292,8 +4297,13 @@ private:
     // (applyHit mutates units_, which the sweep is walking). Transient within one
     // tick -- always empty at tick end, so it needs no hashing.
     // 52ac00 detonates at the dying unit's 3D position: a flyer's blast is in the air.
-    struct DeathBlast { const Weapon* w; std::array<int32_t,3> position; int player, fromId; };
+    // source: the retired unit. 512ae0 fires the blast (52ac00) before it
+    // places the corpse (512ee0), so the blast never reaches that corpse;
+    // World places it in the sweep and drains the blast after, sparing it
+    // (sparedCorpse_, read by applyHit only while the blast lands).
+    struct DeathBlast { const Weapon* w; std::array<int32_t,3> position; int player, fromId, source=0; };
     std::vector<DeathBlast> deathBlasts_;
+    int sparedCorpse_=0;
     // Remote Effect (FBI type=Remote Effect): the effect materialises at the AIMED
     // GROUND POINT after `builduptime`, then applies its damage/status/conversion
     // once over areaofeffect. Earthquakes, monarch waves, god spells, Area Mind
