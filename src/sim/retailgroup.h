@@ -376,6 +376,21 @@ int retailStandbyGroupCheck(RetailStandbyCheck kind,OutOfSlot outOfSlot,Formatio
     return landing ? 5 : 0;
 }
 
+// Legion's counterpart of the standbys' group check (ours, not retail; see
+// World::legionStandbyCheck): retail's tolerance, 51d1e0(unit, 1, 2) for a
+// ground member, measured from the member's own Legion formation slot instead
+// of the group centre. dx/dz (px) run from the slot to the member. Level 2,
+// relaxed to 3 when no member of its class moves (51d1e0's empty moving
+// subset); the area is the moving members' plus its own while some move (the
+// standby's 0x4000000 counts the member in), else every member's.
+struct LegionSlotClass { int32_t area=0, movingArea=0, moving=0; };
+constexpr bool legionStandbyOutOfSlot(const LegionSlotClass& c,int32_t ownArea,int32_t dx,int32_t dz) {
+    int32_t radius=c.moving>0 ? (c.movingArea+ownArea)/2 : c.area;   // level 2 halves; level 3 is the area
+    radius=std::max(radius,2);
+    const int32_t distance=retailOctDistance(dx,dz)/16;
+    return distance*distance/4>radius;
+}
+
 // 41798b..4179e9: the group is active (50b800) with a moving member of any
 // class (50b900 ground, 50bd20 boat, 50c140 flyer): a
 // VTOL_Move_FormationStandby back in its slot stays (retailFlightFormation).

@@ -15565,6 +15565,14 @@ bool LegionNavigator::goalPoint(int id,int32_t& x,int32_t& z) const {
     x=Fixed::fromInt((g%W)*16+u->type->footX*8).v;z=Fixed::fromInt((g/W)*16+u->type->footZ*8).v;
     return true;
 }
+bool LegionNavigator::anchorGoal(int id,int32_t& x,int32_t& z) const {
+    const auto found=impl_->anchors.find(id);
+    const Unit* u=impl_->w.unit(id);
+    if(found==impl_->anchors.end()||found->second.goal<0||!u||!u->type)return false;
+    const int W=impl_->width(),g=found->second.goal;
+    x=Fixed::fromInt((g%W)*16+u->type->footX*8).v;z=Fixed::fromInt((g/W)*16+u->type->footZ*8).v;
+    return true;
+}
 void LegionNavigator::noteFlyerEvent(FlyerEvent e) {
     auto& s=impl_->stats;
     switch(e) {

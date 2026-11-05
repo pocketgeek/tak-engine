@@ -907,7 +907,12 @@ as `retailAttackGroupCheck`. These missions are group movers (SUPPRESS
 SUPPRESS, so they now count in the moving aggregate of a formation. The
 formation leaves the attack's weapon slots as they are, and a SUPPRESS walker
 fires at its point on the way back; docs/retail-engine.md ("SUPPRESS port")
-has the details. Legion has no group record: unchanged.
+has the details. Legion has no group record: unchanged. Standby's check
+(`407779`) has a Legion counterpart of our own (fx-legform, 2026-11-05): at the
+same standby wakes, with the same `51d1e0` tolerance measured from the
+member's own Legion slot, an idle ground member of a formation (Alt+N, or an
+AI squad the AI flags) walks back to that slot, a member moved on its own
+included (docs/legion-pathfinding.md, "Formation re-form").
 
 Original mapping (audit 2026-10-06):
 
