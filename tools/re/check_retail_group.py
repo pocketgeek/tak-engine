@@ -35,6 +35,8 @@ helpers in src/sim/retailgroup.h and retailGroundFormation:
              the next mission's flags, the Move_Ground_Formation push at
              level -3 with no target scan, rand(15)), stopped at its stage
              jump table
+  patrol     403600's head (40361c..40388d): the ground Patrol's two group
+             checks, against retailGroundGroupCheck as 402b00's
   follow     407f90's head (40800c..40810e): Follow_Ground's group check
              (retailGuardGroupCheck: 51d1e0(unit, 1, 4), rand(4) -> 50c480
              and 4d6a50(unit, 0), the Move_Ground_Formation push at level -3
@@ -260,6 +262,9 @@ def main():
     h.uc.hook_add(1 << 2, lambda uc, address, size, _: h.events.append(('leave',)), begin=0x50c480, end=0x50c480)
     h.uc.hook_add(1 << 2, lambda uc, address, size, _: (h.events.append(('stages',)), uc.emu_stop()),
                   begin=0x40810e, end=0x40810e)
+    # Patrol (403600) goes on at 40388d (the flag's rand(10)) once its group
+    # checks pass, as Move_Ground at 402d53.
+    h.uc.hook_add(1 << 2, h._stop, begin=0x40388d, end=0x40388d)
     stats = dict(notified=0, slowed=0, reform=0, wait=0, cancel=0)
     # 51b890 tick
     for case in range(a.cases):
@@ -653,6 +658,40 @@ def main():
         key = {-1: 'fin', 2: 'fcancel', 0: 'fform'}.get(want[0], 'f%d' % want[0])
         stats[key] = stats.get(key, 0) + 1
         counts['follow'] += 1
+    # 403600's head: the ground Patrol's two group checks, against the same
+    # helper as 402b00 (World's Patrol host calls retailGroundGroupCheck).
+    # Its own random stream, so the other modes' cases stay as they were.
+    prng = random.Random(0x403600); counts['patrol'] = 0
+    for case in range(a.cases * 5):
+        rec = random_record(prng, spread=400); rec['active'] = True; g = prng.randrange(1, 99)
+        h.load_record(g, rec)
+        u = random_unit(prng, g, spread=400); u['mover'] = True; u['mission'] = True
+        u['flags'] = 0x3000410 | prng.choice([0, 0x4000]) | (0x8000000 if prng.random() < 0.5 else 0)
+        u['ustate'] = 0x1000000
+        u['fixed'] = (u['fixed'][0], 0, u['fixed'][2]); addr = h.load_unit(0, u)
+        ms = MISSIONS; gx, gz = prng.randrange(0, 400) << 16, prng.randrange(0, 400) << 16
+        for k, v in zip((0x22, 0x26, 0x2a), (gx, 0, gz)): h.put('i', ms + k, v)
+        h.put('i', ms + 0x52, 0); h.uc.mem_write(ms + 5, bytes([prng.randrange(0, 4)]))
+        draw = prng.randrange(4); h.draws = [draw]; h.events.clear()
+        h.call(0x403600, (addr, ms, 0), allow_early_stop=True)
+        flags_after = h.get('I', ms + 0x5a)[0]
+        kinds = [e[0] for e in h.events]
+        if 'cancel' in kinds: want = 1
+        elif 'formation' in kinds:
+            want = [e for e in h.events if e[0] == 'formation'][0][2]
+            if 'push' not in kinds: raise AssertionError(('patrol push', case, h.events))
+        elif 'moveground' in kinds: want = 0
+        else: raise AssertionError(('patrol-exit', case, h.events))
+        draws = kinds.count('rand'); rec_after = h.read_record(g)
+        out = ask('check %s %s %d %d 0 %d %d 0 %d %d' % (record_text(rec), member_text(u), u['flags'],
+                                                       u['fixed'][0], u['fixed'][2], gx, gz, draw), 2)
+        r, f, d = (int(v) for v in out[0].split()); rmine = [int(v) for v in out[1].split()]
+        if (r, f, d) != (want, flags_after, draws) or (want == 1 and rmine != rec_after):
+            raise AssertionError(('patrol', case, (want, hex(flags_after), draws, rec_after), (r, hex(f), d, rmine),
+                                  dict(unit=(u['fixed'][0] >> 16, u['fixed'][2] >> 16), goal=(gx >> 16, gz >> 16))))
+        key = {-2: 'greform', 4: 'gwait', 1: 'gcancel'}.get(want)
+        if key: stats[key] = stats.get(key, 0) + 1
+        counts['patrol'] += 1
     ours.stdin.close(); ours.wait()
     print('PASS: %s; %s' % (', '.join('%s %d' % kv for kv in counts.items()),
                             ', '.join('%s %d' % kv for kv in stats.items())))

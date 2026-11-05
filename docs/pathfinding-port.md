@@ -693,7 +693,9 @@ Also ported in the second pass: the changed flag (record `+0xb0`, set by
 `51c612..51c6e1` as `retailGroupNotify` (the World does not consume the
 navigator bit it sets, `4e60f0` `nav+0x114|8`); `50c480` as
 `retailGroupLeave`; the `402b00` head as `retailGroundGroupCheck`; the same
-head in Patrol (`403600`, sites `4037ad`/`40383b`, identical structure), so
+head in Patrol (`403600`, checks at `40361c`/`4037e9`, pushes at `4037ad`/`40383b`,
+the same structure; E since 2026-11-05: `check_retail_group.py` `patrol`, 2,000
+heads against `retailGroundGroupCheck`, all agree), so
 grouped patrols re-form too; and computer players skip the cap (owner
 `+0xea` 3 uses navigator `vt+0x3c`, zero for ground navigators). In the
 World "computer" is a player with the AI's automatic gates (every AI seat,
