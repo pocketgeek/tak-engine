@@ -4379,7 +4379,10 @@ private:
         uint32_t nextFlags() const { return w.retailNextMissionFlags(u,0); }
         void leave() const { w.leaveRetailGroupCentre(u); }
         bool formation() { formationTo=true;return true; }
-        void push();
+        // Puts the formation ahead and runs it at once, as the dispatcher
+        // goes on to the head it was handed: true when it did (the caller's
+        // mover is done for the tick).
+        bool push();
     };
     void tickRetailGroups();
     void planLegionFlightStations();

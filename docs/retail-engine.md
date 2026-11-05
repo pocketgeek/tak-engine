@@ -6916,9 +6916,12 @@ null target; `Order::airPoint`):
   VTOL_Move_Formation and attacks again, at a point and at a unit, for each
   of the three; one left behind after it has aimed fires on the way back
   (AirToGround at either, the hover at a point), and a shot due as the
-  formation retires leaves then, once. I: the formation is pushed after the
-  dispatch and first runs at the next tick; retail's dispatcher runs it at
-  once.
+  formation retires leaves then, once. The dispatcher (`4d8450`) re-reads the
+  head (`+0x60`) after the attack returns 0, so the formation `4d7750` put
+  there runs its first stages in the same dispatch (S, as SUPPRESS's):
+  `AirAttackGroup::push` dispatches it (`tickFlightPatrol`) and the mover
+  flies its controller that tick; until 2026-11-04 it first ran at the next
+  tick (`suppress_test`: no formation waits a tick at stage 0).
 - S, the registry rows (read statically, 2026-11-04): VTOL_SEEKATTACK
   (`4192f0`) and VTOL_SEEKGUARD (`4197d0`) both carry
   0x1000600, so a seek is a group mover; whether their ctor clears 0x200

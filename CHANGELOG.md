@@ -179,7 +179,9 @@ their validation reports; both live in [`docs/`](docs/).
   when its weapon can aim without turning the body, and then fires on from there; now
   and then it gives up the order instead. Flyers attacking in a group, at a spot or
   at a unit, fly back to their group the same way, and keep firing at what they
-  had aimed at while they do.
+  had aimed at while they do; they now turn back at once, not a moment later.
+  Patrolling flyers in a Ctrl group now count as moving with their group on the
+  way out as well as on the way back, as in the original game.
 - **Campaign siege units and towers scripted to bombard a spot now fire at it**, as in
   the original game, instead of only walking toward it (or, for a tower, doing
   nothing). A flyer scripted the same way now makes its air attack on the spot

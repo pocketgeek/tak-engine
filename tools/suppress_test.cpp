@@ -445,6 +445,7 @@ struct GroupRun {
                                  // its slot (51d1e0(unit, 1, 4)), with no formation leading: the leave
     int stoppedTurns = 0;        // walk ticks the body stood, its formation's controller let go, and turned
     int movers = -1, members = -1;   // the group's moving and all ground members, two ticks into the march
+    int pushedIdle = 0;          // formations still at stage 0 with no controller on the tick they went in
     uint64_t hash = 0;
 };
 
@@ -604,6 +605,9 @@ GroupRun flyGroup(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim::
         const bool lead = o.size() > 1 && o[0].formationLevel && attacking(o[1]);
         if (!o.empty() && o[0].formationLevel && !lead) r.otherLegs = true;
         if (lead && !walking) ++r.formations;
+        // The dispatcher goes on to the head it was handed (4d8450): the
+        // formation runs its first stages in the tick it went in.
+        if (lead && !walking && o[0].mission.stage == 0 && !o[0].flightGoal) ++r.pushedIdle;
         if (!lead && walking && !o.empty() && attacking(o[0])) {
             r.retired = true; r.afterShots = 0; r.retireTicks.push_back(now);
         }
@@ -699,11 +703,18 @@ void flyerGroups(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim::U
         const GroupRun r = flyGroup(vfs, reg, *t, 2400);
         std::printf("  %s outlier of an all-flyer group: %s\n", name, describe(r).c_str());
         // A strike's passes reach far: it may be sent back again before its
-        // next release, so its shots are counted from the first return.
-        if (mode == sim::PathfindingMode::Retail)
-            check(r.formations >= 1 && !r.otherLegs && r.retired && r.orderAtEnd && r.shotsSince >= 1,
+        // next release, so its shots are counted from the first return, and
+        // out of its slot again once flagged it may give the order up
+        // (rand(2), as at a unit above).
+        if (mode == sim::PathfindingMode::Retail) {
+            check(r.formations >= 1 && !r.otherLegs && r.retired && (r.orderAtEnd || t == &striker) &&
+                      r.shotsSince >= 1,
                   std::string(name) + ": out of its slot it flies back on VTOL_Move_Formation, then attacks again",
                   describe(r) + ", " + std::to_string(r.shotsSince) + " shots since the first return");
+            check(r.formations >= 1 && r.pushedIdle == 0,
+                  std::string(name) + ": the formation runs in the dispatch that pushed it",
+                  std::to_string(r.pushedIdle) + " of " + std::to_string(r.formations) + " waited a tick");
+        }
         else
             check(r.formations == 0 && r.orderAtEnd, std::string(name) + ": Legion has no group check", describe(r));
     }

@@ -3035,14 +3035,25 @@ const Order* World::formationAttack(const std::vector<Order>& orders) {
 // 41db51 / 41c1f1 / 41b7f6: VTOL_Move_Formation (row 5ebca1), level -4
 // (+0x56): the moving members' centre until back within level 4; the attack
 // starts again at stage 0 when it retires.
-void World::AirAttackGroup::push() {
-    if (!formationTo) return;
+//
+// The attack returns 0 with the formation at the head (+0x60, 4d7750), and
+// the dispatcher (4d8450) goes on to it in the same dispatch, as SUPPRESS's
+// (tickSuppress): its first stages run now, and the mover flies its
+// controller this tick. The attack's weapons have fired already (52ae90
+// runs first), so only the formation's dispatch and the mover run here.
+bool World::AirAttackGroup::push() {
+    if (!formationTo) return false;
     Order formation;
     formation.x=u.x;formation.z=u.z;formation.goal=formation.flightMoveMission=true;
     formation.formationLevel=-4;formation.mission.flags=0x1000000u;
     formation.attackFormation=true;formation.issuedTick=w.tickCounter_;
     u.orders.insert(u.orders.begin(),formation);
     w.noteOrders(u.id);
+    w.tickFlightPatrol(u);
+    if (w.stepOutFront(u)) w.flyMissionGoal(u,u.orders.front());
+    else if (formationAttack(u.orders)) { w.tickFlightMovement(u);w.notifyFlightOccupancy(u); }
+    else { w.tickFlightBody(u);w.notifyFlightOccupancy(u); }
+    return true;
 }
 
 // Flags of the unit's current mission (+0x5a), for the missions this host
@@ -13372,7 +13383,7 @@ void World::tickAirToGroundHover(Unit& u,const Unit* target,const Weapon* select
     }
     if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
         u.orders.front().aheadOfDefault=aheadOfDefault;
-    host.push();
+    if (host.push()) return;
     if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
     if (host.seekTo) { seekLostPoint(u,pointX,pointZ);return; }
     if (stepOutFront(u)) { flyMissionGoal(u,u.orders.front());return; }
@@ -13532,7 +13543,7 @@ void World::tickAirToGround(Unit& u,const Unit* target,const Weapon* selected) {
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
         u.orders.front().aheadOfDefault=aheadOfDefault;
-    host.push();
+    if (host.push()) return;
     if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
     if (host.seekTo) { seekLostPoint(u,pointX,pointZ);return; }
     if (stepOutFront(u) || (!u.orders.empty() && host.owns(u.orders.front()))) {
@@ -13662,7 +13673,7 @@ void World::tickAirStrike(Unit& u,const Unit* target) {
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
         u.orders.front().aheadOfDefault=aheadOfDefault;
-    host.push();
+    if (host.push()) return;
     if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
     if (host.seekTo) { seekLostPoint(u,pointX,pointZ);return; }
     if (stepOutFront(u) || (!u.orders.empty() && host.owns(u.orders.front()))) {
