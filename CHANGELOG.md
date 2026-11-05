@@ -361,7 +361,9 @@ their validation reports; both live in [`docs/`](docs/).
     are done, as in the original game; a unit sent on a patrol by the mission stays
     under its control. While its orders run, a moving unit does not turn on whoever
     shoots at it, and a computer opponent leaves the unit to the mission instead of
-    drafting it into its own army, whose orders replaced the mission's.
+    drafting it into its own army, whose orders replaced the mission's. Troops a
+    mission's transport puts ashore set off on their own orders at once, instead of
+    first finishing them and then shuffling aside where they ended up.
 - **Fedora 45 packages.** Fedora 45 now has its own x86-64 and ARM64 RPMs, beside
   Fedora 44's.
 - **Investigated, no change needed:**

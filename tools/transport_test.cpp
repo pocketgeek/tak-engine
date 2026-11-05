@@ -794,6 +794,40 @@ static void transferLifecycle() {
     check(!w.unit(cid)->alive(),"cargo is lost when its carrier dies");
 }
 
+// The released passenger's PARK (409154..409178): never permanent; behind the
+// passenger's own orders, or in front of them when the carrier fails the
+// selection predicate -- a mission script's transport (its selectable bit
+// clear) puts it first. (A selectable passenger's PARK in front gives way to
+// its next order at its first run.)
+static void unloadParkPlace() {
+    for(int scripted=0;scripted<2;++scripted) {
+        World w;setTestPathfinding(w);
+        w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+        UnitType carrier=boatType(),passenger=footType();
+        const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,430,400);
+        w.loadInto(cid,tid);
+        for(int tick=0;tick<40 && !w.unit(cid)->embarked();++tick)w.tick(1.f/30);
+        // The passenger's own order, queued aboard, from its mission script (so
+        // it is not selectable either: a PARK in front of it does not give way
+        // at once, 407d1e, and stays to be seen).
+        w.order(cid,700,700,true);
+        w.unit(cid)->selectable=false;
+        w.unit(tid)->selectable=scripted==0;
+        w.unloadAt(tid,500,400);
+        for(int tick=0;tick<40 && w.unit(cid)->embarked();++tick)w.tick(1.f/30);
+        const auto& o=w.unit(cid)->orders;
+        const bool front=!o.empty() && o.front().park.has_value();
+        const bool back=!o.empty() && o.back().park.has_value();
+        const auto* park=front ? &*o.front().park : back ? &*o.back().park : nullptr;
+        check(!w.unit(cid)->embarked() && park && park->permanent==0,
+              scripted ? "a scripted carrier's passenger gets a PARK that is not permanent"
+                       : "a passenger gets a PARK that is not permanent");
+        check(scripted ? front && !back : back && !front,
+              scripted ? "in front of its own orders (the carrier is not selectable)"
+                       : "behind its own orders (the carrier is selectable)");
+    }
+}
+
 // Ordinary moves use the same VTOL mission for transports, builders and armed
 // flyers: queued work starts at the coarse circle; the final move refines it.
 static void ordinaryFlightMoves() {
@@ -3363,6 +3397,21 @@ int main(int argc,char** argv) {
             std::printf("%u\n",tak::sim::retailUnloadParkPadding(first,second,remaining,int16_t(footX),int16_t(footZ)));
         return 0;
     }
+    if (argc==2 && !std::strcmp(argv[1],"--unload-park-order")) {
+        // tools/re/check_unload_park_order.py: "flags left held carried holder"
+        // per line -> 1 when the released passenger's PARK goes in front.
+        unsigned flags,held,carried,holder;float left;
+        while (std::scanf("%x %f %u %u %u",&flags,&left,&held,&carried,&holder)==5) {
+            tak::sim::Unit c;
+            c.deadFor=(flags&0x1000000u) ? -1 : 0;
+            c.hp=(flags&0x1000u) ? tak::sim::Fixed() : tak::sim::Fixed::fromInt(100);
+            c.selectable=(flags&0x20u)!=0;
+            c.underConstruction=left>0.0f;
+            c.inTransport=carried ? 99 : 0;
+            std::printf("%d\n",int(World::unloadParkAhead(c)));
+        }
+        return 0;
+    }
     if(argc==3 && !std::strcmp(argv[1],"--post-unload")) {
         postUnloadRoster(argv[2]);
         postUnloadQueued(argv[2]);
@@ -3381,6 +3430,7 @@ int main(int argc,char** argv) {
     if(argc==2) retailRoster(argv[1]);
     boardingLimits();
     transferLifecycle();
+    unloadParkPlace();
     ordinaryFlightMoves();
     loadOrderQueueing();
     queueUnloadDuringPickup();

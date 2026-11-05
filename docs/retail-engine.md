@@ -7161,9 +7161,16 @@ lookups answering yes and no) and `401450`, against `mission_orders_test
     park only for a live, selectable, finished, free, uncarried unit; a
     scripted one parks on until its tries run out (`World`'s ground PARK,
     `production_test`).
-  - Ground_Unload and VTOL_Unload (`40902e`, `41b3a6`) compute the same
-    predicate for the dropped unit and pass it on to the drop (`51b480`; I:
-    its selection); that changes no mission's course here (not ported).
+  - Ground_Unload and VTOL_Unload (`40901c..40906e`, `41b394..41b3e9`, E with
+    `check_unload_park_order.py`) take the same predicate on the CARRIER
+    before the drop; its negation is the PARK push's argument 7, which `4d78a0`
+    reads at `4d7a09`: 0 appends the released passenger's PARK behind its
+    orders (`4d77f0`), anything else puts it in front (`4d7750`). The PARK is
+    never permanent (argument 6, `+0x52`, is 0). So a mission script's
+    transport puts each passenger's PARK first, where a selectable passenger
+    with orders gives it up at once (`407d1e`). Ours appended it always and
+    made it permanent when the carrier was incapacitated
+    (`World::unloadParkAhead`, `transport_test` `unloadParkPlace`).
 
 Shipped data: 3,395 computer and 128 human placements push a mission; most
 human ones start with `s`. Ours, before: no such bit; a mission's units were

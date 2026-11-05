@@ -5593,11 +5593,19 @@ bool World::tickTransport(Unit& u, float dt) {
         }
         const uint32_t first=pathRand(3),second=pathRand(3);
         Order park;park.goal=park.groundMission=true;park.park.emplace();
-        park.park->permanent=u.incapacitated() ? 1 : 0;
+        // 409154..409178 (41b3e2.. for VTOL_Unload): never permanent (push
+        // argument 6 is 0), appended behind the passenger's orders, or put in
+        // front of them when the carrier fails the selection predicate taken
+        // before the drop (40901c..40906e): a mission script's transport, one
+        // dying or unfinished (E, check_unload_park_order.py).
+        park.park->permanent=0;
         park.park->padding=retailUnloadParkPadding(first,second,remaining,
             int16_t(next ? next->type->footX : 0),int16_t(next ? next->type->footZ : 0));
         park.mission.flags=0x200u;
-        c->orders.push_back(park);
+        if (unloadParkAhead(u) && !c->orders.empty()) {
+            cancelPath(*c);c->routeStamp=-1;
+            c->orders.insert(c->orders.begin(),park);
+        } else c->orders.push_back(park);
         noteOrders(c->id);
     }
     o.transportPassenger=0;

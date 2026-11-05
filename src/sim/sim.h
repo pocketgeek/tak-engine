@@ -3161,6 +3161,14 @@ public:
     // clear): when it comes up the unit is selectable again and the next
     // order runs.
     void orderMakeSelectable(int unitId);
+    // Ground_Unload / VTOL_Unload's release (40901c..40906e): the passenger's
+    // PARK goes in front of its orders unless the carrier is live, not dying,
+    // selectable, finished and not carried (retail's selection predicate;
+    // +0x104 and the holder bit are never set in lockstep).
+    static bool unloadParkAhead(const Unit& carrier) {
+        return !(carrier.alive() && carrier.hp > Fixed() && carrier.selectable && !carrier.underConstruction &&
+                 !carrier.embarked());
+    }
     // Put `passengerId` straight into `transportId`'s hold (InitialMission
     // "i NAME", retail 51b4f0): no pickup, and its later orders wait aboard.
     bool embarkInto(int passengerId, int transportId);
