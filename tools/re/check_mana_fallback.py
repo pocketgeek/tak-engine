@@ -17,8 +17,9 @@ the global 6188bc (10), times 6188b8 (0.1f) plus 5ebfb4 (1.0f); noveteran
 (type +0x268 & 0x10) answers 1.0 first. The kill credit (512ce0) adds the
 victim type's experiencepoints to +0xf0, so a unit that killed K units of its
 own type's experiencepoints, as here (+0xf0 = K x +0x1c2 plus a remainder
-below one level), stands at level min(K, 10); the port is given K kills
-(xp, then setVeterancyOverride sets the rank). A level-path case "flips" when
+below one level), stands at level min(K, 10); the port is given the same
+experience and experiencepoints (Unit::xp, UnitType::experiencePoints, then
+setVeterancyOverride sets the rank). A level-path case "flips" when
 the native selector differs from the same row at 0 kills.
 
     python3 tools/re/check_mana_fallback.py [build-o2/retail_script_test]
@@ -110,8 +111,11 @@ def main():
                               rng.choice((0, 0, 1)), rng.choice((0, 0, 1, 2, 3, 4, 6, 8, 10, 10, 11, 14, 40))))
     expected = [native(*f) for f in fixtures]
     flips = sum(native(*f[:5])[0] != want[0] for f, want in zip(fixtures[plain:], expected[plain:]))
-    rows = ['%d %r %r %r %r %r %d %d' % (f[0], *map(float, f[1]), float(f[2]), f[3], f[4], f[5] if len(f) > 5 else 0)
-            for f in fixtures]
+    def row(f):
+        kills, points, spare = f[5:8] if len(f) > 5 else (0, 1, 0)
+        return '%d %r %r %r %r %r %d %d %d' % (f[0], *map(float, f[1]), float(f[2]), f[3], f[4],
+                                               kills * points + spare, points)
+    rows = [row(f) for f in fixtures]
     output = subprocess.run([binary, '--mana-fallback'], input='\n'.join(rows) + '\n',
                             text=True, capture_output=True, check=True)
     actual = [tuple(map(int, line.split())) for line in output.stdout.splitlines()]

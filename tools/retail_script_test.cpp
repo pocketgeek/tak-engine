@@ -140,13 +140,14 @@ struct Host {
 int main(int argc,char** argv) {
     if (argc==2 && std::string(argv[1])=="--mana-fallback") {
         // Rows: selector (3 = every slot), three manapershot costs, mana
-        // before the release, the vetOverride (+0xf4), noveteran and the
-        // kills. Prints the selector and the mana after the release in 1/1024
-        // units.
+        // before the release, the vetOverride (+0xf4), noveteran, the
+        // experience (+0xf0) and the type's experiencepoints (+0x1c2). Prints
+        // the selector and the mana after the release in 1/1024 units.
         using namespace tak::sim;
-        int selected,noVeteran,kills;float c0,c1,c2,vet;double mana;
-        while(std::cin>>selected>>c0>>c1>>c2>>mana>>vet>>noVeteran>>kills) {
+        int selected,noVeteran,experience,points;float c0,c1,c2,vet;double mana;
+        while(std::cin>>selected>>c0>>c1>>c2>>mana>>vet>>noVeteran>>experience>>points) {
             UnitType type;type.maxHp=100;type.maxMana=1000;type.noVeteran=noVeteran!=0;
+            type.experiencePoints=points;
             type.weaponSwitching=selected<3;
             Weapon gun;gun.range=400;gun.damage=1;gun.projVel=300;gun.reload=1;
             for(const float cost:{c0,c1,c2}) {gun.manaCost=cost;type.weapons.push_back(gun);}
@@ -156,10 +157,11 @@ int main(int argc,char** argv) {
             const int id=world.spawn(&type,200,200,{},0);
             Unit& u=*world.unit(id);
             u.weaponSlot=selected<3 ? selected : 0;u.mana=mana;
-            // The kills as the kill credit counts them (a noveteran type gains
-            // none); the override then sets the rank (getLevel 519310: 10
-            // while +0xf4 is set, else the kills capped at 10).
-            u.xp=type.noVeteran ? 0 : kills;world.setVeterancyOverride(id,vet);
+            // The experience as the kill credit sums it (a noveteran unit gains
+            // it too); the override then sets the rank (getLevel 519310: 0 for
+            // noveteran, 10 while +0xf4 is set, else experience over
+            // experiencepoints capped at 10).
+            u.xp=experience;world.setVeterancyOverride(id,vet);
             // A non-switcher releases every slot it holds (52ae90's selector 3).
             for(int slot=type.weaponSwitching ? u.weaponSlot : 0;slot<=(type.weaponSwitching ? u.weaponSlot : 2);++slot)
                 RetailReplayProbe::release(world,u,slot);
