@@ -258,6 +258,11 @@ their validation reports; both live in [`docs/`](docs/).
   cannot hover, ships included, and troops carried on a ship too (a flyer's
   passengers high above the water are safe). A unit the water kills dies that
   moment, not a moment later.
+- **A player who loses their Monarch loses their whole army with it.** With Monarch
+  Expendable off, the moment a Monarch dies (or a transport carrying it is destroyed)
+  every other unit and building of that player dies too, as in the original game;
+  before, the player was out but their army stayed on the field. Scenario games keep
+  their own rules.
 - **Self-destruct keeps the original game's timing.** After its two-second countdown
   a unit now leaves your command up to half a second later, at random, as in the
   original game. Pressing self-destruct while some of the selected units already

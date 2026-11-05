@@ -18150,6 +18150,18 @@ void World::sweepDeath(Unit& u) {
         const int corpse=u.corpseStatue>=0 ? u.corpseStatue : corpseTypeOf(u.type);
         if (corpse>=0 && (u.corpseStatue>=0 || !u.underConstruction) && !placeCorpse(u,corpse)) retireCorpse(u);
     }
+    // 512610's commander rule (51280d..512852): with CommanderDeath on (our
+    // Monarch Expendable off) outside a campaign mission (map mode 1), the
+    // death of a commander, or of a unit carrying a live one, ends with
+    // 5131b0 for the dying unit's player: every unit of that player dies at
+    // once (E: check_kill_credit.py commander). Our scenario rooms keep their
+    // own rules (Monarch Expendable does not apply there).
+    if (!monarchExpendable_ && !mission_ && !scenario_ && validUnitOwner(u.player)) {
+        bool commander=u.type->commander;
+        for (const int id:u.cargo)
+            if (const Unit* c=unit(id); c && retailObjectLives(*c) && c->type->commander) commander=true;
+        if (commander) removeScenarioUnits(u.player);
+    }
 }
 
 void World::beginUnitDeath(Unit& u) {
@@ -21875,18 +21887,33 @@ void World::forceDefeat(int player) {
 }
 
 void World::removeScenarioUnits(int player) {
-    // Retail CRT defeat (4f6be0 -> 5131b0) sends death type 10, then retires
-    // every remaining live owner. Zero severity skips Killed/Dying, corpse and
-    // death weapons; this is immediate removal, not timed self destruction.
+    // 5131b0, under the CRT defeat (4f6be0) and 512610's commander rule: for a
+    // player with units (record +0xe8), every unit whose object lives dies
+    // with death type 10 and retires at once; one whose Dying runs retires at
+    // once (E: check_kill_credit.py commander). Zero severity skips
+    // Killed/Dying, corpse and death weapons; this is immediate removal, not
+    // timed self destruction.
     for (auto& u : units_) {
-        if (!u.alive() || !u.type || u.player != player) continue;
+        if (u.player != player || !retailObjectLives(u)) continue;
+        if (!u.alive()) {
+            // Its Dying cut short: the handoff it would have reached, as Kill.
+            u.deathAnimationTicks = u.deadFor;
+            updateCorpseWindow(u);
+            retireDeath(u);
+            if (u.corpseStatue<0 && u.deadFor<u.corpseUntil && !placeCorpse(u,corpseTypeOf(u.type))) retireCorpse(u);
+            continue;
+        }
         stop(u.id);
+        cancelPath(u);
+        killProductionOutput(u);
         u.hp = Fixed();
         u.lastHitBy = 0; u.lastHitPlayer = -1;
         u.deathType = 10; u.severity = 0; u.corpseStatue = -1;
         beginUnitDeath(u);
         if (u.type->isStructure())
             blockFoot(*u.type,u.x.toFloat(),u.z.toFloat(),false);
+        retireAirOccupant(u);
+        groundRemove(u);
         retireCorpse(u);
         u.speed = Fixed(); u.selfDestructT = -1;
         updateBodyIndex(u);

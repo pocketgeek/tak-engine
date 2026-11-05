@@ -1108,6 +1108,24 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   carriers). A ship's cargo at sea level is hurt, a flyer's aloft is not.
   Ours skipped every carried unit until 2026-11-05; World's cargo step keeps
   an embarked unit at the attach point and the water check now reads it.
+- **The commander rule** (gap hunt 3, E: `check_kill_credit.py` commander).
+  `512610` ends (`51280d..512852`) with `5131b0(+0xfd)` when the dying unit
+  is a commander (UnitDef +0x264 bit 18) or carries a live one (the
+  +0xac/+0xb0 chain, walked until an entry that does not live), the
+  CommanderDeath setting (`[[62d558]+8]+8`, the registry key read at
+  `4bbb75`) is 1, the owner is this machine's (+0xea 1 or 2) and the map mode
+  (`[game+0x175dc]+0`) is not 1, a campaign mission. `5131b0`, for a player
+  with units (record +0xe8): each unit whose object lives gets `512610(u, 10)`
+  (severity 0: no Killed, no Dying) and, still living, `512ae0`; one whose
+  Dying runs retires at once (`512ae0`), the dying commander among them.
+  Ours (before): the player was only marked defeated (`updateOutcome`), and
+  its army stayed. Now `World::sweepDeath` runs the rule when Monarch
+  Expendable is off, outside a campaign mission and a scenario room (ours:
+  Monarch Expendable does not apply there), and `World::removeScenarioUnits`
+  (the CRT defeat's `5131b0` too) also retires a unit whose Dying runs and
+  takes each body off the ground word, the air and its production. Ours
+  looks at every carried unit (the chain never holds a retired one here).
+  Test: `kill_credit_test`.
 - **Self-destruct** (gap hunt 3, E: `check_kill_credit.py` self-destruct,
   natively `4d85e0` and `4017e0`). Ctrl+D (`48e2b1..48e309`) removes the
   SelfDestruct mission from every selected unit that has one (`4d69d0`,

@@ -213,6 +213,33 @@ int main(int argc,char** argv) try {
               "a scripted self-destruct waited for the next tick's sweep");
         check(s.unit(f)->lastHitBy==f && s.unit(f)->lastHitPlayer==0,"a scripted self-destruct named no hitter");
     }
+    {
+        // 512610's commander rule (check_kill_credit.py commander): with the
+        // Monarch not expendable, its death, or the death of a unit carrying
+        // it, ends with 5131b0 for that unit's player: every unit of that
+        // player dies at once, kind 10. Another player's units are untouched.
+        auto monarch=fighter("monarch");monarch.commander=true;
+        auto boat=fighter("boat");boat.canTransport=true;boat.transportCap=4;boat.transportSizeCap=16;
+        for (const int carried:{0,1}) for (const int expendable:{0,1}) {
+            World w;terrain(w);w.setMonarchExpendable(expendable!=0);
+            const int m=w.spawn(&monarch,400,400,0,0),a=w.spawn(&t,500,400,0,0),b=w.spawn(&t,600,400,0,0);
+            const int e=w.spawn(&t,900,900,0,1);
+            const int ship=carried ? w.spawn(&boat,420,400,0,0) : 0;
+            if (carried) check(w.embarkInto(m,ship),"the monarch did not board");
+            const int victim=carried ? ship : m;
+            w.unit(victim)->hp=Fixed();w.unit(victim)->deathType=1;
+            w.tick(1.f/30);
+            const bool swept=!w.unit(a)->alive() && !w.unit(b)->alive();
+            if (expendable) check(!swept,"an expendable monarch's death took its player's units");
+            else {
+                check(swept && w.unit(a)->deathType==10 && !w.unit(a)->deathPending,
+                      carried ? "a carrier's death with the monarch aboard did not end its player's units"
+                              : "the monarch's death did not end its player's units at once");
+                check(w.player(0).kills==0 && w.player(1).kills==0,"the commander rule credited a kill");
+            }
+            check(w.unit(e)->alive(),"the commander rule took another player's unit");
+        }
+    }
     if (argc==2) {
         // The death weapon at retirement: the Bomb Sprinkler's Dying runs for
         // a while before 512ae0 fires its [EXPLODEAS].

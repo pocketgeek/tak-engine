@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Who gets the credit for a hit and a kill in retail, natively.
 
-Eight pieces, each run on synthetic units:
+Nine pieces, each run on synthetic units:
 
   * the hitter gate of the damage routine 51a140 -> 51a240: a hitter whose
     object lives (+0x130 & 0x1000000, a dying one too) is stored at +0xf8 and
@@ -33,6 +33,11 @@ Eight pieces, each run on synthetic units:
     and hits that many ticks later with 51a140(u, u, 30000, 5, 0): the unit
     is its own last hitter and 409a50's attacker, and the update ends with
     512610(u, 5).
+
+  * the commander rule: 512610 of a commander, or of a unit carrying a live
+    one, calls 5131b0 for its player with CommanderDeath on, outside a
+    campaign mission; 5131b0 kills that player's every unit (kind 10) and
+    retires them at once.
 
 The deadly-water rows are answered by `retail_script_test --deadly-water`
 and `--carried-water`.
@@ -486,11 +491,72 @@ def self_destruct_death():
     return 'self-destruct death: after the missions, the hit, the mover and surface; 512610(u, 5) ends the update'
 
 
+def commander():
+    """512610's commander rule (51280d..512852) and 5131b0, natively. The rule
+    calls 5131b0 with the dying unit's player when CommanderDeath is on
+    ([[62d558]+8]+8 == 1, the 'CommanderDeath' setting), the owner is this
+    machine's (+0xea 1 or 2), the map mode ([game+0x175dc]+0) is not 1 (a
+    campaign mission), and the unit is a commander (UnitDef +0x264 bit 18) or
+    carries a live one (the +0xac/+0xb0 chain, walked until an entry that does
+    not live). 5131b0, for a player with units (record +0xe8): every unit
+    whose object lives gets 512610(u, 10) and, still living, 512ae0; one whose
+    Dying runs (+0x130 & 0x10000000) is retired at once."""
+    def rule(commander, option=1, mode=2, remote=False, kind=1, cargo=()):
+        f = Fixture()
+        opts, inner, scen = f.flags, f.flags + 0x100, f.flags + 0x200
+        f.put(0x62d558, opts); f.put(opts + 8, inner); f.put(inner + 8, option); f.put(opts + 0x18, opts + 0x300)
+        f.put(f.game + 0x175dc, scen); f.put(scen, mode)
+        for name, n in (('5131b0', 1), ('512860', 2), ('4e8030', 3), ('56c720', 5)):
+            f.record(name, n)
+        f.p.hooks[0x4e6860] = lambda uc, sp: (1, 0)
+        plain = f.victim_type + 0x400
+        f.put(f.victim_type + 0x264, 0x40000); f.put(plain + 0x264, 0)
+        f.put(f.victim_type + 0x1be, 100); f.put(plain + 0x1be, 100)
+        u = f.unit(1, player=3)
+        f.put(u + 0xb4, f.victim_type if commander else plain)
+        f.put(u + 0x10c, 0, 'H'); f.put(u + 0x108, 0.0, 'f'); f.put(u + 0xbc, f.units + 0x6000)
+        link = u + 0xac
+        for i, (boss, flags) in enumerate(cargo):
+            c = f.unit(2 + i, flags=flags, player=4)
+            f.put(c + 0xb4, f.victim_type if boss else plain)
+            f.put(link, c); link = c + 0xb0
+        if remote:
+            f.put(u + 0xb8, f.remote)
+        f.calls.clear()
+        f.call(0x512610, (u, kind))
+        return [c[1] & 0xff for c in f.calls if c[0] == '5131b0']
+    assert rule(True) == [3] and rule(True, kind=10) == [3], 'a commander'
+    assert rule(True, option=0) == [] and rule(True, mode=1) == [] and rule(True, remote=True) == [], 'the gates'
+    assert rule(False) == [] and rule(False, cargo=((False, ALIVE),)) == [], 'no commander'
+    assert rule(False, cargo=((True, ALIVE),)) == [3], 'a carried commander: the carrier\'s player'
+    assert rule(False, cargo=((False, ALIVE), (True, ALIVE))) == [3], 'a carried commander second'
+    assert rule(False, cargo=((False, 0), (True, ALIVE))) == [], 'the walk stops at a freed entry'
+
+    f = Fixture()
+    f.record('512ae0', 1); f.record('52ac00', 2); f.record('512610', 2)
+    pool = f.units + 0x138
+    rec = f.game + 3 * 0x110 + 0x2404
+    f.put(rec, 1)
+    f.put(f.game + 3 * 0x110 + 0x2478, pool); f.put(f.game + 3 * 0x110 + 0x247c, pool + 3 * 0x138)
+    for count, want in ((4, [('512610', 0, 10), ('512ae0', 0), ('512ae0', 1), ('512610', 3, 10), ('512ae0', 3)]),
+                        (0, [])):
+        f.put(rec + 0xe8, count, 'H')
+        for i, state in enumerate((ALIVE, ALIVE | DEATH_RUNS, 0, ALIVE)):
+            f.unit(1 + i, flags=state, player=3)
+        f.calls.clear()
+        f.call(0x5131b0, (3,))
+        got = [(c[0], (c[1] - pool) // 0x138) + tuple(c[2:]) for c in f.calls]
+        assert got == want, (count, got)
+    return ('commander: a commander\'s death, or its carrier\'s, ends with 5131b0 for that player '
+            '(CommanderDeath on, a local owner, no campaign); 5131b0 kills every live unit kind 10 '
+            'and retires a dying one at once')
+
+
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else 'build-o2/retail_script_test'
     for line in (hitter_gate(), attack_multiplier(), death_weapon_shot(), retirement(), mission_kill(),
                  water_hit(), water_death(), deadly_water(binary), carried_water(binary),
-                 self_destruct(), self_destruct_hit(), self_destruct_death()):
+                 self_destruct(), self_destruct_hit(), self_destruct_death(), commander()):
         print(line)
 
 
