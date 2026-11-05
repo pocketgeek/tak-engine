@@ -1203,7 +1203,10 @@ struct alignas(64) Unit {
     int32_t frozenFor = 0;   // >0 = frozen solid (can't act); counts down
     int32_t stonedFor = 0;   // >0 = petrified (can't act, immune to damage while stone)
     int32_t paralyzedFor = 0;// >0 = paralyzed (can't act, still takes damage)
-    int32_t selfDestructT = -1;// >=0 = self-destruct countdown (ticks) armed; -1 = not
+    // Self-destruct (the SelfDestruct mission 4017e0): -1 not armed; >= 0 the
+    // countdown's ticks left, its last run drawing rand(15); <= -2 that
+    // draw's wait, -2 - ticks left (World::tickSelfDestruct).
+    int32_t selfDestructT = -1;
     // The tick's REQUESTED turn (want - heading, unclamped BAM). Not hashed
     // itself, but World::notifyTurnDirection reports it to the unit's own
     // (hashed) script VM, so it must stay deterministic; the client animation
@@ -3983,6 +3986,10 @@ private:
     // idle retaliation mission (part a) and, failing that, the per-slot
     // retarget (part b).
     void retailHitResponse(Unit& victim,const Unit* attacker,int dmgType);
+    // The SelfDestruct mission's hit (40188a) and its countdown runs; each
+    // answers whether the unit is now dying.
+    bool selfDestructHit(Unit& u);
+    bool tickSelfDestruct(Unit& u);
     // The status callbacks' roll (52da10 charm, 52dca0 stone, 52df00 freeze):
     // chance min(99, (veteran level + 16) * 5), so a green unit falls 80 times
     // in 100 and a level-4 veteran 99; one CRT rand() scaled to 0..99

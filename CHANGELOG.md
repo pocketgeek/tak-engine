@@ -258,6 +258,11 @@ their validation reports; both live in [`docs/`](docs/).
   cannot hover, ships included, and troops carried on a ship too (a flyer's
   passengers high above the water are safe). A unit the water kills dies that
   moment, not a moment later.
+- **Self-destruct keeps the original game's timing.** After its two-second countdown
+  a unit now leaves your command up to half a second later, at random, as in the
+  original game. Pressing self-destruct while some of the selected units already
+  count down now cancels theirs and starts none, as in the original game; it used
+  to start the others too.
 - **Gates are built closed and switched off**, as in the original game. A new gate
   used to count as switched on with its doors shut, so the first click on its ON
   button did nothing.

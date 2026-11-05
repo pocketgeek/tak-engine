@@ -1047,7 +1047,7 @@
         s.frozenFor = float(u.frozenFor) / 30.0f;
         s.stonedFor = float(u.stonedFor) / 30.0f;
         s.paralyzedFor = float(u.paralyzedFor) / 30.0f;
-        s.selfDestructT = u.selfDestructT < 0 ? -1.0f : float(u.selfDestructT) / 30.0f;
+        s.selfDestructT = tak::client::selfDestructSeconds(u.selfDestructT);
         s.hasConstructionEmitter=bool(u.constructionEmitter || u.cosmeticConstructionEmitter);
         s.constructionEmissions=u.constructionEmissions;
         if (u.constructionEmitter) s.constructionParticles=u.constructionEmitter->particles;
@@ -3802,21 +3802,24 @@
             case tak::Act::SelfDestruct: {   // self-destruct the selected unit(s)
                 // Through the command path (Cmd::Destroy), not a direct hp write --
                 // a local mutation would silently desync a networked game.
-                // Cmd::Destroy TOGGLES a 5s countdown; if any selected unit is
-                // already counting down, this press cancels instead of arming.
-                int n = 0;
-                bool anyArmed = false;
+                // Cmd::Destroy TOGGLES one unit's countdown; if any selected
+                // unit is already counting down, this press cancels those and
+                // arms none (selfDestructPress).
+                std::vector<std::pair<int, bool>> owned;
                 for (int id : selection_)
                     if (auto* su = frameUnitP(id))
-                        if (su->alive() && su->player == localPlayer_) {
-                            if (su->selfDestructT >= 0.0f) anyArmed = true;
-                            tak::net::Command c;
-                            c.kind = tak::net::Cmd::Destroy;
-                            c.unitId = id;
-                            issue(c);
-                            ++n;
-                        }
-                if (n) {
+                        if (su->alive() && su->player == localPlayer_)
+                            owned.emplace_back(id, su->selfDestructT >= 0.0f);
+                const auto send = tak::client::selfDestructPress(owned);
+                bool anyArmed = false;
+                for (const auto& o : owned) anyArmed |= o.second;
+                for (int id : send) {
+                    tak::net::Command c;
+                    c.kind = tak::net::Cmd::Destroy;
+                    c.unitId = id;
+                    issue(c);
+                }
+                if (!send.empty()) {
                     notice_ = anyArmed ? "SELF-DESTRUCT CANCELLED" : "SELF-DESTRUCT IN 5...";
                     noticeTimer_ = 2;
                 }

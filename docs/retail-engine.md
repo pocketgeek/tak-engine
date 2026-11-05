@@ -1108,6 +1108,32 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   carriers). A ship's cargo at sea level is hurt, a flyer's aloft is not.
   Ours skipped every carried unit until 2026-11-05; World's cargo step keeps
   an embarked unit at the attach point and the water check now reads it.
+- **Self-destruct** (gap hunt 3, E: `check_kill_credit.py` self-destruct,
+  natively `4d85e0` and `4017e0`). Ctrl+D (`48e2b1..48e309`) removes the
+  SelfDestruct mission from every selected unit that has one (`4d69d0`,
+  `4d6ad0`) and, only when none had it, orders it for them all (`5214b0`).
+  The mission (row `5eb63b`, flags `0x20000`) sits in the background list
+  `+0x64`, which `4d85e0` runs in the unit update after self-repair
+  (`429d90`), the pool (`401160`) and the missions (`4d8450`): the unit goes
+  on with its orders. Its first run loads the countdown (UnitDef `+0x264`
+  bits 21..23, default 2) and each run 30 ticks apart takes one off; the run
+  that finds it spent sets `+0x4e` and waits `rand(15)` (`535cc0`) ticks; the
+  next run hits: `51a140(u, u, 30000, 5, 0)`. A wait of 0 hits in the same
+  update, since `4d85e0` takes the list from its head again after each run;
+  a countdown of 0 hits on the first run with no draw. The unit is its own
+  hitter: it lives, so it is the last hitter (+0xf8 itself, +0xfc its own
+  player) and `409a50`'s attacker, called before the HP drop; kind 5 credits
+  nobody at retirement and its owner is the hitter's player anyway. HP is
+  16-bit, so only more than 30000 lives on. The update ends with
+  `512610(u, 5)` (`51e36c`). SetMission `d` (SelfDestructFG, `+0x4e` = 1) is
+  the same hit from the foreground list. Ours before: a fixed 60 ticks, no
+  draw, HP zeroed with no hitter and no hit response, the death at the next
+  tick's sweep (one tick early, so the death tick matched a draw of 0); and
+  the HUD's Ctrl+D toggled each selected unit, so a mixed selection armed
+  the rest. Now `World::tickSelfDestruct` / `selfDestructHit`, run after the
+  pool and before the unit's orders (a dying unit's orders get no last run,
+  I), and `selfDestructPress` (`src/client/unitstatus.h`). Tests:
+  `kill_credit_test`, `unit_status_test`.
 
 Ours (protocol 312): `World::retailHitter` / `retailObjectLives` (alive, or
 dead with `deathPending` until `World::retireDeath`); `retireDeath` runs at

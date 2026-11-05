@@ -17,7 +17,7 @@ static UnitR snapshot(const Unit& u) {
     UnitR r;
     r.id = u.id; r.type = u.type; r.player = u.player;
     r.active = u.active; r.cloaked = u.cloaked; r.underConstruction = u.underConstruction;
-    r.selfDestructT = u.selfDestructT < 0 ? -1.0f : float(u.selfDestructT) / 30.0f;
+    r.selfDestructT = tak::client::selfDestructSeconds(u.selfDestructT);
     r.repairId = u.repairId; r.reclaimId = u.reclaimId; r.buildSiteId = u.buildSiteId;
     r.captureOrders(u);
     return r;
@@ -44,6 +44,17 @@ int main() try {
     UnitR on = snapshot(*w.unit(g)); on.active = true;
     const std::string onText = tak::client::unitStatusLabel(on);
     check(onText == "STANDBY", "a gate switched on reads " + onText + ", not STANDBY");
+    // Ctrl+D (48e2b1..48e309): any selected unit counting down -> the press
+    // removes every countdown and arms none; otherwise it arms them all.
+    using tak::client::selfDestructPress;
+    check(selfDestructPress({{1, false}, {2, false}}) == std::vector<int>{1, 2}, "a press did not arm them all");
+    check(selfDestructPress({{1, false}, {2, true}, {3, false}}) == std::vector<int>{2},
+          "a press over a counting unit armed the others");
+    // The wait after the countdown's draw still reads as counting down.
+    w.destroy(a);
+    w.unit(a)->selfDestructT = -5;
+    const std::string leaving = tak::client::unitStatusLabel(snapshot(*w.unit(a)));
+    check(leaving == "LEAVING YOUR COMMAND", "a unit in the self-destruct's last wait reads " + leaving);
     std::puts("unit status: PASS");
     return 0;
 } catch (const std::exception& e) {

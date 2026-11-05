@@ -623,7 +623,8 @@ Cap deathCapPerOwner(const sim::UnitType& archer) {
     Cap out;
     out.alive0 = std::min(peak(0, 0), peak(1, 0));
     out.alive1 = std::min(peak(0, 1), peak(1, 1));
-    for (int id : ids) w.destroy(id);
+    // All on one tick: a self-destruct's wait is random (rand(15)), so kill outright.
+    for (int id : ids) { w.unit(id)->hp = sim::Fixed(); w.unit(id)->deathType = 1; }
     auto alive = [&](int id) { const sim::Unit* u = w.unit(id); return u && u->alive(); };
     for (int i = 0; i < 300 && !out.died; ++i) {
         w.tick(kTick);

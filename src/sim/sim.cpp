@@ -5917,8 +5917,9 @@ void World::tickScriptedOrder(Unit& u) {
     case ScriptedOrder::Kind::SelfDestruct:
         // 40188a: 30000 damage of type 5 to itself, the end of a Ctrl+D
         // countdown (see the countdown in tick): no wreck, no kill credit.
+        // The caller ends the update with the death (51e36c).
         done();
-        u.hp = Fixed(); u.lastHitBy = 0; u.lastHitPlayer = -1; u.deathType = Unit::kDeathSelfDestruct;
+        selfDestructHit(u);
         return;
     case ScriptedOrder::Kind::Train: {
         Order& o = u.orders.front();
@@ -6073,13 +6074,56 @@ void World::destroy(int unitId) {
     // across every archive -- which is exactly why the DEFAULT matters, and the
     // default is not zero. When the key is absent the parser clears bit 23 and
     // sets bit 22 (0x4c0a1f), leaving the field at 2. Emulating the mission
-    // confirms it: at 2 it reschedules twice at 30 ticks, expires, and applies
-    // its 30000 damage on the run after -- two seconds, which is what the game
-    // gives you. See tools/re/emuself.py.
+    // confirms it: at 2 it reschedules twice at 30 ticks, then draws
+    // rand(15) and applies its 30000 damage that many ticks later -- two
+    // seconds and up to 14 ticks (tools/re/emuself.py, check_kill_credit.py
+    // self-destruct). The mission sits in the background list (+0x64, its
+    // definition's 0x20000), so the unit goes on with its orders meanwhile.
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type) return;
     const float len = float(u->type->selfDestructCountdown);
-    u->selfDestructT = (u->selfDestructT < 0) ? int32_t(len * kTick + 0.5f) : -1;
+    u->selfDestructT = u->selfDestructT == -1 ? int32_t(len * kTick + 0.5f) : -1;
+}
+
+// The SelfDestruct mission's hit (40188a): 51a140(u, u, 30000, 5, 0), the
+// unit its own hitter. It lives, so it becomes the last hitter (+0xf8, its
+// own player at +0xfc) and the hit response 409a50 runs for it before the
+// hit points drop (its event 0x10 reaches the unit's guards; an AI Monarch
+// rolls its threat deadline). Kind 5 credits nobody at retirement. A unit
+// with more than 30000 hit points lives on, the mission done.
+bool World::selfDestructHit(Unit& u) {
+    retailHitResponse(u,&u,Unit::kDeathSelfDestruct);
+    u.lastHitBy=u.id;u.lastHitPlayer=u.player;
+    u.hp=Fixed::raw(int32_t(std::clamp<int64_t>(int64_t(u.hp.v)-int64_t(30000)*Fixed::kOne,
+                                                -int64_t(INT32_MAX),INT32_MAX)));
+    // 51a3c2: an unfinished site's progress follows its new HP.
+    if (u.retailSite && u.underConstruction && u.retailSite->progress.remaining!=0) {
+        auto& progress=u.retailSite->progress;
+        progress.hp=uint16_t(u.hp.floorInt());
+        progress.remaining=float(1.0-double(int16_t(progress.hp))/std::max(1,u.maximumHp()));
+    }
+    if (u.hp>Fixed()) return false;
+    u.overkill=fxMax(u.overkill,-u.hp);u.deathType=Unit::kDeathSelfDestruct;
+    return true;
+}
+
+// The SelfDestruct mission's runs (4017e0, in the background list 4d85e0):
+// the countdown's run every 30 ticks; the run that finds it spent draws
+// rand(15) and waits that long (a draw of 0 hits in the same update, as
+// 4d85e0 takes the list from its head again); then the hit. A countdown of
+// 0 hits on the first run, with no draw.
+bool World::tickSelfDestruct(Unit& u) {
+    if (u.selfDestructT==-1) return false;
+    if (u.selfDestructT>0) { --u.selfDestructT; return false; }
+    if (u.selfDestructT==0) {
+        const uint32_t wait=u.type->selfDestructCountdown>0 ? gameRand(15) : 0;
+        if (wait) { u.selfDestructT=-2-int32_t(wait); return false; }
+    } else if (const int32_t left=-u.selfDestructT-2-1;left>0) {
+        u.selfDestructT=-2-left;
+        return false;
+    }
+    u.selfDestructT=-1;
+    return selfDestructHit(u);
 }
 
 void World::setWeapon(int unitId, int slot) {
@@ -19868,24 +19912,6 @@ void World::tick(float dt) {
         if (u.frozenFor > 0) --u.frozenFor;
         if (u.stonedFor > 0) --u.stonedFor;
         if (u.paralyzedFor > 0) --u.paralyzedFor;
-        if (u.selfDestructT >= 0) {   // armed self-destruct: tick down, then blow up
-            --u.selfDestructT;
-            if (u.selfDestructT <= 0) {
-                u.selfDestructT = -1;
-                // NOT an explosion. Retail's self-destruct mission (icd
-                // 0x4017e0, the handler behind SelfDestruct /
-                // UNITMISSIONCODE_SELFDESTRUCT) ends by applying 30000 damage of
-                // DAMAGE TYPE 5 to the unit itself. Type 5 is not the explosion
-                // type -- 3 is, and 3 is the one that gibs -- and it takes its
-                // own branch in the death handler (0x5126a9), distinct from
-                // every other type, setting a flag none of them set.
-                //
-                // What the player sees, reported from retail: the unit does not
-                // blow up. It quietly leaves your command and fades, with no
-                // wreck left behind.
-                u.hp = Fixed(); u.lastHitBy = 0; u.lastHitPlayer = -1; u.deathType = Unit::kDeathSelfDestruct;
-            }
-        }
         // Deadly water (.ota waterdoesdamage, retailDeadlyWaterDamage): once a
         // second, whole hit points off anything at or below sea level that is
         // not canhover, through 51a140 with no hitter and damage kind 13: no
@@ -19930,16 +19956,12 @@ void World::tick(float dt) {
         // (retail requires +0x108 == 0); hit points stay whole in retail, so a
         // fraction ours picked up elsewhere rides along unchanged.
         //
-        // `u.hp > Fixed()` matters because of WHERE hp gets zeroed, not by how much.
-        // Every other death path puts hp <= 0 outside this loop body, so the sweep
-        // at the top (3912) catches it and `continue`s -- never reaching this line.
-        // The self-destruct expiry a few lines up is the one that fires INSIDE the
-        // body, after this unit's own sweep has already gone by, so its kill waits
-        // for the next tick and regen gets to run first. Without the guard a
-        // regenerating unit healed straight back off zero and never died at all,
-        // which is nearly every unit: of the 202 types this registry loads from a
-        // retail install, 200 have healtime > 0 (only aranull and npcwagon do not).
-        // That is why Ctrl+Shift+D self-destruct appeared to do nothing.
+        // `u.hp > Fixed()` guards a unit at zero hp that has not been swept: a
+        // regenerating one would heal straight back off zero and never die
+        // (200 of the 202 retail types have healtime > 0). The self-destruct
+        // expiry once zeroed hp here and waited for the next tick's sweep, which
+        // is why Ctrl+Shift+D appeared to do nothing; it now runs after this,
+        // as retail's background missions run after 429d90, and dies at once.
         if (u.type->healTime != 0 && (tickCounter_ & 7) == 0 && !u.underConstruction &&
             u.hp > Fixed() && u.hp < Fixed::fromInt(u.maximumHp())) {
             const uint32_t maxHp = uint32_t(u.maximumHp());
@@ -19953,6 +19975,17 @@ void World::tick(float dt) {
         // (+0x108 == 0); one being built stays as made, empty.
         if (u.type->maxMana > 0 && u.mana < u.type->maxMana && !u.underConstruction)
             u.mana = std::min(double(u.type->maxMana), u.mana + double(u.type->manaRegen) * double(dt));
+        // Self-destruct (Ctrl+D): NOT an explosion. Its mission (4017e0, the
+        // handler behind UNITMISSIONCODE_SELFDESTRUCT) runs in the background
+        // list (4d85e0, after self-repair 429d90, the pool 401160 and the
+        // missions 4d8450) and ends by dealing 30000 damage of type 5 to the
+        // unit itself: no gibs, no wreck, nobody credited; it quietly leaves
+        // your command and fades. A lethal hit's death (512610) ends the same
+        // update (51e357..51e36c), as deadly water's does. World runs it before
+        // the unit's orders here, so a dying unit's orders get no last run.
+        if (tickSelfDestruct(u)) {
+            if (!(u.retailSite && u.underConstruction)) { sweepDeath(u); continue; }
+        }
         // A WANDERER keeps its spawn point as home -- that anchor is what stops its
         // stroll turning into a migration.
         if (u.orders.empty() && !u.type->wanders) { u.homeX = u.x; u.homeZ = u.z; }
@@ -20062,7 +20095,11 @@ void World::tick(float dt) {
 
         // A mission order with a mission of its own (AttackUType, BuildingBuild,
         // SelfDestructFG) at the head runs here, ahead of the unit's combat.
-        if (!u.orders.empty() && u.orders.front().scripted) tickScriptedOrder(u);
+        if (!u.orders.empty() && u.orders.front().scripted) {
+            tickScriptedOrder(u);
+            // SelfDestructFG's hit: the update ends with the death (51e36c).
+            if (u.hp<=Fixed() && !(u.retailSite && u.underConstruction)) { sweepDeath(u); continue; }
+        }
 
         // Wildlife and villagers roam. Retail gives them Standby_wander and they
         // amble; ours stood like statues on every campaign and scenario map. An idle

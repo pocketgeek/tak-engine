@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Who gets the credit for a hit and a kill in retail, natively.
 
-Seven pieces, each run on synthetic units:
+Eight pieces, each run on synthetic units:
 
   * the hitter gate of the damage routine 51a140 -> 51a240: a hitter whose
     object lives (+0x130 & 0x1000000, a dying one too) is stored at +0xf8 and
@@ -27,6 +27,12 @@ Seven pieces, each run on synthetic units:
   * a carried unit in deadly water: 4dad30 commits its carrier's attach
     point as its own +0x68 (51b3b0), and 51e0d5 then reads that height;
     being carried (+0xa8) exempts nothing.
+
+  * self-destruct: the SelfDestruct mission 4017e0 in the background list
+    4d85e0 runs every 30 ticks, draws rand(15) when its countdown is spent
+    and hits that many ticks later with 51a140(u, u, 30000, 5, 0): the unit
+    is its own last hitter and 409a50's attacker, and the update ends with
+    512610(u, 5).
 
 The deadly-water rows are answered by `retail_script_test --deadly-water`
 and `--carried-water`.
@@ -374,10 +380,117 @@ def water_death():
             '%d lethal, %d not' % (seen.count(True), seen.count(False)))
 
 
+SELFDESTRUCT = 11   # row 0x5eb63b of the mission definitions at 0x5eb528 (4d4cc0 indexes it)
+
+
+def self_destruct():
+    """The SelfDestruct mission 4017e0 run by the background list 4d85e0 once
+    per update, natively both, for countdowns 0..3 and draws 0..14: the run
+    every 30 ticks, rand(15) on the run that finds the countdown spent, the
+    hit 51a140(u, u, 30000, 5, 0) that many ticks later (a draw of 0 in the
+    same update: 4d85e0 takes the list from its head again), the mission
+    removed (4d6ad0). A countdown of 0 hits on the first run, no draw."""
+    rows = 0
+    for countdown in range(4):
+        for r in (0, 1, 7, 14):
+            f = Fixture()
+            f.put(0x62db84, 0x5eb528)
+            draws, hits, tick = [], [], [0]
+
+            def rand(uc, sp, r=r):
+                draws.append((tick[0], struct.unpack('<I', uc.mem_read(sp, 4))[0]))
+                return 1, r
+
+            def hit(uc, sp):
+                hits.append((tick[0],) + struct.unpack('<5I', uc.mem_read(sp, 20)))
+                return 5, 0
+
+            def remove(uc, sp):
+                unit, mission = struct.unpack('<2I', uc.mem_read(sp, 8))
+                hits.append(('removed', tick[0]))
+                f.put(unit + 0x64, f.get(mission + 0x66))
+                return 2, 0
+            f.p.hooks[0x535cc0] = rand; f.p.hooks[0x51a140] = hit; f.p.hooks[0x4d6ad0] = remove
+            u = f.unit(1)
+            f.put(f.victim_type + 0x264, countdown << 21)
+            m = f.units + 0x4000
+            f.p.uc.mem_write(m, bytes(0x80))
+            f.put(m + 4, SELFDESTRUCT, 'B'); f.put(m + 0xe, u); f.put(u + 0x64, m)
+            for k in range(120):
+                tick[0] = k
+                f.put(f.game + 0x19f44, 1000 + k)
+                f.call(0x4d85e0, (u,))
+                if hits:
+                    break
+            at = 30 * countdown + (r if countdown else 0)
+            assert draws == ([(30 * countdown, 15)] if countdown else []), (countdown, r, draws)
+            assert hits == [(at, u, u, 30000, 5, 0), ('removed', at)], (countdown, r, hits)
+            rows += 1
+    return 'self-destruct: %d timelines, rand(15) when the countdown is spent, the hit that many ticks on' % rows
+
+
+def self_destruct_hit():
+    """51a140(u, u, 30000, 5, 0): the unit is its own last hitter and 409a50's
+    attacker (before the HP drop); 16-bit HP, so only more than 30000 lives."""
+    f = Fixture()
+    f.record('409a50', 3); f.record('56c640', 8)
+    f.put(0x62d558, f.flags); f.put(f.flags + 0x18, f.flags + 0x100)
+    for hp, left in ((50, -29950), (29999, -1), (30000, 0), (30001, 1)):
+        u = f.unit(1, player=4)
+        f.put(u + 0x10c, hp, 'H'); f.put(u + 0xc0, f.units + 0x6000)
+        f.calls.clear()
+        f.call(0x51a140, (u, u, 30000, 5, 0))
+        assert f.get(u + 0x10c, 'h') == left and bool(f.get(u + 0x130) & DYING) == (left <= 0), hp
+        assert (f.get(u + 0xf8), f.get(u + 0xfc, 'B'), f.get(u + 0x10f, 'B')) == (u, 4, 5), hp
+        assert f.calls == [('409a50', u, u, 30000)], f.calls
+    return 'self-destruct hit: its own last hitter and 409a50 attacker; dying at 30000 HP or less'
+
+
+def self_destruct_death():
+    """51e0d5..51e371 with an expired SelfDestruct in the background list
+    (4d85e0, native): the missions 4d8450 first, then the hit, the mover and
+    surface, and the update ends with 512610(u, 5)."""
+    from unicorn import UC_HOOK_CODE
+    f = Fixture()
+    f.put(0x62db84, 0x5eb528)
+    for name, n in (('429d90', 4), ('401160', 1), ('4d8450', 1), ('4dc800', 1),
+                    ('51b2a0', 1), ('5195e0', 1), ('512060', 9), ('512610', 2), ('409a50', 3), ('56c640', 8)):
+        f.record(name, n)
+
+    def remove(uc, sp):
+        unit, mission = struct.unpack('<2I', uc.mem_read(sp, 8))
+        f.calls.append(('4d6ad0', unit, mission))
+        f.put(unit + 0x64, f.get(mission + 0x66))
+        return 2, 0
+    f.p.hooks[0x4d6ad0] = remove
+    f.put(0x62d558, f.flags); f.put(f.flags + 0x18, f.flags + 0x100)
+    f.p.uc.hook_add(UC_HOOK_CODE, lambda uc, *_: uc.emu_stop(), begin=0x51e371, end=0x51e371)
+    u = f.unit(1, player=2); f.put(u + 0x10c, 50, 'H'); f.put(u + 8, f.units + 0x1000)
+    f.put(u + 0xc0, f.units + 0x6000)
+    f.put(f.victim_type + 0x260, 0); f.put(f.victim_type + 0x268, 0); f.put(f.victim_type + 0x21e, 0.0, 'f')
+    f.put(f.victim_type + 0x264, 2 << 21)
+    f.put(u + 0x6c, (2 << 16) | 0x8000)
+    f.put(f.game + 0x19f44, 31); f.put(f.game + 0x175dc, f.map); f.put(f.map + 0xd41, 0)
+    m = f.units + 0x4000
+    f.p.uc.mem_write(m, bytes(0x80))
+    f.put(m + 4, SELFDESTRUCT, 'B'); f.put(m + 0xe, u); f.put(m + 0x4e, 1); f.put(m + 0x52, 0xf0000000)
+    f.put(u + 0x64, m)
+    f.p.uc.reg_write(UC_X86_REG_ESI, u); f.p.uc.reg_write(UC_X86_REG_EBX, f.game)
+    f.p.uc.reg_write(UC_X86_REG_EDI, 0)
+    f.p.uc.reg_write(UC_X86_REG_ESP, STACK_TOP); f.p.uc.reg_write(UC_X86_REG_EBP, STACK_TOP + 0x100)
+    f.p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
+    f.p.uc.emu_start(0x51e0d5, 0x51e371, count=4000)
+    names = [c[0] for c in f.calls]
+    assert names == ['401160', '4d8450', '409a50', '4d6ad0', '4dc800', '51b2a0', '512610'], names
+    assert f.calls[-1] == ('512610', u, 5), f.calls
+    return 'self-destruct death: after the missions, the hit, the mover and surface; 512610(u, 5) ends the update'
+
+
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else 'build-o2/retail_script_test'
     for line in (hitter_gate(), attack_multiplier(), death_weapon_shot(), retirement(), mission_kill(),
-                 water_hit(), water_death(), deadly_water(binary), carried_water(binary)):
+                 water_hit(), water_death(), deadly_water(binary), carried_water(binary),
+                 self_destruct(), self_destruct_hit(), self_destruct_death()):
         print(line)
 
 

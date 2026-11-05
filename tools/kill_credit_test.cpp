@@ -165,6 +165,54 @@ int main(int argc,char** argv) try {
         check(d.player(0).losses==1 && !d.unit(v)->deathPending,
               "a deadly-water death waited for the next tick's sweep");
     }
+    {
+        // Self-destruct (4017e0 in the background list, check_kill_credit.py
+        // self-destruct): the countdown's runs every 30 ticks from the first
+        // update, rand(15) on the run that finds it spent, the hit that many
+        // ticks later: 51a140(u, u, 30000, 5, 0), the unit its own last
+        // hitter, and the death in the same update (51e36c).
+        int waited[15]={};
+        for (uint32_t seed=1;seed<=40;++seed) {
+            World w;terrain(w,2);w.setGameSeed(seed);
+            const int u=w.spawn(&t,400,400,0,0);
+            int drawTick=-1,draw=-1,update=0;
+            w.setRngObserver([&](const World::RngObservation& o) {
+                if (o.bound==15) { check(drawTick<0,"self-destruct drew rand(15) twice");drawTick=update;draw=int(o.result); }
+            });
+            w.destroy(u);
+            for (;update<120 && w.unit(u)->alive();++update) {
+                check(w.unit(u)->hp>Fixed() || !w.unit(u)->alive(),"self-destruct left a unit at zero hit points");
+                w.tick(1.f/30);
+            }
+            const Unit& d=*w.unit(u);
+            check(!d.alive() && w.player(0).losses==1 && !d.deathPending,"the self-destruct did not die in its update");
+            check(drawTick==60,"the countdown's last run did not draw rand(15) two seconds in");
+            check(update-1==60+draw,"the self-destruct did not hit rand(15) ticks after its countdown");
+            check(d.lastHitBy==u && d.lastHitPlayer==0 && d.deathType==Unit::kDeathSelfDestruct,
+                  "the self-destructing unit is not its own last hitter");
+            check(w.player(0).kills==0,"a self-destruct credited a kill");
+            ++waited[draw];
+        }
+        int distinct=0;
+        for (int n:waited) distinct+=n>0;
+        check(distinct>=5,"the self-destruct wait did not vary with the draw");
+        // A countdown of 0 hits on its first run, with no draw.
+        auto quick=fighter("quick");quick.selfDestructCountdown=0;
+        World w;terrain(w,2);
+        const int q=w.spawn(&quick,400,400,0,0);
+        bool drew=false;
+        w.setRngObserver([&](const World::RngObservation& o) { drew|=o.bound==15; });
+        w.destroy(q);w.tick(1.f/30);
+        check(!w.unit(q)->alive() && !drew,"a countdown of 0 did not hit on its first run");
+        // SetMission "d" (SelfDestructFG, +0x4e 1): the same hit when the
+        // mission comes up, and the death in that update.
+        World s;terrain(s,2);
+        const int f=s.spawn(&t,400,400,0,0);
+        s.orderSelfDestruct(f,false);s.tick(1.f/30);
+        check(!s.unit(f)->alive() && s.player(0).losses==1 && !s.unit(f)->deathPending,
+              "a scripted self-destruct waited for the next tick's sweep");
+        check(s.unit(f)->lastHitBy==f && s.unit(f)->lastHitPlayer==0,"a scripted self-destruct named no hitter");
+    }
     if (argc==2) {
         // The death weapon at retirement: the Bomb Sprinkler's Dying runs for
         // a while before 512ae0 fires its [EXPLODEAS].
