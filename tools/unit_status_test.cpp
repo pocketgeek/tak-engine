@@ -44,6 +44,11 @@ int main() try {
     UnitR on = snapshot(*w.unit(g)); on.active = true;
     const std::string onText = tak::client::unitStatusLabel(on);
     check(onText == "STANDBY", "a gate switched on reads " + onText + ", not STANDBY");
+    // 4b26c0..4b26ef: no mark below rank 4, then one frame per three ranks.
+    using tak::client::experienceFrame;
+    const int marks[11]={-1,-1,-1,-1,0,0,0,1,1,1,2};
+    for (int rank=0;rank<=10;++rank)
+        check(experienceFrame(rank)==marks[rank],"rank "+std::to_string(rank)+" shows the wrong veteran mark");
     // Ctrl+D (48e2b1..48e309): any selected unit counting down -> the press
     // removes every countdown and arms none; otherwise it arms them all.
     using tak::client::selfDestructPress;

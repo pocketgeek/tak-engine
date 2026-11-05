@@ -96,6 +96,12 @@ until gap hunt 7: `Unit::kills` (not hashed, like the players' kill counts),
 `World::creditKill`, the HUD's `KillCount`; `check_veterancy.py` compares it
 (E), `kill_credit_test` counts a carrier's passengers and resets it on a change
 of owner.
+The panel's veteran mark (the `.gui`'s `Experience`, `UnitLevels` frames)
+is frame `_ftol(level / 10.0 * 3) - 1` and hidden when that is 0
+(`4b26c0..4b26ef`, E over ranks 0..10: ranks 0-3 show none, 4-6 the first
+frame, 7-9 the second, 10 the third); ours showed the first from rank 1 and
+the third from rank 7 until gap hunt 7 (`tak::client::experienceFrame`,
+`unit_status_test`).
 Saves store the level, not the points (51f04c). Ours:
 `src/sim/retailveterancy.h`; `tools/re/check_veterancy.py` runs 512ae0's kill
 count, score and experience gates, 519310/5193c0 and 519370 natively against

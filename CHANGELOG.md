@@ -308,6 +308,9 @@ their validation reports; both live in [`docs/`](docs/).
 - **A selected unit of yours shows how many enemies it has killed**, beside its health
   and mana bars, as in the original game (once it has a kill). A unit that changes
   sides starts again from none.
+- **The rank mark on a unit's picture follows the original game**: none until rank 4,
+  then one mark for ranks 4 to 6, the next for 7 to 9 and the last at rank 10. It
+  used to show from the first rank and reach the last at rank 7.
 - **A Pillar of Light and a Sacred Fire light up as in the original game.** Both
   switch themselves on when they are finished, whether you build one or a mission
   or map scenario places it, and the original game runs their flames twice over

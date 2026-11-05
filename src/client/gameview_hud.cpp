@@ -8,6 +8,7 @@
 #include "client/artscale.h"
 #include "client/cursorpath.h"
 #include "client/cursorrange.h"
+#include "client/unitstatus.h"
 #include "client/cursorrules.h"
 #include "sim/retailflyerspread.h"
 #include "client/reclaimpick.h"
@@ -1415,9 +1416,11 @@ namespace {
                     SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
                     SDL_RenderDrawRectF(ren_, &pr);
                 }
-                if (u->veteran > 0) {
+                // 4b26c0..4b26ef: frame _ftol(level / 10 * 3) - 1, none below 1:
+                // ranks 0-3 show nothing, 4-6 the first, 7-9 the second, 10 the third.
+                if (const int mark = tak::client::experienceFrame(u->veteran); mark >= 0) {
                     int xi = guiIdxLeft("Experience");
-                    int tier = u->veteran >= 7 ? 2 : u->veteran >= 4 ? 1 : 0;
+                    int tier = mark;
                     if (xi >= 0 && tier < int(guiTex_[xi].size()) && guiTex_[xi][size_t(tier)]) {
                         SDL_FRect cr{pr.x + 1, pr.y + pr.h - 22 * vs - 1, 11 * vs, 22 * vs};
                         SDL_RenderCopyF(ren_, guiTex_[xi][size_t(tier)], nullptr, &cr);
