@@ -125,7 +125,9 @@ static void factoryDies(bool scripted) {
                   s ? s->deadFor : 0, s ? int(s->deathType) : 0, s ? s->hp.toFloat() : 0.f);
     check(!f || !f->alive(), "the factory is dead", d);
     check(!s || !s->alive(), "its unfinished output dies on the same tick", d);
-    check(!s || (s->deathType == 11 && s->lastHitBy == factory),
+    // 512860 then drops the factory as +0xf8: its object retired first. The
+    // player (+0xfc) stays; kind 11 credits nobody either way.
+    check(!s || (s->deathType == 11 && s->lastHitPlayer == 0),
           "...from the factory, damage type 11 (0x51a140)", d);
     check(!s || !s->deathHasCorpse, "...with no corpse", d);
     std::snprintf(d, sizeof d, "losses %d -> %d, enemy kills %d -> %d", lossesBefore, w.player(0).losses,

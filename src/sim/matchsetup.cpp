@@ -1513,7 +1513,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     world.setPathBudgetClasses(budgetClasses);
     for (int p = 0; p < int(slots.size()); ++p) world.player(p).passiveNeutral = (passiveSlots >> p & 1) != 0;
     if (gh->numberOr("waterdoesdamage", 0) != 0)
-        world.setWaterDamage(float(gh->numberOr("waterdamage", 0)));
+        world.setWaterDamage(int32_t(gh->numberOr("waterdamage", 0)));
 
     // Placed units from [Map Data][units].
     int spawned = 0;

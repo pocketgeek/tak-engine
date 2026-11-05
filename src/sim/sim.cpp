@@ -1022,11 +1022,7 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
         u.moveState=0;u.fireState=2;u.stance=1;u.standingOrder=1;
     }
     u.type = type;
-    if (type) if (auto it = scenarioTypeStats_.find(type->id); it != scenarioTypeStats_.end()) {
-        u.scenarioArmor = float(it->second[0]) * 0.01f;
-        u.scenarioWeapon = float(it->second[1]) * 0.01f;
-    }
-    startExperience(u);
+    startObjectStats(u);
     if (retailAllocation_ && players_[size_t(player)].buildCache) {
         const auto& entries=players_[size_t(player)].buildCache->entries;
         auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto& e){return e.type==type;});
@@ -1108,18 +1104,13 @@ Unit* World::unitNoRepair(int id) {
     return nullptr;
 }
 
-int World::creditedOwner(int id) const {
-    if(const auto* u=unit(id);u && u->type)return u->player;
-    const auto it=retiredOwners_.find(id);
-    return it==retiredOwners_.end() ? -1 : it->second;
-}
-
 void World::compactRetiredUnits() {
     // Keep native restored-pool allocation fixtures on their existing lifecycle.
     // Ordinary matches compact once a second, after scripts consume death events.
     if(retailAllocation_ || tickCounter_%30)return;
-    // In-flight attacks still consume the original source's veteran/aura stats
-    // and location. Keep those few records until every delayed effect finishes.
+    // In-flight attacks still read their source's location (the impact's
+    // display) and identity (the hitter, while its object lives). Keep those
+    // few records until every delayed effect finishes.
     std::unordered_set<int> referenced;
     for(const auto& p:projectiles_) {referenced.insert(p.fromId);referenced.insert(p.targetId);}
     for(const auto& f:flames_)referenced.insert(f.fromId);
@@ -6063,11 +6054,16 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         const int64_t own = direct ? (ownDamage & 0xffff) : ownDamage;
         shooter->missionEvents |= enemy > 2 * own ? 0x1000000u : 0x200000u << slot;
     };
-    // Attacker's veteran attack multiplier boosts damage dealt (retail scales the
-    // attacker's attack stat by vetMul); the victim's boosts armour (below).
-    const Unit* attacker = fromId ? unit(fromId) : nullptr;
-    // Attack multiplier = veterancy × live aura buff (AdjustAttack).
-    float atkMul = attacker ? attacker->vetMul() * attacker->atkBuff * attacker->scenarioWeapon : 1.0f;
+    // The hitter the hits name (51a1c0 / 51a281): only while its object lives,
+    // a dying one too (its Killed/Dying still running), and not one that has
+    // changed sides since it fired. A death weapon has no shooter at all
+    // (52ac00 leaves the shot's +0x7c 0).
+    const Unit* attacker = retailHitter(fromId, fromPlayer);
+    // Attack multiplier = veterancy × live aura buff (AdjustAttack). 52a35c
+    // reads the shooter's +0xe0 only while it lives and is not dying: a shot
+    // still in flight when its shooter fell lands unscaled.
+    float atkMul = attacker && attacker->alive() && attacker->hp > Fixed()
+        ? attacker->vetMul() * attacker->atkBuff * attacker->scenarioWeapon : 1.0f;
     // Damage + status one victim, honouring veterancy, auras and immunities.
     auto hurt = [&](Unit& e, float scale) {
         if (e.stonedFor > 0) return;   // petrified units are impervious
@@ -6118,14 +6114,12 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             // STATUE (blocking, permanent, resurrectable back to life).
             if (e.hp <= Fixed()) return;
             // 51a140 names the hitter only while its object lives: a stone or
-            // freeze shot still lands after its caster died (52db40 / 52dda0),
+            // freeze shot still lands after its caster retired (52db40 / 52dda0),
             // and a caster that changed sides is a dead object to retail (514da0
             // makes the new owner a new one), though World keeps its id.
-            const Unit* caster = attacker && attacker->alive() && attacker->player == fromPlayer
-                                     ? attacker : nullptr;
-            retailHitResponse(e, caster, freeze ? 15 : 14);
+            retailHitResponse(e, attacker, freeze ? 15 : 14);
             e.deathType = freeze ? 15 : 14;
-            if (caster) { e.lastHitBy = fromId; e.lastHitPlayer = fromPlayer; }
+            if (attacker) { e.lastHitBy = fromId; e.lastHitPlayer = fromPlayer; }
             if (freeze) e.frozenFor = int32_t(kTick); else e.stonedFor = int32_t(kTick);
             e.hp = Fixed();
             e.speed = Fixed();
@@ -6199,8 +6193,9 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             e.overkill = fxMax(e.overkill, -e.hp);          // retail severity input
             e.deathType = uint8_t(w.dmgType);                  // 3 = explosion -> gib
         }
-        if (fromId) e.lastHitBy = fromId;
-        e.lastHitPlayer = fromPlayer;
+        // 51a35a: +0xf8 and +0xfc change only when the hit names a hitter;
+        // otherwise the earlier hitter keeps the credit.
+        if (attacker) { e.lastHitBy = fromId; e.lastHitPlayer = fromPlayer; }
         retailHitResponse(e,attacker,w.dmgType);
         // Stone and freeze returned above; the paralyzer is the one status left.
         if (w.status == Weapon::Status::Paralyzed && e.type) {
@@ -8977,7 +8972,7 @@ bool World::giveUnit(int unitId, int fromPlayer, int toPlayer) {
     ++players_[size_t(toPlayer)].unitCount;
     transferEntitySlot(u,toPlayer);
     u.player = toPlayer;
-    startExperience(u);   // ShareUnits gives a new object (514da0 at 4b6b33)
+    startObjectStats(u);   // ShareUnits gives a new object (514da0 at 4b6b33)
     u.rally.clear();
     u.selfDestructT = -1;
     u.squad = 0;
@@ -9060,13 +9055,10 @@ void World::scenarioDestroy(int unitId,uint8_t deathType) {
         ++players_[size_t(owner)].losses;
         if (players_[size_t(owner)].unitCount>0) --players_[size_t(owner)].unitCount;
     }
-    if (!scoreAutomaticDisabled_ && !u.underConstruction && validUnitOwner(u.lastHitPlayer) && u.lastHitPlayer!=owner) {
-        auto& score=players_[size_t(u.lastHitPlayer)].score;
-        score=std::bit_cast<int32_t>(uint32_t(score)+uint32_t(u.type->experiencePoints));
-    }
-    const int killOwner=creditedOwner(u.lastHitBy);
-    if(validUnitOwner(killOwner) && !allied(killOwner,owner))++players_[size_t(killOwner)].kills;
-    creditKill(u);
+    // Retired at once: 512610 with zero severity runs no Dying (512ac8).
+    if (!retailHitter(u.lastHitBy,u.lastHitPlayer)) u.lastHitBy=0;
+    u.deathPending=true;
+    retireDeath(u);
     if (scenario_) scenario_->unitDied(*this,unitId);
     if (mission_) mission_->unitDied(*this,unitId);
 }
@@ -9125,7 +9117,7 @@ bool World::scenarioTransfer(int unitId, int newPlayer, MissionScript* notify) {
     if (notify) notify->unitCaptured(*this, unitId);
     transferEntitySlot(*u,newPlayer);
     u->player = newPlayer;
-    startExperience(*u);
+    startObjectStats(*u);
     u->rally.clear();
     u->selfDestructT = -1;
     u->squad = 0;
@@ -9168,8 +9160,8 @@ void World::captureUnit(Unit& t, int newPlayer) {
     t.player = newPlayer;
     gPlayersValid_=false;
     t.orders.clear();
-    // The new object's experience, exactly as spawn() starts a unit.
-    startExperience(t);
+    // The new object's experience and multipliers, exactly as spawn() starts a unit.
+    startObjectStats(t);
     t.lastHitBy = 0; t.lastHitPlayer = -1;
     t.squad = 0;             // no longer in its old owner's control group
     t.buildQueue.clear();    // and not still producing for them
@@ -9177,11 +9169,20 @@ void World::captureUnit(Unit& t, int newPlayer) {
     t.productionSiteId = 0;
 }
 
-void World::startExperience(Unit& u) {
+// A new object's scenario stats (512060 -> the scenario's 4cd590): no
+// experience (511990), both authored multipliers back to 1.0, then the
+// scenario's armour/weapon percentages and veteran level for the type. A
+// change of owner (514da0) makes such an object, so a captured or given unit
+// drops its placement's own percentages (matchsetup) and takes the type's.
+void World::startObjectStats(Unit& u) {
     u.xp = 0;u.vetOverride = 0.0f;
-    if (u.type) if (auto it = scenarioTypeStats_.find(u.type->id); it != scenarioTypeStats_.end())
+    u.scenarioArmor = 1.0f; u.scenarioWeapon = 1.0f;
+    if (u.type) if (auto it = scenarioTypeStats_.find(u.type->id); it != scenarioTypeStats_.end()) {
+        u.scenarioArmor = float(it->second[0]) * 0.01f;
+        u.scenarioWeapon = float(it->second[1]) * 0.01f;
         u.xp = retailExperienceForLevel(u.xp, std::clamp(it->second[2], 0, 10), u.type->experiencePoints,
                                         u.type->noVeteran, u.vetOverride);
+    }
     u.veteran = u.veteranLevel();
 }
 
@@ -9193,16 +9194,81 @@ void World::setVeteranLevel(Unit& u, int level) {
 }
 
 // Native 512ae0 credits the unit its victim's last hit named (+0xf8, set by
-// 51a240 only while the hitter's object lives): it gains the victim type's
-// experiencepoints and its level follows (getLevel 519310 reads +0xf0 anew).
-// A dead killer's object is freed, so its credit reaches nobody.
+// 51a240 only while the hitter's object lives, and cleared by 512860 at the
+// death when it no longer does): it gains the victim type's experiencepoints
+// and its level follows (getLevel 519310 reads +0xf0 anew). A killer retired
+// or turned since is a freed object, so its credit reaches nobody.
 void World::creditKill(const Unit& victim) {
     Unit* killer = victim.lastHitBy ? unit(victim.lastHitBy) : nullptr;
-    if (!killer || !killer->type || !killer->alive() || !victim.type ||
+    if (!killer || !retailObjectLives(*killer) || killer->player != victim.lastHitPlayer || !victim.type ||
         !retailKillCreditsExperience(victim.deathType, !victim.underConstruction, victim.lastHitPlayer, victim.player))
         return;
     killer->xp = retailAddExperience(killer->xp, victim.type->experiencePoints);
     killer->veteran = killer->veteranLevel();
+}
+
+// Retail's retirement 512ae0, once a unit's Killed/Dying is over (at once
+// when it runs none). The death-kind switch (512b71) credits the kill: the
+// hitter player's kill count (the F4 Kills) and score (512bd5..512c63) and
+// the killer's experience (512c9c), all for kinds 1, 2, 3, 7, 8, 14 and 15
+// on a finished unit whose owner differs from the hitter's player. Then,
+// for a positive severity on a finished unit, the death weapon (52ac00):
+// SELFDESTRUCTAS for kind 5, else EXPLODEAS, from where the unit is now,
+// with no shooter, so it credits nobody, is not scaled by the unit's
+// veterancy and spares nobody (529dc0 skips the shooter); its owner is the
+// unit's player. Only after both is the object freed (512e23). The blast
+// goes on a queue: applyHit walks units_ and can kill others, and this runs
+// mid-sweep; draining after the loop keeps that safe and the order the
+// sweep's.
+void World::retireDeath(Unit& u) {
+    if (!u.deathPending || !u.type) return;
+    const bool finished = !u.underConstruction;
+    if (retailKillCountsForPlayer(u.deathType, finished, u.lastHitPlayer, u.player) &&
+        validUnitOwner(u.lastHitPlayer)) {
+        auto& hitter = players_[size_t(u.lastHitPlayer)];
+        ++hitter.kills;
+        if (!scoreAutomaticDisabled_)
+            hitter.score = std::bit_cast<int32_t>(uint32_t(hitter.score) + uint32_t(u.type->experiencePoints));
+    }
+    creditKill(u);
+    u.deathPending = false;
+    if (u.severity == 0 || !finished) return;
+    // 52ac00 selects UnitDef+1ba for type 5 and +1b6 otherwise; a missing
+    // SELFDESTRUCTAS does not fall back to EXPLODEAS.
+    const Weapon* deathWeapon = u.deathType == Unit::kDeathSelfDestruct
+        ? (u.type->hasSelfDestructAs ? &u.type->selfDestructAs : nullptr)
+        : (u.type->hasExplodeAs ? &u.type->explodeAs : nullptr);
+    if (deathWeapon)
+        deathBlasts_.push_back({deathWeapon, {u.x.v, (u.type->canFly ? u.flightY : u.groundY).v, u.z.v},
+                                u.player, 0});
+}
+
+// Retail's mission Kill (0x4d36eb -> 513130) ignores its arguments. Every
+// unit this machine runs (owner +0xea 1 or 2; lockstep runs them all) loses
+// its shots in flight (52ae30(u, 1) -> 529af0, removed without impact); then
+// one whose Dying runs (+0x130 & 0x10000000) retires at once (512ae0) and
+// every other one dies with kind 10 (512610), which credits nobody and,
+// with zero severity, runs no Dying and fires no death weapon. The last
+// hitter is left as it is. A retired unit is skipped.
+void World::missionKillAll() {
+    std::unordered_set<int> killed;
+    for (auto& u : units_) {
+        if (!retailObjectLives(u)) continue;
+        killed.insert(u.id);
+        if (u.alive()) {
+            u.hp = Fixed(); u.deathType = 10;
+            continue;
+        }
+        // The handoff its Dying would have reached: corpse and retirement now.
+        u.deathAnimationTicks = u.deadFor;
+        updateCorpseWindow(u);
+        retireDeath(u);
+        if (u.corpseStatue<0 && u.deadFor<u.corpseUntil && !placeCorpse(u,corpseTypeOf(u.type))) retireCorpse(u);
+    }
+    std::erase_if(projectiles_, [&](const Projectile& p) { return killed.contains(p.fromId); });
+    std::erase_if(flames_, [&](const FlameShot& f) { return killed.contains(f.fromId); });
+    std::erase_if(pendingEffects_, [&](const PendingEffect& e) { return killed.contains(e.fromId); });
+    std::erase_if(storms_, [&](const Storm& s) { return killed.contains(s.fromId); });
 }
 
 // Stamp every PARKED ground unit into the occupancy layer. O(n), one cell each:
@@ -19220,6 +19286,8 @@ void World::tick(float dt) {
         } surfaceUpdate{*this,u.id,u.x,u.z,u.heading};
         if (!u.alive()) {
             ++u.deadFor;
+            // Its Dying is over: retirement (512ae0), with the corpse below.
+            if (u.deathPending && u.deadFor>=u.corpseAnimationTicks()) retireDeath(u);
             if (u.corpseStatue<0 && u.deadFor==u.corpseAnimationTicks() && u.deadFor<u.corpseUntil) {
                 if (!placeCorpse(u,corpseTypeOf(u.type))) retireCorpse(u);
             }
@@ -19234,47 +19302,11 @@ void World::tick(float dt) {
             killProductionOutput(u);
             if (u.player >= 0 && u.player < int(players_.size()))
                 players_[size_t(u.player)].losses++;   // end-of-game "Losses" column
-            // Native512c4c uses the player captured by the damaging shot.
-            // A killer converted after impact must not move its earlier score.
-            if(!scoreAutomaticDisabled_ && u.type && !u.underConstruction && u.lastHitPlayer>=0 && u.lastHitPlayer<int(players_.size()) &&
-               u.lastHitPlayer!=u.player) {
-                auto& score=players_[size_t(u.lastHitPlayer)].score;
-                score=std::bit_cast<int32_t>(uint32_t(score)+uint32_t(u.type->experiencePoints));
-            }
-            // The killer gains the destroyed unit's experiencepoints (creditKill);
-            // no HP-pool change -- veterancy works through the attack/armor
-            // multipliers, not a bigger health bar.
-            if (u.lastHitBy && u.type) {
-                // Credit the killer's player with an enemy kill (F4 overlay). Counts
-                // even if the killer is a structure or has since died -- what
-                // matters is who landed the fatal blow, not that it still lives.
-                const int killOwner=creditedOwner(u.lastHitBy);
-                if(validUnitOwner(killOwner) && !allied(killOwner,u.player))
-                    players_[size_t(killOwner)].kills++;
-                creditKill(u);
-            }
+            // 512860 keeps the last hitter only while its object lives; the
+            // kill itself is credited at retirement (retireDeath).
+            if (!retailHitter(u.lastHitBy,u.lastHitPlayer)) u.lastHitBy=0;
             if (mission_ || scenario_) justDied_.push_back(u.id);
-            // [EXPLODEAS]: the unit detonates its own death weapon where it stands
-            // (Kamikaze Rat, Grenadier, Fire Demon, Balloon...). Credit the blast to
-            // the dying unit's OWNER so kills count for the player who built it. Like
-            // retail's area pass (529dc0) it hurts allies too; only the source unit
-            // is skipped. Deferred to a
-            // queue: applyHit walks units_ and can kill others, and we are mid-sweep
-            // over units_ -- draining after the loop keeps that safe and keeps the
-            // order deterministic (sweep order, which is id order).
-            // Native 512d5a requires positive severity for the death weapon.
-            // Stone/frozen packets have zero severity (51275f), so they
-            // preserve the body without a blast.
-            // 52ac00 selects UnitDef+1ba for type 5 and +1b6 otherwise.
-            // A missing SELFDESTRUCTAS does not fall back to EXPLODEAS.
             const bool selfDestruct=u.deathType==Unit::kDeathSelfDestruct;
-            const Weapon* deathWeapon=selfDestruct
-                ? (u.type->hasSelfDestructAs ? &u.type->selfDestructAs : nullptr)
-                : (u.type->hasExplodeAs ? &u.type->explodeAs : nullptr);
-            if (deathWeapon && u.deathType!=0 &&
-                (u.deathType<6 || u.deathType>11) && u.deathType<14)
-                deathBlasts_.push_back({deathWeapon, {u.x.v, (u.type->canFly ? u.flightY : u.groundY).v, u.z.v},
-                                        u.player, u.id});
             // Killed decides corpse admission; Dying controls when the original
             // body retires. Only then does decomposition or water sinking begin.
             {
@@ -19297,6 +19329,7 @@ void World::tick(float dt) {
                     std::fprintf(stderr, "statue edge: %s statue=%d stoned=%d\n",
                                  u.type->id.c_str(), u.corpseStatue, u.stonedFor);
                 beginUnitDeath(u);
+                u.deathPending=true;
                 if (u.type->isStructure())
                     blockFoot(*u.type,u.x.toFloat(),u.z.toFloat(),false);
             }
@@ -19312,6 +19345,8 @@ void World::tick(float dt) {
             for (auto& plane:searchGrades_)
                 refreshSearchRect(plane,footprintOrigin(u.x,u.type->footX),
                     footprintOrigin(u.z,u.type->footZ),u.type->footX,u.type->footZ);
+            // No Dying to run: 512610 retires the unit at once (512ac8).
+            if (u.corpseAnimationTicks()==0) retireDeath(u);
             // Frozen/stone deaths bypass the ordinary death animation.
             if (u.corpseAnimationTicks()==0 && u.deadFor<u.corpseUntil) {
                 const int corpse=u.corpseStatue>=0 ? u.corpseStatue : corpseTypeOf(u.type);
@@ -19349,17 +19384,24 @@ void World::tick(float dt) {
                 u.hp = Fixed(); u.lastHitBy = 0; u.lastHitPlayer = -1; u.deathType = Unit::kDeathSelfDestruct;
             }
         }
-        // Deadly water (.ota waterdoesdamage): a ground unit standing in it is
-        // burned down. Flyers are over it, not in it; ships and amphibians belong
-        // there, so anything that can cross water is exempt.
-        if (waterDamage_ > 0 && !u.type->canFly && u.type->maxWaterDepth <= 0 &&
-            isWater(u.x.toFloat(), u.z.toFloat())) {
-            // Saturating: a retail site stays alive at or below zero hp.
-            u.hp = Fixed::raw(int32_t(std::clamp<int64_t>(int64_t(u.hp.v) - Fixed::fromFloat(waterDamage_ * dt).v,
+        // Deadly water (.ota waterdoesdamage, retailDeadlyWaterDamage): once a
+        // second, whole hit points off anything at or below sea level that is
+        // not canhover, through 51a140 with no hitter and damage kind 13: no
+        // hit response (51a333), the death kind 13 that 512610 then gets
+        // (51a348 -> 51e36c), the last hitter kept, credited nothing. A
+        // carried unit is skipped: World does not keep its height.
+        if (const uint16_t water = u.embarked() ? 0 : retailDeadlyWaterDamage(tickCounter_,
+                (u.type->canFly ? u.flightY : u.groundY).v, seaLevel_, u.type->canHover,
+                waterDamage_ != 0, waterDamage_)) {
+            // As hurt: 64-bit, clamped so that -hp is representable.
+            u.hp = Fixed::raw(int32_t(std::clamp<int64_t>(int64_t(u.hp.v) - int64_t(water) * Fixed::kOne,
                                                           -int64_t(INT32_MAX), INT32_MAX)));
-            // Retail hurts it through 51a140 with no attacker and damage kind 13
-            // (51e13f), which 51a348 keeps as the death kind (+0x10f -> 512610 at
-            // 51e36c): the last hitter stays, but kind 13 credits it nothing.
+            // 51a3c2: an unfinished site's progress follows its new HP.
+            if (u.retailSite && u.underConstruction && u.retailSite->progress.remaining!=0) {
+                auto& progress=u.retailSite->progress;
+                progress.hp=uint16_t(u.hp.floorInt());
+                progress.remaining=float(1.0-double(int16_t(progress.hp))/std::max(1,u.maximumHp()));
+            }
             if (u.hp <= Fixed()) { u.overkill = fxMax(u.overkill, -u.hp); u.deathType = 13; }
         }
         // Self-repair (KINGDOMS.icd 0x51e152..0x51e1bc). healtime is the unit's own
