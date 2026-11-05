@@ -17,6 +17,8 @@ It asserts the rule MissionScript::applyOrders ports (src/sim/mission.cpp):
 - the resolver is asked for kind 3 with no target unit; when it gives an
   order the order is pushed with the queue flag 1 at that point;
 - when it gives none nothing is pushed and the next clause still reads;
+- `m X Y` (kind 2), `p X Y [T]` (kind 9) and `u X Y` (kind 5) take the same
+  X*16, Y*16 point;
 - MAKESELECTABLE is appended only when some clause pushed and no clause was
   an `a X Y` that got an order (the flag is never cleared, so ANY such clause,
   not the last, decides).
@@ -68,12 +70,14 @@ def retail(order, scale, answers):
     def scan(uc, args):
         # The CRT's sscanf (cdecl): its float conversion goes through pointers
         # the CRT start-up fills (not run here), so the " %f %f" read is done
-        # here, as C reads it: leading blanks, two numbers, the count read.
+        # here, as C reads it: leading blanks, the numbers (two, or three for
+        # p's time), the count read.
         text = bytes(uc.mem_read(get(args), 256)).split(b'\0')[0].decode()
         fmt = bytes(uc.mem_read(get(args + 4), 16)).split(b'\0')[0]
-        if fmt != b' %f %f': raise AssertionError(('format', fmt))
+        if fmt not in (b' %f %f', b' %f %f %f'): raise AssertionError(('format', fmt))
         count = 0
-        for word, out in zip(text.split()[:2], (get(args + 8), get(args + 12))):
+        wanted = fmt.count(b'%')
+        for word, out in zip(text.split()[:wanted], [get(args + 8 + 4 * k) for k in range(wanted)]):
             try: value = float(word.rstrip(','))
             except ValueError: break
             uc.mem_write(out, struct.pack('<f', value)); count += 1
@@ -126,8 +130,20 @@ def main():
            [('resolve', 2, True, 0, *m), ('push', GIVEN, 1, True, 0, m),
             ('descriptor', 'MAKESELECTABLE'), ('push', 0x77, 1, True, 0, None)], True)
     cases += 4
+    # m, p and u take the same point (514120 kind 2, 514307 kind 9, 5141d3
+    # kind 5): X*scale, Y*scale, no half cell either. A patrol holds
+    # MAKESELECTABLE back (51443f); a move and an unload do not.
+    for x, y in ((9, 9), (1.5, 2.25)):
+        q = point(x, y, 16)
+        selectable = [('descriptor', 'MAKESELECTABLE'), ('push', 0x77, 1, True, 0, None)]
+        for order, kind, tail in ((f'm {x} {y}', 2, selectable), (f'u {x} {y}', 5, selectable),
+                                  (f'p {x} {y}', 9, []), (f'p {x} {y} 5', 9, [])):
+            expect(order, 16, {kind: True}, [('resolve', kind, True, 0, *q), ('push', GIVEN, 1, True, 0, q)] + tail,
+                   True)
+            cases += 1
     print(f'PASS: {cases} retail parser cases: a X Y is kind 3 at X*scale, Y*scale (no half cell), '
-          'queued, a refusal drops only itself, any given a X Y holds MAKESELECTABLE back')
+          'queued, a refusal drops only itself, any given a X Y holds MAKESELECTABLE back; '
+          'm, p and u take X*16, Y*16 too')
 
 
 if __name__ == '__main__': main()
