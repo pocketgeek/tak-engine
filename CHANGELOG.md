@@ -203,7 +203,9 @@ their validation reports; both live in [`docs/`](docs/).
   what it finds, until the formation stops. Ground units in a formation do the same
   while guarding: one left behind walks back to its formation first and then guards
   on, and one that keeps falling behind may give up guarding. A formation's guards
-  and attackers now count as moving with it, and its guards keep to its pace.
+  and attackers, its troops walking to board a transport and its transports on their
+  way to pick them up or set them down now count as moving with it, and its guards
+  keep to its pace.
 - **An armed factory from a mod gets no Attack Ground order**, as in the original
   game, which takes the attack command away from any factory. It never attacks an
   enemy unit itself either, ordered or on its own (an Attack on a unit still sends

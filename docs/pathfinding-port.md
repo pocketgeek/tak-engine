@@ -867,6 +867,18 @@ no moving member of its group (`51b890`'s `0x1000000`) and a guard was never
 paced (`0x2000000`). `retailOrderFlags` now gives them
 (`World::retailGroundUnitMission`); `retail_group_test` `groundGuard`.
 
+The transport missions too (gap round 2, rows read the same way, S): a
+passenger's Move_Seek_Pickup (`5eb886`) and its carrier's Ground_Pickup
+(`5eb967`) or VTOL_Pickup (`5ebd05`) are `0x1000200`, Ground_Unload
+(`5eb980`, whose circle approach World keeps as its own order) and
+VTOL_Unload (`5ebd1e`) `0x1000400`. World gave these orders no flags, so a
+formation's member walking to board, its carrier going to fetch it, or a
+carrier going to unload was no moving member. None of them runs a group
+check (no `51d1e0` call in their handlers). `retailOrderFlags` gives them;
+`retail_group_test` `transports`. Still flagless: Facing (`5eba2f`,
+`0x1000000`), which Follow_Ground pushes (`408757`) and World does not
+model as a mission.
+
 Not ported, the ground attacks' check, which this World runs inside its
 combat code rather than as retail handlers: Attack_Chase (`403dce`:
 `51d1e0(unit, 1, 5)`, `rand(3)`, `rand(15)`, Move_Ground_Formation at -4

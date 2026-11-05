@@ -437,10 +437,49 @@ void groundGuard() {
     std::printf("scenario=groundGuard tick=%u dropped=%d\n",world.tickCount(),int(dropped));
 }
 
+// The transport missions are group movers (rows' +0x11, read statically):
+// Move_Seek_Pickup and Ground_Pickup 0x1000200, Ground_Unload 0x1000400. A
+// formation's passenger walking to its wagon, the wagon on its way to fetch
+// it, and a wagon on its way to unload count in the moving aggregate (51b890:
+// 0x1000000). World gave these orders no flags.
+void transports() {
+    World world;setup(world,PathfindingMode::Retail);
+    auto t=mover(0),wagon=mover(0);
+    t.transportLandEligible=true;t.transportSize=1;t.modelTop=100<<16;   // above the 64 sea level from a groundY of 0
+    wagon.canTransport=true;wagon.maxTransportSize=4;wagon.transportCap=4;wagon.transportSizeCap=8;
+    wagon.transportDist=60;
+    const int passenger=world.spawn(&t,640,1900,std::nullopt,0);
+    const int carrier=world.spawn(&wagon,2600,3400,std::nullopt,0);
+    const int idle=world.spawn(&t,640,1948,std::nullopt,0);
+    for (int id:{passenger,carrier,idle}) world.setSquad(id,-1);
+    known(world);
+    world.loadInto(passenger,carrier,false);
+    require(!world.unit(passenger)->orders.empty() && world.unit(passenger)->orders.front().load &&
+            !world.unit(carrier)->orders.empty() && world.unit(carrier)->orders.front().transportPickup,
+            "the pickup orders were not given");
+    world.tick(1.f/30);world.tick(1.f/30);
+    const auto* record=world.retailGroupRecord(passenger);
+    require(record && record->active && record->moving[size_t(RetailGroupClass::Ground)].count==2,
+            "a passenger's Move_Seek_Pickup and its carrier's Ground_Pickup are not the group's movers");
+    // A loaded wagon sent to unload far off moves with its formation too.
+    World drop;setup(drop,PathfindingMode::Retail);
+    const int a=drop.spawn(&t,640,1900,std::nullopt,0),w=drop.spawn(&wagon,700,1900,std::nullopt,0);
+    const int b=drop.spawn(&t,640,1948,std::nullopt,0);
+    for (int id:{w,b}) drop.setSquad(id,-1);
+    known(drop);
+    require(drop.embarkInto(a,w),"the soldier did not board the wagon");
+    drop.unloadAt(w,2600,3400,Fixed(),false);
+    drop.tick(1.f/30);drop.tick(1.f/30);
+    const auto* dropRecord=drop.retailGroupRecord(w);
+    require(dropRecord && dropRecord->active && dropRecord->moving[size_t(RetailGroupClass::Ground)].count==1,
+            "a carrier's Ground_Unload is not a group mover");
+    std::printf("scenario=transports\n");
+}
+
 int main() {
     try {
         geometry();attackHead();airHeads();slowest();plain();aiSquads();replayReset();
-        flyerMove();flyerPatrol();groundGuard();standbys(false);standbys(true);
+        flyerMove();flyerPatrol();groundGuard();transports();standbys(false);standbys(true);
         straggler(PathfindingMode::Retail);
     } catch(const std::exception& error) {std::fprintf(stderr,"FAIL: %s\n",error.what());return 1;}
     std::puts("retail group pacing: PASS");

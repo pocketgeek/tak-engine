@@ -3037,6 +3037,13 @@ uint32_t World::retailOrderFlags(const Unit& u,const Order& o) const {
     // with no target is not established; the group check reads only
     // 0x1000000 and 0x4000000.
     if (o.seekAttack || o.seekGuard) return o.mission.flags|0x1000600u;
+    // The transport missions (rows read statically, +0x11): a passenger's
+    // Move_Seek_Pickup (0x5eb886) and its carrier's Ground_Pickup (0x5eb967)
+    // or VTOL_Pickup (0x5ebd05) are 0x1000200 with the other unit; the
+    // carrier's Ground_Unload (0x5eb980, its circle approach included) or
+    // VTOL_Unload (0x5ebd1e) 0x1000400 at the drop point. Group movers all.
+    if (o.load) return o.mission.flags|0x1000200u;
+    if (o.unload || o.transportUnloadApproach) return o.mission.flags|0x1000400u;
     // A flyer's attack on a unit that cannot fly (tickCombat's choice):
     // AirStrike on a selected `dropped` weapon, else AirToGround or the hover.
     // On a flyer: AirToAir (row 0x5ebd82), and VTOL_Evade ahead of it (row
@@ -3131,6 +3138,9 @@ uint32_t World::retailMissionFlags(Unit& u) {
         // a grouped guard or attacker was never a moving member, and a guard
         // never paced.
         if (retailGroundUnitMission(u,u.orders[leg])) return retailOrderFlags(u,u.orders[leg]);
+        // A pickup or unload, either side, on the ground or in the air.
+        if (u.orders[leg].load || u.orders[leg].unload || u.orders[leg].transportUnloadApproach)
+            return retailOrderFlags(u,u.orders[leg]);
         if (u.type->canFly && !u.type->isStructure()) {
             // AirToGround, AirStrike, AirToGroundHover, AirToAir (and
             // VTOL_Evade ahead of it), the seeks and VTOL_Follow.
@@ -3140,8 +3150,7 @@ uint32_t World::retailMissionFlags(Unit& u) {
                 return retailOrderFlags(u,front);
         }
     }
-    if (auto* o=groundMissionOrder(u,true))
-        return o->transportUnloadApproach ? o->transportMission.flags : o->mission.flags;
+    if (auto* o=groundMissionOrder(u,true)) return o->mission.flags;
     // VTOL_Standby's row (0x5ebc88): 0x5010000. World keeps a flyer's
     // standby flags at 0 (they are hashed); only the group code reads them.
     if (u.orders.empty() && u.standbyActive) return u.type->canFly ? 0x5010000u : u.standbyState.flags;
