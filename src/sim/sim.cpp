@@ -3642,6 +3642,84 @@ const World::LegionFlightStation* World::legionFlightStation(const Unit& u) cons
     return &legionFlightStations_[index];
 }
 
+// Legion's formation re-form (ours, not retail): the counterpart of Retail's
+// standby group check (Standby 407779, retailStandbyGroupCheck), which walks
+// an idle formation member that has drifted out of its slot back to the
+// group. Legion gives every member of a formation's move a slot of its own
+// (its goal footprint on the shared point), so an idle member walks back to
+// that slot with an ordinary move instead of to the group centre. Ground and
+// boat members of Alt+N formations (Unit::squad < 0) only: Legion's flyers
+// keep their own stations (planLegionFlightStations) and are never re-ordered
+// (the W6 rejoin's rule too), and the AI's squads are not Legion formations.
+//
+// Each tick (before the unit loop) a member's slot follows the goal of its
+// plain move while it walks one and the goal its settled arrival completed on
+// once it is idle; any other order (an attack, a step-out, a build) leaves the
+// slot where it was, so the member comes back from it. The areas and movers
+// of each formation's ground and boat classes are rebuilt with it.
+void World::updateLegionFormationSlots() {
+    for (auto& player:legionFormationClasses_) for (auto& formation:player) formation={};
+    if (!legion_) return;
+    for (auto it=legionFormationSlots_.begin();it!=legionFormationSlots_.end();) {
+        const Unit* u=unit(it->first);
+        it=u && u->alive() && u->type && u->squad==it->second.squad ? std::next(it) : legionFormationSlots_.erase(it);
+    }
+    for (auto& u:units_) {
+        if (u.squad>=0 || u.squad<-10 || !u.alive() || !u.type || u.type->canFly || u.type->isStructure() ||
+            u.underConstruction || u.embarked() || u.player<0 || u.player>=kMaxPlayers) continue;
+        const auto member=retailGroupMember(u);
+        auto& c=legionFormationClasses_[size_t(u.player)][size_t(-u.squad)][member.kind==RetailGroupClass::Boat ? 1 : 0];
+        c.area+=member.area;
+        const uint32_t flags=retailMissionFlags(u);
+        if ((flags&0x1000000u) && !(flags&0x4000000u)) { ++c.moving;c.movingArea+=member.area; }
+        int32_t x=0,z=0;
+        const bool walking=groundMissionOrder(u)!=nullptr && legion_->goalPoint(u.id,x,z);
+        const bool have=walking || legion_->anchorGoal(u.id,x,z);
+        auto found=legionFormationSlots_.find(u.id);
+        if (found!=legionFormationSlots_.end() && found->second.state!=kSlotHeld) {
+            // Its walk back (or the slot it gave up on) stands until the
+            // member carries some other order.
+            if (u.orders.empty()) continue;
+            const Order& leg=u.orders[currentLeg(u.orders)];
+            if (leg.groundMission && leg.issuedTick==found->second.returnTick) continue;
+            found->second.state=kSlotHeld;
+        }
+        if (!have) continue;
+        if (found==legionFormationSlots_.end())
+            legionFormationSlots_.emplace(u.id,LegionFormationSlot{u.squad,kSlotHeld,x,z,0});
+        else if (found->second.x!=x || found->second.z!=z)
+            found->second=LegionFormationSlot{u.squad,kSlotHeld,x,z,0};
+    }
+}
+
+// At the standby's wake (where Retail runs 51d1e0(unit, 1, 2)): out of its
+// slot by Retail's tolerance (legionStandbyOutOfSlot), the member walks back
+// with a plain move to the slot's centre, unless a body or the ground holds
+// the slot (it waits for the next wake). A member that walked back and still
+// stands out of its slot (Legion settled it short, or the way was shut) gives
+// that slot up until it is given some other order: no walking to and fro.
+int World::legionStandbyCheck(Unit& u) {
+    if (!isLegionPathfinding(pathfindingMode_) || !legion_ || u.squad>=0 || u.squad<-10 || u.type->canFly ||
+        u.player<0 || u.player>=kMaxPlayers) return -1;
+    const auto found=legionFormationSlots_.find(u.id);
+    if (found==legionFormationSlots_.end() || found->second.squad!=u.squad ||
+        found->second.state==kSlotGivenUp) return -1;
+    auto& slot=found->second;
+    const auto member=retailGroupMember(u);
+    const auto& c=legionFormationClasses_[size_t(u.player)][size_t(-u.squad)][member.kind==RetailGroupClass::Boat ? 1 : 0];
+    const Fixed sx=Fixed::raw(slot.x),sz=Fixed::raw(slot.z);
+    if (!legionStandbyOutOfSlot(c,member.area,u.x.floorInt()-sx.floorInt(),u.z.floorInt()-sz.floorInt())) {
+        slot.state=kSlotHeld;
+        return -1;
+    }
+    if (slot.state==kSlotReturning) { slot.state=kSlotGivenUp;return -1; }
+    if (!mobilePlacement(u,footprintOrigin(sx,u.type->footX),footprintOrigin(sz,u.type->footZ),false)) return -1;
+    order(u.id,sx.toFloat(),sz.toFloat(),false);
+    if (u.orders.empty()) return -1;
+    slot.state=kSlotReturning;slot.returnTick=tickCounter_;
+    return 5;
+}
+
 // 4d856a: when the dispatcher finds the list empty -- including right after the
 // last mission retired in the same call -- it builds the FBI default mission for
 // owner types 1/2. The mover's controller is not a mission and does not defer it:
@@ -3743,10 +3821,11 @@ void World::tickGroundMission(Unit& u,bool attackWalk) {
         // mission (the rows' 0x4000000 counts the member in its centre);
         // out of the slot the FormationStandby goes ahead (4d7750). A
         // standby waits under it (0: stage 0 when it retires); the landing
-        // retires (5).
+        // retires (5). Legion has no group records: a ground standby runs
+        // our counterpart instead (legionStandbyCheck), at the same wakes.
         int standbyGroupCheck(RetailStandbyCheck kind) {
             const RetailGroupRecord* group=w.retailGroupOf(u);
-            if (!group) return -1;
+            if (!group) return kind==RetailStandbyCheck::Standby ? w.legionStandbyCheck(u) : -1;
             return retailStandbyGroupCheck(kind,[&](int level) {
                 return retailGroupOutOfSlot(*group,w.retailGroupMember(u),true,level,true);
             },[&](int level,int mode) {
@@ -19301,6 +19380,7 @@ void World::tick(float dt) {
                 }
             }
     if (pathfindingMode_==PathfindingMode::Retail) tickRetailGroups();
+    else updateLegionFormationSlots();
     planLegionFlightStations();
     // An idle member standing against an idle same-player body that is nearer
     // the centre is at the crowd's face already: walking in cannot bring it
@@ -19359,6 +19439,9 @@ void World::tick(float dt) {
         if (u.type->isStructure() || u.underConstruction) continue;   // buildings don't rejoin
         if (legionRejoin) {
             if (u.type->canFly) continue;
+            // A member with a slot of its own walks back to it at its
+            // standby's wake instead (legionStandbyCheck).
+            if (const auto* slot = legionFormationSlot(u.id); slot && slot->squad == u.squad) continue;
             FormAgg* f = formOf(u);
             if (!f || f->gn <= 1 || f->busy) continue;
             const float cx = Fixed::raw(int32_t(f->gx / f->gn)).toFloat(), cz = Fixed::raw(int32_t(f->gz / f->gn)).toFloat();
@@ -21318,6 +21401,14 @@ uint64_t World::stateHash() const {
     for (size_t p=0;p<aiFormation_.size();++p) if (aiFormation_[p].any()) {
         mix(0x41494646u);mix(p);
         for (size_t g=1;g<100;++g) if (aiFormation_[p].test(g)) mix(g);
+    }
+    // Legion's formation slots (legionStandbyCheck), when any member has one.
+    if (!legionFormationSlots_.empty()) {
+        mix(0x4c46534cu);mix(legionFormationSlots_.size());
+        for (const auto& [id,slot]:legionFormationSlots_) {
+            mix(uint32_t(id));mix(uint32_t(uint8_t(slot.squad)));mix(uint32_t(slot.state));
+            mix(uint32_t(slot.x));mix(uint32_t(slot.z));mix(slot.returnTick);
+        }
     }
     checkpoint("players");
     // Reclaimable features: fold a cheap signature so a reclaim divergence faults as

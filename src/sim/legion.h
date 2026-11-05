@@ -402,6 +402,11 @@ public:
     // unit is no member or has no goal. Reads hashed member state only (the
     // formation flyers' landing points, World::planLegionFlightStations).
     bool goalPoint(int id,int32_t& x,int32_t& z) const;
+    // The centre (raw Fixed) of the goal footprint the unit's settled-arrival
+    // record completed on (its formation slot when it arrived on a shared
+    // point); false if it has none. Reads hashed state only (the formation
+    // slots World's standby re-form returns members to, legionStandbyCheck).
+    bool anchorGoal(int id,int32_t& x,int32_t& z) const;
     // W6 behaviour counters World's flyer rules raise (Stats, observation only).
     enum class FlyerEvent : uint8_t {StationOverflow,ReleaseA,ReleaseB,CapHit,GoAround,TargetPoll};
     void noteFlyerEvent(FlyerEvent);
