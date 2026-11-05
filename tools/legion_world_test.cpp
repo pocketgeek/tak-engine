@@ -3023,7 +3023,9 @@ void squadformation() {
 // it was left. Then the slot is walled off with the member shoved outside the
 // wall: it walks once, gives the slot up and is never re-ordered again. A
 // member whose slot a body stands on waits (no walk) until the body leaves. A
-// formation stopped short of its point keeps no slot to walk to or back to.
+// member moved on its own keeps its slot and walks back to it, as Retail pulls
+// it back to its group. A formation stopped short of its point keeps no slot to
+// walk to or back to.
 void formationreform() {
     Fixture f(128,112);
     f.publish();
@@ -3090,6 +3092,24 @@ void formationreform() {
     const float freedBack=fxLen(f.world.unit(a)->x-ax,f.world.unit(a)->z-az).toFloat();
     std::printf("formationreform freed: walks=%d back_px=%.1f\n",freed,freedBack);
     check(freed==1&&freedBack<=32.f,"formationreform: the member did not walk back once its slot was free");
+    // Moved on its own: the member is ordered 20 cells east by itself and arrives there. Its slot stays (a
+    // formation member's own move is not a formation move): once idle it walks back to it.
+    f.world.order(a,float((footprintOrigin(ax,2)+20)*16+16),az.toFloat(),false);
+    int soloWalks=0;
+    {
+        bool idle=false,arrived=false;
+        for(int t=0;t<1500;++t) {
+            f.world.tick(1.f/30);
+            const bool now=f.world.unit(a)->orders.empty();
+            if(now&&!arrived&&fxLen(f.world.unit(a)->x-ax,f.world.unit(a)->z-az).toFloat()>=16*18.f)arrived=true;
+            soloWalks+=arrived&&idle&&!now;idle=now;
+        }
+        check(arrived,"formationreform: the solo move never arrived");
+    }
+    const float soloBack=fxLen(f.world.unit(a)->x-ax,f.world.unit(a)->z-az).toFloat();
+    std::printf("formationreform solo: walks_back=%d back_px=%.1f\n",soloWalks,soloBack);
+    check(soloWalks==1&&f.world.unit(a)->orders.empty()&&soloBack<=32.f,
+          "formationreform: a formation member moved on its own did not walk back to its slot");
     // Stopped short: the formation is sent 60 cells east and stopped a third of the way. No member walks on
     // to the slot it was heading for, nor back to the one it left. Then it is sent home again.
     for(int id:form)f.world.order(id,100*16,24*16,false);
@@ -3116,6 +3136,51 @@ void formationreform() {
         fxLen(ug.x-hx,ug.z-hz).toFloat());
     check(tries==1,"formationreform: a member whose slot is walled off did not walk exactly once");
     check(later==0&&ug.orders.empty(),"formationreform: a member that gave its slot up was re-ordered");
+}
+// The classic AI's squads are Retail's formations while the AI flags them (Cmd::AiGroup, World::aiFormation: a
+// strike squad attacking): in Legion a flagged squad's member shoved out of its slot walks back as an Alt+N member
+// does; an unflagged squad's member stays where it was left.
+void formationreformai() {
+    Fixture f(128,112);
+    f.publish();
+    f.world.player(1).automaticGates=true;
+    const auto type=mover(2);
+    std::vector<int> flagged,plain;
+    for(int i=0;i<6;++i)flagged.push_back(f.spawn(type,10+(i%3)*3,20+(i/3)*3,1));
+    for(int i=0;i<6;++i)plain.push_back(f.spawn(type,10+(i%3)*3,80+(i/3)*3,1));
+    f.start();
+    for(int id:flagged)f.world.setAiGroup(1,id,23,false);
+    for(int id:plain)f.world.setAiGroup(1,id,24,false);
+    f.world.setAiGroup(1,0,23,true);
+    check(f.world.aiFormation(1,23)&&!f.world.aiFormation(1,24),"formationreformai: the AI squad flags");
+    for(int id:flagged)f.world.order(id,40*16,24*16,false);
+    for(int id:plain)f.world.order(id,40*16,84*16,false);
+    for(int t=0;t<1800;++t)f.world.tick(1.f/30);
+    for(int id:flagged)check(f.world.unit(id)->orders.empty(),"formationreformai: the flagged squad never settled");
+    for(int id:plain)check(f.world.unit(id)->orders.empty(),"formationreformai: the plain squad never settled");
+    auto east=[&](const std::vector<int>& ids) {
+        return *std::max_element(ids.begin(),ids.end(),[&](int a,int b){return f.world.unit(a)->x<f.world.unit(b)->x;});
+    };
+    const int a=east(flagged),b=east(plain);
+    const Fixed ax=f.world.unit(a)->x,az=f.world.unit(a)->z;
+    for(int id:{a,b}) {
+        Unit& u=*f.world.unit(id);const Fixed x=u.x;
+        for(int i=0;i<48;++i)f.world.commitGroundStep(u,Fixed::fromInt(4),Fixed());
+        check(u.x-x>=Fixed::fromInt(12*16-8),"formationreformai: the shove was refused");
+    }
+    const Fixed bx=f.world.unit(b)->x,bz=f.world.unit(b)->z;
+    int walksA=0,walksB=0;bool idleA=true,idleB=true;
+    for(int t=0;t<900;++t) {
+        f.world.tick(1.f/30);
+        const bool nowA=f.world.unit(a)->orders.empty(),nowB=f.world.unit(b)->orders.empty();
+        walksA+=idleA&&!nowA;walksB+=idleB&&!nowB;idleA=nowA;idleB=nowB;
+    }
+    const auto& ua=*f.world.unit(a);const auto& ub=*f.world.unit(b);
+    const float back=fxLen(ua.x-ax,ua.z-az).toFloat();
+    std::printf("formationreformai: flagged walks=%d back_px=%.1f | unflagged walks=%d moved_px=%.1f\n",walksA,back,walksB,
+        fxLen(ub.x-bx,ub.z-bz).toFloat());
+    check(walksA==1&&ua.orders.empty()&&back<=32.f,"formationreformai: the flagged AI squad member did not walk back");
+    check(walksB==0&&ub.x==bx&&ub.z==bz,"formationreformai: an unflagged AI squad member re-formed");
 }
 }
 
@@ -4738,7 +4803,7 @@ int main(int argc,char** argv) {
         {"staticblock",staticblock},{"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn},
         {"approachhold",approachhold},{"approachopen",approachopen},
         {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend},
-        {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},{"formationreform",formationreform},
+        {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},{"formationreform",formationreform},{"formationreformai",formationreformai},
         {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"flyerfront",flyerfront},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainschurn",chainschurn},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
