@@ -20383,6 +20383,7 @@ void World::hashTrace() const {
                         uint64_t(uint32_t(u.z.v)));
         hUnitPos  = fnv(hUnitPos, uint64_t(uint32_t(u.heading.v)));
         hUnitHp   = fnv(fnv(hUnitHp, u.id), uint64_t(uint32_t(u.hp.v)));
+        if (u.mana != 0) hUnitHp = fnv(hUnitHp, bits64(u.mana));
         hUnitOrd  = fnv(fnv(hUnitOrd, u.id), u.orders.size());
         if (!u.orders.empty()) {
             const Order& o = u.orders.front();
@@ -20977,6 +20978,8 @@ uint64_t World::stateHash() const {
         mix(uint64_t(u.moveState) * 3 + uint64_t(u.fireState));
         mix(u.standingOrder);
         mix(uint64_t((u.cloakOn ? 1u : 0u) | (u.active ? 2u : 0u)));
+        // The personal pool gates casting and cloak; a double, so all eight bytes.
+        if (u.mana != 0) { uint64_t b; std::memcpy(&b, &u.mana, 8); mix(0x554d414eu); mix(b); }
         if (u.cloakBlockedUntil) { mix(0x434c4f4bu); mix(u.cloakBlockedUntil); }
         if (u.guardHelpTick) { mix(0x47554152u); mix(u.guardHelpTick); }
         if (u.guardHeard) { mix(0x47484541u); mix(u.guardHeard); }
