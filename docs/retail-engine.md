@@ -1679,9 +1679,21 @@ flyer's patrol is VTOL_Patrol, armed or a builder (`plainFlightPatrol`;
 until now only an unarmed flyer that builds nothing ran it): its stage-2
 target scan and job search are World's acquisition and `tickPatrolRepair`. A
 patrol from idle gives its return leg the anchor's flags (0x1000412) and the
-outbound leg 0x4000, so VTOL_Patrol does not append a second anchor and a
-Shift-patrol joins the loop at its tail, as a ground patrol's does (before,
-an unarmed flyer lapped start, B, start, C). A flyer output's rally steps are
+outbound leg the row's flags marked 0x4000 (0x1004412), so VTOL_Patrol does
+not append a second anchor and a Shift-patrol joins the loop at its tail, as
+a ground patrol's does (before, an unarmed flyer lapped start, B, start, C).
+E (`check_air_point_mission.py`, 2026-11-04): VTOL_PATROL's row (`0x5ebd50`)
+is class 7, 0x1000412, which its ctor keeps with a point and no target;
+stage 0 (`41a64f`, `4d6b80`) walks the list for a mission flagged 0x4000,
+appends a VTOL_PATROL at the unit's position (0x1000412) only when none is,
+and ORs 0x4000 into its own flags either way. Until 2026-11-04 the outbound
+leg carried 0x4000 alone and a Shift-queued leg or a flyer output's rally
+patrol step the move's 0x3000400, so a Ctrl group's patrolling flyers left
+its moving aggregate on the way out (the group check reads 0x1000000 and
+0x4000000; `retailMissionFlags`). Every flyer patrol leg now carries the
+row's flags (`kVtolPatrolFlags`); `suppress_test` checks the legs and the
+group's moving count. (VTOL_Patrol's own group checks, `419fa0` / `41a162`,
+are still not ported: docs/pathfinding-port.md.) A flyer output's rally steps are
 VTOL_Move and VTOL_Patrol too: GetBuilt resolves each QMove and QPatrol for
 the output (`4de530` actions 2 and 9, `0x4022ec` / `0x402319`); they used to
 fly with no mission. The group spread (`0x5214b0`, "Group move spread"

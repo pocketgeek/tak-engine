@@ -697,6 +697,12 @@ struct ManaBuildArea {
 //    type 5 to itself when the order comes up.
 // An index stays valid while an order refers to it (addScriptedOrder
 // compacts a full table and renumbers the orders that refer to it).
+// VTOL_PATROL's registry flags (row 0x5ebd50) as its ctor keeps them with a
+// point and no target (4d6c40): a flyer's patrol leg. Its stage 0 (4d6b80)
+// adds 0x4000 to the leg that has appended (or found) the loop's anchor.
+// tools/re/check_air_point_mission.py.
+inline constexpr uint32_t kVtolPatrolFlags = 0x1000412u;
+
 struct ScriptedOrder {
     enum class Kind : uint8_t { AttackType, Train, WaitAttack, WaitNear, SelfDestruct };
     Kind kind = Kind::AttackType;

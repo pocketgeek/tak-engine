@@ -2516,7 +2516,7 @@ void World::tickFlightPatrol(Unit& u) {
                 const bool anchored=std::any_of(u.orders.begin(),u.orders.end(),[](const Order& o) {return (o.mission.flags&0x4000u)!=0;});
                 if (!anchored) {
                     Order anchor;anchor.x=u.x;anchor.z=u.z;anchor.goal=anchor.patrol=true;
-                    anchor.mission.flags=0x1000412u;anchor.issuedTick=w.tickCounter_;
+                    anchor.mission.flags=kVtolPatrolFlags;anchor.issuedTick=w.tickCounter_;
                     // A return leg: it belongs to the outbound leg's convoy (and order).
                     anchor.setIdentity(u.orders.front().identity());
                     u.orders.push_back(anchor);
@@ -5374,15 +5374,17 @@ void World::patrol(int unitId, float x, float z) {
     }
     if (u->type->canFly) {
         // VTOL_Patrol (plainFlightPatrol, every flyer's). The return leg where
-        // the flyer stands is the anchor its stage 0 would append (0x1000412),
-        // and the outbound leg is marked anchored (0x4000), so a Shift-patrol
-        // queued behind joins the loop at its tail, as a ground patrol's does,
-        // instead of a second anchor going in behind it.
+        // the flyer stands is the anchor its stage 0 would append (4d6b80:
+        // the row's 0x1000412 at the unit), and the outbound leg is the row's
+        // flags marked anchored (0x1000412 | 0x4000), so a Shift-patrol queued
+        // behind joins the loop at its tail, as a ground patrol's does,
+        // instead of a second anchor going in behind it. Both are group
+        // movers (0x1000000) for the moving aggregate (retailMissionFlags).
         u->orders.clear();cancelPath(*u);
         Order a{u->x,u->z,0},b{Fixed::fromFloat(x),Fixed::fromFloat(z),0};
         a.goal=a.patrol=a.attackMove=true;
         b.goal=b.patrol=b.attackMove=true;
-        a.mission.flags=0x1000412u;b.mission.flags=0x4000u;
+        a.mission.flags=kVtolPatrolFlags;b.mission.flags=kVtolPatrolFlags|0x4000u;
         // The outbound leg joins the click's Patrol convoy; the return leg (the
         // flyer's own position) copies it rather than open a convoy of its own.
         if(isLegionPathfinding(pathfindingMode_)) {const auto id=stampIdentity(*u,ConvoyClass::Patrol,b.x,b.z);a.setIdentity(id);b.setIdentity(id);}
@@ -5417,6 +5419,9 @@ void World::patrolTo(int unitId, float x, float z, bool queue, std::optional<Ord
         u->orders[i].patrol = true;
         u->orders[i].attackMove = true;
         u->orders[i].flightMoveMission = false;
+        // A flyer's leg is VTOL_PATROL at its point (row 0x5ebd50), not the
+        // move's flags order() gave it.
+        if (u->type->canFly) u->orders[i].mission.flags = kVtolPatrolFlags;
     }
 }
 
@@ -17889,6 +17894,7 @@ void World::finishProduction(int producerId,Unit& finished) {
                 // fight-move step carries the move's flags.
                 leg.patrolOpen=false;
                 if (!leg.patrol) { leg.flightMoveMission=true;leg.mission.flags=0x3000400u; }
+                else leg.mission.flags=kVtolPatrolFlags;   // VTOL_PATROL at the step's point
             }
         }
     // Nothing handed over -- no rally, or every entry was dropped (dead attack
