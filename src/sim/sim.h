@@ -2187,7 +2187,21 @@ class World {
     friend struct RetailReplayProbe;
     friend class LegionNavigator;
 public:
-    int spawn(const UnitType* type, float x, float z, std::optional<float> heading = {}, int player = 0);
+    // `finished` is 512060's sixth argument: a placement, a game start, Create,
+    // the CRT and a god are made finished; production and a builder's site are
+    // not (they finish through activateBuilt at completion).
+    int spawn(const UnitType* type, float x, float z, std::optional<float> heading = {}, int player = 0,
+              bool finished = true);
+    // 512301 (a finished creation) and 429a8d (a completion): an
+    // activatewhenbuilt type is activated, 51e4d0(1, 1), whose rising edge
+    // starts the script's Activate. A new unit's activation byte is 0
+    // (511990), so this is the only thing that turns one on unasked.
+    void activateBuilt(int unitId);
+    // Whether the unit's script has been activated (its +0x114 bit 1); tests.
+    bool unitScriptActivated(int unitId) const {
+        const auto* script=unitScript(unitId);
+        return script && script->activated;
+    }
     // A creation that credits its storage (512060's last argument): the unit's
     // mogriumstorage joins its owner's pool and capacity at once.
     void creditCreationStorage(int unitId);

@@ -2919,7 +2919,22 @@ the getter `543190(key, default)` asked with 0; `check_change_owner.py`). A
 new unit's activation byte is 0 (`511990`) and only that flag activates it,
 at a finished creation (`512301`) or at completion (`429990`,
 `check_construction_completion.py`). The four gates are onoffable with no
-`activatewhenbuilt`, so they stand closed and inactive when made. Ours read
+`activatewhenbuilt`, so they stand closed and inactive when made. The activation is `51e4d0(1, 1)`, which tests no
+onoffable and runs the script's `Activate` on the rising edge of bit 1 only
+(S); `512301` is reached only with 512060's sixth argument ("finished") set,
+which the placement (`514c83`), Create (`4d36cd`), the game start (`4d2faf`,
+`4d3293`), the CRT (`4caf16`, `4cbc03`, `4cd307`), the god (`51e352`) and the
+change of owner (`514eeb`) pass and production, the builders and RESURRECT
+(`401eeb`, `4059ca`, `41f49e`, `406f0c`, `420541`) do not (S). The two shipped
+types, `verpill` and `zonfire`, start `FireControl` from `Create` once built
+and again from `Activate`, so retail runs two such threads. Ours (gap hunt 7):
+`World::spawn` set the unit's activation from `activatewhenbuilt` whether
+finished or not and ran `Activate` neither at a finished creation nor at a
+completion; now a new unit is inactive, `spawn(..., finished)` and the two
+completions (`World::finishProduction`, the builder's work) call
+`World::activateBuilt`, and the viewer mirrors the activation of an
+`activatewhenbuilt` type as it does a gate's. Test: `new_unit_mana_shipped`
+(a placed Pillar of Light and Sacred Fire, a built Pillar). Ours read
 a missing key as 1: every gate started "active" with its doors closed, the
 automatic gates' first tick ran a needless Deactivate on it, and a player's
 first ON click did nothing. `native_gate.py` had taken the same default for

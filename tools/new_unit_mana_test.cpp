@@ -140,8 +140,50 @@ static int shipped(const char* root) {
                                      (w.corpseDamage(site)<0 ? "no" : "its")+" feature");
         check(w.player(0).losses==0,"a built wall counted as a loss");
     }
+    {
+        // 511990 clears the activation byte; 512301 (a finished creation) and
+        // 429a8d (a completion) activate an activatewhenbuilt type, whose
+        // Activate starts a second FireControl beside Create's
+        // (check_change_owner.py, check_construction_completion.py). Ours set
+        // the unit active at spawn, under construction too, and ran Activate
+        // at neither point.
+        World w;MatchConfig cfg;cfg.vfs=&vfs;cfg.mapPath=tak::hpi::findMap(vfs,"ulasem arena");
+        MatchSlot s;s.used=true;s.faction=2;cfg.slots.push_back(s);
+        setupMatch(w,reg,cfg);
+        const Unit* monarch=nullptr;
+        for (const auto& u:w.units()) if (u.alive() && u.type && u.type->commander) monarch=&u;
+        check(monarch!=nullptr && monarch->type->id=="vermage","no Veruna Monarch");
+        const float mx=monarch->x.toFloat(),mz=monarch->z.toFloat();const int mid=monarch->id;
+        for (const char* name:{"verpill","zonfire"}) {
+            const auto* type=reg.find(name);
+            check(type && type->activateWhenBuilt,"verpill / zonfire lost activatewhenbuilt");
+            const int placed=w.spawn(type,mx-300,mz-300,0,0);
+            if (!w.unit(placed)->active || !w.unitScriptActivated(placed))
+                throw std::runtime_error(std::string("a finished ")+name+" was not activated at its creation");
+            w.destroy(placed);
+        }
+        const auto* pillar=reg.find("verpill");
+        int site=0;
+        for (float dx:{128.f,-128.f,0.f}) for (float dz:{0.f,128.f,-128.f})
+            if (!site && w.canPlace(pillar,mx+dx,mz+dz)) site=w.startBuild(mid,pillar,mx+dx,mz+dz);
+        check(site>0,"the Monarch could not start a Pillar of Light");
+        bool done=false;int ticks=0;
+        for (;ticks<30*300 && !done;++ticks) {
+            w.tick(1.f/30.f);
+            const Unit* u=w.unit(site);
+            check(u && u->alive(),"the Pillar of Light site died");
+            if (u->underConstruction) {
+                if (u->active || w.unitScriptActivated(site))
+                    throw std::runtime_error("a Pillar of Light under construction is already active");
+            } else done=true;
+        }
+        check(done,"the Pillar of Light was never finished");
+        if (!w.unit(site)->active || !w.unitScriptActivated(site))
+            throw std::runtime_error("a built Pillar of Light was not activated at its completion");
+    }
     std::cout<<"shipped: a skirmish opens with 5000 a player, a mission with its placed storage; "
-               "a placed or built wall is its feature\n";
+               "a placed or built wall is its feature; a Pillar of Light is activated when made finished "
+               "or completed\n";
     return 0;
 }
 

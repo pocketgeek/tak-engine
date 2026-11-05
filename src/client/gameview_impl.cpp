@@ -2106,7 +2106,7 @@
             // The simulation owns activation, including manual gate commands and
             // automatic AI gate occupancy checks. Mirror its edge so door poses
             // agree with the authoritative yard handshake below.
-            if (u.type && u.type->onOffable && a.hasActivate && u.active != a.active) {
+            if (u.type && (u.type->onOffable || u.type->activateWhenBuilt) && a.hasActivate && u.active != a.active) {
                 a.active = u.active;
                 a.vm->start(u.active ? "Activate" : "Deactivate");
             }
@@ -2722,10 +2722,10 @@
             a.hasFlightSM = ci->second.hasFlightSM;
             a.hasActivate = ci->second.hasActivate;
             a.hasTurnDir = ci->second.hasTurnDir;
-            // Gate Create leaves the doors closed; replay an active snapshot's
-            // Activate even when the gate became active before it was visible.
-            // Other on/off units retain their authored initial state.
-            a.active = type && type->gate ? false : (type ? type->activateWhenBuilt : true);
+            // Every unit starts inactive (511990); the mirror below replays an
+            // active snapshot's Activate, a gate's that became active before it
+            // was visible and an activatewhenbuilt unit's (512301 / 429a8d) too.
+            a.active = false;
             a.vm = std::make_unique<tak::cob::Vm>(ci->second.file);
             a.vm->enableRetailAnimation();
             {

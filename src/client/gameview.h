@@ -1218,7 +1218,7 @@ private:
                                  // state machine (Create ambients + statics) instead of
                                  // the generic reset()+fly/land flyer path
         bool hasActivate = false;// onOffable + has Activate: watch u.active for door swing
-        bool active = true;      // last active/door-open state (onoffable/gate swing edge)
+        bool active = false;     // last mirrored activation (onoffable, activatewhenbuilt)
         bool cloakOn = false;    // last requested cloak mode (not temporary invisibility)
         bool hasCloakAnim = false;   // COB defines StartCloaking (araspy, npcheket)
         bool hasTurnDir = false; // has a TurnDirection script (rudder/sail trim,

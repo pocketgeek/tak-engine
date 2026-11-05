@@ -986,7 +986,8 @@ void World::transferEntitySlot(Unit& u,int newPlayer) {
     allocateEntitySlot(u.id,newPlayer);
 }
 
-int World::spawn(const UnitType* type, float x, float z, std::optional<float> heading, int player) {
+int World::spawn(const UnitType* type, float x, float z, std::optional<float> heading, int player,
+                 bool finished) {
     Unit u;
     u.groundGradeTick=tickCounter_;
     // Clamp to a valid player slot: every players_[u.player] index downstream is
@@ -1056,7 +1057,8 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
     // the death severity reads start at 0 (511b40).
     u.mana = 0;
     u.hpPct1s = 0; u.hpPctCur = 0;
-    u.active = type ? type->activateWhenBuilt : true;
+    // 511990 clears the activation byte +0x114; only activateBuilt sets it.
+    u.active = false;
     u.cloakOn = type && type->initCloaked;   // 511c77: the cloak order from init_cloaked
     u.homeX = Fixed::fromFloat(x);
     u.homeZ = Fixed::fromFloat(z);
@@ -1077,7 +1079,24 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
                                        {uint32_t(type->maxWeaponReloadMs),0,0,0},1);
     }
     groundStamp(*unit(u.id));   // 5122d9: creation places the body
+    if (finished) activateBuilt(u.id);   // 512301, after the script, weapons and stamp
     return u.id;
+}
+
+// 51e4d0(1, 1) sets bit 1 of the activation byte and runs Activate on the
+// rising edge only; it tests no onoffable (the Pillar of Light is not). The
+// callers test activatewhenbuilt (UnitDef +0x260 & 0x40000): 512301 for a
+// finished creation, 429a8d for a completion, after the detach and before the
+// isfeature test (check_change_owner.py, check_construction_completion.py).
+void World::activateBuilt(int unitId) {
+    Unit* u=unit(unitId);
+    if (!u || !u->type || !u->type->activateWhenBuilt) return;
+    auto* script=unitScript(u->id);
+    const bool was=script ? script->activated : u->active;
+    u->active=true;
+    if (was) return;
+    if (script) script->activated=true;
+    notifyUnitScript(*u,"Activate");
 }
 
 // 512060's last argument (5123ce..512417): set, the new unit's mogriumstorage
@@ -11414,7 +11433,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
     }
     // Preserve retail birth orientation. Factory scripts query this heading to
     // counter-rotate their build pads into the fixed yard where appropriate.
-    int id = spawn(type, x, z, std::nullopt, b->player);
+    int id = spawn(type, x, z, std::nullopt, b->player, false);
     Unit* site = unit(id);
     site->underConstruction = true;
     site->lodestoneReplacement=replacement;
@@ -15292,6 +15311,7 @@ bool World::constructionWork(Unit& b, Unit& site, float dt) {
         site.hp >= Fixed::fromFloat(site.type->maxHp)) {
         site.hp = Fixed::fromFloat(site.type->maxHp);
         site.underConstruction = false;
+        activateBuilt(site.id);     // 429a8d
         if (!b.type->isStructure()) joinBuilderGroup(b,site);
         finishAsFeature(site.id);   // 429a92: a finished wall becomes its feature
         return true;
@@ -18423,7 +18443,7 @@ void World::tickProduction(Unit& u, float dt) {
         }
         u.productionRetryTick=0;
         // Preserve the raw script position across the public float spawn API.
-        const int siteId=spawn(t,spawnX.toFloat(),spawnZ.toFloat(),std::nullopt,player);
+        const int siteId=spawn(t,spawnX.toFloat(),spawnZ.toFloat(),std::nullopt,player,false);
         site=unit(siteId);
         site->x=site->homeX=spawnX; site->z=site->homeZ=spawnZ; site->flightY=spawnY; updateBodyIndex(*site);
         groundMove(*site);
@@ -18582,6 +18602,7 @@ void World::finishProduction(int producerId,Unit& finished) {
     const bool commanded=!site->orders.empty();
     site->underConstruction=false;
     site->productionOwner=0;
+    activateBuilt(id);   // 429a8d: the completion activates an activatewhenbuilt output
     // A building's output remembers its factory (clearYardDoor).
     if (producer->type->isStructure()) { site->builtBy=producerId;producer->doorSerial=(producer->doorSerial|1u)+1u; }
     producer->productionSiteId=0;

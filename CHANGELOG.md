@@ -301,6 +301,11 @@ their validation reports; both live in [`docs/`](docs/).
   as soon as it is finished: it still blocks the way and can be smashed, but it is
   no longer a unit you can select, that counts against your units, or that enemies
   pick as a target. Building one no longer counts as a loss.
+- **A Pillar of Light and a Sacred Fire light up as in the original game.** Both
+  switch themselves on when they are finished, whether you build one or a mission
+  or map scenario places it, and the original game runs their flames twice over
+  from then on. They used to count as switched on while still being built and their
+  extra flames never started.
 - **A modded unit with `init_cloaked` starts with its cloak switched on**, as the
   original game does (no unit of the original game uses it).
 - **A unit that changes sides starts afresh, as in the original game.** A unit
