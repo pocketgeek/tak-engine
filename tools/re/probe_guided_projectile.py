@@ -227,8 +227,9 @@ for case in range(cases + special):
         turn = rng.choice((0.002, 0.05, 0.1047, 0.2, 0.35, rng.random() * 0.45 + 0.001))
         update_angles = case % 3 != 0
     if mode == 'ahead':
-        # An axis-aligned launch: native 5ad930 takes acos(dot/(|a||b|)), so
-        # only a single-component velocity gives an exactly zero angle there.
+        # An axis-aligned launch. Native 5ad930 takes acos of the float
+        # dot/(|a||b|), which is usually exactly 1 here, but not always: a
+        # float dot that rounds below |a||b| still snaps (near/nudge below).
         body, heading, pitch = 0, rng.choice((0, 0x4000, 0x8000, 0xc000)), rng.choice((0, 0x4000, 0xc000))
     putf(p.uc, guided + 4, turn)
     put(p.uc, data + 0xcc, speed)
@@ -303,8 +304,7 @@ for case in range(cases + special):
         if mode in ('none', 'dead', 'dying'):
             ported_target = py_state[0]  # World: no live target -> the shot's own position
         elif mode == 'ahead':
-            # Four current velocities ahead along the launch axis: the turn
-            # angle is exactly 0 in both native and World.
+            # Four current velocities ahead along the launch axis.
             target_point = ported_target = tuple(
                 signed(py_state[0][i] + 4 * py_state[1][i]) for i in range(3))
         elif mode == 'near':
