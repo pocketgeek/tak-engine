@@ -3724,11 +3724,22 @@ void World::updateLegionFormationSlots() {
                 legionFormationSlots_.erase(found);
             continue;
         }
-        if (found!=legionFormationSlots_.end() && found->second.arrivalX==s.gx && found->second.arrivalZ==s.gz) continue;
-        if (arrivals[{u.player,s.group,s.dx,s.dz}]<2) continue;   // its own move's arrival: the slot stays
         const int fx=u.type->footX,fz=u.type->footZ;
-        const LegionFormationSlot slot{int8_t(s.group),kSlotHeld,Fixed::fromInt(footprintOrigin(u.x,fx)*16+fx*8).v,
-                                       Fixed::fromInt(footprintOrigin(u.z,fz)*16+fz*8).v,0,s.gx,s.gz,s.dx,s.dz};
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        if (found!=legionFormationSlots_.end() && found->second.arrivalX==s.gx && found->second.arrivalZ==s.gz) {
+            // A settled body steps aside at most a cell from its goal to let
+            // its own side by (Legion's yields): within that cell the slot
+            // goes with it, so a body that came in behind the step does not
+            // stand on the slot it left.
+            const int gx=(Fixed::raw(s.gx).floorInt()-fx*8)/16,gz=(Fixed::raw(s.gz).floorInt()-fz*8)/16;
+            if (found->second.state==kSlotHeld && std::abs(ox-gx)<=1 && std::abs(oz-gz)<=1) {
+                found->second.x=Fixed::fromInt(ox*16+fx*8).v;found->second.z=Fixed::fromInt(oz*16+fz*8).v;
+            }
+            continue;
+        }
+        if (arrivals[{u.player,s.group,s.dx,s.dz}]<2) continue;   // its own move's arrival: the slot stays
+        const LegionFormationSlot slot{int8_t(s.group),kSlotHeld,Fixed::fromInt(ox*16+fx*8).v,
+                                       Fixed::fromInt(oz*16+fz*8).v,0,s.gx,s.gz,s.dx,s.dz};
         if (found==legionFormationSlots_.end()) legionFormationSlots_.emplace(u.id,slot);
         else found->second=slot;
     }
@@ -19402,21 +19413,35 @@ void World::tick(float dt) {
         float cx() const { return Fixed::raw(int32_t(sx / n)).toFloat(); }
         float cz() const { return Fixed::raw(int32_t(sz / n)).toFloat(); }
     };
-    FormAgg forms[kMaxPlayers][11] = {};   // [player][1..10]; slot 0 unused
+    // [player][formation 1..99]; slot 0 unused. Alt+N formation N (squad -N)
+    // sits at N; in Legion a classic AI squad the AI flags a formation
+    // (legionFormationGroup) at its own number: it gathers by the rejoin
+    // below as an Alt+N formation does, but is never paced (formOf).
+    std::vector<std::array<FormAgg, 100>> forms(kMaxPlayers);
+    const bool legionRejoin = isLegionPathfinding(pathfindingMode_) && legion_;
+    auto groupOf = [&](const Unit& u) -> int {
+        if (u.player < 0 || u.player >= kMaxPlayers || pathfindingMode_==PathfindingMode::Retail) return 0;
+        if (u.squad < 0) return -u.squad;
+        return legionRejoin ? legionFormationGroup(u) : 0;
+    };
     auto formOf = [&](const Unit& u) -> FormAgg* {
         // Retail paces through the native group records instead.
         if (u.squad >= 0 || u.player < 0 || u.player >= kMaxPlayers ||
             pathfindingMode_==PathfindingMode::Retail) return nullptr;
         return &forms[u.player][-u.squad];
     };
+    auto rejoinOf = [&](const Unit& u) -> FormAgg* {
+        const int g = groupOf(u);
+        return g ? &forms[u.player][g] : nullptr;
+    };
     // Retail has no formation aggregates (formOf is null for every unit), so it
     // skips this walk and the rejoin walk below: neither can do anything there.
     const bool formations = pathfindingMode_!=PathfindingMode::Retail;
     if (formations) TAK_PASS();
     if (formations) for (auto& u : units_)
-        if (u.alive() && u.type && u.squad < 0 && !u.type->isStructure() &&
+        if (u.alive() && u.type && !u.type->isStructure() &&
             !u.underConstruction && u.baseSpeed.v > 0)
-            if (FormAgg* f = formOf(u)) {
+            if (FormAgg* f = rejoinOf(u)) {
                 f->sx += u.x.v; f->sz += u.z.v; ++f->n;
                 f->slowest = fxMin(f->slowest, u.baseSpeed);
                 f->area += u.type->footX * u.type->footZ;
@@ -19460,16 +19485,16 @@ void World::tick(float dt) {
     // from P than the centroid is. With no settled member the centroid rule
     // stands. Candidates are found by the old test first, so P is computed
     // only for a resting formation that has one.
-    const bool legionRejoin = isLegionPathfinding(pathfindingMode_) && legion_;
     struct RejoinPoint { bool done = false, has = false; int32_t x = 0, z = 0; int count = 0; };
-    std::array<std::array<RejoinPoint, 11>, kMaxPlayers> rejoinPoints{};
+    std::array<std::array<RejoinPoint, 100>, kMaxPlayers> rejoinPoints{};
     auto rejoinPoint = [&](const Unit& u) -> const RejoinPoint& {
-        auto& r = rejoinPoints[size_t(u.player)][size_t(-u.squad)];
+        const int g = groupOf(u);
+        auto& r = rejoinPoints[size_t(u.player)][size_t(g)];
         if (r.done) return r;
         r.done = true;
         std::map<std::pair<int32_t,int32_t>,int> counts;
         for (const auto& o : units_) {
-            if (!o.alive() || !o.type || o.player != u.player || o.squad != u.squad || o.type->canFly ||
+            if (!o.alive() || !o.type || o.player != u.player || groupOf(o) != g || o.type->canFly ||
                 o.type->isStructure() || o.underConstruction) continue;
             int32_t x, z; int n;
             if (legion_->arrivalPoint(o.id, x, z, n)) ++counts[{x, z}];
@@ -19482,14 +19507,16 @@ void World::tick(float dt) {
     };
     if (formations) TAK_PASS();
     if (formations) for (auto& u : units_) {
-        if (!u.alive() || !u.type || u.squad >= 0 || !u.orders.empty()) continue;
+        if (!u.alive() || !u.type || !u.orders.empty()) continue;
+        const int group = groupOf(u);
+        if (!group) continue;
         if (u.type->isStructure() || u.underConstruction) continue;   // buildings don't rejoin
         if (legionRejoin) {
             if (u.type->canFly) continue;
             // A member with a slot of its own walks back to it at its
             // standby's wake instead (legionStandbyCheck).
-            if (const auto* slot = legionFormationSlot(u.id); slot && slot->group == -u.squad) continue;
-            FormAgg* f = formOf(u);
+            if (const auto* slot = legionFormationSlot(u.id); slot && slot->group == group) continue;
+            FormAgg* f = rejoinOf(u);
             if (!f || f->gn <= 1 || f->busy) continue;
             const float cx = Fixed::raw(int32_t(f->gx / f->gn)).toFloat(), cz = Fixed::raw(int32_t(f->gz / f->gn)).toFloat();
             const float d = detmath::len(u.x.toFloat() - cx, u.z.toFloat() - cz);
