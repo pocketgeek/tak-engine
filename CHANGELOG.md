@@ -175,7 +175,7 @@ their validation reports; both live in [`docs/`](docs/).
   view or on the minimap, now gives it to each selected unit that can, under an
   Attack cursor; Shift queues it, Ctrl puts it first, and Shift or Ctrl on a
   queued point takes it back. As in the original game, a unit in a formation that
-  finds itself left behind walks back to its group first, still firing at the spot
+  finds itself left behind walks back to its formation first, still firing at the spot
   when its weapon can aim without turning the body, and then fires on from there; now
   and then it gives up the order instead. Flyers attacking in a formation, at a spot
   or at a unit, fly back to their formation the same way, and keep firing at what they

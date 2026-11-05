@@ -182,7 +182,7 @@ the platform checks, Windows signing and complete asset verification pass.
   (a second build of the same sources, or of another worktree, is mostly cache hits).
 - **Targeted tests: `ctest -L quick -j 8`.** Every test that is not `nightly` and takes
   under 5 s is labelled `quick`, plus the four `retailgap_*` slices, which are slower but
-  check too much to skip (about 510 of the roughly 775 tests, about a minute at `-j 8`,
+  check too much to skip (about 600 of the roughly 900 tests, about a minute at `-j 8`,
   against several minutes for the full suite). Use it for a task's own checks; run the full suite
   (`ctest -j 8`) before handing a change over. Other labels: `legion`, `w2`, `nightly`
   (`ctest -L legion`, `-LE nightly`).
