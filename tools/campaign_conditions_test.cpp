@@ -132,6 +132,32 @@ int main(int argc,char** argv) {
         check(next==0 ? w.unit(enemy)->xp==0 && w.unit(enemy)->veteran==0 : w.unit(enemy)->veteran==5,
             next==0?"scripted Capture kept the unit's experience":"same-owner scripted Capture changed experience");
     }
+    for(int cap:{0,1}) {
+        // 514da0 kills the old object of a change of owner (kind 6, retired at
+        // once): the conditions hear the death of an enemy soldier (523510),
+        // so a capture counts toward KillUnitType. The capture event (523570)
+        // comes before the new object is made, so it holds even when the new
+        // owner's unit cap refuses it, and then nothing else changes.
+        sim::World w;w.setTerrain(std::vector<uint8_t>(64*64,50),64,64,0);
+        w.spawn(soldier,100,100,0,0);int enemy=w.spawn(soldier,300,100,0,1);
+        if(cap)w.setUnitCap(1);
+        tdf::Node header;header.values["killunittype"]="soldier,1";
+        auto m=std::make_unique<sim::MissionScript>(commandScript("Capture",uint32_t(enemy),0),header,registry,0,"capture death fixture");
+        auto* mission=m.get();w.setMission(std::move(m));
+        for(int i=0;i<3;++i)w.tick(1.f/30);
+        check(cap ? mission->outcome()==0 && w.unit(enemy)->player==1 :
+                    mission->outcome()==1 && w.unit(enemy)->player==0 && w.unit(enemy)->alive(),
+            cap?"a capture refused at the unit cap killed nothing":"a capture was not a death for KillUnitType (514da0 kind 6)");
+        tdf::Node held;held.values["captureunittype"]="soldier";
+        sim::World v;v.setTerrain(std::vector<uint8_t>(64*64,50),64,64,0);
+        v.spawn(soldier,100,100,0,0);int other=v.spawn(soldier,300,100,0,1);
+        if(cap)v.setUnitCap(1);
+        auto n=std::make_unique<sim::MissionScript>(commandScript("Capture",uint32_t(other),0),held,registry,0,"capture event fixture");
+        auto* event=n.get();v.setMission(std::move(n));
+        for(int i=0;i<3;++i)v.tick(1.f/30);
+        check(event->outcome()==1 && v.unit(other)->player==(cap?1:0),
+            cap?"the capture event waited for the new object (523570 comes first)":"capture objective after a change of owner");
+    }
     {
         // Retail's Kill sends death kind 10 (513130 -> 512610): no kill credit.
         sim::World w;int mine=w.spawn(soldier,100,100,0,0);int enemy=w.spawn(soldier,300,100,0,1);

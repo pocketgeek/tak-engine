@@ -1101,7 +1101,13 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   kind 13 as the death kind. Flight, ship and amphibian are not exemptions:
   only the height counts (I: a ship's height is sea level, so it is hurt).
   Ours burned `waterdamage * dt` every tick off ground units over water
-  cells, sparing flyers, ships and amphibians.
+  cells, sparing flyers, ships and amphibians. Nothing exempts a carried
+  unit (`+0xa8` is not read): its `+0x6e` is the attach point its mover's
+  `4dad30` committed (`51b3b0`), which `51de30` runs after this check, so it
+  is the last tick's (E, chained natively in `check_kill_credit.py`, 600
+  carriers). A ship's cargo at sea level is hurt, a flyer's aloft is not.
+  Ours skipped every carried unit until 2026-11-05; World's cargo step keeps
+  an embarked unit at the attach point and the water check now reads it.
 
 Ours (protocol 312): `World::retailHitter` / `retailObjectLives` (alive, or
 dead with `deathPending` until `World::retireDeath`); `retireDeath` runs at
@@ -1117,7 +1123,7 @@ when the local player's alliance byte for the owner is 0, a per-machine
 display figure; ours counts every loss. The XP add at retirement goes to the
 +0xf8 slot even if a new unit has since taken it (retail reuses slots; World
 ids are never reused, so that credit is dropped). A carried unit is not
-hurt by deadly water (World keeps no height for it). A deadly-water death is
+hurt by deadly water here (fixed since: see below). A deadly-water death is
 swept on the next tick, not in the same update (`51e36c`). The blast is
 queued after the corpse is placed, where retail fires it before (`512d97`
 before `512dbb`), so a blast could reach its own corpse feature here.
@@ -2616,10 +2622,10 @@ veterancy; nothing refused an unfinished target. Now the Harpy is an
 ordinary mind-control caster, `captureUnit` keeps HP and resets `xp` /
 `veteran` to a fresh unit's (the scenario's rank for the type, as `spawn`),
 and `canCaptureTarget` and the roll refuse `underConstruction`. Deviation
-kept: the unit keeps its id (and its mana, status timers and cloak) rather
-than becoming a new object. (`scenarioTransfer` and `giveUnit`, which also go
-through `0x514da0`, kept veterancy until the veterancy fix; they now restart
-it the same way.) A mind-control slot does not select an
+kept: the unit keeps its id rather than taking a new slot; since protocol 312
+everything else of the new object is ported, see "A change of owner is a new
+object" below (it kept its mana, status timers, cloak order, standing
+orders, script and trigger latch until then). A mind-control slot does not select an
 unfinished unit (`retailSelectTarget`, `sweepKeepsTarget`); this was listed
 as a deviation, but retail's picker skips one too (`4128ca..4128db`, see
 below). Probes:
@@ -2720,7 +2726,172 @@ deviating: World updates its flames and straight shots (these three
 included) before its other projectiles, where retail runs one pool in
 creation order (`52afd0`), so in a tick with a status roll and another shot's
 damage spread the two CRT draws can come in the other order; and a charmed
-unit keeps its id (see above). Test: `tools/los_status_flight_test.cpp`.
+unit keeps its id (see "A change of owner is a new object"). Test:
+`tools/los_status_flight_test.cpp`.
+
+## A change of owner is a new object (icd, emulated, 2026-11-05)
+
+E = emulated, S = static, I = inferred. `tools/re/check_change_owner.py` runs
+`514da0` whole with `512060`, `511f60` and `511990` under it (1,024 cases,
+shown to fail on a planted bug) against `owner_change_test --native`.
+
+`514da0(unit, new owner record, packet)` is the one change of owner: ShareUnits
+(`4b6b33`), the CRT transfer (`4cb0c4`), the mission `Capture` (`4d3d40`), the
+charm (`52db08`) and its network receive (`4e9ebd`) (S). For the same owner, or
+a unit not alive or dying (`+0x130` `0x1000000` / `0x1000`), it does nothing
+at all (E). Otherwise, in order (E):
+
+1. `523570(unit)`: the campaign conditions' capture event, under the old
+   owner (CaptureUnitType's `523b20`; no other condition class answers it).
+   It comes before the new object is made, so it holds even when step 2 is
+   refused.
+2. `512060(new owner, type, +0x68..+0x70, finished, +0x130 & 3, ...)`: a new
+   object in the new owner's pool, refused (and then nothing else changes) at
+   the owner's unit cap or with `totalallowed` (`+0x136`) of the type already
+   in its pool. The creation makes its draws: the CRT slot draw (`5121d8`),
+   `rand(buildangle)` for the birth heading (`511baa`), `rand(65536)` for
+   `+0x82` (`511cae`), and `rand(201)` for the speed when the type has one
+   (`512430`). `511990` starts every field fresh (below); `511d00` a new
+   script, which starts `Create`; `52aae0` new weapon records and
+   `SetMaxReloadTime`; with "finished" set and `activatewhenbuilt` (UnitDef
+   `+0x260 & 0x40000`, default 0: only `verpill` and `zonfire` set it) it is
+   activated at once (`512301`, `Activate`); the scenario's `+0x14` sets its
+   scenario stats and `5235d0` is the conditions' creation event (no shipped
+   condition answers it).
+3. It copies only the type's movement bits of `+0x130`, `+0x12b` (the
+   individual speed, overwriting the draw), HP raw and the construction left
+   (`514f8a..514fa1`), the angles `+0x7c..+0x81` (overwriting the birth
+   heading) and the activation byte `+0x114` through `51e4d0(old, 1)` and
+   `51e4d0(~old, 0)`, so `Activate` / `Deactivate` run on an edge against
+   the new object's state and the cloaked bit (4) is kept.
+4. `51a140(0, old, 30000, 6, 0)`: the old object dies with kind 6. `512610`
+   gives kind 6 severity 0, so no Killed runs and it retires at once
+   (`512ae0`): no corpse, no kill credit or score (the `512b71` switch skips
+   6), no death weapon, the losses word untouched. Retirement still sends
+   `523510`, the conditions' death event, for a unit of its type under the
+   OLD owner (KillUnitType, KillAllOfType, KillAllMobileUnits,
+   KillEnemyCommander, CommanderKilled, UnitTypeKilled and
+   AllUnitsKilledOfType all count it), and the scenario's `+0x18`: a
+   campaign's `4d2d90` starts `UnitDestroyed(old id)`, a CRT game's `4cd600`
+   counts it lost by the old owner and killed by the player of its last hit
+   (`+0xfc`) when that is another one. (S for the retirement path; E that
+   `51a140` is called with these arguments after the new object stands.)
+
+What the new object starts fresh (`511990`, E): the trigger latch `+0xd4`
+(0, so the next `4d33a0` sweep fires `UnitCreated` for the new owner's byte
+and `TriggerHit` for every armed region it stands in again), the mana pool
+`+0xd8` (0; its maximum `+0xdc` is MaxMana), the cloak delay `+0xcc`, the
+experience `+0xf0`/`+0xf4`, the last hitter (`+0xf8` 0, `+0xfc` 10), the
+unit's kill count `+0xfe`, the self-repair carry `+0x10e`, the HP samples
+`+0x110`/`+0x111`, `+0x113`, `+0x104`, the weapon flags `+0xd0`, the air
+traffic count `+0x12a` and occupancy `+0x117..+0x128`, the scenario name
+`+4`, the cloak order bit `+0x130 & 0x200`, and the standing orders (`+0x130`
+bits 30-31 from the type, `+0x134 & 0xf` cleared). Its missions are new
+(none; paralysis and cloaking are missions, S), and so are its weapon
+records (every slot auto, no reload, no target or point, S).
+
+Ours (protocol 312, `World::changeOwner`, under `giveUnit`,
+`scenarioTransfer` and `captureUnit`): the same order and gates, the same
+draws, a new script (`Create`, `SetMaxReloadTime`, the activation edges from
+the old script's `activated`), and the fresh fields above where World has
+them; `MissionScript::objectReplaced` resets the latch at once, and the old
+object's death reaches the mission (`replacedObjectDied`: the condition
+deaths under the old owner, `UnitDestroyed`) and the scenario (`objectDied`)
+with the tick's other deaths (`World::replacedObjects_`, hashed while
+pending). Before: the three paths differed, none made the draws or a new
+script, ShareUnits sent no capture event, the charm and Capture kept mana,
+paralysis, the cloak order and delay, standing orders, reloads and weapon
+records, the latch survived (no second `UnitCreated`, no region refired), no
+condition or scenario heard a death, and `totalallowed` did not refuse a
+transfer. Deviations kept: the id (I: a new slot would give the new object a
+new id, which every client-side reference and replay would see); the body's
+registrations (ground stamp, sight, air occupancy, mover state) carry over
+in place where retail's old body stays stamped until it retires and the new
+one stamps itself; a carried unit or a carrier changing sides (the mission
+Capture and the CRT transfer do not refuse one) stays aboard / keeps its
+cargo (I: retirement detaches the old object, `51b4f0`, and the new one is
+made where it was; not traced further); a commander changing sides does not
+run `512610`'s commander rule (`5131b0`, I). Tests: `owner_change_test`,
+`campaign_conditions_test` (a capture is a KillUnitType death; the capture
+event comes first), `mission_orders_test` (UnitCreated and the region fire
+again, UnitDestroyed for the old object).
+
+Found along the way (E, `511990`): every new unit starts with an empty mana
+pool; ported since, see "A new unit's mana pool starts empty" below.
+The HP samples `+0x110`/`+0x111` start at 0, not full (ported: a unit killed
+in its first second has the lower severity retail gives it).
+
+Also found (E): `activatewhenbuilt` is read with default 0 (`4c0327..4c035f`,
+the getter `543190(key, default)` asked with 0; `check_change_owner.py`). A
+new unit's activation byte is 0 (`511990`) and only that flag activates it,
+at a finished creation (`512301`) or at completion (`429990`,
+`check_construction_completion.py`). The four gates are onoffable with no
+`activatewhenbuilt`, so they stand closed and inactive when made. Ours read
+a missing key as 1: every gate started "active" with its doors closed, the
+automatic gates' first tick ran a needless Deactivate on it, and a player's
+first ON click did nothing. `native_gate.py` had taken the same default for
+its fixture; `check_gate_lifecycle.py` passes for all four gates in both
+balances with retail's.
+
+## A new unit's mana pool starts empty (icd, 2026-11-05)
+
+A unit's pool is a pair of floats, the current value at `+0xd8` and the
+maximum at `+0xdc`, and four small routines are all that write it (S, every
+direct call in .text, `tools/re/check_new_unit_mana.py`):
+
+| routine | what it does | called from |
+|---|---|---|
+| `401000(max)` | current 0, maximum `max` | `511c9d` only (511990) |
+| `401120(v)` | current `v`, capped at the maximum | `514cf2` (a placement record), `4d3ed2` (SetAttribute) |
+| `401100(v)` | current `+= v`, capped at the maximum | `40119e` (regeneration), `4263c8` (ManaMe) |
+| `4010d0(v)` | spends `v` when the pool covers it | `401201` (cloak), `42811d`, `5302d6` (a shot) |
+
+`511990`, which makes every unit object, runs only under `511f60`, which
+only `512060` and `512460` call; `512060`'s callers include the factory
+(`401c20`), the mobile builders (`405560`, `4068b0`) and VTOL builders
+(`41ef00`, `41fe70`), the mission start (`4d3200`), Create (`4d35c0`), the
+placement record (`514b40`), the CRT (`4cad50`, `4cd080`), `513330`,
+`51e352` and the change of owner (`514da0`). No caller writes the pool
+afterwards except `514b40` and SetAttribute. So (E, `401000` run natively)
+every new unit -- produced, placed, created, revived, taken over, and the
+Monarch a skirmish opens with -- starts with 0 mana of its MaxMana. Construction finishing
+fills nothing (`429990` calls none of the four). What fills it afterwards:
+
+- Regeneration (`401160`, E): ManaRechargeRate (type `+0x1a6`, per tick) is
+  added only when the construction left (`+0x108`) is 0, so a unit being
+  built stays empty until it is complete; the sum is capped at MaxMana.
+- A placement record (`514c9d..514cf7`, E): `HealthPercentage` (default 100)
+  and `ManaPercentage` (default 0) are read with atoi into words
+  (`4c8dc3..4c8dec`, the getter `543190` run natively); HP becomes
+  `(maxdamage * pct) / 100` in unsigned 32 bits, kept as a word, and mana
+  `MaxMana * pct * 0.01f` at double precision, stored as a float through
+  `401120`, which caps it at MaxMana. 70 of the shipped records give 100, one
+  gives 1, the other 7270 give 0.
+- A mission `SetAttribute` (`4d3e6a`, `4d3eb9`, E): the same two formulas on
+  an int percentage.
+- The ManaMe cheat (`426390`) and nothing else.
+
+Ours filled every spawned caster's pool, let a unit being built regenerate,
+left a record without `ManaPercentage` full, set an over-100 percentage above
+MaxMana, and gave HealthPercentage a fractional HP (25 of 651 was 162.75, retail
+162). All ported (`World::spawn`, `MissionScript::percentHp/percentMana`);
+`new_unit_mana_test` fails on the old code, and `check_new_unit_mana.py`
+compares 504 percentage cases with the native code. Mana stays a double in
+the port (retail's unit pool is a float); a value is rounded to float where
+retail stores one.
+
+What changes in play: a Mage Archer, an Acolyte (whose first slot,
+Earthquake, costs 250) or Elsin, the Aramon Monarch, waits for its pool to
+regenerate (10 a second for most) before a costly spell; a cloaker cannot
+cloak until it has the cost. The Classic AI reads unit mana in two places,
+both retail ports: the Monarch's flee threshold (`40c890`, the pool at most
+half full doubles it) and the weapon switch (`40f411`, an unaffordable slot is
+not chosen). Over eight seeds each of Aramon v Veruna and Creon v Aramon on
+Edmont's Field 15 of 16 duels end inside 120 game-minutes with empty pools,
+as 15 of 16 did with full ones (a different seed each); the default Creon v
+Aramon seed now ends at 120.7 minutes, an even war (kills 152 / 132 at 45
+minutes) in which at most one caster a side stood on a slot it could not
+pay yet at any 5-minute sample. The duel test's cap is 150 minutes.
 
 ## The Crusades balance swaps only the unit roster (icd, 2026-10-26)
 
@@ -6712,7 +6883,8 @@ at live (`0x1000000`), not dying (`0x1000`), finished (`+0x108 == 0.0`) units.
 It first fires `UnitCreated(unit id, owner byte +0xfd)` once (bit 31 of
 `+0xd4`), then for regions 0..15 `TriggerHit(id, unit id, owner byte)` once per
 region (bit `1 << id`, cleared only by `RemoveTrigger`; leaving and coming back
-does not fire again). A rectangle (`4d2b20`) holds the footprint-origin cell
+does not fire again; a change of owner makes a new object whose latch is 0,
+see "A change of owner is a new object"). A rectangle (`4d2b20`) holds the footprint-origin cell
 `+0x74/+0x76` when x1 <= x <= x2 and z1 <= z <= z2, inclusive with no swap, so
 an inverted one never fires (no shipped script has one); a circle when
 max(|dx|,|dz|) + (min >> 2) (`535e90`) <= r, in cells from the origin cell:

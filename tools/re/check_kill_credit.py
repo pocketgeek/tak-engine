@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Who gets the credit for a hit and a kill in retail, natively.
 
-Six pieces, each run on synthetic units:
+Seven pieces, each run on synthetic units:
 
   * the hitter gate of the damage routine 51a140 -> 51a240: a hitter whose
     object lives (+0x130 & 0x1000000, a dying one too) is stored at +0xf8 and
@@ -24,7 +24,12 @@ Six pieces, each run on synthetic units:
     waterdamage (+0xd45, when +0xd41 is set) through 51a140 with no hitter
     and damage kind 13: no hit response, the last hitter kept.
 
-The deadly-water rows are answered by `retail_script_test --deadly-water`.
+  * a carried unit in deadly water: 4dad30 commits its carrier's attach
+    point as its own +0x68 (51b3b0), and 51e0d5 then reads that height;
+    being carried (+0xa8) exempts nothing.
+
+The deadly-water rows are answered by `retail_script_test --deadly-water`
+and `--carried-water`.
 
     python3 tools/re/check_kill_credit.py [build-o2/retail_script_test]
 """
@@ -244,6 +249,68 @@ def deadly_water(binary):
     return 'deadly water: %d rows match (%d hurt), no hitter, kind 13' % (len(rows), hurt)
 
 
+def carried_water(binary):
+    """Deadly water on a carried unit: 4dad30 commits the carrier's attach
+    point as the cargo's +0x68 (51b3b0), then 51e0d5 reads that +0x6e; being
+    carried (+0xa8) exempts nothing. Natively chained, against the port."""
+    import random
+    from unicorn import UC_HOOK_CODE
+    f = Fixture()
+    f.record('51a140', 5)
+    committed = []
+
+    def commit(uc, sp):
+        unit, x, y, z, _flags = struct.unpack('<Iiiii', uc.mem_read(sp, 20))
+        committed.append((unit, x, y, z))
+        return 5, 0
+    f.p.hooks[0x51b3b0] = commit
+    stop = [0]
+    f.p.uc.hook_add(UC_HOOK_CODE, lambda uc, *_: (stop.__setitem__(0, 1), uc.emu_stop()),
+                    begin=0x4dadd7, end=0x4dadd7)
+    host, mover, kind = HEAP + 0x300000, HEAP + 0x301000, HEAP + 0x302000
+    rng = random.Random(0x51e13f)
+    rows, expected = [], []
+    for case in range(600):
+        sea = rng.choice((0, 20, 50, 128, 255))
+        hy = rng.choice((sea - 1, sea, sea + 1, sea - 20, sea + 60, rng.randrange(-40, 300)))
+        y = ((hy << 16) | rng.randrange(0x10000)) & 0xffffffff
+        floater, waterline = rng.randrange(2), rng.choice((0, 3, 12, 40))
+        amount = rng.choice((1, 100, 30000))
+        tick = rng.choice((0, 30, 31, 900))
+        cargo = f.unit(1)
+        p = f.p
+        p.uc.mem_write(host, bytes(0x200)); p.uc.mem_write(mover, bytes(0x100)); p.uc.mem_write(kind, bytes(0x300))
+        f.put(host + 0x68, 4096 << 16); f.put(host + 0x6c, y); f.put(host + 0x70, 2048 << 16)
+        f.put(cargo + 0xa8, host); f.put(cargo + 0xb4, kind); f.put(cargo + 0x112, 0xff, 'B')
+        f.put(kind + 0x260, 0x80000 if floater else 0); f.put(kind + 0x248, waterline, 'B')
+        f.put(f.game + 0x19ef8, sea, 'B'); f.put(f.game + 0x19f44, tick); f.put(f.game + 0x175dc, f.map)
+        f.put(f.map + 0xd41, 1); f.put(f.map + 0xd45, amount)
+        committed.clear(); stop[0] = 0
+        p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
+        _, error = p.call(0x4dad30, (cargo,), ecx=mover, allow_early_stop=True)
+        assert not error and stop[0] and len(committed) == 1 and committed[0][0] == cargo, (error, committed)
+        _, cx, cy, cz = committed[0]
+        f.put(cargo + 0x68, cx & 0xffffffff); f.put(cargo + 0x6c, cy & 0xffffffff); f.put(cargo + 0x70, cz & 0xffffffff)
+        f.calls.clear()
+        p.uc.reg_write(UC_X86_REG_ESI, cargo); p.uc.reg_write(UC_X86_REG_EBX, f.game)
+        p.uc.reg_write(UC_X86_REG_EDI, 0)
+        p.uc.reg_write(UC_X86_REG_ESP, STACK_TOP); p.uc.reg_write(UC_X86_REG_EBP, STACK_TOP + 0x100)
+        p.uc.emu_start(0x51e0d5, 0x51e152, count=200)
+        assert f.get(cargo + 0xa8) == host
+        rows.append('%d %d %d %d %d %d' % (struct.unpack('<i', struct.pack('<I', y))[0], floater, waterline,
+                                           sea, amount, tick))
+        expected.append('%d' % (f.calls[0][3] if f.calls else 0))
+    output = subprocess.run([binary, '--carried-water'], input='\n'.join(rows) + '\n',
+                            text=True, capture_output=True, check=True)
+    actual = output.stdout.splitlines()
+    assert len(actual) == len(expected), (len(actual), len(expected))
+    for row, got, want in zip(rows, actual, expected):
+        if got != want:
+            raise AssertionError('%s\n  port   %s\n  native %s' % (row, got, want))
+    hurt = sum(1 for e in expected if e != '0')
+    return 'carried in deadly water: %d rows match (%d hurt at the carrier\'s attach point)' % (len(rows), hurt)
+
+
 def water_hit():
     """The kind-13 hit itself: whole HP, no hit response, the last hitter kept."""
     f = Fixture()
@@ -260,7 +327,7 @@ def water_hit():
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else 'build-o2/retail_script_test'
     for line in (hitter_gate(), attack_multiplier(), death_weapon_shot(), retirement(), mission_kill(),
-                 water_hit(), deadly_water(binary)):
+                 water_hit(), deadly_water(binary), carried_water(binary)):
         print(line)
 
 

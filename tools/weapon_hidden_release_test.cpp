@@ -35,6 +35,7 @@ int main() {
 
     const int shooterId=world.spawn(&shooter,200,200,{},0);
     const int targetId=world.spawn(&targetType,300,200,{},1);
+    world.unit(shooterId)->mana=20;   // a new unit's pool starts empty (511990)
     world.tick(1.f/30.f);
     require(world.playerSees(1,*world.unit(targetId)),"fixture begins with the target visible to its owner");
     world.attack(shooterId,targetId,false);

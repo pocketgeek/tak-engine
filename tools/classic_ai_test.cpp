@@ -1305,9 +1305,13 @@ static void classicWaves(const char* root) {
 // Classic against Classic (P6): two Classic seats on Edmont's Field, the
 // Monarch not expendable (losing it loses the game), building and fighting
 // with nothing but the retail AI's own decisions, until one side wins or the
-// 120-minute cap (90 until 0.9.12, whose retail help/repair approach left the
+// 150-minute cap (90 until 0.9.12, whose retail help/repair approach left the
 // default Aramon v Veruna seed an even war that Aramon wins at 91.9 minutes;
-// over eight seeds 7 end within 90 minutes, mean 31.9) (TAK_DUEL_MAP /
+// over eight seeds 7 end within 90 minutes, mean 31.9; 120 until every new
+// unit started with retail's empty mana pool, 511990, after which the default
+// Creon v Aramon seed is an even war Creon wins at 120.7 minutes -- at most
+// one caster a side stands on a slot it cannot pay yet, and over eight seeds of each of the two pairs 15 of 16 end
+// within 120 minutes, as 15 of 16 did with full pools) (TAK_DUEL_MAP /
 // TAK_DUEL_MINUTES pick another map or cap; on Abnar's Terrace the same pairs take 59 to 227 minutes, its terraces leaving
 // many members' reachability walks without a target). By hand: TAK_DUEL_PAIRS
 // ("0v2,1v3", factions 0-4) picks the pairs, TAK_DUEL_LEVEL gives the second
@@ -1337,7 +1341,7 @@ static void classicDuels(const char* root) {
     const ai::Difficulty levelB=std::getenv("TAK_DUEL_LEVEL") ? ai::Difficulty(std::clamp(std::atoi(std::getenv("TAK_DUEL_LEVEL")),0,6))
                                                               : ai::Difficulty::Classic;
     const ai::Profile& normalProfile=ai::builtinProfile(levelB);
-    const uint32_t minutes=std::getenv("TAK_DUEL_MINUTES") ? uint32_t(std::atoi(std::getenv("TAK_DUEL_MINUTES"))) : 120u;
+    const uint32_t minutes=std::getenv("TAK_DUEL_MINUTES") ? uint32_t(std::atoi(std::getenv("TAK_DUEL_MINUTES"))) : 150u;
     const uint32_t traceEvery=std::getenv("TAK_DUEL_TRACE") ? uint32_t(std::max(1,std::atoi(std::getenv("TAK_DUEL_TRACE"))))*1800u : 18000u;
     const uint32_t kCap=minutes*1800u;
     if (levelB==ai::Difficulty::Classic)
@@ -1410,6 +1414,17 @@ static void classicDuels(const char* root) {
                                 "march %u contact %u home %u dissolves %u builds %u trains %u\n",double(tick)/1800.0,p,
                                 w.player(p).unitCount,army,base,w.player(p).mana,mhp,st.groundLaunches,st.targets,st.picks,
                                 st.strikeMoves,st.contactMoves,st.withdrawals,st.dissolves,b.builds(),b.factoryQueues());
+                    // The casters: how many, their mean pool, and how many stand on a
+                    // slot they cannot pay for yet (no shot until they regenerate).
+                    int casters=0,dry=0;double fill=0;
+                    for (const auto& u:w.units()) if (u.player==p && u.alive() && u.type && u.type->maxMana>0 &&
+                                                      !u.underConstruction && !u.type->weapons.empty()) {
+                        ++casters;fill+=u.mana/double(u.type->maxMana);
+                        const size_t s=size_t(std::clamp(u.weaponSlot,0,int(u.type->weapons.size())-1));
+                        if (double(u.type->weapons[s].manaCost)>u.mana) ++dry;
+                    }
+                    std::printf("        casters %d (mean pool %.0f%%, %d cannot pay their slot) kills %d losses %d\n",casters,
+                                casters ? 100.0*fill/casters : 0.0,dry,w.player(p).kills,w.player(p).losses);
                 }
             }
         }

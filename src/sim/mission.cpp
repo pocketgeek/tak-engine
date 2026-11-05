@@ -144,28 +144,45 @@ void MissionScript::unitCaptured(World& w,int id) {
         }
 }
 
-void MissionScript::unitDied(World& w, int id) {
-    if (const Unit* victim=w.unit(id)) {
-        const int owner=conditionOwner(victim->player);
-        for(auto& c:conds_) {
-            bool survivor=false;
-            if(c.kind==Cond::KillAllMobileUnits || c.kind==Cond::KillAllOfType || c.kind==Cond::AllUnitsKilledOfType) {
-                for(const auto& u:w.units()) {
-                    if(u.id==id || !u.alive() || u.hp<=Fixed() || !u.type)continue;
-                    const int side=conditionOwner(u.player);
-                    if(c.kind==Cond::AllUnitsKilledOfType ? side>1 : side!=1)continue;
-                    if(c.kind==Cond::KillAllMobileUnits ? u.type->isStructure() : u.type!=c.type)continue;
-                    survivor=true;break;
-                }
+void MissionScript::conditionDeaths(World& w, const UnitType* type, int player, int dead) {
+    const int owner=conditionOwner(player);
+    for(auto& c:conds_) {
+        bool survivor=false;
+        if(c.kind==Cond::KillAllMobileUnits || c.kind==Cond::KillAllOfType || c.kind==Cond::AllUnitsKilledOfType) {
+            for(const auto& u:w.units()) {
+                if(u.id==dead || !u.alive() || u.hp<=Fixed() || !u.type)continue;
+                const int side=conditionOwner(u.player);
+                if(c.kind==Cond::AllUnitsKilledOfType ? side>1 : side!=1)continue;
+                if(c.kind==Cond::KillAllMobileUnits ? u.type->isStructure() : u.type!=c.type)continue;
+                survivor=true;break;
             }
-            retailCampaignDeath(c.kind,c,owner,victim->type==c.type,
-                victim->player>=0 && size_t(victim->player)<playerCommanders_.size() &&
-                    victim->type && victim->type==playerCommanders_[size_t(victim->player)],
-                victim->type && !victim->type->isStructure(),survivor);
-            emitConditionSound(w,c);
         }
+        retailCampaignDeath(c.kind,c,owner,type==c.type,
+            player>=0 && size_t(player)<playerCommanders_.size() &&
+                type && type==playerCommanders_[size_t(player)],
+            type && !type->isStructure(),survivor);
+        emitConditionSound(w,c);
     }
+}
+
+void MissionScript::unitDied(World& w, int id) {
+    if (const Unit* victim=w.unit(id)) conditionDeaths(w,victim->type,victim->player,id);
     triggerBits_.erase(id);
+    if (!vm_ || cob_.scriptIndex("UnitDestroyed") < 0) return;
+    world_ = &w; getUnitContext_ = id;
+    vm_->start("UnitDestroyed", {id});
+}
+
+void MissionScript::objectReplaced(int id) { triggerBits_.erase(id); }
+
+// 514e93 / 514fc2 kill the old object with 30000 of kind 6; 512610 gives it
+// severity 0, so it retires at once (512ae0): 523510 hands every condition
+// the death of a unit of its type and old owner, and the scenario's +0x18
+// starts UnitDestroyed(old id). The new object holds the id here, so it is
+// not taken for the dead one in the survivor scans, and its latch (reset at
+// the change, objectReplaced) is left alone.
+void MissionScript::replacedObjectDied(World& w, int id, const UnitType* type, int oldPlayer) {
+    conditionDeaths(w,type,oldPlayer,0);
     if (!vm_ || cob_.scriptIndex("UnitDestroyed") < 0) return;
     world_ = &w; getUnitContext_ = id;
     vm_->start("UnitDestroyed", {id});
@@ -357,6 +374,15 @@ MissionScript::Point MissionScript::placedPoint(const UnitType& t, int xpos, int
     return p;
 }
 
+int32_t MissionScript::percentHp(const UnitType& t, int32_t pct) {
+    return int32_t(uint16_t((uint32_t(t.maxHp) * uint32_t(pct)) / 100u));
+}
+
+double MissionScript::percentMana(const UnitType& t, int32_t pct) {
+    const float v = float(double(t.maxMana) * double(pct) * double(0.01f));
+    return double(v > t.maxMana ? t.maxMana : v);
+}
+
 MissionScript::Point MissionScript::createPoint(const UnitType& t, int x, int z) {
     return {Fixed::fromInt(x * 16 + t.footX * 8), Fixed::fromInt(z * 16 + t.footZ * 8)};
 }
@@ -516,8 +542,8 @@ void MissionScript::doSetAttribute(World& w, const std::string& sub, int unitId,
     Unit* u = w.unit(unitId);
     if (!u || !u->type) return;
     float f = float(pct) / 100.0f;
-    if (ieq(sub, "healthpercentage"))     u->hp = Fixed::fromFloat(u->type->maxHp * f);
-    else if (ieq(sub, "manapercentage"))  u->mana = u->type->maxMana * f;
+    if (ieq(sub, "healthpercentage"))     u->hp = Fixed::fromInt(percentHp(*u->type, pct));
+    else if (ieq(sub, "manapercentage"))  u->mana = percentMana(*u->type, pct);
     else if (ieq(sub, "armorpercentage")) u->armBuff = f;      // live armour multiplier
     else if (ieq(sub, "attackpercentage")) u->atkBuff = f;
 }

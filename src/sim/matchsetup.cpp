@@ -1547,13 +1547,13 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
                         su->heading = retailHeadingToPort(angle);
                         su->tickStartHeadingBam = uint16_t(su->heading.v);
                         if (t->canFly) su->flightNavigation.heading = angle;
-                        su->hp = Fixed::fromFloat(su->type->maxHp * float(u.numberOr("healthpercentage", 100)) / 100.0f);
-                        // ManaPercentage: enemy casters open a mission with the mana
-                        // the designer gave them (usually 0 -- they must recharge
-                        // before casting), not a full pool.
-                        if (su->type->maxMana > 0 && u.value("manapercentage"))
-                            su->mana = (su->type->maxMana *
-                                       float(u.numberOr("manapercentage", 100)) / 100.0f);
+                        // HealthPercentage (default 100) and ManaPercentage (default 0),
+                        // read with atoi into words (4c8dc5..4c8dec), set at 514cb9 and
+                        // 514cd3: a caster opens a mission with the mana the designer
+                        // gave it (usually 0 -- it must recharge before casting).
+                        const int16_t health = int16_t(std::atoi(u.valueOr("healthpercentage", "100").c_str()));
+                        su->hp = Fixed::fromInt(MissionScript::percentHp(*t, health));
+                        su->mana = MissionScript::percentMana(*t, int16_t(integer("manapercentage")));
                     }
                     // InitialMission: the per-unit order queue in the SAME mini-language
                     // the god script's SetMission uses (move/patrol/attack/stance/wait/

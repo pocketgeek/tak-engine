@@ -11,6 +11,7 @@
 #include "sim/retailhweffectdata.h"
 #include "sim/retailanimationqueries.h"
 #include "sim/retaildeath.h"
+#include "sim/retailtransport.h"
 #include <algorithm>
 #include <bit>
 #include <cctype>
@@ -453,6 +454,17 @@ int main(int argc,char** argv) {
         uint32_t tick;int32_t height,amount;int sea,hover,enabled;
         while (std::cin>>tick>>height>>sea>>hover>>enabled>>amount)
             std::cout<<tak::sim::retailDeadlyWaterDamage(tick,height,sea,hover!=0,enabled!=0,amount)<<'\n';
+        return 0;
+    }
+    // tools/re/check_kill_credit.py: deadly water on a unit carried at a host
+    // height (the attach point World commits for its cargo) -> the damage.
+    if (argc==2 && std::string(argv[1])=="--carried-water") {
+        int32_t height,amount;int floater,waterline,sea;uint32_t tick;
+        while (std::cin>>height>>floater>>waterline>>sea>>amount>>tick) {
+            const auto at=tak::sim::retailAttachedPosition(tak::sim::retailAttachPoint({4096<<16,height,2048<<16},{},{},-1,0),
+                floater!=0,uint8_t(waterline),uint8_t(sea));
+            std::cout<<tak::sim::retailDeadlyWaterDamage(tick,at[1],sea,false,true,amount)<<'\n';
+        }
         return 0;
     }
     // tools/re/check_veterancy.py: one row per case, answered in its order.
@@ -1756,6 +1768,7 @@ int main(int argc,char** argv) {
         Weapon weapon;weapon.range=400;weapon.reload=10;weapon.damage=1;weapon.projVel=300;weapon.manaCost=3;
         shooter.weapons.push_back(weapon);shooter.weapon=weapon;
         const int sid=world.spawn(&shooter,200,200,{},0),tid=world.spawn(&targetType,300,200,{},1);
+        world.unit(sid)->mana=20;   // a new unit's pool starts empty (511990)
         unsigned draws=0;world.setCrtRngObserver([&](const World::RngObservation& o){if(o.retailReturnAddress==0x530167)++draws;});
         world.attack(sid,tid,false);
         int callback=0,shot=0,reloadAtCallback=0;
@@ -1789,6 +1802,7 @@ int main(int argc,char** argv) {
             World rangeLoss;
             rangeLoss.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=rangeLoss.spawn(&mobileShooter,200,200,{},0);
+            rangeLoss.unit(from)->mana=mobileShooter.maxMana;   // a new unit's pool starts empty (511990)
             const int victim=rangeLoss.spawn(&mobileTarget,300,200,{},1);
             rangeLoss.attack(from,victim,false);
             bool fireCallback=false,pendingRelease=false;
@@ -1830,6 +1844,7 @@ int main(int argc,char** argv) {
             UnitType stationary=shooter;stationary.canMove=false;
             UnitType mobileTarget=targetType;mobileTarget.maxVel=Fixed::fromInt(1);
             const int from=edge.spawn(&stationary,200,200,{},0);
+            edge.unit(from)->mana=stationary.maxMana;   // a new unit's pool starts empty (511990)
             const int atRange=edge.spawn(&mobileTarget,600,200,{},1);
             edge.attack(from,atRange,false);edge.tick(1.f/30);
             const auto& inRangeEvents=edge.unit(from)->weaponAnimations;
@@ -1840,6 +1855,7 @@ int main(int argc,char** argv) {
             World outside;
             outside.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int outsideFrom=outside.spawn(&stationary,200,200,{},0);
+            outside.unit(outsideFrom)->mana=stationary.maxMana;   // a new unit's pool starts empty (511990)
             const int outsideTarget=outside.spawn(&mobileTarget,601,200,{},1);
             outside.attack(outsideFrom,outsideTarget,false);outside.tick(1.f/30);
             require(outside.unit(outsideFrom)->weaponAnimations.count==0,
@@ -1853,6 +1869,7 @@ int main(int argc,char** argv) {
                 "the blocked-LOS weapon fixture has an actual terrain obstruction");
             UnitType stationary=shooter;stationary.canMove=false;
             const int from=blocked.spawn(&stationary,200,200,{},0);
+            blocked.unit(from)->mana=stationary.maxMana;   // a new unit's pool starts empty (511990)
             const int victim=blocked.spawn(&targetType,300,200,{},1);
             blocked.attack(from,victim,false);
             for(int tick=0;tick<12;++tick)blocked.tick(1.f/30);
@@ -1894,6 +1911,7 @@ int main(int argc,char** argv) {
             World callbacksWorld;
             callbacksWorld.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=callbacksWorld.spawn(&type,200,200,{},0),target=callbacksWorld.spawn(&targetType,300,200,{},1);
+            callbacksWorld.unit(from)->mana=type.maxMana;   // a new unit's pool starts empty (511990)
             callbacksWorld.attack(from,target,false);
             bool firedCallback=false;
             for(int tick=0;tick<60;++tick) {
@@ -1916,6 +1934,7 @@ int main(int argc,char** argv) {
             World loss;
             loss.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=loss.spawn(&type,200,200,{},0),target=loss.spawn(&targetType,300,200,{},1);
+            loss.unit(from)->mana=type.maxMana;   // a new unit's pool starts empty (511990)
             loss.setStance(from,2);loss.attack(from,target,false);loss.tick(1.f/30);
             require(loss.unit(from)->scriptAimTarget==target,"target loss fixture establishes script target");
             loss.unit(from)->weaponAim[0].set(23);
@@ -1943,6 +1962,7 @@ int main(int argc,char** argv) {
             World switching;
             switching.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=switching.spawn(&type,200,200,{},0);
+            switching.unit(from)->mana=type.maxMana;   // a new unit's pool starts empty (511990)
             auto* unit=switching.unit(from);
             switching.setStance(from,2);
             unit->scriptAimTarget=123;unit->weaponAim[0].set(23);
@@ -1966,6 +1986,7 @@ int main(int argc,char** argv) {
             World delayed;
             delayed.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=delayed.spawn(&type,200,200,{},0),target=delayed.spawn(&targetType,300,200,{},1);
+            delayed.unit(from)->mana=type.maxMana;   // a new unit's pool starts empty (511990)
             delayed.setStance(from,2);delayed.unit(from)->reloads[1]=1000;
             delayed.attack(from,target,false);
             bool callback=false;
@@ -2006,6 +2027,7 @@ int main(int argc,char** argv) {
             clearing.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=clearing.spawn(&type,200,200,{},0),first=clearing.spawn(&targetType,300,200,{},1),
                 next=clearing.spawn(&targetType,320,240,{},1);
+                clearing.unit(from)->mana=type.maxMana;   // a new unit's pool starts empty (511990)
             clearing.setWeapon(from,1);clearing.attack(from,first,false);clearing.tick(1.f/30);
             if(switching) {
                 clearing.unit(from)->weaponAim[0].flags=0xe8;

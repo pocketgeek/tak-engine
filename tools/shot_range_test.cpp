@@ -201,6 +201,7 @@ Static staticShooter(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const ch
     else s.w.unit(shooter)->moveState = 0;
     if (slot >= 0) s.w.setWeapon(shooter, slot);
     s.w.player(0).mana = 30000;
+    s.w.unit(shooter)->mana = st->maxMana;   // a caster's pool starts empty (511990): give it a full one
     const int target = building(s.w, tt, sx + dx, sz + dz);
     // A spotter of the shooter's beside the building: a shooter whose range
     // outreaches its sight (a Fire Mage: 200 sight, Fire Storm 447) takes only
@@ -253,6 +254,7 @@ Approach attackBuilding(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const
     const int shooter = s.w.spawn(st, tx - 1100, tz, {}, 0);
     if (slot >= 0) s.w.setWeapon(shooter, slot);
     s.w.player(0).mana = 30000;
+    s.w.unit(shooter)->mana = st->maxMana;   // a caster's pool starts empty (511990): give it a full one
     const int target = building(s.w, tt, tx, tz);
     for (int i = 0; i < 30; ++i) s.w.tick(1.f / 30);
     s.w.attack(shooter, target, false);

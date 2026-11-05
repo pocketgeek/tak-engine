@@ -324,6 +324,7 @@ void flightCases(const tak::sim::TypeRegistry& registry) {
             targetType.cantBeStoned=targetType.cantBeFrozen=false;
             World w;setup(w);
             const int a=w.spawn(casterType,1000,1000,0,0);
+            w.unit(a)->mana=casterType->maxMana;   // a new unit's pool starts empty (511990)
             const int b=w.spawn(&targetType,1000,1200,0,1);
             const Fixed hp=w.unit(b)->hp;
             w.attack(a,b,false);
