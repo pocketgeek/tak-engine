@@ -18183,8 +18183,14 @@ void World::updateCorpseWindow(Unit& u) {
     if (!u.deathHasCorpse || starts==INT32_MAX) return;
     const int ct=u.corpseStatue>=0 ? u.corpseStatue : corpseTypeOf(u.type);
     if (ct<0) return;
-    const int duration=u.corpseStatue<0 && isWater(u.x.toFloat(),u.z.toFloat())
-        ? 75 : featTypes_[size_t(ct)].decomposeTicks;
+    // 512ee0 (512f8f..512fab): a corpse is a water grave when the ground
+    // height under the body (511170, interpolated; -1 off the last row or
+    // column) is at or below sea level, not when its cell's corner is below.
+    const bool water=!heights_.empty() && terW_>0 &&
+        retailTerrainHeight(u.x.v,u.z.v,terW_,terH_,[&](int x,int z) {
+            return int(heights_[size_t(z)*size_t(terW_)+size_t(x)]);
+        })<=seaLevel_;
+    const int duration=u.corpseStatue<0 && water ? 75 : featTypes_[size_t(ct)].decomposeTicks;
     u.corpseUntil=duration>0 ? int32_t(std::min(int64_t(INT32_MAX),int64_t(starts)+duration)) : INT32_MAX;
 }
 

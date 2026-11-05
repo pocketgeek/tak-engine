@@ -255,6 +255,10 @@ their validation reports; both live in [`docs/`](docs/).
   so it never damages that body. On a map made with the sea-level trigger switched
   off (none of the original maps), a burst, or any shot that hits nothing, landing in
   the water does nothing at all, as in the original game.
+- **Bodies at the water's edge sink or stay as in the original game.** Whether a
+  fallen unit's body sinks now depends on the height of the ground right under it,
+  as in the original game, so bodies lying level with the water sink, and bodies on
+  dry ground beside a deep spot stay to be raised or reclaimed.
 - **Deadly water hurts once a second**, as in the original game: the map's whole
   water damage each second to anything standing at or below the water line that
   cannot hover, ships included, and troops carried on a ship too (a flyer's

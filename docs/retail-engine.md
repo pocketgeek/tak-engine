@@ -1089,6 +1089,18 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   the dying unit as its shooter: its kills were credited to the unit's
   player and it was scaled by its veterancy. The Bomb Sprinkler's Dying runs
   147 ticks, so its cannonball burst came five seconds early.
+- **The water grave** (`512ee0`, `512f8f..512fab`; E over 3,000 layouts,
+  gap hunt 6, `tools/re/check_corpse_water.py`): the corpse feature goes in either way
+  (`495360`); the body is a water grave, the feature given the sinking
+  velocity `+0x18 = -0x2ccc` and no smoke (`502be0` is only on land), when
+  `511170`'s interpolated ground height under it (-1 off the last row or
+  column) is at or below sea level. Ours asked whether the cell's top-left
+  corner was below sea level, which disagreed in 39% of random shore
+  layouts; `World::updateCorpseWindow` now asks retail's question. The
+  sinking itself (the feature update `495bd0..495c8d`: a fall to the sea
+  bed, a fade) is still World's 75-tick window, unverified, and a statue
+  (stone or freeze) in water, which `512ee0` sinks the same way, keeps its
+  permanent window here. Test: `building_death_test`.
 - **Mission Kill** (`513130`): ignores its arguments. For every unit this
   machine runs (owner +0xea 1 or 2; lockstep runs them all): `52ae30(u, 1)`
   removes every shot it fired (`529af0`, no impact); a unit whose Dying runs

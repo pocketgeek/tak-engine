@@ -51,6 +51,30 @@ int main(int argc,char** argv) {
             }
             if(!balance)std::printf("EXPLOSION_CORPSE %s\n",name.c_str());
         }
+        // 512ee0 (512f8f..512fab, emulated over 3000 layouts): the corpse is a
+        // water grave when 511170's interpolated ground height under the body
+        // is at or below sea level, whatever its cell's corner says.
+        for (const auto& [name,type]:registry.types()) {
+            if (!type.explosionCorpse || type.instantCorpse) continue;
+            const int ct=definitions.corpseTypeOf(&type);
+            auto lifetime=[&](const std::vector<uint8_t>& heights,int32_t x,int32_t z) {
+                sim::World w;w.setTerrain(heights,64,64,20);
+                w.setFeatureTypes(definitions.featureTypes());w.mapCorpse(&type,ct);
+                const int id=w.spawn(&type,512,512,std::nullopt,0);
+                w.unit(id)->x=sim::Fixed::raw(x);w.unit(id)->z=sim::Fixed::raw(z);
+                w.unit(id)->hp={};w.unit(id)->deathType=3;
+                w.tick(1.f/30);
+                for(int i=0;i<1500 && w.unit(id)->deadFor<w.unit(id)->corpseAnimationTicks();++i)
+                    w.tick(1.f/30);
+                return int64_t(w.unit(id)->corpseUntil)-w.unit(id)->deadFor;
+            };
+            check(lifetime(std::vector<uint8_t>(64*64,20),512<<16,512<<16)==75,
+                  "a body on ground level with the sea is no water grave");
+            std::vector<uint8_t> corner(64*64,100);corner[32*64+32]=0;
+            check(lifetime(corner,(32*16+15)<<16,(32*16+15)<<16)!=75,
+                  "a body on dry ground over a sunken cell corner became a water grave");
+            break;
+        }
         // The Crusades roster has no Cult of Lokken Ship (tarcship has no unitscb FBI).
         check(restored==(balance?28:29),"all 29 (Crusades 28) omitted corpse types restored");
         check(!registry.find("arasword")->explosionCorpse,"ordinary soldier explosion still gibs");
