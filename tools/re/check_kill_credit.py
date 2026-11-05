@@ -336,10 +336,48 @@ def water_hit():
     return 'water hit: whole HP off, no 409a50, last hitter kept, kind 13 on the lethal one'
 
 
+def water_death():
+    """51e13f..51e371: a lethal water hit's 512610 runs at the end of the same
+    update, after the missions (4d8450, skipped for a dying unit), the mover
+    (4dc800) and the surface (51b2a0); a hit that leaves HP above zero runs
+    none. Natively: 51a140 itself, the rest of the update's calls recorded."""
+    from unicorn import UC_HOOK_CODE
+    f = Fixture()
+    for name, n in (('429d90', 4), ('401160', 1), ('4d8450', 1), ('4d85e0', 1), ('4dc800', 1),
+                    ('51b2a0', 1), ('5195e0', 1), ('512060', 9), ('512610', 2), ('409a50', 3)):
+        f.record(name, n)
+    f.p.uc.hook_add(UC_HOOK_CODE, lambda uc, *_: uc.emu_stop(), begin=0x51e371, end=0x51e371)
+    seen = []
+    for hp, amount in ((50, 100), (50, 50), (50, 49), (300, 100)):
+        u = f.unit(1); f.put(u + 0x10c, hp, 'H'); f.put(u + 8, f.units + 0x1000)   # a mover
+        f.put(f.victim_type + 0x260, 0); f.put(f.victim_type + 0x268, 0); f.put(f.victim_type + 0x21e, 0.0, 'f')
+        f.put(u + 0x6c, (2 << 16) | 0x8000)
+        f.put(f.game + 0x19f44, 30); f.put(f.game + 0x19ef8, 5, 'B'); f.put(f.game + 0x175dc, f.map)
+        f.put(f.map + 0xd41, 1); f.put(f.map + 0xd45, amount)
+        f.calls.clear()
+        f.p.uc.reg_write(UC_X86_REG_ESI, u); f.p.uc.reg_write(UC_X86_REG_EBX, f.game)
+        f.p.uc.reg_write(UC_X86_REG_EDI, 0)
+        f.p.uc.reg_write(UC_X86_REG_ESP, STACK_TOP); f.p.uc.reg_write(UC_X86_REG_EBP, STACK_TOP + 0x100)
+        f.p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
+        f.p.uc.emu_start(0x51e0d5, 0x51e371, count=2000)
+        names = [c[0] for c in f.calls]
+        lethal = hp <= amount
+        assert bool(f.get(u + 0x130) & DYING) == lethal, (hp, amount)
+        if lethal:
+            assert names[-1] == '512610' and f.calls[-1][1:] == (u, 13), f.calls
+            assert names.index('4dc800') < names.index('51b2a0') < names.index('512610'), names
+            assert '4d8450' in names, names          # called; it returns at once for a dying unit (4d8475)
+        else:
+            assert '512610' not in names, names
+        seen.append(lethal)
+    return ('water death: a lethal water hit\'s 512610 runs at the end of the same update (kind 13); '
+            '%d lethal, %d not' % (seen.count(True), seen.count(False)))
+
+
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else 'build-o2/retail_script_test'
     for line in (hitter_gate(), attack_multiplier(), death_weapon_shot(), retirement(), mission_kill(),
-                 water_hit(), deadly_water(binary), carried_water(binary)):
+                 water_hit(), water_death(), deadly_water(binary), carried_water(binary)):
         print(line)
 
 

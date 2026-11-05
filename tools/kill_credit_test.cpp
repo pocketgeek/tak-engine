@@ -153,6 +153,17 @@ int main(int argc,char** argv) try {
         }
         check(hits==3,"deadly water did not hurt once a second");
         check(w.unit(h)->hp.floorInt()==hover.maxHp,"deadly water hurt a canhover unit");
+        // 51e36c: the update whose water hit is lethal ends with 512610, so
+        // the unit dies (here, with no Dying, retires: a loss) on that tick.
+        World d;d.setPlayerCount(2);d.setTerrain(std::vector<uint8_t>(64*64,10),64,64,50);
+        d.setWaterDamage(100);
+        const int v=d.spawn(&ship,400,400,0,0);
+        d.unit(v)->hp=Fixed::fromInt(100);
+        int tick=0;
+        while (d.unit(v)->hp>Fixed() && tick<60) { d.tick(1.f/30);++tick; }
+        check(d.unit(v)->hp<=Fixed() && d.unit(v)->deathType==13,"deadly water did not kill");
+        check(d.player(0).losses==1 && !d.unit(v)->deathPending,
+              "a deadly-water death waited for the next tick's sweep");
     }
     if (argc==2) {
         // The death weapon at retirement: the Bomb Sprinkler's Dying runs for

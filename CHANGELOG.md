@@ -242,7 +242,8 @@ their validation reports; both live in [`docs/`](docs/).
 - **Deadly water hurts once a second**, as in the original game: the map's whole
   water damage each second to anything standing at or below the water line that
   cannot hover, ships included, and troops carried on a ship too (a flyer's
-  passengers high above the water are safe).
+  passengers high above the water are safe). A unit the water kills dies that
+  moment, not a moment later.
 - **Gates are built closed and switched off**, as in the original game. A new gate
   used to count as switched on with its doors shut, so the first click on its ON
   button did nothing.

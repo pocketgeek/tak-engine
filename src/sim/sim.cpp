@@ -17898,6 +17898,69 @@ void World::updateCorpseWindow(Unit& u) {
     u.corpseUntil=duration>0 ? int32_t(std::min(int64_t(INT32_MAX),int64_t(starts)+duration)) : INT32_MAX;
 }
 
+// 512610 as World runs it: the unit at hp <= 0 starts dying (Killed,
+// corpse admission, the losses column) and leaves the ground word, its
+// orders and its search body. The per-unit update runs it at its start for
+// a unit hurt since its last update, and deadly water at once (51e36c: the
+// water's own update ends with 512610).
+void World::sweepDeath(Unit& u) {
+    cancelPath(u);
+    refreshMovingSearchBody(u);
+    killProductionOutput(u);
+    if (u.player >= 0 && u.player < int(players_.size()))
+        players_[size_t(u.player)].losses++;   // end-of-game "Losses" column
+    // 512860 keeps the last hitter only while its object lives; the
+    // kill itself is credited at retirement (retireDeath).
+    if (!retailHitter(u.lastHitBy,u.lastHitPlayer)) u.lastHitBy=0;
+    if (mission_ || scenario_) justDied_.push_back(u.id);
+    const bool selfDestruct=u.deathType==Unit::kDeathSelfDestruct;
+    // Killed decides corpse admission; Dying controls when the original
+    // body retires. Only then does decomposition or water sinking begin.
+    {
+        // Retail severity (icd 0x512610): ((overkill% + HP% one second
+        // before death) / 2), clamped 1..100. Passed to the COB Killed.
+        float okPct = u.overkill.toFloat() * 100.0f / std::max(float(u.maximumHp()), 1.0f);
+        u.severity = uint8_t(std::clamp((okPct + float(u.hpPct1s)) * 0.5f,
+                                        1.0f, 100.0f));
+        if (selfDestruct) u.severity=1;
+        else if (u.deathType==0 || (u.deathType>=6 && u.deathType<=11) || u.deathType>=14)
+            u.severity=0;
+        // Dying while petrified/frozen leaves the FBI stone=/frozen=
+        // STATUE feature instead of the corpse (retail deathType 0xE/0xF
+        // path, 0x512d2a) -- blocking, permanent, and resurrectable
+        // (raising a statue un-petrifies the unit).
+        u.corpseStatue = u.stonedFor > 0 ? statueTypeOf(u.type, false)
+                      : u.frozenFor > 0 ? statueTypeOf(u.type, true) : -1;
+        static const bool kStatLog2 = tak::devEnv("TAK_BURNLOG") != nullptr;
+        if (kStatLog2 && (u.stonedFor > 0 || u.frozenFor > 0))
+            std::fprintf(stderr, "statue edge: %s statue=%d stoned=%d\n",
+                         u.type->id.c_str(), u.corpseStatue, u.stonedFor);
+        beginUnitDeath(u);
+        u.deathPending=true;
+        if (u.type->isStructure())
+            blockFoot(*u.type,u.x.toFloat(),u.z.toFloat(),false);
+    }
+    // Drop this unit's per-unit pathfinding state. Ids are never reused, so a
+    // dead unit's entries can never match anything again -- they would simply
+    // accumulate for the rest of the match.
+    retireAirOccupant(u);
+    // 5066a0 (World retires a body from the ground word at death).
+    groundRemove(u);
+    u.deadFor = 0; u.orders.clear(); u.speed = Fixed();
+    noteOrders(u.id);
+    // Refresh the old body before a corpse offset moves the record.
+    for (auto& plane:searchGrades_)
+        refreshSearchRect(plane,footprintOrigin(u.x,u.type->footX),
+            footprintOrigin(u.z,u.type->footZ),u.type->footX,u.type->footZ);
+    // No Dying to run: 512610 retires the unit at once (512ac8).
+    if (u.corpseAnimationTicks()==0) retireDeath(u);
+    // Frozen/stone deaths bypass the ordinary death animation.
+    if (u.corpseAnimationTicks()==0 && u.deadFor<u.corpseUntil) {
+        const int corpse=u.corpseStatue>=0 ? u.corpseStatue : corpseTypeOf(u.type);
+        if (corpse>=0 && (u.corpseStatue>=0 || !u.underConstruction) && !placeCorpse(u,corpse)) retireCorpse(u);
+    }
+}
+
 void World::beginUnitDeath(Unit& u) {
     u.deathAnimationTicks=0;
     u.deathHasCorpse=u.corpseStatue>=0;
@@ -19623,61 +19686,7 @@ void World::tick(float dt) {
             continue;
         }
         if (u.hp <= Fixed() && !(u.retailSite && u.underConstruction)) {
-            cancelPath(u);
-            refreshMovingSearchBody(u);
-            killProductionOutput(u);
-            if (u.player >= 0 && u.player < int(players_.size()))
-                players_[size_t(u.player)].losses++;   // end-of-game "Losses" column
-            // 512860 keeps the last hitter only while its object lives; the
-            // kill itself is credited at retirement (retireDeath).
-            if (!retailHitter(u.lastHitBy,u.lastHitPlayer)) u.lastHitBy=0;
-            if (mission_ || scenario_) justDied_.push_back(u.id);
-            const bool selfDestruct=u.deathType==Unit::kDeathSelfDestruct;
-            // Killed decides corpse admission; Dying controls when the original
-            // body retires. Only then does decomposition or water sinking begin.
-            {
-                // Retail severity (icd 0x512610): ((overkill% + HP% one second
-                // before death) / 2), clamped 1..100. Passed to the COB Killed.
-                float okPct = u.overkill.toFloat() * 100.0f / std::max(float(u.maximumHp()), 1.0f);
-                u.severity = uint8_t(std::clamp((okPct + float(u.hpPct1s)) * 0.5f,
-                                                1.0f, 100.0f));
-                if (selfDestruct) u.severity=1;
-                else if (u.deathType==0 || (u.deathType>=6 && u.deathType<=11) || u.deathType>=14)
-                    u.severity=0;
-                // Dying while petrified/frozen leaves the FBI stone=/frozen=
-                // STATUE feature instead of the corpse (retail deathType 0xE/0xF
-                // path, 0x512d2a) -- blocking, permanent, and resurrectable
-                // (raising a statue un-petrifies the unit).
-                u.corpseStatue = u.stonedFor > 0 ? statueTypeOf(u.type, false)
-                              : u.frozenFor > 0 ? statueTypeOf(u.type, true) : -1;
-                static const bool kStatLog2 = tak::devEnv("TAK_BURNLOG") != nullptr;
-                if (kStatLog2 && (u.stonedFor > 0 || u.frozenFor > 0))
-                    std::fprintf(stderr, "statue edge: %s statue=%d stoned=%d\n",
-                                 u.type->id.c_str(), u.corpseStatue, u.stonedFor);
-                beginUnitDeath(u);
-                u.deathPending=true;
-                if (u.type->isStructure())
-                    blockFoot(*u.type,u.x.toFloat(),u.z.toFloat(),false);
-            }
-            // Drop this unit's per-unit pathfinding state. Ids are never reused, so a
-            // dead unit's entries can never match anything again -- they would simply
-            // accumulate for the rest of the match.
-            retireAirOccupant(u);
-            // 5066a0 (World retires a body from the ground word at death).
-            groundRemove(u);
-            u.deadFor = 0; u.orders.clear(); u.speed = Fixed();
-            noteOrders(u.id);
-            // Refresh the old body before a corpse offset moves the record.
-            for (auto& plane:searchGrades_)
-                refreshSearchRect(plane,footprintOrigin(u.x,u.type->footX),
-                    footprintOrigin(u.z,u.type->footZ),u.type->footX,u.type->footZ);
-            // No Dying to run: 512610 retires the unit at once (512ac8).
-            if (u.corpseAnimationTicks()==0) retireDeath(u);
-            // Frozen/stone deaths bypass the ordinary death animation.
-            if (u.corpseAnimationTicks()==0 && u.deadFor<u.corpseUntil) {
-                const int corpse=u.corpseStatue>=0 ? u.corpseStatue : corpseTypeOf(u.type);
-                if (corpse>=0 && (u.corpseStatue>=0 || !u.underConstruction) && !placeCorpse(u,corpse)) retireCorpse(u);
-            }
+            sweepDeath(u);
             continue;
         }
 
@@ -19731,7 +19740,15 @@ void World::tick(float dt) {
                 progress.hp=uint16_t(u.hp.floorInt());
                 progress.remaining=float(1.0-double(int16_t(progress.hp))/std::max(1,u.maximumHp()));
             }
-            if (u.hp <= Fixed()) { u.overkill = fxMax(u.overkill, -u.hp); u.deathType = 13; }
+            if (u.hp <= Fixed()) {
+                u.overkill = fxMax(u.overkill, -u.hp); u.deathType = 13;
+                // 51e357..51e36c: the update that hurt it ends with 512610, so
+                // it dies on this tick, not at the next tick's sweep. The rest
+                // of retail's update does nothing more for a dying unit here:
+                // self-repair and the missions (4d8450) skip it; World runs no
+                // mover step for a dying unit at any death.
+                if (!(u.retailSite && u.underConstruction)) { sweepDeath(u); continue; }
+            }
         }
         // Self-repair (KINGDOMS.icd 0x51e152..0x51e1bc). healtime is the unit's own
         // WORKER TIME, not seconds per hit point: every eighth tick a finished unit

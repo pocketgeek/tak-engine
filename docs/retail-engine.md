@@ -1123,8 +1123,14 @@ when the local player's alliance byte for the owner is 0, a per-machine
 display figure; ours counts every loss. The XP add at retirement goes to the
 +0xf8 slot even if a new unit has since taken it (retail reuses slots; World
 ids are never reused, so that credit is dropped). A carried unit is not
-hurt by deadly water here (fixed since: see below). A deadly-water death is
-swept on the next tick, not in the same update (`51e36c`). The blast is
+hurt by deadly water here (fixed since: see below). A deadly-water death was
+swept on the next tick, not in the same update: the lethal water hit sets the
+dying bit, and the update that made it ends with `512610(unit, 13)` (`51e357..
+51e36c`), after the missions (`4d8450`, which return at once for a dying
+unit, `4d8475`), the mover and the surface (E: `check_kill_credit.py`
+water death). `World::sweepDeath` now runs at the water hit (fixed
+2026-11-05, gap round 2; `kill_credit_test`: the loss counts on the lethal
+tick). World still runs no last mover step for a dying unit. The blast is
 queued after the corpse is placed, where retail fires it before (`512d97`
 before `512dbb`; E: `check_kill_credit.py` retirement, all 16 cases with
 both): the drain spares the blast's own corpse (`World::sparedCorpse_`), so
