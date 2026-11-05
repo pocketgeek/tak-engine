@@ -174,14 +174,24 @@ their validation reports; both live in [`docs/`](docs/).
   weapon. An armed Attack (A) clicked on the ground or on a friendly unit, in the
   view or on the minimap, now gives it to each selected unit that can, under an
   Attack cursor; Shift queues it, Ctrl puts it first, and Shift or Ctrl on a
-  queued point takes it back. As in the original game, a unit in a Ctrl group that
+  queued point takes it back. As in the original game, a unit in a formation that
   finds itself left behind walks back to its group first, still firing at the spot
   when its weapon can aim without turning the body, and then fires on from there; now
-  and then it gives up the order instead. Flyers attacking in a group, at a spot or
-  at a unit, fly back to their group the same way, and keep firing at what they
+  and then it gives up the order instead. Flyers attacking in a formation, at a spot
+  or at a unit, fly back to their formation the same way, and keep firing at what they
   had aimed at while they do; they now turn back at once, not a moment later.
-  Patrolling flyers in a Ctrl group now count as moving with their group on the
-  way out as well as on the way back, as in the original game.
+  Patrolling flyers in a formation now count as moving with it on the way out as
+  well as on the way back, as in the original game.
+- **In Retail pathfinding a Ctrl group no longer moves at its slowest unit's pace.**
+  As in the original game, a group (Ctrl+number) is only a saved selection; only a
+  formation (Alt+number) keeps together, waits for its stragglers and sends them back
+  to it. Before, both did. The Retail computer player's attack waves and flyer squads
+  now keep together the same way, as the original game's do (without slowing to
+  their slowest unit, which the original never does for a computer player).
+- **A factory's new unit joins the factory's group or formation when it leaves the
+  factory**, as in the original game, not when it is started, in Retail and Legion
+  pathfinding alike. A unit a builder conjures joins the builder's group when it is
+  finished.
 - **An armed factory from a mod gets no Attack Ground order**, as in the original
   game, which takes the attack command away from any factory. It never attacks an
   enemy unit itself either, ordered or on its own (an Attack on a unit still sends

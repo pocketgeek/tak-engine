@@ -1419,12 +1419,16 @@ A unit belongs to one group or formation at a time. Each unit shows its number
 under it in green: `3` for group 3, `3F` for formation 3. With the whole group or formation
 selected, the information bar shows its name, such as **GROUP 3**.
 
-- A **group** is a saved selection.
-- A **formation** also travels together: it moves at the pace of its slowest
-  member, and members that fall far behind rejoin once the formation has stopped.
+- A **group** is a saved selection. Its units each move at their own speed.
+- A **formation** also travels together. In **Legion** mode it moves at the pace
+  of its slowest member, and members that fall far behind rejoin once the
+  formation has stopped. In **Retail** mode it keeps together as in the original
+  game: it moves at its slowest member's pace, and a member that falls out of
+  place waits for the others or walks back to them.
 
 Recalling a group skips its builders, but units those builders produce join the
-group automatically.
+group automatically: a factory's new unit when it leaves the factory, a unit a
+builder conjures when it is finished.
 
 ### Camera and information
 

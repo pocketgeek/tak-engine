@@ -667,9 +667,26 @@ Legion keep the `squad < 0` code below unchanged. Ported, static reading
   formation mission retires (5) once back in slot; stages 0..3 as `402880`;
   the stage-3 target scan (`40296c`) runs only for a non-zero response mode
   and is not ported (plain moves have mode 0).
-- Groups: human Ctrl+N assigns group N from the selection (`522170` ->
-  `50b4f0` at `5221ce`; a plain selection is never grouped). Our `+N` squads
-  map to group N and `-N` formations to group `10+N`.
+- Groups: the console's `CreateSquad N` (`48e170` -> `522170` -> `50b4f0` at
+  `5221ce`) rebuilds group N from the selection; a plain selection is never
+  grouped, and issuing orders creates no group. Record `+8` is the FORMATION
+  flag, written only by `50b700`: `CreateSquad N` clears it (a plain group),
+  `CreateSquad N f` sets it (a formation). There is one record per number, so
+  either replaces the other, and there is no append form. `51b890` aggregates
+  and activates (`+0x2c`) only `+8` groups with members, and every reader of
+  group pacing (`51c700`, `51d1e0`, `4d95f0`, the moving aggregate) needs the
+  group active (`50b800`): a plain group behaves as no group at all (emulated
+  2026-11-04, E). Ours (fx-groups, protocol 312): a `+N` Ctrl group is plain
+  group N and never paced; a `-N` formation is group N with `+8`
+  (`retailGroupSlot`). Until then `+N` was paced too (the World fed "group
+  has members" as `+8`) and `-N` used group `10+N`.
+- Computer players: the retail AI's squads are the player's group records
+  (`50b4f0` sets `unit+0xc8`, its set-active `50b700` sets `+8`). A strike
+  squad is a formation while it attacks (state 2) and a VTOL squad while it
+  has units (S, the thinks `40e180` / `40eb40`), so their members are paced
+  as a human formation's are, except the speed cap (owner kind 3, below).
+  The server's classic AI tells the sims those squads with `Cmd::AiGroup`
+  (`ClassicBrain::publishGroups`, `World::setAiGroup`, `Unit::aiGroup`).
 
 Also ported in the second pass: the changed flag (record `+0xb0`, set by
 `50b7a0`/`50bbc0`/`50bfe0` when the value differs) and its notification
@@ -679,8 +696,8 @@ navigator bit it sets, `4e60f0` `nav+0x114|8`); `50c480` as
 head in Patrol (`403600`, sites `4037ad`/`40383b`, identical structure), so
 grouped patrols re-form too; and computer players skip the cap (owner
 `+0xea` 3 uses navigator `vt+0x3c`, zero for ground navigators). In the
-World "computer" is a player with the AI's automatic gates; skirmish AI
-slots do not set it, but the skirmish AI issues no groups.
+World "computer" is a player with the AI's automatic gates (every AI seat,
+and a seat the server AI took over); its group checks still run.
 
 **Differential check.** `tools/re/check_retail_group.py` loads randomized
 group records into the emulated binary through retail's own setters
@@ -711,8 +728,9 @@ are Attack_Chase (`403e78`), Attack_Melee (`4048e1`), Suppress (`404ead`) and
 Follow_Ground (`4080a0`), missions this World does not run as retail
 handlers. The formation goal's y terms are zero in the `402b00` comparison
 (the helper takes them; the host passes 0). Mission flags of orders the
-ground host does not model (attack/build) read as 0. Retail AI squads
-(`players_[].retailAi`) are not group members. The human UI's click offsets
+ground host does not model (attack/build) read as 0. The classic AI's
+strike and VTOL squads are group members (`Unit::aiGroup`); the restored
+retail AI of the save-replay probes (`players_[].retailAi`) is not. The human UI's click offsets
 are retail's `0x5214b0` (traced 2026-10-30, `retail-engine.md` "Group move
 spread"): flyers keep theirs, ground units take the point; ours keeps a
 `+-60 px` ground offset by choice. Ctrl+N group assignment
@@ -787,7 +805,7 @@ suppress mode, `check_air_attack_run.py`, `check_air_traffic.py`) and ported
 as `retailAttackGroupCheck`. These missions are group movers (SUPPRESS
 `0x1000410`, AirToGround and AirToGroundHover `0x1000200`, AirStrike
 `0x1000600`): `retailMissionFlags` reports them, SUPPRESS's approach leg as
-SUPPRESS, so they now count in the moving aggregate of a Ctrl group. The
+SUPPRESS, so they now count in the moving aggregate of a formation. The
 formation leaves the attack's weapon slots as they are, and a SUPPRESS walker
 fires at its point on the way back; docs/retail-engine.md ("SUPPRESS port")
 has the details. Legion has no group record: unchanged.
@@ -804,14 +822,15 @@ Retail's system, read statically and partly emulated:
 - **Groups** are per-player records (99 groups × 0xc4 bytes) at `player+0x84`.
   A unit's group is `unit+0xc8`, assigned by `50b4f0`. That routine is called
   for unit creation and death, save restore, the AI squad code (`40ac53..40feae`)
-  and the selection-to-group handler at `5221ce`. Record `+8` is the member list
-  (`50b760`), `+0x2c` is "active" (`50b7a0`/`50b800`), `+0x58` is the ground
+  and the selection-to-group handler at `5221ce`. Record `+8` is the formation
+  flag (`50b700`; first read here as a member list, corrected 2026-11-04),
+  `+0x2c` is "active" (`50b7a0`/`50b800`), `+0x58` is the ground
   group speed (`50bbc0`/`50bc20`), `+0x84` is the boat group speed
   (`50bfe0`/`50c040`), `+0xa4` is the centre (`50c340`) and `+0xb0` is a changed
   flag (`50c440`/`50c400`).
 - **Per-tick aggregation** happens in `51b890`, called from `526389` before
   `51d3e0` (movers). It runs for players whose `+0xea` is 1, 2 or 3. For each
-  group with members, it walks alive, completed units with a mover. Navigator
+  formation group (`+8`), it walks alive, completed units with a mover. Navigator
   `vt+0x30` sets formation bit `nav+0x114&0x10` exactly when the unit's current
   mission has flag `0x2000000`; ordinary point moves (`0x3000400`) have it. The
   routine sums centres per class: flyer (`type+0x260&0x800`), boat (`0x80000`
