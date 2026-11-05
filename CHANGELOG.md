@@ -177,7 +177,12 @@ their validation reports; both live in [`docs/`](docs/).
   queued point takes it back.
 - **Campaign siege units and towers scripted to bombard a spot now fire at it**, as in
   the original game, instead of only walking toward it (or, for a tower, doing
-  nothing).
+  nothing). A flyer scripted the same way now makes its air attack on the spot
+  instead of flying to it, and a computer player sees it as attacking.
+- **Campaign units sent to a map square go to its corner, as in the original game.**
+  Scripted moves, patrols and unloads aimed half a square off.
+- **An armed factory from a mod gets no Attack Ground order**, as in the original
+  game, which takes the attack command away from any factory.
 - **Holding Shift shows a cloaked unit's decloak range.** While Shift is held, each
   of your selected units, and your unit under the pointer, that is cloaked now shows a
   white circle at its decloak distance, as in the original game. A `kamikaze` unit

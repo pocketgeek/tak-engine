@@ -6455,7 +6455,8 @@ resolve only in an `InitialMission`. Ours registered a unit under the name an
   point is (`ftol(X*65536)` * s, 0, `ftol(Y*65536)` * s) with s the scenario's
   `+0xdc5` (`513fd6`), which is 16 for an `.ota` with a `[Map Data]` section
   (`4c86eb`; 1 without, `4c8748`; S) and all 74 shipped missions have one, so
-  X*16, Y*16 px with no half cell; `m X Y` scales the same way. When the
+  X*16, Y*16 px with no half cell; `m X Y` (kind 2), `p X Y [T]` (kind 9)
+  and `u X Y` (kind 5) scale the same way (E). When the
   resolver gives no order the clause pushes nothing and the next clause
   still reads (E). Else `" %[a-zA-Z0-9_.]"`: a unit
   type (`0x515ac0`) pushes ATTACKUTYPE, else the named unit gets kind 3.
@@ -6486,8 +6487,9 @@ resolve only in an `InitialMission`. Ours registered a unit under the name an
 When the parser has pushed a mission it clears the unit's selectable bit 0x20,
 and unless any of them was a patrol, an attack on the ground that got an order,
 `s` or `d` it appends MAKESELECTABLE (`514a7d`; `[ebp-0x20]`, set by those
-clauses at `5143ad` / `51443f`, is never cleared during the parse; E for `a X Y`
-and `m X Y`; `a NAME` and `a TYPE` do not set it): a player's unit under a script cannot be
+clauses at `5143ad` / `51443f`, is never cleared during the parse; E: a given
+`a X Y` and a `p X Y` set it, an `m X Y` and a `u X Y` do not; `a NAME` and
+`a TYPE` do not set it): a player's unit under a script cannot be
 selected until its script is done.
 
 **Ours (0.9.12).** `MissionScript::applyOrders` reads clauses as above, with
@@ -6508,9 +6510,12 @@ unit busy. `mission_orders_test` (fixtures, and `--data` on takx04 and takx07)
 and `ambush_test` cover it; a 30-second run of all 74 shipped missions loads and
 runs every one. `a X Y` (since 0.9.20) is `World::suppress` at X*16, Y*16 with
 the queue flag, the click's order; the Retail AI reads a head SUPPRESS as
-row `0x5eb8b8` (class 1, 0x1000410). A kamikaze type's ATTACK_KAMIKAZE from
-the resolver is not ported (no shipped use). `m`, `p` and `u` still take the
-cell centre (X*16+8), half a cell off retail's X*16. Not ported: the patrol's time, the selectable bit,
+row `0x5eb8b8` (class 1, 0x1000410), and a flyer's air attack at the point as
+its row less the target bit the ctor clears (`4d6d66`): AIRSTRIKE class 2,
+0x1000400; AIRTOGROUNDHOVER and AIRTOGROUND class 1, 0x1000000 (E,
+`tools/re/check_air_point_mission.py`). A kamikaze type's ATTACK_KAMIKAZE from
+the resolver is not ported (no shipped use). `m`, `p` and `u` take X*16, Y*16
+too (since 0.9.20; they took the cell centre, X*16+8). Not ported: the patrol's time, the selectable bit,
 BuildWeapon and resurrect; SetMission's owner test (`0x4d37be`: a player of
 kind 1 or 2 only) is not applied.
 
@@ -6540,6 +6545,12 @@ The order itself is read stage by stage in "Fire at a point: SUPPRESS" (on
 `fx-clicks`). For the port the details below were read again in the code (S);
 none was emulated (no E). What World does differently is marked I.
 
+- **S, canattack.** The resolver gives nothing without `canattack`
+  (`4de62d -> 4de6ed`), which load clears for an armed type with `bmcode` 0
+  (`+0x24a`, read at `4c0057`) and a canbuild menu (`4c18d7..4c18ff`). Ours:
+  `World::suppressRule` answers None for such a type, so neither a click, a
+  `Cmd::AttackGround` nor a mission's `a X Y` puts SUPPRESS on an armed
+  factory (no shipped one; a mod's). `mission_orders_test`.
 - **S, resolver** `4de65f..4de7a6`: the selected slot's weapon (`519ac0`: a
   switcher's selected slot, else the first present). `+0xc8` 0x4000
   (toairweapon): no order; a flyer (`+0x260` 0x800) goes to the airstrike
@@ -6643,6 +6654,11 @@ null target; `Order::airPoint`):
   point, as for SUPPRESS (it restarts the mission), not on a unit attack.
 - I: the group check (`51d1e0`) is as on the unit-target missions: ported
   for the hover, not for AirToGround and AirStrike.
+- E (`tools/re/check_air_point_mission.py`, retail's `4d4bf0` and `4d6c40`):
+  with no target the mission's flags are the row's less 0x200, so the Retail
+  AI reads AIRSTRIKE as class 2, 0x1000400 and AIRTOGROUNDHOVER and
+  AIRTOGROUND as class 1, 0x1000000 (`ClassicBrain`'s `firstMission`; it read
+  a move before 0.9.20).
 
 `suppress_test` (both modes): `creaeri` flies runs over the
 point and hits it (24 shots, 4 px off); a Tarbeak hovers ~134 px off a point
