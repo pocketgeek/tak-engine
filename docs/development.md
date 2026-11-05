@@ -106,6 +106,18 @@ frameworks. CI checks these dependency boundaries for release packages.
   `build-static-deps.sh` step is not needed. See
   [windows.yml](../.github/workflows/windows.yml) for the exact package list and
   installer build.
+- **Windows x64 cross-built on Linux** (a local check, not how releases are
+  made): with the MinGW-w64 GCC (Fedora `mingw64-gcc-c++`), cross-build the static
+  archives first, since the distribution's MinGW packages ship DLL import libraries
+  only. Run `build-static-deps.sh` with `PREFIX=<deps-win>`,
+  `CHOST=x86_64-w64-mingw32`, `CMAKE_TOOLCHAIN_FILE=/usr/share/mingw/toolchain-mingw64.cmake`
+  and `STATIC_DEPS_SKIP_WAYLAND_CHECK=1`, then `build-ffmpeg-bink.sh` with
+  `PREFIX=<ffmpeg-win>`, `CROSS_PREFIX=x86_64-w64-mingw32-`, `TARGET_OS=mingw32` and
+  `TARGET_ARCH=x86_64`. Configure with a toolchain file that includes the
+  distribution's and puts both prefixes FIRST on `CMAKE_FIND_ROOT_PATH`
+  (`list(PREPEND ...)`; otherwise SDL2 and libjpeg resolve to the sysroot's import
+  libraries), plus `-DTAK_STATIC_DEPS_PREFIX=<deps-win> -DTAK_FFMPEG_PREFIX=<ffmpeg-win>`,
+  with `PKG_CONFIG_LIBDIR=<ffmpeg-win>/lib/pkgconfig` in the environment.
 - **Windows ARM64:** use Windows 11 ARM64 and MSYS2 **CLANGARM64** with its
   native Clang/LLVM and ARM64 dependency packages. Set `CC=clang`, `CXX=clang++`,
   `TARGET_OS=mingw32`, and `TARGET_ARCH=aarch64` before running the FFmpeg script

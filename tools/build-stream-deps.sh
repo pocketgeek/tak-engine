@@ -37,6 +37,9 @@ if [ ! -f "$PREFIX/lib/libssl.a" ] || [ "$(cat "$PREFIX/openssl-version" 2>/dev/
   fetch "openssl-$openssl_version" https://github.com/openssl/openssl.git "openssl-$openssl_version"
   (cd "$root/openssl-$openssl_version"
    tls_args=(--prefix="$PREFIX" --libdir=lib no-shared no-module no-tests no-apps)
+   # A cross build (CROSS_PREFIX, as for x264 above) must name the target compiler,
+   # or OpenSSL's Configure uses the host cc for the mingw64 target.
+   [ -n "${CROSS_PREFIX:-}" ] && tls_args+=("--cross-compile-prefix=$CROSS_PREFIX")
    case "$platform" in
      MINGW*|MSYS*|mingw32)
        if [ "${TARGET_ARCH:-}" = aarch64 ]; then
