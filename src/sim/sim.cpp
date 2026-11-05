@@ -5968,6 +5968,8 @@ void World::attack(int unitId, int targetId, bool queue) {
         return;
     }
     if (u->type->weapon.damage <= 0) return;
+    // 4de62d: no canattack (attackStrippedAtLoad), no attack mission.
+    if (attackStrippedAtLoad(*u->type)) return;
     const Unit* target=unit(targetId);
     const bool converts=std::any_of(u->type->weapons.begin(),u->type->weapons.end(),
                     [](const Weapon& weapon){return weapon.mindControl;});
@@ -7605,6 +7607,8 @@ int World::retailHostScan(Unit& u) {
 
 bool World::retailIssueAutoAttackAllowed(const Unit& u,int targetId,bool forceReturn,bool forced) const {
     if (targetId==u.id) return false;
+    // 4d7de0's 4de530 kind 3: a type stripped of canattack gets none (4de62d).
+    if (attackStrippedAtLoad(*u.type)) return false;
     if (u.moveState==0 && !forceReturn && !forced) return false;
     if (u.fireState==0 && !forced) return false;
     const Unit* t=unit(targetId);
@@ -7647,8 +7651,9 @@ int World::retailMoveFallback(const Unit& u) const {
 std::optional<Order> World::retailBuiltAttack(const Unit& u,int targetId,bool automatic,uint16_t leash,
                                               RetailGroundPoint origin) const {
     const Unit* t=unit(targetId);
-    // 4de530 kind 3 (an attack mission for the pair) -> the closest host test.
-    if (targetId==u.id || !t || !canAttackTarget(u,*t)) return std::nullopt;
+    // 4de530 kind 3 (an attack mission for the pair) -> the closest host test;
+    // none for a type stripped of canattack (4de62d).
+    if (targetId==u.id || !t || attackStrippedAtLoad(*u.type) || !canAttackTarget(u,*t)) return std::nullopt;
     Order attack{Fixed(),Fixed(),targetId};
     attack.goal=true;attack.autoTarget=automatic;attack.issuedTick=tickCounter_;
     if (leash) { attack.chaseLeashed=true;attack.chaseLeash=leash;attack.chaseOrigin=origin; }
@@ -8661,9 +8666,8 @@ bool World::tickAttackWalk(Unit& u) {
 World::SuppressRule World::suppressRule(const UnitType& t, int weaponSlot) {
     if (t.weapons.empty()) return SuppressRule::None;
     // 4c18d7..4c18ff: an armed type with bmcode 0 (+0x24a) and a canbuild menu
-    // (+0x12e > 0) loses canattack at load, and 4de62d then gives no order. No
-    // shipped type is one; a mod's armed factory would be.
-    if (t.buildMovementCode == 0 && !t.buildMenu.empty()) return SuppressRule::None;
+    // (+0x12e > 0) loses canattack at load, and 4de62d then gives no order.
+    if (attackStrippedAtLoad(t)) return SuppressRule::None;
     // 4de530 kind 3 with a point, by the selected slot's weapon (519ac0: a
     // switcher's selected slot, else the first).
     const int n=int(std::min<size_t>(3,t.weapons.size()));

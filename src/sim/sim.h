@@ -3007,6 +3007,15 @@ public:
     // weapon) only where clearableBlockerAtPoint holds.
     enum class SuppressRule : uint8_t { None, Fire, OverBlocker };
     static SuppressRule suppressRule(const UnitType& t, int weaponSlot);
+    // 4c18d7..4c18ff (and the reload path 4c1f6c..4c1f7c): a type with a
+    // weapon, bmcode 0 and a canbuild menu loses canattack (+0x264 0x20) at
+    // load, and the resolver's attack mode (4de530 kind 3, 4de62d) then gives
+    // it no mission: no fire at a point, no attack on a unit, ordered or
+    // automatic (4d7de0). No shipped type is one; a mod's armed factory is.
+    // The weapons still fire through the sweep (40f330 sets slot targets).
+    static bool attackStrippedAtLoad(const UnitType& t) {
+        return !t.weapons.empty() && t.buildMovementCode == 0 && !t.buildMenu.empty();
+    }
     bool clearableBlockerAtPoint(float x, float z) const {
         return clearableBlockerAt(Fixed::fromFloat(x), Fixed::fromFloat(z));
     }

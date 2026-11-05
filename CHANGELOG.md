@@ -187,7 +187,9 @@ their validation reports; both live in [`docs/`](docs/).
   nothing). A flyer scripted the same way now makes its air attack on the spot
   instead of flying to it, and a computer player sees it as attacking.
 - **An armed factory from a mod gets no Attack Ground order**, as in the original
-  game, which takes the attack command away from any factory.
+  game, which takes the attack command away from any factory. It never attacks an
+  enemy unit itself either, ordered or on its own (an Attack on a unit still sends
+  its new units there), though its weapons still fire at what comes in range.
 - **Holding Shift shows a cloaked unit's decloak range.** While Shift is held, each
   of your selected units, and your unit under the pointer, that is cloaked now shows a
   white circle at its decloak distance, as in the original game. A `kamikaze` unit

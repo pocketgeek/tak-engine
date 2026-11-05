@@ -92,6 +92,7 @@ struct Fixture {
         std::filesystem::create_directories(root / "units");
         std::filesystem::create_directories(root / "canbuild" / "builder");
         std::filesystem::create_directories(root / "canbuild" / "fort");
+        std::filesystem::create_directories(root / "canbuild" / "gunner");
         auto fbi = [&](const char* name, const std::string& body, const std::string& weapon = {}) {
             std::ofstream f(root / "units" / (std::string(name) + ".fbi"));
             f << "[UNITINFO]\n{\nunitname=" << name << ";\nobjectname=" << name << ";\n" << body << "}\n" << weapon;
@@ -111,6 +112,9 @@ struct Fixture {
         // An armed factory (no shipped one has a [WEAPON1]; a mod's could).
         fbi("fort", "footprintx=4;\nfootprintz=4;\nmaxdamage=5000;\nsightdistance=400;\nbuilder=1;\nworkertime=10;\n",
             ranged(""));
+        // A mobile one with a build menu and no bmcode (0, a building's): the
+        // load strips its canattack as a factory's (4c18d7..4c18ff).
+        fbi("gunner", mobile + "sightdistance=600;\nbuilder=1;\nworkertime=10;\n", ranged(""));
         const std::string flyer = mobile + "canfly=1;\ncruisealt=80;\nacceleration=0.2;\nbrakerate=0.2;\n";
         fbi("hawk", flyer, ranged(""));
         fbi("hoverer", flyer + "hoverattack=1;\n", ranged(""));
@@ -126,6 +130,7 @@ struct Fixture {
         fbi("hut", "footprintx=2;\nfootprintz=2;\nmaxdamage=1000;\nbuildtime=60;\nbuildcost=10;\n");
         std::ofstream(root / "canbuild" / "builder" / "hut.tdf") << "[Menu]\n{\nPriority=1;\n}\n";
         std::ofstream(root / "canbuild" / "fort" / "soldier.tdf") << "[Menu]\n{\nPriority=1;\n}\n";
+        std::ofstream(root / "canbuild" / "gunner" / "hut.tdf") << "[Menu]\n{\nPriority=1;\n}\n";
         vfs.addLayer(hpi::MountSet(root));
         reg.loadDir(vfs, "units");
         reg.loadBuildTree(vfs, "canbuild");
@@ -674,6 +679,48 @@ static void airUnit(Fixture& f) {
     }
 }
 
+// ---- 8e. an armed type stripped of canattack attacks no unit ---------------------------------
+// 4c18d7..4c18ff clears canattack for a type with a weapon, bmcode 0 and a
+// canbuild menu; the resolver's attack mode (4de62d) then gives no mission,
+// for a click, a raw command, a mission's a NAME and an automatic attack
+// (4d7de0) alike. A factory's attack on a unit stays a rally for its output
+// (the rally rule).
+
+static void strippedAttack(Fixture& f) {
+    std::printf("an armed type stripped of canattack (a NAME, Cmd::Attack, automatic):\n");
+    auto w = makeWorld();
+    std::vector<Placed> p = {
+        {"gunner", 60, 60, 0, "", "a foe"},
+        {"target", 66, 60, 1, "foe", ""},
+        {"fort", 80, 80, 0, "", ""},
+        {"archer", 90, 60, 0, "", "a foe"},
+    };
+    auto m = startMission(f, *w, p);
+    const auto attacking = [&](int id) {
+        const auto& o = w->unit(id)->orders;
+        return std::any_of(o.begin(), o.end(), [](const Order& q) { return q.targetId != 0; });
+    };
+    check(World::attackStrippedAtLoad(*f.t("gunner")) && World::attackStrippedAtLoad(*f.t("fort")) &&
+              !World::attackStrippedAtLoad(*f.t("archer")) && !World::attackStrippedAtLoad(*f.t("tower")),
+          "a weapon, bmcode 0 and a canbuild menu: canattack stripped at load");
+    check(!attacking(p[0].id), "a foe puts no attack on it",
+          std::to_string(w->unit(p[0].id)->orders.size()) + " order(s)");
+    check(attacking(p[3].id), "and still does on an archer");
+    net::Command c;
+    c.kind = net::Cmd::Attack; c.player = 0; c.unitId = p[0].id; c.targetId = p[1].id;
+    sim::applyCommand(*w, f.reg, c);
+    check(!attacking(p[0].id), "Cmd::Attack gives it none either");
+    c.unitId = p[2].id;
+    sim::applyCommand(*w, f.reg, c);
+    const Unit* fort = w->unit(p[2].id);
+    check(fort->orders.empty() && fort->rally.size() == 1 && fort->rally.front().targetId == p[1].id,
+          "a factory's attack on a unit is still its output's rally",
+          std::to_string(fort->orders.size()) + " order(s), " + std::to_string(fort->rally.size()) + " rally");
+    bool automatic = false;
+    for (int t = 0; t < 300; ++t) { tickN(*w, 1); automatic = automatic || attacking(p[0].id); }
+    check(!automatic, "nor does its scan give it one with an enemy in sight");
+}
+
 // ---- 9. s and d ----------------------------------------------------------------------------
 
 static void selectAndDestruct(Fixture& f) {
@@ -954,6 +1001,13 @@ static void shipped(const char* data) {
     sim::setupRegistry(reg, vfs, false);
     const auto* arafly = reg.find("arafly"), *arassh = reg.find("arassh"), *aralode = reg.find("aralode");
     const auto* arakeep = reg.find("arakeep"), *araat = reg.find("araat");
+    {
+        // 4c18d7..4c18ff strips canattack from a type with a weapon, bmcode 0
+        // and a canbuild menu: none shipped is one (merged units and unitscb).
+        std::string stripped;
+        for (const auto& [name, t] : reg.types()) if (World::attackStrippedAtLoad(t)) stripped += " " + name;
+        check(stripped.empty(), "no shipped type loses canattack at load", stripped);
+    }
     std::printf("takx04 (Flying Builder, keeps, towers):\n");
     {
         World w;
@@ -1112,6 +1166,7 @@ int main(int argc, char** argv) {
         clausePoints(f);
         airPoint(f);
         airUnit(f);
+        strippedAttack(f);
         selectAndDestruct(f);
         holds(f);
         setMission(f);

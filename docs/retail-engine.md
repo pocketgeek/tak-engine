@@ -2232,6 +2232,19 @@ Retail has no Attack rally, and a factory gets no order at all there:
   `4df0cb..4df0e9`, and mode 9 QPATROL, `4deb8a..4deba8`; mode 3 has nothing
   alike), and GetBuilt copies only QMove and QPatrol (above). An Attack at a
   point never becomes a retail rally leg.
+* S: the same `canattack` test is the first of mode 3 for a unit target too
+  (`4de623..4de62d`, before the target branch `4de7e6`), and every attack
+  World gives goes through mode 3: a click or `Cmd::Attack` (`521a79`,
+  `4d7a30`), a mission's `a NAME` (`513ec0`) and an automatic attack from a
+  scan or a hit (`4d7de0`, `4d7e46`). So a stripped type never attacks a
+  unit itself; its weapons still fire through the sweep (`40f330` sets slot
+  targets, not missions). Ours: `World::attackStrippedAtLoad` gates
+  `World::attack` (after the producer's rally), `retailIssueAutoAttackAllowed`
+  and `retailBuiltAttack`, as it gates `suppressRule`. For a factory (a
+  producer) a unit attack stays its output's rally (the rally rule, below);
+  a stripped type that holds no rally (a mod's mobile type with a canbuild
+  menu and no `bmcode`, 0 being a building's) gets nothing, where it used to
+  attack. No shipped type is stripped. `mission_orders_test`.
 * S: for an armed repeating mobile builder (Beast Lord: ballistic; Shaman:
   line of sight; Beast Handler: melee) the resolver ignores the repeat:
   SUPPRESS, for melee only over a clearable blocking feature. A plain click
