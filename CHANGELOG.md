@@ -201,6 +201,15 @@ their validation reports; both live in [`docs/`](docs/).
   by itself, and a flyer that lands, or waits, does so with its formation. A flyer
   that has caught up while the formation is still moving circles near it, attacking
   what it finds, until the formation stops.
+- **In Legion pathfinding, an idle unit in a formation that ends up out of its place
+  walks back to it by itself.** This is TAK Engine's own Legion behaviour, matching
+  how a formation re-forms in Retail pathfinding and the original game: when a unit
+  standing in a formation (Alt+number) has been pushed, stepped aside, or has come
+  back from a fight farther from its place than the original game allows, it walks
+  back to its own spot in the formation. If another unit or a building stands on
+  that spot it waits until the spot is free, and if it cannot get there it stays
+  where it stopped instead of trying again and again. Flyers keep to their formation
+  as before, and units in a group (Ctrl+number) are left where they are.
 - **An armed factory from a mod gets no Attack Ground order**, as in the original
   game, which takes the attack command away from any factory. It never attacks an
   enemy unit itself either, ordered or on its own (an Attack on a unit still sends

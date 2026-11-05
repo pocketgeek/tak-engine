@@ -571,6 +571,44 @@ P than the centroid is (with no settled member, the centroid rule stands). A
 dead-end queue is no longer pulled back on itself (`legion_flyers_deadendrejoin`:
 holding 0, no anchored body re-ordered) and a factory's joiner still gathers.
 
+**Formation re-form (fx-legform, 2026-11-05; ours, mirroring Retail).** Retail
+mode walks an idle formation member that has drifted out of its slot back to
+its group with Standby's group check (`407779`, `51d1e0(unit, 1, 2)`,
+Move_Ground_FormationStandby; docs/pathfinding-port.md). Legion's counterpart
+returns it to its own slot instead of the group centre, since every member of a
+formation's move has one:
+* *The slot* (`World::legionFormationSlots_`, hashed, folded only while any
+  member has one): for each ground or boat member of an Alt+N formation, the
+  goal footprint of its plain move while it walks one (`goalPoint`) and the goal
+  its settled arrival completed on once idle (`LegionNavigator::anchorGoal`).
+  Rebuilt each tick before the unit loop (`updateLegionFormationSlots`, one walk
+  of the units, map writes only on change). Any other order -- an attack, a
+  step-out, a build, a factory door clearing -- leaves the slot where it was, so
+  the member comes back from wherever that order left it; a new move (the
+  player's or the AI's) gives it a new slot.
+* *The trigger* runs where Retail's does, at each wake of the member's ground
+  Standby (every 7 + rand(7) ticks; no new draws), with Retail's tolerance
+  measured from the slot (`legionStandbyOutOfSlot`, `src/sim/retailgroup.h`):
+  `(octdist/16)^2/4` against the class's footprint area -- every member's when
+  none of its class moves (level 2 relaxed to 3), the movers' plus its own,
+  halved, while some do -- at least 2. Six 2x2 bodies: 9.8 cells; 120: 44.
+* *The walk* is a plain Legion move to the slot's centre (`World::order`), so it
+  paces, yields and settles as any other; the Standby retires and restarts when
+  the move is done. A body or the ground on the slot (`mobilePlacement`): no
+  walk, the next wake asks again. A member that walked back and still stands out
+  of its slot (Legion settled it short, or the way is shut) gives that slot up
+  until it carries another order: one walk, never a to-and-fro.
+* Flyers keep their flight stations over the ground and are never re-ordered
+  (the W6 rule); Ctrl groups are not formations; the AI's squads are Retail
+  group records only and not Legion formations. A member with a slot is left to
+  the re-form instead of the rest-time rejoin above, which still gathers the
+  members that never moved together (a fresh Alt+N, a factory's joiner).
+* `legion_formationreform`: a member shoved 12 cells (past the 9.8-cell
+  tolerance, inside the W6 reach) walks back once and settles in its slot (the
+  parent never moved it: walks 0, 192 px off); a Ctrl member shoved alike stays;
+  a body on the slot holds it back until it leaves; walled off, it walks once
+  and gives up.
+
 The in-game right-click in Legion mode sends one shared point for ground
 units, boats and hovercraft with footprints up to 8 whose order is not
 queued behind existing orders. Flyers and queued legs keep Retail's per-unit
