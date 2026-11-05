@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -433,6 +434,63 @@ int main(int argc, char** argv) {
             check(lostTargetContinues,"losing the target leaves a Guided shot on its existing XYZ trajectory");
             check(paired && w.stateHash()==peer.stateHash(),
                   "flying-target guidance and loss remain lockstep across paired Worlds");
+        }
+    }
+
+    // ---- 2b.2 guided homing on a carried target -------------------------------
+    {
+        // 52e030 tests only +0x78's alive (0x1000000) and dying (0x1000) bits;
+        // the attach (51b5a0) keeps both, so a target that boards a transport
+        // is still homed on, at its SweetSpot over the host's attach point
+        // (tools/re/probe_guided_projectile.py, carried mode). World passed the
+        // shot's own position for an embarked target and flew it straight on.
+        const sim::UnitType* demon=reg.find("tarfire");
+        const sim::UnitType* prey=reg.find("arasword");
+        const sim::UnitType* roc=reg.find("zonroc");
+        if(!demon || !prey || !roc || demon->weapons.empty()) {
+            std::printf("  (missing guided shooter, target or transport; skipped)\n");
+        } else {
+            sim::World w,peer;
+            sim::MatchConfig cfg;cfg.vfs=&vfs;cfg.mapPath=kMap;
+            cfg.slots={sim::MatchSlot{},sim::MatchSlot{}};
+            cfg.slots[0].team=0;cfg.slots[1].team=1;
+            sim::setupMatch(w,reg,cfg);
+            sim::setupMatch(peer,reg,cfg);
+            w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+            peer.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+            int target=0,peerTarget=0,host=0,peerHost=0;
+            for(auto [world,victim,carrier]:{std::tuple{&w,&target,&host},std::tuple{&peer,&peerTarget,&peerHost}}) {
+                const int shooter=world->spawn(demon,1000,1000,0,0);
+                *victim=world->spawn(prey,1000,1600,0,1);
+                *carrier=world->spawn(roc,1500,1600,0,1);
+                if(auto* u=world->unit(shooter))u->stance=0;
+                world->attack(shooter,*victim,false);
+            }
+            int guard=0;
+            bool paired=true;
+            while(w.projectiles().empty() && guard++<400) {
+                w.tick(1.0f/30.0f);peer.tick(1.0f/30.0f);
+                paired=paired && w.stateHash()==peer.stateHash();
+            }
+            check(!w.projectiles().empty() && w.projectiles().front().guided3d,
+                  "the demon launched a guided shot at the soon-carried target");
+            if(!w.projectiles().empty()) {
+                const auto launch=w.projectiles().front().velocity;
+                const bool boarded=w.embarkInto(target,host) && peer.embarkInto(peerTarget,peerHost);
+                check(boarded,"the target boards the Roc while the shot is in the air");
+                bool homed=false;
+                for(int i=0;i<6 && !w.projectiles().empty();++i) {
+                    w.tick(1.0f/30.0f);peer.tick(1.0f/30.0f);
+                    paired=paired && w.stateHash()==peer.stateHash();
+                    const auto* cargo=w.unit(target);
+                    if(!w.projectiles().empty() && cargo && cargo->embarked())
+                        homed=homed || w.projectiles().front().velocity[0]>launch[0];
+                }
+                check(homed,"a Guided shot keeps homing on a target carried off (toward its host)",
+                      homed ? "" : "flew straight on: the carried target was dropped");
+            }
+            check(paired && w.stateHash()==peer.stateHash(),
+                  "carried-target guidance stays lockstep across paired Worlds");
         }
     }
 

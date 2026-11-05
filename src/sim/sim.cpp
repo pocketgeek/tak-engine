@@ -18908,8 +18908,13 @@ void World::tick(float dt) {
                 continue;
             }
             if(tickCounter_>=p.end) {p.life=0;continue;}
+            // 52e030 steers at a target that is alive (+0x130 0x1000000) and not
+            // dying (0x1000), and tests nothing else: a carried target (its
+            // attach, 51b5a0, keeps both bits; +0x114's carried bits are not
+            // read) is homed on through its SweetSpot over its own +0x68, which
+            // 4dad30 commits at the host's attach point every tick.
             const Unit* target=unit(p.targetId);
-            const auto targetPoint=target && target->alive() && !target->embarked() ?
+            const auto targetPoint=target && target->alive() ?
                 queryUnitScriptPoint(p.targetId,true) : p.position;
             RetailGuidedShot state{p.position,p.velocity,p.angles};
             const uint32_t flags=(p.wsrc->unitsOnly?0x800u:0u)|
