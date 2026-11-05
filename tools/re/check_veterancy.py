@@ -4,8 +4,10 @@
 Three native pieces, each against the port's --veterancy rows:
 
   * the kill credit of the death routine 512ae0: its death-kind switch
-    (512b71, table 512eb8/512ec4) through the score and credit gates to
-    512d2a, run natively on a synthetic victim. Every death kind 0..15, a
+    (512b71, table 512eb8/512ec4) through the kill count, score and credit
+    gates to 512d2a, run natively on a synthetic victim: the hitter player's
+    kill count (record +0xa0) and score (+0xa4, off when game +0x3070 & 4),
+    and the killer's experience. Every death kind 0..15, a
     finished or unfinished victim (+0x108), hitter player (+0xfc, 10 = none)
     against owner (+0xfd), a killer at +0xf8 or none, the victim type's
     experiencepoints (+0x1c2) and the killer's experience (+0xf0) near the
@@ -47,8 +49,11 @@ def main():
     for player in range(11):   # the per-player totals 512c8b adds the victim's value into
         put(game + 0x2510 + player * 0x110, totals + player * 0x20)
 
-    def credit(kind, finished, hitter, owner_player, has_killer, points, xp):
+    def credit(kind, finished, hitter, owner_player, has_killer, points, xp, score_off):
         p.uc.mem_write(victim, bytes(0x138)); p.uc.mem_write(killer, bytes(0x138))
+        for player in range(11):   # the hitter's kill count (+0xa0, word) and score (+0xa4)
+            put(game + 0x24a4 + player * 0x110, 0); put(game + 0x24a8 + player * 0x110, 0)
+        put(game + 0x3070, 4 if score_off else 0, 'B')
         put(victim + 0xb4, victim_type); put(victim + 0xb8, owner); put(owner + 0xeb, owner_player, 'B')
         put(victim + 0x116, kind << 4, 'B'); put(victim + 0x108, 0.0 if finished else 0.25, 'f')
         put(victim + 0xfc, hitter, 'B'); put(victim + 0xfd, owner_player, 'B')
@@ -62,7 +67,8 @@ def main():
         p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
         p.uc.emu_start(0x512b71, 0x512d2a, count=400)
         got = get(killer + 0xf0, 'i')
-        return got if has_killer else xp
+        kills = get(game + 0x24a4 + hitter * 0x110, 'H'); score = get(game + 0x24a8 + hitter * 0x110, 'i')
+        return '%d %d %d' % (got if has_killer else xp, kills, score)
 
     def call_stub(code):
         p.uc.mem_write(stub, code + b'\xc3')
@@ -101,9 +107,10 @@ def main():
     for kind, finished, (hitter, owner_player), has_killer in itertools.product(
             range(16), (0, 1), ((0, 1), (1, 0), (2, 2), (10, 3), (0, 0), (7, 9)), (0, 1)):
         points = rng.choice(shipped); xp = rng.choice((0, 5, 666, 0x7fffffff - 3, -40))
-        rows.append('c %d %d %d %d %d %d %d' % (kind, finished, -1 if hitter == 10 else hitter, owner_player,
-                                              has_killer, points, xp))
-        expected.append('%d' % credit(kind, finished, hitter, owner_player, has_killer, points, xp))
+        score_off = rng.choice((0, 0, 1))
+        rows.append('c %d %d %d %d %d %d %d %d' % (kind, finished, -1 if hitter == 10 else hitter, owner_player,
+                                                 has_killer, points, xp, score_off))
+        expected.append(credit(kind, finished, hitter, owner_player, has_killer, points, xp, score_off))
     credits = len(rows)
     for _ in range(400):
         points = rng.choice(shipped + (0, -5))
@@ -132,9 +139,11 @@ def main():
     for row, got, want in zip(rows, actual, expected):
         if got != want:
             raise AssertionError('%s\n  port   %s\n  native %s' % (row, got, want))
-    credited = sum(1 for r, w in zip(rows[:credits], expected[:credits]) if w != r.split()[-1])
-    print('veterancy: %d kill-credit cases (%d credited), %d getLevel/getMult, %d setLevel rows match'
-          % (credits, credited, levels, len(rows) - credits - levels))
+    credited = sum(1 for r, w in zip(rows[:credits], expected[:credits]) if w.split()[0] != r.split()[-2])
+    kills = sum(1 for w in expected[:credits] if w.split()[1] != '0')
+    scored = sum(1 for w in expected[:credits] if w.split()[2] != '0')
+    print('veterancy: %d kill-credit cases (%d credited, %d kills counted, %d scored), %d getLevel/getMult, '
+          '%d setLevel rows match' % (credits, credited, kills, scored, levels, len(rows) - credits - levels))
     print(uncredited_deaths())
 
 
