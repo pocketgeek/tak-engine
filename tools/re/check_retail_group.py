@@ -41,6 +41,14 @@ helpers in src/sim/retailgroup.h and retailGroundFormation:
              (retailGuardGroupCheck: 51d1e0(unit, 1, 4), rand(4) -> 50c480
              and 4d6a50(unit, 0), the Move_Ground_Formation push at level -3
              with response mode 0, rand(10)), stopped at its stage switch
+  carried    the tick's member filter (51ba44..51ba8f) with passengers:
+             carrier +0xa8 set, every +0x114 bit, BeCarried's flags 0x24;
+             it reads none of them, so a passenger is a member at its +0x68
+  becarried  the attach 51b4f0 -> 51b5a0, which for a live owner (+0xea 1
+             or 2) and a carrier that is no airbase calls 4d49f0: the queue
+             cleared (4d6a50(unit, 0)) and BECARRIED put in front (4d7750);
+             BeCarried's row (5eb69f: handler 4024a0, flags 0x24) and the
+             handler itself, which never runs a group check (51d1e0)
 
 Observation only: nothing from the binary is copied into the engine.
 
@@ -188,6 +196,8 @@ class Harness:
         self.put('f', a + 0x108, 0.0 if u['complete'] else 0.5)
         self.put('I', a + 0x130, u['ustate']); self.put('I', a + 0xb4, t); self.put('I', a + 0xb8, PLAYER)
         self.put('I', a + 0xc8, u['group'])
+        if u.get('carrier'):   # aboard: the carrier pointer and every +0x114 bit
+            self.put('I', a + 0xa8, u['carrier']); self.uc.mem_write(a + 0x114, b'\xff')
         self.put('i', t + 0x162, u['type_max']); self.put('i', t + 0x16e, u['water']); self.put('i', t + 0x172, u['road'])
         self.uc.mem_write(t + 0x194, struct.pack('<h', u['depth'])); self.put('I', t + 0x260, u['tflags'])
         return a
@@ -265,7 +275,8 @@ def main():
     # Patrol (403600) goes on at 40388d (the flag's rand(10)) once its group
     # checks pass, as Move_Ground at 402d53.
     h.uc.hook_add(1 << 2, h._stop, begin=0x40388d, end=0x40388d)
-    stats = dict(notified=0, slowed=0, reform=0, wait=0, cancel=0)
+    stats = dict(notified=0, slowed=0, reform=0, wait=0, cancel=0, carried=0)
+    crng = random.Random(0x51ba44)
     # 51b890 tick
     for case in range(a.cases):
         h.events.clear()
@@ -278,6 +289,11 @@ def main():
             h.load_record(g, recs[g])
         n = rng.randrange(1, 14)
         units = [random_unit(rng, rng.choice(groups + [0])) for _ in range(n)]
+        # Passengers, from their own stream so the other cases stay as they were.
+        for u in units:
+            if crng.random() < 0.3:
+                u['carrier'] = UNITS + 60 * STRIDE; u['flags'] = 0x24; u['mission'] = True
+                stats['carried'] += eligible(u) and u['group'] in groups
         # cluster a group so the straggler test fires
         for u in units[: n // 2]: u['fixed'] = tuple(((300 + rng.randrange(40)) << 16) for _ in range(3))
         for i, u in enumerate(units): h.load_unit(i, u)
@@ -693,8 +709,87 @@ def main():
         if key: stats[key] = stats.get(key, 0) + 1
         counts['patrol'] += 1
     ours.stdin.close(); ours.wait()
+    counts['becarried'] = becarried()
     print('PASS: %s; %s' % (', '.join('%s %d' % kv for kv in counts.items()),
                             ', '.join('%s %d' % kv for kv in stats.items())))
+
+
+def becarried():
+    """The attach and BeCarried, in an emulator of their own (the attach's
+    ground, sound, packet and selection calls are observation boundaries)."""
+    p = Icd(); uc = p.uc; events = []
+    def record(name, nargs, ret=0):
+        def f(uc_, sp):
+            args = struct.unpack('<%di' % nargs, uc_.mem_read(sp, 4 * nargs)) if nargs else ()
+            events.append((name, uc_.reg_read(UC_X86_REG_ECX)) + tuple(args)); return nargs, ret
+        return f
+    for addr, nargs in ((0x5065f0, 1), (0x506630, 1), (0x421e10, 2), (0x50a9c0, 3), (0x5207d0, 1)):
+        p.hooks[addr] = record('boundary', nargs)
+    p.hooks[0x4e6730] = lambda uc_, sp: (2, struct.unpack('<I', uc_.mem_read(sp, 4))[0])
+    p.hooks[0x4e8030] = record('send', 1)
+    p.hooks[0x4d6a50] = record('cancel', 2)
+    p.hooks[0x4d7750] = record('push', 2)
+    p.hooks[0x4d6a10] = record('sleep', 1)
+    p.hooks[0x519b70] = record('weapons', 1)
+    p.hooks[0x51d1e0] = record('groupcheck', 3)
+    alloc = HEAP + 0xa0000
+    p.hooks[0x4eb9e0] = lambda uc_, sp: (0, alloc)
+    def name(uc_, sp):
+        text = struct.unpack('<I', uc_.mem_read(sp, 4))[0]
+        events.append(('name', bytes(uc_.mem_read(text, 16)).split(b'\0')[0].decode()))
+        return 1, uc_.reg_read(UC_X86_REG_ECX)
+    p.hooks[0x4d4bf0] = name
+    def ctor(uc_, sp):
+        this = uc_.reg_read(UC_X86_REG_ECX); uc_.mem_write(this + 4, b'\1'); return 12, this
+    p.hooks[0x4d6c40] = ctor
+    p.freeze_hooks()
+    def put(fmt, addr, *v): uc.mem_write(addr, struct.pack('<' + fmt, *v))
+    def get(fmt, addr): return struct.unpack('<' + fmt, uc.mem_read(addr, struct.calcsize(fmt)))[0]
+    # BeCarried's row: handler, flags (+0x11) and name (S, read off .rdata).
+    row = 0x5eb69f
+    assert get('I', row + 4) == 0x4024a0 and get('I', row + 0x11) == 0x24
+    assert bytes(uc.mem_read(get('I', row + 0x15), 10)) == b'BeCarried\0'
+    put('I', 0x62d55c, GAME)
+    cases = 0
+    rng = random.Random(0x4d49f0)
+    for case in range(64):
+        uc.mem_write(UNITS, bytes(4 * STRIDE)); uc.mem_write(TYPES, bytes(0x600)); uc.mem_write(MOVERS, bytes(0x80))
+        put('I', GAME + 0x14e84, UNITS); put('I', GAME + 0x14e88, UNITS + 3 * STRIDE)
+        passenger, carrier = UNITS + STRIDE, UNITS + 2 * STRIDE
+        kind = rng.choice((1, 2, 3)); airbase = rng.random() < 0.25
+        uc.mem_write(PLAYER + 0xea, bytes([kind])); put('I', PLAYER, 1)
+        for i, u in ((1, passenger), (2, carrier)):
+            put('H', u + 2, i); put('I', u + 0x130, 0x1000000); put('I', u + 0xb8, PLAYER)
+            put('I', u + 0xb4, TYPES + i * 0x300); put('I', u + 8, MOVERS + i * 0x40)
+        put('I', TYPES + 2 * 0x300 + 0x260, 0x200 if airbase else 0)
+        events.clear()
+        _, err = p.call(0x51b4f0, (passenger, carrier, -1, 0, 1))
+        assert not err, err
+        assert get('I', passenger + 0xa8) == carrier and get('I', carrier + 0xac) == passenger
+        kinds = [e[0] for e in events]
+        want = kind in (1, 2) and not airbase
+        if want:
+            cancel = [e for e in events if e[0] == 'cancel']
+            assert cancel and cancel[0][2:] == (passenger, 0), events
+            assert ('name', 'BECARRIED') in events and 'push' in kinds, events
+            assert kinds.index('cancel') < kinds.index('push')
+        else:
+            assert 'push' not in kinds and 'cancel' not in kinds, events
+        # The handler while carried (stages 0 and 1), and once set down.
+        mission = HEAP + 0xb0000
+        for carried, stage in ((True, 0), (True, 1), (False, 0), (False, 1)):
+            uc.mem_write(mission, bytes(0x80)); uc.mem_write(mission + 5, bytes([stage]))
+            put('I', passenger + 0xa8, carrier if carried else 0)
+            events.clear()
+            r, err = p.call(0x4024a0, (passenger, mission, 0))
+            assert not err, err
+            kinds = [e[0] for e in events]
+            assert 'groupcheck' not in kinds
+            if not carried: assert r == 5 and not kinds
+            elif stage == 0: assert r == 1 and kinds == ['weapons'] and events[0][1:] == (passenger, 3), events
+            else: assert r == 2 and kinds == ['sleep'] and events[0][1:] == (mission, 10), events
+        cases += 1
+    return cases
 
 
 if __name__ == '__main__': main()

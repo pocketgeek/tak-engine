@@ -19,6 +19,11 @@ enum class RetailGroupClass : uint8_t { Ground=0, Boat=1, Flyer=2 };
 
 struct RetailGroupPoint { int32_t x=0, y=0, z=0; };
 
+// BeCarried's row flags (descriptor 5eb69f, +0x11 at 5eb6b0): 0x24, kept
+// through a clear (4) and neither moving (0x1000000) nor paced (0x2000000).
+// A passenger's mission while it rides (51b5a0 -> 4d49f0 puts it in front).
+inline constexpr uint32_t kRetailBeCarriedFlags = 0x24;
+
 struct RetailGroupAggregate {
     int32_t count=0, area=0;
     RetailGroupPoint centre;   // retained when a later tick has no members
