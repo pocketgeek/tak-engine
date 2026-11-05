@@ -122,6 +122,30 @@ int main(int argc,char** argv) try {
             check(lost>=85 && lost<=115,"the death weapon was missing or scaled by the dying unit's veterancy");
             check(w.unit(v)->lastHitBy==old && w.unit(v)->lastHitPlayer==2,"the death weapon named a hitter");
         }
+        // 529c10 (529c4c..529c84): on a nosealeveltrigger map an impact that
+        // struck no unit, in a cell whose highest corner is below sea level,
+        // does nothing; a death blast is such an impact. Land, an ordinary
+        // map and a struck unit keep their damage.
+        auto blast=[&](bool trigger,bool water,bool direct) {
+            World w;w.setPlayerCount(3);
+            std::vector<uint8_t> heights(64*64,50);
+            if (water) for (int z=20;z<30;++z) for (int x=20;x<30;++x) heights[size_t(z)*64+x]=10;
+            w.setTerrain(heights,64,64,30);
+            w.setNoSeaLevelTrigger(trigger);
+            const int v=w.spawn(&t,420,400,0,1);
+            if (direct) {
+                RetailReplayProbe::hit(w,bomb.explodeAs,420,400,0,0,w.unit(v));
+            } else {
+                const int b=w.spawn(&bomb,400,400,0,0);
+                w.unit(b)->hp=Fixed();w.unit(b)->deathType=1;
+                w.tick(1.f/30);
+            }
+            return t.maxHp-w.unit(v)->hp.floorInt();
+        };
+        check(blast(true,true,false)==0,"a death blast in water hurt a unit on a nosealeveltrigger map");
+        check(blast(false,true,false)>0,"a death blast in water did nothing on an ordinary map");
+        check(blast(true,false,false)>0,"a death blast on land did nothing on a nosealeveltrigger map");
+        check(blast(true,true,true)>0,"a shot that struck a unit in water did nothing on a nosealeveltrigger map");
     }
     {
         // 513130: Kill ignores its arguments and kills every unit, kind 10,

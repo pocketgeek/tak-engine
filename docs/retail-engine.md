@@ -969,8 +969,13 @@ Still deviating:
   and stores a float. World's `hurt` computes base x attack / armour x fraction
   in float, so the result can differ by one HP at a rounding edge.
 - `529c10` also skips damage for a shot with no player (+0x92 == 10) or whose
-  player record's +0xea is 3. On a `waterdoesdamage` map (rules +0xd3d) it drops
-  an impact in water that struck no unit. None of these is ported.
+  player record's +0xea is 3 (not ported). On a `nosealeveltrigger` map (rules
+  +0xd3d, read at `4c8345`; `waterdoesdamage` is +0xd41) it drops an impact
+  that struck no unit in a cell whose highest corner (`50e660`'s +5) is below
+  sea level: only the shot's retirement, no sound, explosion or damage
+  (`529c4c..529c84`; E, `tools/re/check_impact_water.py`, 128 cases). Ported
+  in `World::applyHit` (gap hunt 6), so a death blast in such water does
+  nothing; no shipped map sets the key. Test: `kill_credit_test`.
 - The feature half keeps World's radius floor of 8 px and runs before the units
   rather than cell by cell.
 - World detonates death weapons after the whole unit pass; retail does so

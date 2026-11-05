@@ -6429,6 +6429,18 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
                      Unit* primary, std::optional<std::array<int32_t,3>> position,
                      std::optional<std::array<int32_t,3>> impact, int slot) {
 
+    // 529c10 (529c4c..529c84): on a nosealeveltrigger map (rules +0xd3d) a
+    // shot that struck no unit, in a map cell whose highest corner (50e660's
+    // +5) is below sea level, does nothing at all: no sound, no explosion, no
+    // damage, no outcome for its shooter. A death blast in water is one.
+    if (noSeaLevelTrigger_ && !primary && !heights_.empty() && hW_ > 0) {
+        const auto at = impact ? *impact : position ? *position
+            : std::array<int32_t,3>{Fixed::fromFloat(hx).v, 0, Fixed::fromFloat(hz).v};
+        const int cx = at[0] >> 20, cz = at[2] >> 20;
+        if (cx >= 0 && cz >= 0 && cx < hW_ && cz < hH_ &&
+            uint8_t(cellHeightRange(size_t(cz) * size_t(hW_) + size_t(cx)).second) < uint8_t(seaLevel_))
+            return;
+    }
     const size_t hitIndex = hits_.size();
     // Record the impact for the viewer (hit sound / effect).
     {
