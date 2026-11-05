@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare MissionScript::orderPoint with the point retail's order parser
-0x513fb0 builds for `m X Y`, `ma X Y`, `p X Y T` and `u X Y` (and the mobile
-`b TYPE N X Y`), and check that 4c8710 sets the scale it multiplies by.
+0x513fb0 builds for `m X Y`, `ma X Y`, `p X Y T`, `u X Y` and `a X Y` (and the
+mobile `b TYPE N X Y`), and check that 4c8710 sets the scale it multiplies by.
 
 Retail runs natively: the clause cut, the handlers' ftol(X * 65536.0) (5d3d54)
 and the multiply by scenario +0xdc5. Hooked: sscanf (5d46f0; the CRT's float
@@ -107,7 +107,7 @@ def main():
     values += ['%.*f' % (rng.choice((0, 1, 2, 4, 6)), rng.uniform(-50, 600)) for _ in range(40)]
     cases = []
     for scale in (16, 1):
-        for form in ('m', 'ma', 'p', 'u', 'b'):
+        for form in ('m', 'ma', 'p', 'u', 'b', 'a'):
             for i, x in enumerate(values):
                 z = values[(i * 7 + 3) % len(values)]
                 clause = {'p': f'p {x} {z} 4', 'b': f'b HUT 1 {x} {z}'}.get(form, f'{form} {x} {z}')
@@ -119,7 +119,7 @@ def main():
     bad = [(c[0], c[1], c[4], p) for c, p in zip(cases, port) if c[4] != p]
     if bad:
         raise AssertionError({'mismatches': len(bad), 'first': bad[:5]})
-    print(f'PASS: +0xdc5 is 16 with [Map Data], 1 without; {len(cases)} m/ma/p/u/b points match retail '
+    print(f'PASS: +0xdc5 is 16 with [Map Data], 1 without; {len(cases)} m/ma/p/u/b/a points match retail '
           f'(16.16 raw, both scales)')
 
 

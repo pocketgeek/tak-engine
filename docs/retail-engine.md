@@ -2194,6 +2194,55 @@ queue never inherits a plan the player can no longer see. Tests: `production_tes
 plans, attack-then-move, replace/Stop/hash) and `conjure_test` (the shipped
 Zhon builders through the command path).
 
+**Armed ATTACK at a point on a producer (checked 2026-11-04, static only).**
+Retail has no Attack rally, and a factory gets no order at all there:
+
+* S: at type load `canattack` (UnitDef `+0x264` bit 0x20) is set from the
+  first weapon slot (`+0x1aa != 0`, `4c1672..4c1698`), not from the FBI's
+  `canattack`. `+0x260` bit 0x10000 is set when a `WEAPON%i` section loads
+  (`4c15b2..4c1609`), and `4c18d7..4c18ff` then clears `canattack` for a type
+  with a weapon, `bmcode` 0 (`+0x24a`, a building) and a canbuild menu
+  (`+0x12e > 0`); the reload path `4c1f6c..4c1f7c` does the same, and
+  `canguard` (bit 0x40) is cleared alike (`4c1905..4c1925`). So no
+  unit-producing structure has `canattack`, armed or not (the Barracks'
+  `canattack=1` has no effect), and no shipped structure with a canbuild list
+  has a `[WEAPON1]` block (merged units and unitscb).
+* S: the ATTACK button is enabled only when a selected unit has `canattack`
+  (`4b0429..4b0438` sets the summary's `+0x1d`, `4b0597..4b05b6` picks state 0
+  or 2), so with only factories selected it is disabled (I: it cannot be
+  armed). The cursor selector returns Normal without `canattack`
+  (`4dd8ac..4dd8b6 -> 4de4e0`, 0x13), and an armed click under Normal issues
+  nothing and stays armed (`527dd0`); neither the aggregator (`521cd0`) nor the
+  selector tests repeat production.
+* S: the mode-3 resolver (`4de623`) returns no mission without `canattack`
+  (`4de62d -> 4de6ed`); its point branch (`4de65f..4de7e3`) has no structure,
+  producer or queued kind (mode 2 gives QMOVE to a unit with no mover,
+  `4df0cb..4df0e9`, and mode 9 QPATROL, `4deb8a..4deba8`; mode 3 has nothing
+  alike), and GetBuilt copies only QMove and QPatrol (above). An Attack at a
+  point never becomes a retail rally leg.
+* S: for an armed repeating mobile builder (Beast Lord: ballistic; Shaman:
+  line of sight; Beast Handler: melee) the resolver ignores the repeat:
+  SUPPRESS, for melee only over a clearable blocking feature. A plain click
+  calls `4d6a50(unit, 0)` (`4d79b9`; I: that clears the mission list, so the
+  repeating MobileBuild and its repeat end and the builder fires). An order with
+  0x4 set and 0x8 clear is skipped for a builder whose MobileBuild quantity is
+  at least 10,000,000 (`52162d..5216c5`, the `cmp [edi+0x52], 0x989680`; I: a
+  Shift order is dropped, a Ctrl order goes ahead of the build). An unarmed
+  repeating builder (Beast Tamer) has no `canattack`: Normal, nothing.
+
+Ours keeps the rally rule (owner, C9): a factory's Attack-at-a-point rally is
+ours (retail gives nothing), and for a repeating mobile builder retail's
+SUPPRESS is overridden on purpose: armed or not, a factory or a repeating
+builder shows the Attack cursor and gets one `Cmd::AttackMove`, which puts a
+fight leg on its rally (`World::setRally`, `markFightLeg`) and leaves it
+producing; `applyCommand` refuses `Cmd::AttackGround` while `repeatType` is
+set, plain, Shift or Ctrl. In a mixed selection the other units fire at the
+point. A click inside the factory's own footprint hovers the factory, which is
+left out as in retail, so it gets nothing. Tests: `click_input` (C1 rally
+holders: factory alone, factory + archer, repeating Beast Lord and Beast
+Tamer, the footprint click; applied to the sim) and `conjure_test`
+(AttackGround refused, hash and `repeatType` unchanged).
+
 ### Legion: a spot of its own (ours, not retail, protocol 295)
 
 Retail's ground PARK steers to the ring's mid-radius along the unit's own
@@ -5994,10 +6043,34 @@ Retail stamps an ally's units into the *local* plane on each machine; our
 every-plane-on-every-peer sim gives each ally the same union. The client's
 fog display ORs the local player's allies' planes (`captureFog`), which is
 now exactly the local plane. Not ported: the in-game ShareMapAndLOS toggle
-(no Diplomacy checkbox here). Inferred, not read (I): the revealer is still
-kept only for a human owner's dying unit and its "fewer than 20" cap counted
-by that owner, not per receiving plane, so a computer ally's dying scout
-leaves every plane at once.
+(no Diplomacy checkbox here).
+
+**Death sight** (E, `tools/re/check_death_sight.py`, 2026-11-04). The unit
+retire `0x512ae0` compares the owner's index (record `+0xeb`) with
+`game+0x306f`: equal, it calls `0x4c6750(unit, 0x3c)`; otherwise
+`0x4c6800(sight, 0, 0)` removes the footprint at once, whatever `0x306e`
+holds. `0x306e` is the local player and `0x306f` the viewed one (S): both are
+set to the local player at start (`0x527018`/`0x527024`,
+`0x4f6504..0x4f651d`, `0x4f7704`/`0x4f7717`), and only the watch-player path
+`0x4257d0` moves `0x306f` alone, to any present slot of kind 1, 2 or 3. So
+each machine keeps revealers only for its own human's dying units: a
+computer's never, and a human ally's not on the other ally's machine.
+`0x4c6750` runs only with LosOn on (`[[0x62d558]+8]+0x15`; off, it neither
+keeps nor removes). Its list is one global per machine (count `0x62da20`,
+32-byte slots at `0x62d7a0`): below 20 it copies the unit's sight object
+(`unit+0x84`, which keeps the plane `0x4c66b0` stamped it into), sets the
+slot's expiry (`+4`) to tick (`game+0x19f44`) + 60 and clears `unit+0xa3`;
+at 20 the footprint is removed at once, nothing evicted. `0x4c6b30`, once a
+tick (`0x526553`, S), removes every slot whose expiry is before now (expiry
+== now stays) and compacts the list in order. Since only the viewed player's
+units enter a machine's list, its 20 is one owner's. Ported in
+`World::updateViewCounts`: 20 per owner, past the cap at once, `tick + 60`
+kept while `expiry >= tick`, in the planes the footprint was counted in.
+Widened with D2: a human owner keeps one as retail, and so does a computer
+whose footprint was shared into another plane (it has a non-passive ally);
+a lone computer keeps none, as retail, and a passive neutral never.
+`shared_sight` (`death_revealer_*`) covers it. Not ported: LosOn off's
+no-op.
 
 **Passive neutrals in campaigns** (S, 2026-11-04; owner decision of
 2026-11-03). A mission's villagers and wildlife (`Player%i=passive neutral`,
@@ -6019,8 +6092,8 @@ computer out both ways. The only other writers of `+0xf7[]`/`+0x101[]`
 campaign the human never sees through a passive neutral, it never sees
 through the human, and neither explores for the other (`0x4c6800` follows the
 same planes). Its dying units get no revealer: `0x512ae0` calls `0x4c6750`
-only when the owner's index equals `game+0x306f` (I: the local-player byte
-beside `0x4c66b0`'s `0x306e`). Ported: `setupMission` sets
+only when the owner's index equals `game+0x306f` (S: the viewed player,
+the local one in play; see Death sight above). Ported: `setupMission` sets
 `Player::passiveNeutral` (hashed) for every record but the human without an
 effective `strategic` (the same test as the path-budget class);
 `viewShareMask` gives such a player its own bit only and leaves it out of
@@ -6333,7 +6406,7 @@ the order -- where retail shows TooFar for a tower out of reach and for any
 unit over a friendly one -- and TooFar for an attacker given nothing -- where
 retail shows Attack for an anti-air mover over ground. A rally holder keeps
 our attack-move rally. Fight-move (F) stays our attack-move. A campaign
-`a X Y` still walks into reach and fights (`mission.cpp`).
+`a X Y` goes through the same `World::suppress` (see "Mission order strings").
 
 ## Mission order strings (icd 0x513fb0, 2026-10-30)
 
@@ -6403,9 +6476,18 @@ resolve only in an `InitialMission`. Ours registered a unit under the name an
   (`409a50`), 0x08 its unit's listeners let go (`519a60`). No watched unit:
   done at once. Ours released when any enemy came within sight and ignored
   NAME.
-- `a` (`5143b5`): `" %f %f"` is `4de530` kind 3 with a point (SUPPRESS for a
-  ranged ground unit, AIRSTRIKE / AIRTOGROUNDHOVER / AIRTOGROUND for a flyer;
-  a melee unit only with a feature there). Else `" %[a-zA-Z0-9_.]"`: a unit
+- `a` (`5143b5`): `" %f %f"` is `4de530(out, 3, unit, 0, &point, 0)`, the
+  click's kind 3 with a point (SUPPRESS for a ranged ground unit or a tower,
+  AIRSTRIKE / AIRTOGROUNDHOVER / AIRTOGROUND for a flyer, nothing for a
+  `toairweapon`; a melee unit only with a feature there), pushed by `4d78a0`
+  with the queue flag 1. E (`tools/re/check_mission_attack_point.py`): the
+  point is (`ftol(X*65536)` * s, 0, `ftol(Y*65536)` * s) with s the scenario's
+  `+0xdc5` (`513fd6`), which is 16 for an `.ota` with a `[Map Data]` section
+  (`4c86eb`; 1 without, `4c8748`; S) and all 74 shipped missions have one, so
+  X*16, Y*16 px with no half cell; `m X Y` (kind 2), `p X Y [T]` (kind 9)
+  and `u X Y` (kind 5) scale the same way (E). When the
+  resolver gives no order the clause pushes nothing and the next clause
+  still reads (E). Else `" %[a-zA-Z0-9_.]"`: a unit
   type (`0x515ac0`) pushes ATTACKUTYPE, else the named unit gets kind 3.
   AttackUType (`401580`): stage 0 fails without a first weapon (UnitDef +0x264
   & 0x20, set from weapon slot 0 at `0x4c1672`), else sleeps `rand(90)+1`;
@@ -6450,7 +6532,8 @@ puts a type's footprint corner at the cell, ((X*2 + footprintx) << 19, then
 `5085c0`, S). Ours used the cell centre (X*16+8) for `m`/`ma`/`p`/`u` through
 0.9.19; `MissionScript::orderPoint` is retail's for them and `b`, the scale
 from the header's `[Map Data]` (`mission_orders_test` points,
-`tools/re/check_mission_points.py`). `a X Y` still uses the cell centre. The
+`tools/re/check_mission_points.py`), and for `a X Y`, whose SUPPRESS order
+`check_mission_attack_point.py` also checks. The
 shipped strings hold 1160 `m`, 248 `ma`, 3480 `p` and 81 `u` points in 69
 missions, all whole numbers, so there the change is the half-cell shift alone.
 
@@ -6534,8 +6617,11 @@ passes r 0 (S, scan of the 153 constant `SetTrigger` calls).
 `MoveUnitToRadius` and `Unit/AnyUnitPasses{X,Z}` already used retail's cells.
 
 When the parser has pushed a mission it clears the unit's selectable bit 0x20,
-and unless the last of them was a patrol, an attack on the ground, `s` or `d`
-it appends MAKESELECTABLE (`514a7d`): a player's unit under a script cannot be
+and unless any of them was a patrol, an attack on the ground that got an order,
+`s` or `d` it appends MAKESELECTABLE (`514a7d`; `[ebp-0x20]`, set by those
+clauses at `5143ad` / `51443f`, is never cleared during the parse; E: a given
+`a X Y` and a `p X Y` set it, an `m X Y` and a `u X Y` do not; `a NAME` and
+`a TYPE` do not set it): a player's unit under a script cannot be
 selected until its script is done.
 
 **Ours (0.9.12).** `MissionScript::applyOrders` reads clauses as above, with
@@ -6554,8 +6640,15 @@ holds `v`, and `World::embarkInto`, `scriptStandingOrder` and
 as retail's (class 0x13, its descriptor flags, never 0x2000), so it counts the
 unit busy. `mission_orders_test` (fixtures, and `--data` on takx04 and takx07)
 and `ambush_test` cover it; a 30-second run of all 74 shipped missions loads and
-runs every one. Not ported: firing at the ground (`a X Y` walks the unit until
-the point is in its weapon's reach), the patrol's time, the selectable bit,
+runs every one. `a X Y` (since 0.9.20) is `World::suppress` at X*16, Y*16
+(`MissionScript::orderPoint`) with
+the queue flag, the click's order; the Retail AI reads a head SUPPRESS as
+row `0x5eb8b8` (class 1, 0x1000410), and a flyer's air attack at the point as
+its row less the target bit the ctor clears (`4d6d66`): AIRSTRIKE class 2,
+0x1000400; AIRTOGROUNDHOVER and AIRTOGROUND class 1, 0x1000000 (E,
+`tools/re/check_air_point_mission.py`). A kamikaze type's ATTACK_KAMIKAZE from
+the resolver is not ported (no shipped use). `m`, `p`, `u` and `b` take the
+same `orderPoint` (since 0.9.20; `m`, `p` and `u` took the cell centre, X*16+8). Not ported: the patrol's time, the selectable bit,
 BuildWeapon and resurrect; SetMission's owner test (`0x4d37be`: a player of
 kind 1 or 2 only) is not applied.
 
@@ -6585,6 +6678,12 @@ The order itself is read stage by stage in "Fire at a point: SUPPRESS" (on
 `fx-clicks`). For the port the details below were read again in the code (S);
 none was emulated (no E). What World does differently is marked I.
 
+- **S, canattack.** The resolver gives nothing without `canattack`
+  (`4de62d -> 4de6ed`), which load clears for an armed type with `bmcode` 0
+  (`+0x24a`, read at `4c0057`) and a canbuild menu (`4c18d7..4c18ff`). Ours:
+  `World::suppressRule` answers None for such a type, so neither a click, a
+  `Cmd::AttackGround` nor a mission's `a X Y` puts SUPPRESS on an armed
+  factory (no shipped one; a mod's). `mission_orders_test`.
 - **S, resolver** `4de65f..4de7a6`: the selected slot's weapon (`519ac0`: a
   switcher's selected slot, else the first present). `+0xc8` 0x4000
   (toairweapon): no order; a flyer (`+0x260` 0x800) goes to the airstrike
@@ -6643,8 +6742,9 @@ Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
   never goes negative (readiness `52fff0` asks for the cost). World's
   `manaFallback` follows the script release (`tickScriptWeapon`) and every
   non-script shot; `fire` pays as `4010d0` and uses the divided cost, as does
-  readiness. `tools/re/check_mana_fallback.py` compares 614 fixtures with the
-  native routine. Until 2026-11-04 World had no fallback (a player's switcher
+  readiness. `tools/re/check_mana_fallback.py` compares 1466 fixtures with
+  the native routine, 852 of them on `5193c0`'s level path (`+0xf4` 0: the
+  experience over experiencepoints). Until 2026-11-04 World had no fallback (a player's switcher
   waited for mana, an AI's dropped only when the weapon sweep `40f411` next
   visited it), a script release took mana below zero and the cost ignored the
   veteran multiplier.
@@ -6727,7 +6827,7 @@ Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
   a dead or dying one, or a zero turn angle; World did so only after a turn
   until 2026-11-04. The probe checks all four cases against the native
   routine.
-- Campaign `a X Y` still walks into reach and fights (`mission.cpp`).
+- Campaign `a X Y` gives this order too (`mission.cpp`, `mission_orders_test`).
 
 `suppress_test` checks it in both pathfinding modes.
 
@@ -6813,6 +6913,11 @@ null target; `Order::airPoint`):
   without a target is not read, and the group check reads only 0x1000000
   and 0x4000000. `retailOrderFlags` and `retailMissionFlags` give World's
   seeks (which carry no target unit) that row.
+- E (`tools/re/check_air_point_mission.py`, retail's `4d4bf0` and `4d6c40`):
+  with no target the mission's flags are the row's less 0x200, so the Retail
+  AI reads AIRSTRIKE as class 2, 0x1000400 and AIRTOGROUNDHOVER and
+  AIRTOGROUND as class 1, 0x1000000 (`ClassicBrain`'s `firstMission`; it read
+  a move before 0.9.20).
 
 `suppress_test` (both modes): `creaeri` flies runs over the
 point and hits it (24 shots, 4 px off); a Tarbeak hovers ~134 px off a point

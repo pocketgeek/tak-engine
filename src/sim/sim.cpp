@@ -8644,6 +8644,10 @@ bool World::tickAttackWalk(Unit& u) {
 
 World::SuppressRule World::suppressRule(const UnitType& t, int weaponSlot) {
     if (t.weapons.empty()) return SuppressRule::None;
+    // 4c18d7..4c18ff: an armed type with bmcode 0 (+0x24a) and a canbuild menu
+    // (+0x12e > 0) loses canattack at load, and 4de62d then gives no order. No
+    // shipped type is one; a mod's armed factory would be.
+    if (t.buildMovementCode == 0 && !t.buildMenu.empty()) return SuppressRule::None;
     // 4de530 kind 3 with a point, by the selected slot's weapon (519ac0: a
     // switcher's selected slot, else the first).
     const int n=int(std::min<size_t>(3,t.weapons.size()));
@@ -15641,18 +15645,23 @@ void World::updateViewCounts() {
         retailSightFootprint(sight,add,false,width,height,uint8_t(player),heightAt,
             [&](int x,int z,int delta,uint16_t) { addTo(mask,x,z,delta,shared); });
     };
-    // Deaths first, serially: a dying human-owned unit hands its footprint to
-    // the revealer list (4c6750: LosOn, fewer than 20 for that player), any
-    // other is removed at once (512ae0). The list keeps unit order.
+    // Deaths first, serially: a dying unit whose sight is kept hands its
+    // footprint to the revealer list (4c6750: LosOn, fewer than 20 for that
+    // player), any other is removed at once (512ae0). The list keeps unit order.
     for (auto& u:units_) {
         if (u.alive() || !u.viewSight.active) continue;
         const int p=u.viewPlayer;
-        // 512ae0 keeps it only when the owner's index equals game+0x306f, a
-        // local-player byte beside 4c66b0's 0x306e; a passive neutral is a
-        // mission computer, never that player.
-        const bool human=size_t(p)<planes && !players_[size_t(p)].automaticGates && !isNeutralPlayer(p) &&
-                         !players_[size_t(p)].passiveNeutral;
-        if (human && std::count_if(deathSights_.begin(),deathSights_.end(),
+        // 512ae0 keeps it only when the owner's index equals game+0x306f, the
+        // viewed player (the local one unless a watch path moved it), so
+        // retail keeps a revealer only on its owner's own machine, and the
+        // machine-wide 20 is that owner's. Our D2 widening keeps one for any
+        // owner whose sight is shared -- a human, or a computer with an ally
+        // its footprint is counted for -- in every plane it was counted in.
+        // A lone computer keeps none, as retail; a passive neutral (a mission
+        // computer) never.
+        const bool keep=size_t(p)<planes && !isNeutralPlayer(p) && !players_[size_t(p)].passiveNeutral &&
+                        (!players_[size_t(p)].automaticGates || (u.viewPlanes & ~uint16_t(1u<<p))!=0);
+        if (keep && std::count_if(deathSights_.begin(),deathSights_.end(),
                 [&](const RetailDeathSight& d){return d.player==p;})<20) {
             deathSights_.push_back({u.viewSight,int8_t(p),tickCounter_+60,u.viewPlanes});
             u.viewSight.active=false;

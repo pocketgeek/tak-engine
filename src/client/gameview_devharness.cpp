@@ -2198,6 +2198,91 @@
                 for (int id:{g1,g2}) writableWorld().destroy(id);
                 pendingCmd_=0;
             }
+            // C1, rally holders (ours: retail strips a factory's canattack at load and
+            // gives an Attack at a point no producer kind, so a factory gets nothing
+            // there; a repeating builder's SUPPRESS yields to our rally rule, C9): a
+            // factory or a repeating mobile builder, armed or not, sets a fight-move
+            // rally at the point and keeps producing. Applied, not only captured.
+            {
+                const tak::sim::UnitType* factoryType=nullptr;
+                for (const auto& [id,t]:registry_.types())
+                    if (t.producesUnits() && !t.hasPrimaryWeaponBlock && !registry_.buildable(id).empty() &&
+                        id.rfind("ara",0)==0 && (!factoryType || id<factoryType->id)) factoryType=&t;
+                const auto* lord=registry_.find("zonlord");
+                const auto* tamer=registry_.find("zontrain");
+                check(factoryType && lord && tamer && !lord->isStructure() && !tamer->isStructure() &&
+                      lord->hasPrimaryWeaponBlock && !tamer->hasPrimaryWeaponBlock &&
+                      !registry_.buildable("zonlord").empty() && !registry_.buildable("zontrain").empty(),
+                      "fixture: an unarmed factory, an armed (Beast Lord) and an unarmed (Beast Tamer) mobile builder");
+                const int factory=spawn(factoryType->id,cx+300,cz+60,0,localPlayer_);
+                const int lordId=spawn("zonlord",cx-150,cz+200,0,localPlayer_);
+                const int tamerId=spawn("zontrain",cx-90,cz+200,0,localPlayer_);
+                check(factory>=0 && lordId>=0 && tamerId>=0,"fixture rally holders spawned ("+factoryType->id+")");
+                writableWorld().setRepeat(lordId,registry_.find(registry_.buildable("zonlord").front()));
+                writableWorld().setRepeat(tamerId,registry_.find(registry_.buildable("zontrain").front()));
+                check(world_.unit(lordId)->repeatType && world_.unit(tamerId)->repeatType,"fixture: both builders repeat");
+                publish();
+                const float gx=float(W)/2+40,gy=float(H)/2+200;
+                check(!hoveredUnitAt(tak::client::PointerArea::World,gx,gy),"fixture: no unit under the ground point");
+                const auto apply=[&](const std::vector<tak::net::Command>& cmds) {
+                    for (auto c:cmds) {c.player=uint8_t(localPlayer_);tak::sim::applyCommand(writableWorld(),registry_,c);}
+                    publish();
+                };
+                const auto fightLeg=[&](int id) {
+                    const auto& r=world_.unit(id)->rally;
+                    return !r.empty() && r.back().attackMove && r.back().targetId==0;
+                };
+                // A factory alone: Attack cursor, one AttackMove, a fight leg on its rally.
+                selection_={factory};pendingCmd_='a';publish();
+                event(SDL_MOUSEMOTION,0,gx,gy);
+                check(desiredCursor(tint)==tak::CursorId::Attack,"C1 armed A on ground, a factory alone: Attack");
+                auto cmds=capture([&] {clickAt(gx,gy,SDL_BUTTON_LEFT);});
+                check(cmds.size()==1 && cmds[0].kind==tak::net::Cmd::AttackMove && cmds[0].unitId==factory,
+                      "C1 armed A on ground, a factory alone: exactly one AttackMove");
+                apply(cmds);
+                check(fightLeg(factory) && world_.unit(factory)->orders.empty(),
+                      "C1 the factory's rally gains a fight leg; it takes no order of its own");
+                // A factory and an archer: the archer fires at the point, the factory rallies.
+                writableWorld().unit(factory)->rally.clear();
+                selection_={factory,archer};pendingCmd_='a';publish();
+                event(SDL_MOUSEMOTION,0,gx,gy);
+                check(desiredCursor(tint)==tak::CursorId::Attack,"C1 armed A on ground, factory + archer: Attack");
+                cmds=capture([&] {clickAt(gx,gy,SDL_BUTTON_LEFT);});
+                check(cmds.size()==2 && count(cmds,archer,tak::net::Cmd::AttackGround)==1 &&
+                      count(cmds,factory,tak::net::Cmd::AttackMove)==1,
+                      "C1 armed A on ground, factory + archer: AttackGround for the archer, AttackMove for the factory");
+                apply(cmds);
+                check(fightLeg(factory),"C1 factory + archer: the factory's rally gains a fight leg");
+                stopAll();
+                // Repeating builders, armed and unarmed: AttackMove (a rally), never
+                // AttackGround, and the repeat holds.
+                for (const int b:{lordId,tamerId}) {
+                    const std::string name=b==lordId ? "a repeating Beast Lord" : "a repeating Beast Tamer";
+                    const auto* repeat=world_.unit(b)->repeatType;
+                    selection_={b};pendingCmd_='a';publish();
+                    event(SDL_MOUSEMOTION,0,gx,gy);
+                    check(desiredCursor(tint)==tak::CursorId::Attack,"C1 armed A on ground, "+name+": Attack");
+                    cmds=capture([&] {clickAt(gx,gy,SDL_BUTTON_LEFT);});
+                    check(cmds.size()==1 && count(cmds,b,tak::net::Cmd::AttackMove)==1 &&
+                          count(cmds,b,tak::net::Cmd::AttackGround)==0,
+                          "C1 armed A on ground, "+name+": one AttackMove, no AttackGround");
+                    apply(cmds);
+                    check(fightLeg(b) && world_.unit(b)->repeatType==repeat && world_.unit(b)->orders.empty(),
+                          "C1 "+name+": a fight leg on its rally, the repeat kept, no order of its own");
+                }
+                // Over the factory's own footprint the factory is the hovered unit and
+                // is left out (as in retail): nothing.
+                writableWorld().unit(factory)->rally.clear();
+                selection_={factory};pendingCmd_='a';publish();
+                const auto f=at(factory);
+                check(hoveredUnitAt(tak::client::PointerArea::World,f.x,f.y)==frameUnitP(factory),
+                      "fixture: the pointer is over the factory");
+                cmds=capture([&] {clickAt(f.x,f.y,SDL_BUTTON_LEFT);});
+                check(cmds.empty() && world_.unit(factory)->rally.empty(),
+                      "C1 armed A inside the factory's own footprint: no command");
+                for (int id:{factory,lordId,tamerId}) writableWorld().destroy(id);
+                selection_.clear();pendingCmd_=0;publish();
+            }
             // 2.9 the armed ATTACK box: the enemies in it, no clear.
             selection_={archer,mason};pendingCmd_='a';publish();
             {

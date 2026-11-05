@@ -163,6 +163,7 @@ their validation reports; both live in [`docs/`](docs/).
   and other passive players in a campaign mission share nothing, as in the original
   game, even though missions put them on your team; outside campaigns a passive
   player never shares sight either.
+  A computer ally's dying units now keep their sight for a moment, like your own.
 - **Fire at a point.** The game now has the original game's fire at
   a point (SUPPRESS), as the new Attack Ground command: a ground unit or tower fires
   at the spot itself, a walker steps into range (or out of its minimum range) first
@@ -179,6 +180,12 @@ their validation reports; both live in [`docs/`](docs/).
   and then it gives up the order instead. Flyers attacking in a group, at a spot or
   at a unit, fly back to their group the same way, and keep firing at what they
   had aimed at while they do.
+- **Campaign siege units and towers scripted to bombard a spot now fire at it**, as in
+  the original game, instead of only walking toward it (or, for a tower, doing
+  nothing). A flyer scripted the same way now makes its air attack on the spot
+  instead of flying to it, and a computer player sees it as attacking.
+- **An armed factory from a mod gets no Attack Ground order**, as in the original
+  game, which takes the attack command away from any factory.
 - **Holding Shift shows a cloaked unit's decloak range.** While Shift is held, each
   of your selected units, and your unit under the pointer, that is cloaked now shows a
   white circle at its decloak distance, as in the original game. A `kamikaze` unit
@@ -235,6 +242,10 @@ their validation reports; both live in [`docs/`](docs/).
     keeps switching weapons and never fires: the original game does exactly the same.
   - A Prismatic Mirror holding a target without firing (0.9.3) was a Mirror still being
     built; this was fixed in 0.9.12, and the original game does the same as now.
+  - An armed Attack clicked on the ground with a factory, or a Zhon builder repeating
+    production, selected sends its new units there fighting on the way, and the
+    builder keeps producing (the original game gives a factory nothing there). A
+    click on the factory itself still gives it nothing, as in the original game.
 
 ## 0.9.19
 *2026-11-03 · protocol 311 · replay format 15 · does not play with 0.9.18 or earlier, nor their replays*
