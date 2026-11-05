@@ -904,7 +904,11 @@ static void facings(Fixture& f) {
 // A cob from scripts and a name table (MAP_COMMAND indexes the names).
 static std::vector<uint8_t> buildCob(const std::vector<std::pair<std::string, std::vector<uint32_t>>>& scripts,
                                      const std::vector<std::string>& names) {
-    std::vector<uint8_t> cob(52);
+    const size_t n = scripts.size(), m = names.size();
+    const size_t entries = 52, scriptNames = entries + n * 4, nameTable = scriptNames + n * 4;
+    // Header + both tables sized up front: growing a 52-byte vector here made GCC 16's
+    // -O2 -Warray-bounds misread resize()'s default-append as a write past the old buffer.
+    std::vector<uint8_t> cob(nameTable + m * 4);
     auto put = [&](size_t offset, uint32_t value) {
         if (cob.size() < offset + 4) cob.resize(offset + 4);
         std::memcpy(cob.data() + offset, &value, 4);
@@ -915,9 +919,6 @@ static std::vector<uint8_t> buildCob(const std::vector<std::pair<std::string, st
         std::memcpy(cob.data() + at, str.c_str(), str.size() + 1);
         return uint32_t(at);
     };
-    const size_t n = scripts.size(), m = names.size();
-    const size_t entries = 52, scriptNames = entries + n * 4, nameTable = scriptNames + n * 4;
-    cob.resize(nameTable + m * 4);
     std::vector<uint32_t> code;
     for (size_t i = 0; i < n; ++i) {
         put(entries + i * 4, uint32_t(code.size()));
