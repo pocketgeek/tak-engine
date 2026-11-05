@@ -13,8 +13,11 @@ include(FetchContent)
 # SOURCE_SUBDIR names a directory the tarball does not have, so MakeAvailable only
 # downloads and extracts; the add_subdirectory below brings Opus in EXCLUDE_FROM_ALL,
 # which keeps its install() rules (libopus.a and headers) out of our packages.
+# Two sources for the same tarball (the hash pins it): CI has seen xiph.org refuse
+# connections, and FetchContent tries each URL in turn.
 FetchContent_Declare(tak_opus
   URL https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz
+      https://github.com/xiph/opus/releases/download/v1.5.2/opus-1.5.2.tar.gz
   URL_HASH SHA256=65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1
   TLS_VERIFY TRUE
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
