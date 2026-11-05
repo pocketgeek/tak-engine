@@ -336,6 +336,55 @@ int retailAttackGroupCheck(uint32_t& flags,bool outOfSlot,uint32_t next,int leav
     return -1;
 }
 
+// The guards' group check (VTOL_Follow 418a7b..418b72, VTOL_SeekGuard
+// 4199b2..419aac), after their head's exits and the air-traffic check:
+// 51d1e0(unit, 1, 4), outOfSlot here. Out of the slot on a mission already
+// flagged 0x8000000, rand(4) == 0 lets the member go: 50c480, then
+// 4d6a50(unit, 0) drops every mission (cancel), and 2. Otherwise out of the
+// slot it flags the mission and pushes VTOL_Move_Formation at level -3
+// ahead (4d7750): 0, so the guard starts again at stage 0 when the formation
+// retires, or 7 when it could not be built. In the slot, rand(10) == 0
+// clears the flag. -1: run the stages.
+template<class Random,class Cancel,class Formation>
+int retailGuardGroupCheck(uint32_t& flags,bool outOfSlot,Random random,Cancel cancel,Formation formation) {
+    if (outOfSlot) {
+        if ((flags&0x8000000u) && random(4)==0) { cancel(); return 2; }
+        flags|=0x8000000u;
+        return formation() ? 0 : 7;
+    }
+    if ((flags&0x8000000u) && random(10)==0) flags&=~0x8000000u;
+    return -1;
+}
+
+// The standbys' group check, at every wake past their exits (and a flyer's
+// air-traffic check): VTOL_Standby 417527 and Standby 407779 ask
+// 51d1e0(unit, 1, 2), VTOL_LandIfCan 416eda 51d1e0(unit, 1, 3). Out of the
+// slot the FormationStandby goes ahead (4d7750): VTOL_Move_FormationStandby
+// at level -1 (the landing's at -2), or Move_Ground_FormationStandby at -1
+// with response mode -1 (+0x52). formation(level, mode) builds and pushes
+// it: false when it could not be built (7). A standby then returns 0 (it
+// waits under the formation and starts again at stage 0); the landing
+// returns 5, so it retires and the default mission follows the formation.
+// -1: in the slot, the stages run. No draw. (E: check_retail_group.py
+// standby.)
+enum class RetailStandbyCheck : uint8_t { VtolStandby, Standby, LandIfCan };
+template<class OutOfSlot,class Formation>
+int retailStandbyGroupCheck(RetailStandbyCheck kind,OutOfSlot outOfSlot,Formation formation) {
+    const bool landing=kind==RetailStandbyCheck::LandIfCan;
+    if (!outOfSlot(landing ? 3 : 2)) return -1;
+    if (!formation(landing ? -2 : -1,kind==RetailStandbyCheck::Standby ? -1 : 0)) return 7;
+    return landing ? 5 : 0;
+}
+
+// 41798b..4179e9: the group is active (50b800) with a moving member of any
+// class (50b900 ground, 50bd20 boat, 50c140 flyer): a
+// VTOL_Move_FormationStandby back in its slot stays (retailFlightFormation).
+inline bool retailGroupMoving(const RetailGroupRecord& g) {
+    return g.active && (g.moving[size_t(RetailGroupClass::Ground)].count!=0 ||
+                        g.moving[size_t(RetailGroupClass::Boat)].count!=0 ||
+                        g.moving[size_t(RetailGroupClass::Flyer)].count!=0);
+}
+
 // 4d95f0 (4d976a..4d9a2a): the maximum for a paced member. own is the
 // terrain-scaled unit maximum (unit+0x12b), typeMaximum the terrain-scaled
 // type maximum (type+0x162), modeTypeMaximum that value after the speed-mode

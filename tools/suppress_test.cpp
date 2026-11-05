@@ -483,13 +483,17 @@ GroupRun groupFire(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim:
     for (int i = 0; i < 4; ++i)
         group.push_back(s.w.spawn(&member, 600 + float(i % 2) * 48 - 24, 640 + float(i / 2) * 48, 3.1415926f, 0));
     const int id = s.w.spawn(&outlier, 600, 800, 3.1415926f, 0);   // facing -z, the group's way
-    for (int g : group) { s.w.setSquad(g, groupSquad()); s.w.unit(g)->fireState = 0; }
-    s.w.setSquad(id, groupSquad());
+    for (int g : group) s.w.unit(g)->fireState = 0;
     s.w.unit(id)->fireState = 0;
     for (int i = 0; i < 30; ++i) s.w.tick(kTick);
     const float px = 600 + range * 0.3f, pz = 800 - range * 0.5f;
     attackGround(s.w, reg, id, px, pz);
     for (int i = 0; i < 60; ++i) s.w.tick(kTick);
+    // The formation is made as the group marches: idle until then, Standby's
+    // group check (407779) would first walk the members, and the outlier
+    // out of its slot, back together.
+    for (int g : group) s.w.setSquad(g, groupSquad());
+    s.w.setSquad(id, groupSquad());
     for (int g : group) {
         const float gx = s.w.unit(g)->x.toFloat(), gz = s.w.unit(g)->z.toFloat();
         // march < 0: a patrol across the map and back, so the group keeps

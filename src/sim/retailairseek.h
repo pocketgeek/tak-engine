@@ -69,9 +69,10 @@ inline RetailSeekPush retailAirLostTarget(const RetailAirLoss& in) {
 //   head, past stage 0 (41943a): with the air-traffic counter (unit +0x12a)
 //            at 5 or more, VTOL_StepOut goes ahead (D = (rand(15) + footX) x
 //            16) and the seek starts again at stage 0 a tick after it ends.
-// Every draw is 535cc0, the shared game random number generator. Not ported:
-// the group check (51d1e0), whose flag 0x8000000 is therefore never set here
-// (AirToGround's is ported: retailAirGroupCheck).
+// Past the air-traffic check, the group check (4194f9..41960f,
+// retailAirGroupCheck: 51d1e0(unit, 1, 5), VTOL_Move_Formation at level -4
+// ahead), as AirToGround's. Every draw is 535cc0, the shared game random
+// number generator.
 struct RetailAirSeek {
     RetailFlightVector position;   // unit +0x68
     int32_t range=0;               // the selected slot's WeaponType +0x90 (519ac0)
@@ -89,8 +90,9 @@ struct RetailAirSeek {
 // (519b10(3)); retarget() (4d8370 then 4d7de0(unit, found, 0, 0, 1, 0): true
 // when it put an attack ahead); install(point goal) (4d4d40, which also
 // clears the mission's pending controller events 0x3700); stepOut(D)
-// (VTOL_StepOut pushed ahead, 4d7750: false when it could not be built).
-// `point` is mission +0x22, `angle` the low word of +0x4e.
+// (VTOL_StepOut pushed ahead, 4d7750: false when it could not be built); the
+// group check's outOfSlot(), nextFlags(), leave() and formation(), as
+// AirToGround's. `point` is mission +0x22, `angle` the low word of +0x4e.
 template<class Host>
 int retailVtolSeekAttack(RetailMissionState& m,RetailFlightVector& point,uint16_t& angle,uint32_t tick,
                          uint32_t events,const RetailAirSeek& in,Host& host) {
@@ -103,7 +105,7 @@ int retailVtolSeekAttack(RetailMissionState& m,RetailFlightVector& point,uint16_
         m.sleep(tick,1);
         return 0;
     }
-    if ((m.flags&0x8000000u) && host.random(25)==0) m.flags&=~0x8000000u;   // 4195f9
+    if (const int result=retailAirGroupCheck(m,host);result>=0) return result;   // 4194f9..41960f
     switch (m.stage) {
     case 0:                                                          // 41972e
         if (!in.flies) return 7;
@@ -141,7 +143,8 @@ int retailVtolSeekAttack(RetailMissionState& m,RetailFlightVector& point,uint16_
 //            800 px toward the playable area, radius 128 (as AirToGround's
 //            stage 7); then the air-traffic check at every wake, stage 0
 //            included (4198fd, retailAirTrafficCheck SeekGuard); then the
-//            group check 51d1e0(unit, 1, 4) and its flag's rand(10).
+//            group check (4199b2, retailGuardGroupCheck: 51d1e0(unit, 1, 4),
+//            VTOL_Move_Formation at level -3 ahead) and its flag's rand(10).
 //   stage 0: no mover or not canfly ends the list (7); a zero point becomes
 //            the flyer's own; the orbit angle (+0x4e) is rand(0x10000)
 //            (+0x52 its low bit, which no stage reads); on to stage 1.
@@ -159,8 +162,7 @@ int retailVtolSeekAttack(RetailMissionState& m,RetailFlightVector& point,uint16_
 //            (the selected weapon's range + 160 when armed, unit +0x130
 //            0x8000000, else 160), a sleep of 7 + rand(7) and a wait on
 //            0x718.
-// Every draw is 535cc0. Not ported: the group check (51d1e0), whose flag
-// 0x8000000 is therefore never set here, as in VTOL_SeekAttack.
+// Every draw is 535cc0.
 struct RetailAirSeekGuard {
     RetailFlightVector position;   // unit +0x68
     int32_t range=0;               // the selected slot's WeaponType +0x90 (519ac0)
@@ -178,8 +180,11 @@ struct RetailAirSeekGuard {
 // pending controller events 0x3700 cleared); guard() (4de530 action 7 on the
 // first found, then the mission built and pushed ahead: false when there was
 // no mission for the pair or it could not be built); install(point goal)
-// (4d4d40, which also clears the pending controller events). `point` is
-// mission +0x22, `angle` the low word of +0x4e.
+// (4d4d40, which also clears the pending controller events); the group
+// check's outOfSlot() (51d1e0(unit, 1, 4)), cancel() (50c480, 4d6a50(unit,
+// 0)) and formation() (VTOL_Move_Formation, level -3, pushed ahead: false
+// when it could not be built). `point` is mission +0x22, `angle` the low
+// word of +0x4e.
 template<class Host>
 int retailVtolSeekGuard(RetailMissionState& m,RetailFlightVector& point,uint16_t& angle,uint32_t tick,
                         uint32_t events,const RetailAirSeekGuard& in,Host& host) {
@@ -187,7 +192,8 @@ int retailVtolSeekGuard(RetailMissionState& m,RetailFlightVector& point,uint16_t
     if (!in.onMap) return detail::retailAirReturnToMap(m,in.position,in.width,in.height,host);   // 4197f8
     if (const int result=retailAirTrafficCheck(RetailTrafficMission::SeekGuard,m,tick,in.traffic,in.footX,
             m.flags,host);result>=0) return result;                  // 4198fd
-    if ((m.flags&0x8000000u) && host.random(10)==0) m.flags&=~0x8000000u;   // 419a91
+    if (const int result=retailGuardGroupCheck(m.flags,host.outOfSlot(),[&](int n) { return host.random(n); },
+            [&] { host.cancel(); },[&] { return host.formation(); });result>=0) return result;   // 4199b2..419aac
     switch (m.stage) {
     case 0:                                                          // 419d3f
         if (!in.flies) return 7;

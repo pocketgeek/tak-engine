@@ -704,6 +704,11 @@ struct ManaBuildArea {
 // adds 0x4000 to the leg that has appended (or found) the loop's anchor.
 // tools/re/check_air_point_mission.py.
 inline constexpr uint32_t kVtolPatrolFlags = 0x1000412u;
+// VTOL_Move's (row 0x5ebcd3) with a point and no target: a flyer's move,
+// fight-move or rally step, and its return move after an attack (4de530
+// action 2 gives a flyer VTOL_Move: not Move_Ground's 0x3000400, so no
+// 0x2000000 navigator formation bit). tools/re/check_air_point_mission.py.
+inline constexpr uint32_t kVtolMoveFlags = 0x1000402u;
 
 struct ScriptedOrder {
     enum class Kind : uint8_t { AttackType, Train, WaitAttack, WaitNear, SelfDestruct };
@@ -4424,12 +4429,14 @@ private:
         World& w; Unit& u;
         bool formationTo=false;
         bool outOfSlot() const { return w.retailAttackOutOfSlot(u,5); }
+        // 50c480 then 4d6a50(unit, 0): a guard's group check lets it go.
+        void cancel() const { w.leaveRetailGroupCentre(u);w.cancelPath(u);u.orders.clear();u.routeStamp=-1; }
         uint32_t nextFlags() const { return w.retailNextMissionFlags(u,0); }
         void leave() const { w.leaveRetailGroupCentre(u); }
         bool formation() { formationTo=true;return true; }
-        // Puts the formation ahead and runs it at once, as the dispatcher
-        // goes on to the head it was handed: true when it did (the caller's
-        // mover is done for the tick).
+        // Puts the formation ahead (level -4) and runs it at once, as the
+        // dispatcher goes on to the head it was handed: true when it did
+        // (the caller's mover is done for the tick).
         bool push();
     };
     void tickRetailGroups();

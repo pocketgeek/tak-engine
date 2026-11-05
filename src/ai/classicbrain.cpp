@@ -94,7 +94,9 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
     else if (o.reclaimFeat || o.reclaimArea) { m.cls = 11; m.flags = 0x800; }
     else if (o.load) { m.cls = 12; m.flags = 0x1000200; m.target = o.targetId; }
     else if (o.unload) { m.cls = 13; m.flags = 0x1000400; }
-    else if (o.guard) { m.cls = 5; m.flags = 0x3000200; m.target = o.targetId; }
+    // Follow_Ground (0x5eb89f: 0x3000200); a flyer's is VTOL_Follow (0x5ebd37:
+    // 0x1000200), both with the ward.
+    else if (o.guard) { m.cls = 5; m.flags = u.type->canFly ? 0x1000200 : 0x3000200; m.target = o.targetId; }
     else if (o.targetId) {
         m.cls = 1; m.flags = 0x1000280; m.target = o.targetId;   // Attack_Chase / Attack_Melee (0x5eb8d1 / 0x5eb8ea)
         // A flyer's attack is one of the air rows (the resolver's unit branch,
@@ -144,7 +146,9 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
         m.cls = strike ? 2 : 1; m.flags = strike ? 0x1000400 : 0x1000000;
         m.goalX = o.attackPointX.v; m.goalZ = o.attackPointZ.v;
     }
-    else { m.cls = 14; m.flags = 0x3000400; }   // a move
+    // A move: Move_Ground (0x5eb86d: 0x3000400), a flyer's VTOL_Move (0x5ebcd3:
+    // 0x1000402), each with its point.
+    else { m.cls = 14; m.flags = u.type->canFly ? tak::sim::kVtolMoveFlags : 0x3000400; }
     m.kind = m.cls == 14 ? moveKind(u.type->canFly) : m.cls == 7 ? kKindPatrol : otherKind(m.cls);
     // Only the World's auto-attacks (and the return move behind a leashed one):
     // they sit on the default mission, so they carry its 0x2000.
@@ -812,7 +816,9 @@ bool ClassicBrain::sendOrder(const tak::sim::World& world, ClassicSquadUnit& mem
     if (!queue) {
         member.mission = true; member.missionClass = patrol ? 7 : 14;
         member.missionKind = patrol ? kKindPatrol : moveKind(unit->type->canFly);
-        member.missionFlags = patrol ? 0x3000410u : 0x3000400u;
+        const bool flyer = unit->type->canFly;
+        member.missionFlags = patrol ? (flyer ? tak::sim::kVtolPatrolFlags : 0x3000410u)
+                                     : (flyer ? tak::sim::kVtolMoveFlags : 0x3000400u);
         member.buildingBuild = member.buildsManaSite = false; member.missionTarget = 0;
         member.goalX = at[0]; member.goalZ = at[2];
     }
