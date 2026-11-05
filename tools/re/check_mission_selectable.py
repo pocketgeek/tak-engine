@@ -21,6 +21,8 @@ direct caller). This script
     counting. SetMission (4d37f6) calls the same parser, so a script's orders
     clear the bit too;
   * runs 401450 (E): the bit is set, 0x2000 cleared, the mission ends (5);
+  * runs PARK (407ca0) at stage 1 with a next mission (E): it gives way (5)
+    for a live, selectable unit, not for an unselectable or dying one;
   * prints the same table from `mission_orders_test --selectable` (the port,
     MissionScript::applyOrders on a World) and requires it to match.
 
@@ -118,6 +120,21 @@ def make_selectable():
     return ret, bits
 
 
+def park_yields(flags):
+    """PARK (407ca0) at stage 1 with a next mission (+0x66), no events: 5 when it
+    gives way, else it goes on to its retries (stopped at 407d61)."""
+    from unicorn import UC_HOOK_CODE
+    icd = Icd(); uc = icd.uc
+    mission = HEAP + 0x70000
+    uc.mem_write(UNIT, bytes(0x138)); uc.mem_write(mission, bytes(0x80))
+    uc.mem_write(UNIT + 0x130, struct.pack('<I', flags))
+    uc.mem_write(mission + 5, bytes((1,))); uc.mem_write(mission + 0x66, struct.pack('<I', 1))
+    uc.hook_add(UC_HOOK_CODE, lambda u, *_: u.emu_stop(), begin=0x407d61, end=0x407d61)
+    ret, error = icd.call(0x407ca0, (UNIT, mission, 0), allow_early_stop=True)
+    assert not error, error
+    return ret == 5 and uc.reg_read(__import__('unicorn').x86_const.UC_X86_REG_EIP) != 0x407d61
+
+
 # Each clause with its own answers: (text, resolver/lookups say yes?)
 CLAUSES = ['m 5 7', 'ma 5 7', 'u 5 7', 'p 5 7', 'p 5 7 9', 'a 5 7', 'a NAMEU', 'g NAMEU', 'w 30', 'w 60 20',
            'wa', 'wa NAMEU', 'b ARATYPE 2', 'b ARATYPE 1 5 7', 's', 'd', 'i NAMEU', 'v 1.5', 'o 2', 'o 1 2', 'c',
@@ -138,6 +155,8 @@ def table():
 def main():
     ret, bits = make_selectable()
     assert ret == 5 and bits & 0x20 and not bits & 0x2000, (ret, hex(bits))
+    # PARK gives way to a next mission only for a selectable unit (407d1e).
+    assert park_yields(0x1000020) and not park_yields(0x1000000) and not park_yields(0x1001020)
     rows = table()
     binary = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
         os.path.dirname(os.path.abspath(__file__)), '..', '..', 'build', 'mission_orders_test')
@@ -148,7 +167,8 @@ def main():
         for r, w, o in zip(rows, want, ours + [''] * len(rows)):
             print(('   ' if w == o else 'XX ') + r + '   | ours: ' + o)
         raise SystemExit('FAIL: the port differs from retail')
-    print(f'PASS: 401450 sets 0x20 and clears 0x2000 (returns 5); {len(rows)} parser cases: a pushed mission '
+    print(f'PASS: 401450 sets 0x20 and clears 0x2000 (returns 5); PARK gives way only for a selectable '
+          f'unit; {len(rows)} parser cases: a pushed mission '
           'clears the selectable bit, MAKESELECTABLE follows unless a patrol, a given a X Y, s or d was '
           'among the clauses; the port matches')
 

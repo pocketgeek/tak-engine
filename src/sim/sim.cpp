@@ -4054,8 +4054,11 @@ void World::tickGroundMission(Unit& u,bool attackWalk) {
                 auto& park=*goal.park;
                 const Unit* target=w.unit(park.target);
                 const bool valid=target && target->alive();
+                // 407d02..407d55: a next mission (+0x66) ends the park only for
+                // a unit that is live, selectable, finished, free and not carried
+                // (a mission script's unit keeps parking until its tries run out).
                 return retailGroundPark(m,events,true,park.target!=0,valid,
-                    hasNext(m) && !u.incapacitated() && !u.embarked(),int16_t(u.type->footX),
+                    hasNext(m) && u.selectable && !u.incapacitated() && !u.embarked(),int16_t(u.type->footX),
                     int16_t(valid ? target->type->footX : 0),int16_t(valid ? target->type->footZ : 0),
                     park.padding,park.permanent,park.attempts,[&](int n){return random(n);},
                     [&]{park.target=0;},[&](bool useTarget,int outer,int inner) {

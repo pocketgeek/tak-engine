@@ -1483,6 +1483,35 @@ static void rallyStepItCannotDo(bool mobile, bool moveBehind) {
     else check(u.orders.front().park.has_value(), "it parks");
 }
 
+// PARK's stage 1 (407d02..407d55) ends the park for an order behind it only when
+// the output is selectable: one a mission script has taken (the parse cleared
+// +0x130 & 0x20) parks on until its tries run out.
+static void parkYieldsOnlyWhenSelectable() {
+    std::printf("factory: a parked output and an order behind it:\n");
+    for (int scripted = 0; scripted < 2; ++scripted) {
+        auto ownedWorld = makeWorld(160, 160);
+        World& w = *ownedWorld;
+        UnitType prod = producerType(false), sol = soldierType();
+        const int id = w.spawn(&prod, 600, 600, 0, 0);
+        w.player(0).mana = 1e9f;
+        w.setRepeat(id, &sol);
+        const int child = firstOutput(w, id, 900);
+        check(child != 0, "an output is produced");
+        if (!child) return;
+        Unit* u = w.unit(child);
+        if (u->orders.empty() || !u->orders.front().park) { check(false, "it parks"); return; }
+        u->selectable = scripted == 0;
+        w.order(child, kRallyX, kRallyZ, true);
+        // The park's next wake: its route failed (0x200, in its wait mask 0x2708).
+        u->orders.front().mission.pending |= 0x200;
+        for (int n = 0; n < 2; ++n) w.tick(1.0f / 30.0f);
+        u = w.unit(child);
+        const bool parking = !u->orders.empty() && u->orders.front().park.has_value();
+        check(scripted ? parking : !parking,
+              scripted ? "unselectable, it is still parking (407d1e)" : "selectable, the park gives way to the order");
+    }
+}
+
 // A structure holds its orders as its own rally, so a mobile producer's rally lands
 // there and its orders stay empty. That is a handed-over plan, not an empty one:
 // the exit step would replace it. With no rally the exit step is all it gets.
@@ -1814,6 +1843,7 @@ int main(int argc,char** argv) {
     }
     for (bool deadTarget : {true, false}) rallyHandsOverNothing(deadTarget);
     for (bool withRally : {true, false}) rallyOnAStructureOutput(withRally);
+    parkYieldsOnlyWhenSelectable();
     rallyBesideThePad(600, 716, "on the birth spot");
     rallyBesideThePad(600, 600, "inside the producer's rectangle");
     rallyLeavesRoomForTheNext();

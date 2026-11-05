@@ -7157,10 +7157,13 @@ lookups answering yes and no) and `401450`, against `mission_orders_test
     (`401e77`), MobileBuild (`40595c`) and VTOL_MobileBuild (`41f430`)
     test it in their own allocation gates, which are not ported (see "Not
     ported" below).
-  - Ground_Unload and VTOL_Unload (`40902e`, `41b3a6`) compute the full
-    selection predicate for the dropped unit and pass it on to the drop
-    (`51b480`; I: its selection), and PARK (`407d1e`) tests the predicate on
-    its unit; neither changes a mission's course here (not ported).
+  - PARK (`407d02..407d55`, E): at stage 1 a next mission (`+0x66`) ends the
+    park only for a live, selectable, finished, free, uncarried unit; a
+    scripted one parks on until its tries run out (`World`'s ground PARK,
+    `production_test`).
+  - Ground_Unload and VTOL_Unload (`40902e`, `41b3a6`) compute the same
+    predicate for the dropped unit and pass it on to the drop (`51b480`; I:
+    its selection); that changes no mission's course here (not ported).
 
 Shipped data: 3,395 computer and 128 human placements push a mission; most
 human ones start with `s`. Ours, before: no such bit; a mission's units were
