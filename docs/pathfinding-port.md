@@ -778,17 +778,75 @@ In `legion_world_test mixedformation` (Retail move), flyers now average
 than 300 px from the group: the cancel path dropped their orders on the
 way, as in retail.
 
-Not ported:
-- VTOL_Patrol's identical head (`419fa0`/`41a162`);
-- the single checks in AirToAir (`41cce3`) and VTOL_SeekAttack (`41e55f`).
-  AirToGroundHover's (`41daff`) was ported with its mission (protocol 307),
-  AirToGround's (`41c19f`) and AirStrike's (`41b7a4`) since protocol 312
-  (below);
-- the VTOL_Move_FormationStandby branch (`41797e`, only pushed by the landing
-  search).
+**Every flyer mission's group check (fx-groups, 2026-11-05, protocol 312).**
+The `51d1e0` call sites by mission (registry rows read from `.rdata`, S):
 
-Our flyer fight-move is not a VTOL_Move. Retail-mode fight and patrol orders
-are therefore unchanged.
+| mission (handler) | site | check | out of the slot |
+|---|---|---|---|
+| VTOL_Move (`417c20`) | `417e02` | two, as `402b00` | VTOL_Move_Formation -2 / 4, or cancel |
+| VTOL_Patrol (`419db0`) | `419f9b` | two, as `402b00` | the same |
+| AirToGround, AirStrike, AirToGroundHover | `41c19a`, `41b7a4`, `41dafa` | `(unit, 1, 5)` | VTOL_Move_Formation -4, or leave (8) |
+| AirToAir (`41ca50`), VTOL_Evade (`41e3d0`), VTOL_SeekAttack (`4192f0`) | `41ccde`, `41e55a`, `4194f9` | `(unit, 1, 5)` | the same |
+| VTOL_Follow (`418860`), VTOL_SeekGuard (`4197d0`) | `418a7b`, `4199b2` | `(unit, 1, 4)` | VTOL_Move_Formation -3, or let go (2) |
+| VTOL_Standby (`417350`) | `417527` | `(unit, 1, 2)` | VTOL_Move_FormationStandby -1, 0 |
+| VTOL_LandIfCan (`416cd0`) | `416eda` | `(unit, 1, 3)` | VTOL_Move_FormationStandby -2, 5 |
+| Standby (`407770`) | `407779` | `(unit, 1, 2)` | Move_Ground_FormationStandby -1, mode -1, 0 |
+
+All are ported and emulated:
+- `check_retail_group.py` `vtolpatrol` (2,000 VTOL_Patrol heads against
+  `retailGroundGroupCheck`, stopped at `41a200` as VTOL_Move's at `418052`),
+  `standby` (2,400 heads of the three standbys, each run from its entry past
+  its exits, against `retailStandbyGroupCheck`) and `vtolform` (now with the
+  FormationStandby flags);
+- `check_air_to_air.py` (AirToAir and VTOL_Evade), `check_air_seek_attack.py`
+  (VTOL_SeekAttack) and `check_air_traffic.py` (VTOL_SeekGuard): the whole
+  handlers with the check answered in or out of the slot, flagged or not, and
+  the next mission a group mover or not. AirToAir, VTOL_Evade and
+  VTOL_SeekAttack are AirToGround's check (`retailAirGroupCheck`); VTOL_Follow
+  and VTOL_SeekGuard share `retailGuardGroupCheck` (flagged and out again,
+  `rand(4) == 0` runs `50c480` and `4d6a50(unit, 0)`; in the slot `rand(10)`
+  clears the flag).
+
+The earlier list named `41e55f` as VTOL_SeekAttack's: it is VTOL_Evade's;
+VTOL_SeekAttack's is `4194fe`.
+
+VTOL_Patrol: a formation pushed by its check returns 0, so the patrol starts
+again at stage 0 when it retires. Stage 0's `4d6b80` walks the list from the
+head and finds the leg already flagged `0x4000`, so no second anchor goes in
+and the patrol goes on along the same leg (`retail_group_test`
+`flyerPatrol`).
+
+The FormationStandby branch of `417750` (`41797e..417ad1`): back in its slot,
+a mission with `0x4000000` stays while its group is active (`50b800`) and
+has a moving member of any class (`50c140`, `50bd20`, `50b900`). It scans
+(`4d8370`, then `4d7de0(unit, found, 0, 0, 1, 0)`: an attack clears the wait
+mask and the stage, 3), else it loiters: a 64 px point controller
+`(rand(20) + rand(10) + 10) x 16` px off along `heading - 0x800 +
+rand(0x1000)`, waiting on `0x700`, 0. Otherwise it retires (5). Ported in
+`retailFlightFormation`; `vtolform` checks result, stage, calls, the point
+and the wait mask (E). Only VTOL_Standby and VTOL_LandIfCan push it (`4d4bf0`
+of `60549c` at `417572` and `416f25`; S). VTOL_LandIfCan returns 5 after the
+push, so the landing ends and the default VTOL_Standby follows the
+formation; a standby waits under it (0).
+
+The formations as the checks build them (`4d7750` with no target and no
+point: the ctor clears `0x200` and `0x400`, `4d6d66`/`4d6d6f`):
+VTOL_Move_Formation `0x1000002`, VTOL_Move_FormationStandby `0x5000002`,
+Move_Ground_FormationStandby `0x15000000` (`check_air_point_mission.py`, E).
+
+A flyer's move is VTOL_Move (`0x1000402`, row `5ebcd3`), not Move_Ground's
+`0x3000400`: a click, a fight-move leg, a rally step and the walk back after a
+response attack (`4186f5`, `4de530` action 2). Without `0x2000000` its
+navigator never gets the formation bit, as in retail. The classic AI's
+`firstMission` reports it (and VTOL_Follow's `0x1000200` for a flyer's guard);
+no AI reader looks at the bits that changed. A flyer's guard and AirToAir
+now count in the moving aggregate (`retailMissionFlags`).
+
+Not ported, the ground missions of the same family, which this World runs
+inside its combat and guard code rather than as retail handlers:
+Attack_Chase (`403dce`: `51d1e0(unit, 1, 5)`, `rand(3)`, Move_Ground_Formation
+at -4), Attack_Melee (`404837`: the same with `rand(2)`) and Follow_Ground
+(`40801c`: as VTOL_Follow's, Move_Ground_Formation at -3) (S).
 
 **The attacks' single check (fx-groupcheck, 2026-11-04, protocol 312).**
 SUPPRESS (`404e12`) and the flyer attacks AirToGround (`41c19f`), AirStrike

@@ -191,7 +191,16 @@ their validation reports; both live in [`docs/`](docs/).
 - **A factory's new unit joins the factory's group or formation when it leaves the
   factory**, as in the original game, not when it is started, in Retail and Legion
   pathfinding alike. A unit a builder conjures joins the builder's group when it is
-  finished.
+  finished (the original game leaves it out of any group; this one is TAK Engine's
+  own).
+- **In Retail pathfinding, flyers keep to their formation whatever they are doing**,
+  as in the original game. A flyer left behind on patrol, in an air fight, while
+  hunting for a new target, or while guarding flies back to its formation and then
+  carries on; one that keeps falling behind may give up guarding. An idle member,
+  on the ground or in the air, that ends up away from its formation goes back to it
+  by itself, and a flyer that lands, or waits, does so with its formation. A flyer
+  that has caught up while the formation is still moving circles near it, attacking
+  what it finds, until the formation stops.
 - **An armed factory from a mod gets no Attack Ground order**, as in the original
   game, which takes the attack command away from any factory. It never attacks an
   enemy unit itself either, ordered or on its own (an Attack on a unit still sends
