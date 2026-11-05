@@ -90,7 +90,9 @@ int main(int argc,char** argv) {
             for(int tick=0;tick<180;++tick)world.tick(1.f/30);
             check(world.unit(target)->hp==tak::sim::Fixed::fromInt(victim.maxHp),
                   "Kamikaze Rat's absent weapon callbacks do not invent bite damage");
+            // The death weapon fires at retirement (512ae0), once Dying ends.
             world.unit(from)->hp={};world.tick(1.f/30);
+            for(int tick=0;tick<600 && world.unit(from)->deathPending;++tick)world.tick(1.f/30);
             check(world.unit(target)->hp<tak::sim::Fixed::fromInt(victim.maxHp),
                   "Kamikaze Rat retains its authored death explosion without weapon callbacks");
         }

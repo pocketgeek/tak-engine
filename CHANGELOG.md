@@ -204,6 +204,26 @@ their validation reports; both live in [`docs/`](docs/).
   finished, or a unit that self-destructs or drowns in deadly water earns nothing. A
   unit given to an ally, converted by an enemy or captured by a mission starts again
   without experience.
+- **Kills are credited as in the original game.** A shot still in the air when its
+  shooter was destroyed, or one fired before the shooter changed sides, no longer
+  takes the kill from whoever hit the target before, and lands without the dead
+  shooter's veteran bonus. The Kills count and score now go to the player whose unit
+  landed the killing blow for the same kills that earn experience: killing an ally's
+  unit counts, while a self-destruct or a mission's scripted kill does not.
+- **Units that explode when they die do it when their death ends.** A Bomb
+  Sprinkler, Kamikaze Rat, Grenadier, Fire Wagon, Shock Trooper or Dirigible now
+  bursts once its death animation is over, as in the original game (the Bomb
+  Sprinkler about five seconds after it falls), not the moment it is killed. The burst
+  belongs to nobody: its kills earn no player a kill or score and no unit experience,
+  and it is not stronger for a veteran.
+- **A captured or given unit takes its type's mission bonuses**, as in the original
+  game, rather than keeping the armour and weapon bonuses its old owner's mission
+  placed it with.
+- **Deadly water hurts once a second**, as in the original game: the map's whole
+  water damage each second to anything standing at or below the water line that
+  cannot hover, ships included.
+- **The mission Kill command kills every unit on the map**, as in the original game,
+  whatever unit it names. No original mission uses it.
 - **Sound and music at full quality.** In-game music used to be turned into 11 kHz
   mono. The game now mixes at 44.1 kHz: the original's music plays in
   stereo at its own rate, a mod's 44.1 kHz or surround sounds and music keep their

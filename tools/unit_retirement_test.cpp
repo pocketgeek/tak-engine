@@ -60,8 +60,10 @@ int main(int argc,char** argv)try {
   for(int i=0;i<90;++i)delayed.tick(1.f/30);
   check(!delayed.unit(from),"completed effect retained its retired source forever");
   for(int i=0;i<180;++i)retained.tick(1.f/30);
-  check(delayed.unit(target)->hp==retained.unit(retainedTarget)->hp && delayed.unit(target)->hp.floorInt()<90,
-        "delayed effect changed source damage after death");
+  // 52a35c: a dead source's effect lands without its weapon multiplier (x2
+  // here), whether or not its record was compacted.
+  check(delayed.unit(target)->hp==retained.unit(retainedTarget)->hp && delayed.unit(target)->hp.floorInt()>=88 &&
+        delayed.unit(target)->hp.floorInt()<100,"delayed effect changed source damage after death");
  }
  Frame frame;frame.gen=3;frame.units.resize(2);frame.unitSlots.resize(251,-1);frame.unitSlots[1]=0;frame.unitSlots[250]=1;
  for(size_t i=0;i<2;++i){frame.units[i].id=i?250:1;frame.units[i].gen=3;frame.units[i].type=&t;}

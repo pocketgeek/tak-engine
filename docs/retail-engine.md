@@ -74,18 +74,24 @@ several cheap kills for one. The credit goes to the victim's last hitter
 a site's 13), when the victim was finished (+0x108 == 0) and its owner (+0xfd)
 differs from the hitter's player (+0xfc) -- no alliance test. Nothing about
 the killer is tested: buildings gain experience, and noveteran units collect it
-but stay at level 0. A change of owner (ShareUnits, CRT transfer, charm, all
-via 514da0, and the mission `Capture` verb at 0x4d3c57 as well) makes a new
-object with +0xf0 = +0xf4 = 0, then the type's scenario level. Two deaths no
-attack causes credit nobody: deadly water hurts through 51a140 with no
-attacker and damage kind 13 (51e13f), which keeps the last hitter but becomes
-the death kind (+0x10f, 512610 at 51e36c); the mission `Kill` verb (0x4d36eb ->
-513130) sends kind 10. (Retail's `Kill` also ignores its arguments and takes
-every unit this machine runs, owner +0xea 1 or 2; ours still kills the one unit
-named, and no shipped mission uses it.) Saves store the level, not the points
-(51f04c). Ours: `src/sim/retailveterancy.h`; `tools/re/check_veterancy.py` runs
-512ce0's gate, 519310/5193c0 and 519370 natively against `retail_script_test
---veterancy`, and the water, Kill and Capture paths natively.
+but stay at level 0. The same switch case counts the kill for the hitter's
+PLAYER (+0xfc, not 10): its kill count (record +0xa0, the F4 Kills) and, unless
+the scenario owns the score (game +0x3070 & 4), its score (+0xa4, the victim
+type's experiencepoints), under the same finished and owner gates. A change of
+owner (ShareUnits, CRT transfer, charm, all via 514da0, and the mission
+`Capture` verb at 0x4d3c57 as well) makes a new object (512060) with +0xf0 =
++0xf4 = 0, and the scenario's 4cd590 (vtable +0x14 at 512363) sets its
+armour/weapon multipliers (+0xe8/+0xec) to 1.0 and then to the type's
+scenario percentages, and its level. Two deaths no attack causes credit
+nobody: deadly water hurts through 51a140 with no attacker and damage kind 13
+(51e13f), which keeps the last hitter but becomes the death kind (+0x10f,
+512610 at 51e36c); the mission `Kill` verb (0x4d36eb -> 513130) sends kind 10.
+Saves store the level, not the points (51f04c). Ours:
+`src/sim/retailveterancy.h`; `tools/re/check_veterancy.py` runs 512ae0's kill
+count, score and experience gates, 519310/5193c0 and 519370 natively against
+`retail_script_test --veterancy`, and the water, Kill and Capture paths
+natively. When and to whom the credit is given: "Kill credit and retirement"
+below.
 
 The multiplier scales the instance's **attack** and **armour** up and **divides**
 a reload/cooldown field (veterans hit harder, tank more, fire faster); max HP is
@@ -1043,6 +1049,78 @@ then sets the site's dying bit (`51a639`, owner record +0xea 1 or 2), as for
 any unit at HP <= 0. Our death sweep still exempts a retail site (a fresh one
 sits at HP 0), so a site hit to HP <= 0 stays up here; it only arises in the
 restored-save probe, the one place retail sites (`retailResources`) exist.
+
+### Kill credit and retirement (icd, 2026-11-04)
+
+Emulated with `tools/re/check_kill_credit.py` (E unless marked).
+
+- **The hitter.** `51a140` puts the hitter's slot id in the damage packet
+  only when its object lives (+0x130 & 0x1000000, `51a1c0`), and `51a240`
+  resolves it again the same way (`51a281`). A dying hitter still lives:
+  the bit is cleared only at retirement. Only a resolved hitter is stored
+  (+0xf8, and its +0xfd at +0xfc, `51a35a`) and handed to the hit response
+  `409a50`; a freed object (a retired unit, or the old object of one that
+  changed sides, `514da0`) or no hitter leaves +0xf8/+0xfc as they were and
+  gives `409a50` nothing. Ours took every shot's `fromId` and player.
+- **The attack multiplier** (`52a35c`): the shooter's +0xe0 scales the
+  damage only while it lives and is not dying (+0x130 & 0x1000). A shot
+  still in flight when its shooter fell lands unscaled; ours kept the dead
+  shooter's veterancy, auras and scenario weapon percentage.
+- **The death.** `512610` sends the death packet with the killer's id only
+  when it lives (`5127a9`) and `512860` writes +0xf8 from it (0 otherwise),
+  keeping +0xfc. Then Killed and Dying run; retirement `512ae0` comes at
+  once when no Dying runs (`512ac8`) and otherwise when Dying ends (SET26/31
+  through `51dca2`/`51e613`, see `docs/native-death-lifecycle-2026-09-27.md`).
+- **Retirement** `512ae0`: the death-kind switch credits the kill (kill
+  count, score, experience, above); statues (14/15, `512ee0`); then the death
+  weapon `52ac00` when severity (+0x115) > 0, the unit is finished
+  (+0x108 == 0) and game +0x19f94 & 2 is clear (I: never set in our data
+  paths); then the corpse; then the object is freed (`512e23`). The death
+  weapon is the dying unit's SELFDESTRUCTAS (kind 5) or EXPLODEAS at its
+  position at that moment (+0x68..+0x70), a shot with no shooter (+0x7c = 0,
+  so it credits nobody, has no attack multiplier and spares nobody in
+  `529dc0`) for the unit's player (+0x92 = +0xfd). It lands inside
+  retirement while the object still lives. Ours fired it at the death, with
+  the dying unit as its shooter: its kills were credited to the unit's
+  player and it was scaled by its veterancy. The Bomb Sprinkler's Dying runs
+  147 ticks, so its cannonball burst came five seconds early.
+- **Mission Kill** (`513130`): ignores its arguments. For every unit this
+  machine runs (owner +0xea 1 or 2; lockstep runs them all): `52ae30(u, 1)`
+  removes every shot it fired (`529af0`, no impact); a unit whose Dying runs
+  (+0x130 & 0x10000000) retires at once, every other dies with kind 10
+  (`512610`). The last hitter is not touched. No shipped mission script
+  names the verb (S: the 63 god scripts' strings). Ours killed the one unit
+  named and cleared its last hitter.
+- **Deadly water** (`51e0d5..51e14c`, in the unit update after the HP
+  sample): on ticks that are a multiple of 30, when the map record has
+  waterdoesdamage (+0xd41) and waterdamage (+0xd45, an int, passed on as a
+  word) is nonzero, a unit whose height's whole part (+0x6e) is at or below
+  sea level (byte game +0x19ef8, signed compare) and whose type is not
+  canhover (+0x260 & 0x1000) takes the whole amount through `51a140` with no
+  hitter and kind 13: no hit response, no HitByWeapon, the last hitter kept,
+  kind 13 as the death kind. Flight, ship and amphibian are not exemptions:
+  only the height counts (I: a ship's height is sea level, so it is hurt).
+  Ours burned `waterdamage * dt` every tick off ground units over water
+  cells, sparing flyers, ships and amphibians.
+
+Ours (protocol 312): `World::retailHitter` / `retailObjectLives` (alive, or
+dead with `deathPending` until `World::retireDeath`); `retireDeath` runs at
+the corpse handoff (`deadFor` reaching `corpseAnimationTicks`, or at once),
+counts the kill (`retailKillCountsForPlayer`), credits the experience and
+queues the death weapon with no shooter. `World::missionKillAll`,
+`retailDeadlyWaterDamage` (`src/sim/retaildeath.h`), `startObjectStats`.
+Test: `kill_credit_test` (and `kill_credit_shipped`, the Bomb Sprinkler's
+blast on its retirement tick 147).
+
+Not ported: the losses counter (`512bce`, owner record +0xa2) counts only
+when the local player's alliance byte for the owner is 0, a per-machine
+display figure; ours counts every loss. The XP add at retirement goes to the
++0xf8 slot even if a new unit has since taken it (retail reuses slots; World
+ids are never reused, so that credit is dropped). A carried unit is not
+hurt by deadly water (World keeps no height for it). A deadly-water death is
+swept on the next tick, not in the same update (`51e36c`). The blast is
+queued after the corpse is placed, where retail fires it before (`512d97`
+before `512dbb`), so a blast could reach its own corpse feature here.
 
 ### A dying unit takes no more hits
 

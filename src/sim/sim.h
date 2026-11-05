@@ -30,6 +30,7 @@
 #include "sim/retailgroup.h"
 #include "sim/retailplayer.h"
 #include "sim/retailconstruction.h"
+#include "sim/retaildeath.h"
 #include "sim/retailveterancy.h"
 #include "sim/retailconstructionparticles.h"
 #include "sim/retailai.h"
@@ -1364,6 +1365,11 @@ struct alignas(64) Unit {
     // marking "this unit quit" rather than "this unit was killed".
     static constexpr uint8_t kDeathSelfDestruct = 5;
     uint8_t severity = 0;    // retail Killed severity ((overkill% + 1s-ago HP%)/2)
+    // Dead but not yet retired (512ae0): its Killed/Dying still runs and its
+    // object still lives (+0x130 & 0x1000000), so a shot of its in flight
+    // still names it the hitter. Retirement credits the kill and fires the
+    // death weapon (World::retireDeath).
+    bool deathPending = false;
     uint8_t hpPct1s = 100;   // HP% sampled every 30 ticks (previous sample -- the
     uint8_t hpPctCur = 100;  //  retail unit+0x111/+0x110 pair severity reads)
     int corpseStatue = -1;   // FeatType override chosen at death (stone/frozen), -1 = corpse=
@@ -2156,6 +2162,8 @@ public:
     void setVeteranLevel(Unit& u, int level);
     int scenarioCreate(const UnitType* type,int player,int lx,int lz,int hx,int hz);
     void scenarioDestroy(int unitId,uint8_t deathType=0);
+    // The mission Kill verb (513130): every unit dies, its shots gone.
+    void missionKillAll();
 #ifndef NDEBUG
     // Dev harness: hit `targetId` with `w` through the combat damage path
     // (applyHit), so the death edge sees authored overkill and damage type.
@@ -2517,8 +2525,9 @@ public:
         return onRoad(Fixed::fromFloat(x), Fixed::fromFloat(z), footX, footZ);
     }
     // .ota waterdoesdamage/waterdamage: on two Iron Plague missions the water is
-    // lethal, which is the whole point of their terrain. Damage is per second.
-    void setWaterDamage(float perSec) { waterDamage_ = perSec; }
+    // lethal, which is the whole point of their terrain. Whole hit points, once
+    // a second (retailDeadlyWaterDamage).
+    void setWaterDamage(int32_t perSecond) { waterDamage_ = perSecond; }
     void setNoSeaLevelTrigger(bool value) { noSeaLevelTrigger_ = value; }
     bool isWater(float x, float z) const {
         if (depth_.empty()) return false;
@@ -3297,9 +3306,23 @@ private:
     void captureUnit(Unit& t, int newPlayer);
     // The experience of the new object retail makes for a unit (512060): none
     // (511990 zeroes +0xf0 and +0xf4), then its type's scenario level (4cd5f4).
-    void startExperience(Unit& u);
+    void startObjectStats(Unit& u);
     // A dead unit's kill credit to the unit that hit it last (512c9c..512ce6).
     void creditKill(const Unit& victim);
+    // Retail's retirement 512ae0 for a unit whose death has started.
+    void retireDeath(Unit& u);
+    // Whether a unit's retail object still lives (+0x130 & 0x1000000): alive,
+    // or dead with its retirement still to come.
+    static bool retailObjectLives(const Unit& u) {
+        return u.type && (u.alive() || (u.deathPending && u.deadFor<kRetiredTicks));
+    }
+    // 51a1c0 / 51a281: the hitter a hit names, only while its object lives. A
+    // unit that changed sides is a new object to retail (514da0), so a shot
+    // fired for its old player names nobody, though World keeps its id.
+    const Unit* retailHitter(int id,int player) const {
+        const Unit* u=id ? unit(id) : nullptr;
+        return u && retailObjectLives(*u) && u->player==player ? u : nullptr;
+    }
     // Apply a weapon's damage at (hx,hz), as retail's impact dispatch 529c10
     // does: a weapon with areaofeffect <= 16 that struck `primary` hits it
     // alone; any other impact damages every unit near the 3D `impact` point
@@ -4081,7 +4104,6 @@ private:
     // Only delayed kill attribution survives final retirement, not full unit/VM state.
     std::unordered_map<int,int> retiredOwners_;
     uint64_t retiredHash_=0;
-    int creditedOwner(int id) const;
     void compactRetiredUnits();
     LeftEmptyOnCopy<std::unique_ptr<MissionScript>> mission_;   // optional campaign mission runner
     // Mission orders' state (ScriptedOrder), indexed by Order::scripted - 1.
@@ -4200,7 +4222,7 @@ private:
     ShakeReq shakeReq_;
     bool noSeaLevelTrigger_ = false; // OTA: projectile/effect sea-surface bypass.
     int32_t ballisticGravityRaw_ = 8155; // retail default OTA gravity 112, in native 16.16/tick².
-    float waterDamage_ = 0;   // .ota waterdamage when waterdoesdamage=1
+    int32_t waterDamage_ = 0;   // .ota waterdamage when waterdoesdamage=1
     SoundReq soundReq_;
     std::vector<SoundReq> pendingSounds_;
     // [EXPLODEAS] blasts queued during the death sweep and applied just after it

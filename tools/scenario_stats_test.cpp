@@ -167,7 +167,7 @@ int main() try {
         // Deadly water hurts with no attacker and damage kind 13 (51e13f), the
         // death kind 512610 then gets: the last hitter is kept but not credited.
         auto killerType=fighter(),victim=fighter();
-        killerType.experiencePoints=10;killerType.maxWaterDepth=1000;
+        killerType.experiencePoints=10;killerType.canHover=true;   // only canhover is spared
         victim.id="victim";victim.weapon.damage=0;victim.weapons.clear();victim.maxHp=40;victim.experiencePoints=25;
         World w;w.setPlayerCount(2);w.setTerrain(std::vector<uint8_t>(64*64,10),64,64,50);
         w.setWaterDamage(1000);

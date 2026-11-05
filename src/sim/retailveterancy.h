@@ -20,6 +20,17 @@ inline bool retailKillCreditsExperience(uint8_t deathType, bool finished, int hi
     return deathType < 16 && (kinds >> deathType & 1) && finished && hitterPlayer != victimPlayer;
 }
 
+// The same switch case counts the kill and the score for the hitter's PLAYER
+// (512bd5..512c63), not for a killer unit: +0xfc must name one (10 is none),
+// the victim be finished and its owner (+0xfd) differ from +0xfc -- the same
+// owner test, no alliance -- and then the player's kill count (record +0xa0)
+// goes up and, unless the scenario took the score over (game +0x3070 & 4),
+// its score gains the victim type's experiencepoints. A dead or converted
+// killer still counts: only the player recorded at the hit is read.
+inline bool retailKillCountsForPlayer(uint8_t deathType, bool finished, int hitterPlayer, int victimPlayer) {
+    return hitterPlayer >= 0 && retailKillCreditsExperience(deathType, finished, hitterPlayer, victimPlayer);
+}
+
 // 512ce0: the killer gains the VICTIM type's experiencepoints (+0x1c2), a
 // 32-bit add that wraps.
 inline int32_t retailAddExperience(int32_t experience, int32_t points) {

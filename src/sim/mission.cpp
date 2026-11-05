@@ -215,14 +215,11 @@ int32_t MissionScript::command(World& w, const std::string& name, const std::vec
         }
         return 0;
     }
-    // Retail's Kill (0x4d36eb -> 513130) sends death kind 10 (512610), which
-    // credits no killer and scores nothing (512ae0); it also ignores its
-    // arguments and takes every unit this machine runs -- not ported, and no
-    // shipped mission uses it.
+    // Retail's Kill (0x4d36eb -> 513130) ignores its arguments and kills every
+    // unit with death kind 10 (512610), which credits no killer and scores
+    // nothing (512ae0). No shipped mission uses it.
     if (ieq(verb, "kill")) {
-        if (!a.empty()) if (Unit* u = w.unit(a[0])) {
-            u->hp = Fixed(); u->deathType = 10; u->lastHitBy = 0; u->lastHitPlayer = -1;
-        }
+        w.missionKillAll();
         return 0;
     }
     if (ieq(verb, "screenshake")) {

@@ -10,6 +10,7 @@
 #include "sim/matchsetup.h"
 #include "sim/retailhweffectdata.h"
 #include "sim/retailanimationqueries.h"
+#include "sim/retaildeath.h"
 #include <algorithm>
 #include <bit>
 #include <cctype>
@@ -446,19 +447,29 @@ int main(int argc,char** argv) {
         }
         return 0;
     }
+    // tools/re/check_kill_credit.py: tick height(16.16) sea canhover enabled
+    // amount -> the deadly water's damage this tick (0 for none).
+    if (argc==2 && std::string(argv[1])=="--deadly-water") {
+        uint32_t tick;int32_t height,amount;int sea,hover,enabled;
+        while (std::cin>>tick>>height>>sea>>hover>>enabled>>amount)
+            std::cout<<tak::sim::retailDeadlyWaterDamage(tick,height,sea,hover!=0,enabled!=0,amount)<<'\n';
+        return 0;
+    }
     // tools/re/check_veterancy.py: one row per case, answered in its order.
-    //   c kind finished hitter victim killer points xp  -> the killer's xp after a death
+    //   c kind finished hitter victim killer points xp scoreoff
+    //                                  -> the killer's xp, the hitter player's kills and score after a death
     //   l xp points noveteran multiplier                 -> level, vetMul's float bits
     //   s xp level points noveteran multiplier           -> xp after setLevel
     if (argc==2 && std::string(argv[1])=="--veterancy") {
         std::string row;
         while (std::cin>>row) {
             if (row=="c") {
-                int kind,finished,hitter,victim,killer;int32_t points,xp;
-                std::cin>>kind>>finished>>hitter>>victim>>killer>>points>>xp;
+                int kind,finished,hitter,victim,killer,scoreOff;int32_t points,xp;
+                std::cin>>kind>>finished>>hitter>>victim>>killer>>points>>xp>>scoreOff;
                 if (killer && tak::sim::retailKillCreditsExperience(uint8_t(kind),finished!=0,hitter,victim))
                     xp=tak::sim::retailAddExperience(xp,points);
-                std::cout<<xp<<'\n';
+                const bool counted=tak::sim::retailKillCountsForPlayer(uint8_t(kind),finished!=0,hitter,victim);
+                std::cout<<xp<<' '<<(counted ? 1 : 0)<<' '<<(counted && !scoreOff ? points : 0)<<'\n';
             } else if (row=="l") {
                 tak::sim::UnitType type;tak::sim::Unit unit;int noVeteran;
                 std::cin>>unit.xp>>type.experiencePoints>>noVeteran>>unit.vetOverride;
