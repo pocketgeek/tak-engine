@@ -207,7 +207,8 @@ their validation reports; both live in [`docs/`](docs/).
   standing in a formation (Alt+number) has been pushed, stepped aside, has come back
   from a fight, or was sent somewhere on its own, and ends up farther from its place
   than the original game allows, it walks back to its own spot in the formation. The
-  computer player's attack squads re-form the same way. If another unit or a building
+  computer player's attack squads re-form the same way, and gather their stragglers as
+  your formations do. If another unit or a building
   stands on that spot it waits until the spot is free, and if it cannot get there it
   stays where it stopped instead of trying again and again. A formation you stop on
   the way stays where it stopped. Flyers keep to their formation as before, and units

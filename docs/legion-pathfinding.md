@@ -597,7 +597,12 @@ formation's move has one:
   Retail keeps it in its group record (Retail's reference is the group centre;
   ours is the member's place in the group), and walks back to it once idle out
   of it. Any other order -- an attack, a step-out, a build, a factory door
-  clearing -- leaves the slot too. A slot whose point no other slot of the
+  clearing -- leaves the slot too. A settled body's Legion yield (at most a
+  cell from its goal) carries the slot with it, so a body that comes in behind
+  the step does not stand on the slot it left. Two members moved on their own
+  within the convoy window to nearby points share a convoy, so their moves
+  count as a formation move and give them new slots there (accepted by the
+  owner, 2026-11-05). A slot whose point no other slot of the
   formation shares any more (the formation moved on without the member, or it
   is alone; `legionSlotDests_`) is not walked back to. Kept each tick before
   the unit loop (`updateLegionFormationSlots`: one walk of the units, map writes
@@ -615,10 +620,12 @@ formation's move has one:
   of its slot (Legion settled it short, or the way is shut) gives that slot up
   until it carries another order: one walk, never a to-and-fro.
 * Flyers keep their flight stations over the ground and are never re-ordered
-  (the W6 rule). An Alt+N member with a slot is left to the re-form instead of
-  the rest-time rejoin above, which still gathers the Alt+N members that never
-  moved together (a fresh Alt+N, a factory's joiner); the rejoin stays Alt+N
-  only.
+  (the W6 rule). A member with a slot is left to the re-form instead of the
+  rest-time rejoin above, which gathers the members that have none (a fresh
+  formation, a factory's joiner, a member stopped alone mid-move). The rejoin
+  takes the AI's flagged squads too (round 3 of the owner's decisions): its
+  aggregates key on the formation group, Alt+N formation N at N as before, so
+  Alt+N is unchanged; only Alt+N is paced.
 * In AI games it rarely acts: a 20-minute Legion game against the classic AI
   (Inner Circle, seed 1) flags a strike squad from tick 31,200 on, and its
   members are always walking or fighting at the samples -- no walk back; the
@@ -629,7 +636,9 @@ formation's move has one:
   a body on the slot holds it back until it leaves; a member moved 20 cells on
   its own walks back once idle; a formation stopped short of its point stays
   put; walled off, it walks once and gives up. `legion_formationreformai`: a
-  flagged AI squad's member shoved alike walks back, an unflagged one's stays.
+  flagged AI squad's member shoved alike walks back and its member that never
+  moved with it is gathered to its point by the rejoin; an unflagged squad's
+  stay where they are.
 
 The in-game right-click in Legion mode sends one shared point for ground
 units, boats and hovercraft with footprints up to 8 whose order is not
