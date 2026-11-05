@@ -4696,6 +4696,7 @@ private:
     void sweepDeath(Unit& unit);
     void killPassengers(Unit& carrier);
     void updateCorpseWindow(Unit& unit);
+    bool corpseInWater(const Unit& unit) const;
     // Enabled by setupMatch; a bare test World leaves it off.
     bool pathService_ = false;
     // The retry constants that lived here (kPathRetryTicks, kPathFailBackoff)

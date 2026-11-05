@@ -3217,13 +3217,15 @@
     // terrain lift. Retail stands a canhover unit at max(terrain, sea - waterline)
     // and a floater at sea - waterline (0x51b220 / 0x51b2fa), so over deep water
     // the body rides near the surface, not on the seabed.
-    float GameView::waterSink(const tak::sim::UnitType* t, float wx, float wz) {
+    float GameView::waterSink(const tak::sim::UnitType* t, float wx, float wz, float sunk) {
         if (!t || !(t->canHover || t->floater)) return 0.0f;
         const auto& m = mapView_.map();
         if (m.heights.empty()) return 0.0f;
         const float terrain = rawHeight(wx, wz);
-        const float body = tak::client::lift::bodyHeight(terrain, m.seaLevel, t->waterline,
-                                                         t->canHover, t->floater);
+        float body = tak::client::lift::bodyHeight(terrain, m.seaLevel, t->waterline,
+                                                   t->canHover, t->floater);
+        // A wreck `sunk` pixels below where it floated, never under its bed.
+        if (sunk > 0.0f && terrain <= float(int(uint8_t(m.seaLevel)))) body = std::max(terrain, body - sunk);
         return std::floor(terrain * kHeightScale_) - std::floor(body * kHeightScale_);
     }
 

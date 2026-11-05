@@ -20,4 +20,48 @@ inline uint16_t retailDeadlyWaterDamage(uint32_t tick, int32_t height, int seaLe
     return uint16_t(amount);
 }
 
+// A water grave's feature, as the feature update 4959c0 (495b81..495c8d)
+// moves it after 512ee0 placed it with velocity (0, -0x2ccc, 0) at the dying
+// body's 16.16 height `y`. Each update, in order: a fading feature loses its
+// fade step from its alpha and is removed (496380) once the alpha is at or
+// below zero; a feature at rest leaves the update list (494a80) for good;
+// otherwise the velocity is added, and a feature at or below its bed (511260:
+// the cell's (highest + lowest corner) / 2, -1 off the map) comes to rest
+// there, one under sea level sinks at 0x2ccc a tick and, on a bed of exactly
+// 0, starts fading (alpha 1, step 0.17498779 / height in pixels), and one at
+// or above sea level gains gravity (game +0x19ecc). The placement's own tick
+// runs the first update. Returns the updates after that one until the
+// removal, or -1 for a feature that comes to rest: a water grave carries no
+// decomposition (only the land branch loads +0x3c), so it stays. The floats
+// are the x87 code's: the step is a correctly rounded single quotient and
+// each alpha a correctly rounded single difference, so every comparison
+// agrees. (E: tools/re/check_water_grave.py.)
+inline int32_t retailWaterGraveLife(int32_t y, int bed, int seaLevel, int32_t gravity = 0x1fdb) {
+    int32_t vy = -0x2ccc;
+    bool fading = false;
+    float alpha = 0.0f, step = 0.0f;
+    const auto sea = int32_t(uint32_t(uint8_t(seaLevel)) << 16);
+    const auto rest = int32_t(uint32_t(bed) << 16);
+    for (int32_t update = 1; update < (1 << 20); ++update) {
+        if (fading) {
+            alpha = alpha - step;
+            if (alpha <= 0.0f) return update - 1;
+        }
+        if (vy == 0) return -1;
+        y = int32_t(uint32_t(y) + uint32_t(vy));
+        if (y <= rest) { vy = 0; continue; }
+        if (y < sea) {
+            vy = -0x2ccc;
+            if (!fading && bed == 0) {
+                fading = true;
+                alpha = 1.0f;
+                step = float(0.17498779296875 / (double(y) * (1.0 / 65536.0)));
+            }
+        } else {
+            vy -= gravity;
+        }
+    }
+    return -1;
+}
+
 } // namespace tak::sim

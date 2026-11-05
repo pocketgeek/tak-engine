@@ -5228,7 +5228,11 @@
         // FBI waterline: a wading god or a floating hull sits BELOW the water
         // surface, so the sink is added where the terrain lift is subtracted.
         // Zero on land and for every type that carries neither canhover nor floater.
-        ay += waterSink(u.type, ix, iz) * zm;
+        // A wreck in water sinks to its bed at 0x2ccc a tick (the feature
+        // update 4959c0; the sim keeps its lifetime, retailWaterGraveLife).
+        const float sunk = u.corpsePhase && !flying
+            ? std::max(0.0f, u.deadFor*30.0f - float(u.corpseAnimationTicks)) * float(0x2ccc) / 65536.0f : 0.0f;
+        ay += waterSink(u.type, ix, iz, sunk) * zm;
         // Body attitude precedes the animated piece tree for both ground and
         // flying units. Convert the retail mirrored basis at the same boundary.
         // Retail applies the birth heading to buildings as well as movers.

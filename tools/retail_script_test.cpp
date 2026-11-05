@@ -456,6 +456,13 @@ int main(int argc,char** argv) {
             std::cout<<tak::sim::retailDeadlyWaterDamage(tick,height,sea,hover!=0,enabled!=0,amount)<<'\n';
         return 0;
     }
+    // tools/re/check_water_grave.py: y(16.16) bed sea -> the updates a water
+    // grave's feature lives after its placement update (-1: it stays).
+    if (argc==2 && std::string(argv[1])=="--water-grave") {
+        int32_t y;int bed,sea;
+        while (std::cin>>y>>bed>>sea) std::cout<<tak::sim::retailWaterGraveLife(y,bed,sea)<<'\n';
+        return 0;
+    }
     // tools/re/check_kill_credit.py: deadly water on a unit carried at a host
     // height (the attach point World commits for its cargo) -> the damage.
     if (argc==2 && std::string(argv[1])=="--carried-water") {

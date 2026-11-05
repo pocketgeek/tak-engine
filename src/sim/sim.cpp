@@ -18210,20 +18210,46 @@ void World::UnitScript::pay([[maybe_unused]] bool touch) {
 #endif
 }
 
+// 512ee0 (512f8f..512fab): a corpse is a water grave when the ground height
+// under the body (511170, interpolated; -1 off the last row or column) is at
+// or below sea level, not when its cell's corner is below.
+bool World::corpseInWater(const Unit& u) const {
+    return !heights_.empty() && terW_>0 &&
+        retailTerrainHeight(u.x.v,u.z.v,terW_,terH_,[&](int x,int z) {
+            return int(heights_[size_t(z)*size_t(terW_)+size_t(x)]);
+        })<=seaLevel_;
+}
+
 void World::updateCorpseWindow(Unit& u) {
     const int starts=u.corpseAnimationTicks();
     u.corpseUntil=starts;
     if (!u.deathHasCorpse || starts==INT32_MAX) return;
     const int ct=u.corpseStatue>=0 ? u.corpseStatue : corpseTypeOf(u.type);
     if (ct<0) return;
-    // 512ee0 (512f8f..512fab): a corpse is a water grave when the ground
-    // height under the body (511170, interpolated; -1 off the last row or
-    // column) is at or below sea level, not when its cell's corner is below.
-    const bool water=!heights_.empty() && terW_>0 &&
-        retailTerrainHeight(u.x.v,u.z.v,terW_,terH_,[&](int x,int z) {
-            return int(heights_[size_t(z)*size_t(terW_)+size_t(x)]);
-        })<=seaLevel_;
-    const int duration=u.corpseStatue<0 && water ? 75 : featTypes_[size_t(ct)].decomposeTicks;
+    const bool water=corpseInWater(u);
+    // A water grave (a statue's too; not an isfeature type's, which 512fcd
+    // leaves unmoved) sinks from the body's height and has no decomposition:
+    // it stays on its bed, or fades out on the way down to a bed of 0
+    // (retailWaterGraveLife). Only the land branch loads the type's
+    // decomposition (513027..513034).
+    int duration=featTypes_[size_t(ct)].decomposeTicks;
+    if (water) {
+        int life=-1;
+        if (!u.type->classicFbi.isFeature) {
+            // 511260: the cell under the feature's whole-pixel x and z (each
+            // divided by 16 towards zero): (highest + lowest corner) / 2, -1
+            // off the map.
+            const int cx=int(int16_t(uint32_t(u.x.v)>>16))/16,cz=int(int16_t(uint32_t(u.z.v)>>16))/16;
+            int bed=-1;
+            if (cx>=0 && cz>=0 && cx<hW_ && cz<hH_) {
+                const auto [low,high]=cellHeightRange(size_t(cz)*size_t(hW_)+size_t(cx));
+                bed=(low+high)>>1;
+            }
+            life=retailWaterGraveLife((u.type->canFly && !u.embarked() ? u.flightY : u.groundY).v,
+                                      bed,seaLevel_);
+        }
+        duration=std::max(life,0);
+    }
     u.corpseUntil=duration>0 ? int32_t(std::min(int64_t(INT32_MAX),int64_t(starts)+duration)) : INT32_MAX;
 }
 

@@ -18,7 +18,7 @@ int main(int argc,char** argv) {
         sim::registerMapFeatures(definitions,tnt::Map{},vfs,&registry);
         check(registry.find("arakeep")->instantCorpse,"Keep has immediate constant corpse handler");
         check(!registry.find("arasword")->instantCorpse,"animated mobile death remains animated");
-        int restored=0;uint64_t hash=0;
+        int restored=0,waterStays=0,waterFades=0;uint64_t hash=0;
         for (const auto& [name,type]:registry.types()) {
             if (!type.explosionCorpse || type.instantCorpse) continue;
             ++restored;
@@ -44,8 +44,19 @@ int main(int argc,char** argv) {
                       w.unit(id)->corpseUntil>w.unit(id)->deadFor,
                       "restored corpse survives its authored death-animation handoff");
                 if(water) {
-                    for(int i=0;i<76;++i)w.tick(1.f/30);
-                    check(w.unit(id)->corpseUntil==0,"water corpse retains its sinking/expiry lifetime");
+                    // Over a bed of 0 (4959c0): a body on the bed is at rest
+                    // there at once and its wreck stays; a ship's, at its
+                    // waterline, fades out as it sinks.
+                    const auto* u=w.unit(id);
+                    const int64_t life=sim::retailWaterGraveLife(u->groundY.v,0,20);
+                    check(life<0 ? u->corpseUntil==INT32_MAX
+                                 : int64_t(u->corpseUntil)-u->corpseAnimationTicks()==life,
+                          "a water grave lives as the feature update moves it");
+                    (life<0 ? waterStays : waterFades)++;
+                    for(int i=0;i<300 && w.unit(id) && w.unit(id)->corpseUntil>0;++i)w.tick(1.f/30);
+                    check(life<0 ? w.unit(id) && w.unit(id)->corpseUntil==INT32_MAX
+                                 : !w.unit(id) || w.unit(id)->corpseUntil==0,
+                          "a wreck at rest stays and a fading one is gone");
                 }
                 hash=(hash*1099511628211ULL)^w.stateHash();
             }
@@ -57,26 +68,39 @@ int main(int argc,char** argv) {
         for (const auto& [name,type]:registry.types()) {
             if (!type.explosionCorpse || type.instantCorpse) continue;
             const int ct=definitions.corpseTypeOf(&type);
-            auto lifetime=[&](const std::vector<uint8_t>& heights,int32_t x,int32_t z) {
+            auto lifetime=[&](const std::vector<uint8_t>& heights,int32_t x,int32_t z,int32_t y=-1) {
                 sim::World w;w.setTerrain(heights,64,64,20);
                 w.setFeatureTypes(definitions.featureTypes());w.mapCorpse(&type,ct);
                 const int id=w.spawn(&type,512,512,std::nullopt,0);
                 w.unit(id)->x=sim::Fixed::raw(x);w.unit(id)->z=sim::Fixed::raw(z);
+                if (y>=0) w.unit(id)->groundY=sim::Fixed::raw(y);
                 w.unit(id)->hp={};w.unit(id)->deathType=3;
                 w.tick(1.f/30);
                 for(int i=0;i<1500 && w.unit(id)->deadFor<w.unit(id)->corpseAnimationTicks();++i)
                     w.tick(1.f/30);
                 return int64_t(w.unit(id)->corpseUntil)-w.unit(id)->deadFor;
             };
-            check(lifetime(std::vector<uint8_t>(64*64,20),512<<16,512<<16)==75,
-                  "a body on ground level with the sea is no water grave");
+            const int decompose=definitions.featureTypes()[size_t(ct)].decomposeTicks;
+            const int64_t land=lifetime(std::vector<uint8_t>(64*64,100),512<<16,512<<16);
+            check(decompose>0 ? land==decompose : land>=INT32_MAX-3000,"a wreck on land decomposes as its feature type says");
+            check(lifetime(std::vector<uint8_t>(64*64,20),512<<16,512<<16)>=INT32_MAX-3000,
+                  "a body on ground level with the sea is a water grave at rest at once: it stays");
             std::vector<uint8_t> corner(64*64,100);corner[32*64+32]=0;
-            check(lifetime(corner,(32*16+15)<<16,(32*16+15)<<16)!=75,
+            check(lifetime(corner,(32*16+15)<<16,(32*16+15)<<16)==land,
                   "a body on dry ground over a sunken cell corner became a water grave");
+            // 4959c0 (E, check_water_grave.py): a floating wreck sinks 0x2ccc
+            // a tick; over a bed of 0 it fades out on the way, over any other
+            // bed it comes to rest there for good. Before: 75 ticks either way.
+            const int64_t fade=sim::retailWaterGraveLife(18<<16,0,20);
+            check(fade>90 && fade<110 && lifetime(std::vector<uint8_t>(64*64,0),512<<16,512<<16,18<<16)==fade,
+                  "a wreck over a bed of 0 fades out as it sinks");
+            check(lifetime(std::vector<uint8_t>(64*64,5),512<<16,512<<16,18<<16)>=INT32_MAX-3000,
+                  "a wreck over a bed above 0 comes to rest there and stays");
             break;
         }
         // The Crusades roster has no Cult of Lokken Ship (tarcship has no unitscb FBI).
         check(restored==(balance?28:29),"all 29 (Crusades 28) omitted corpse types restored");
+        check(waterStays>0 && waterFades>0,"both a wreck at rest on a bed of 0 and a fading one were seen");
         check(!registry.find("arasword")->explosionCorpse,"ordinary soldier explosion still gibs");
         check(!registry.find("arafly")->explosionCorpse,"handler that refuses a corpse stays excluded");
         for(bool unfinished:{false,true}) {
