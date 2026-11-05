@@ -93,7 +93,55 @@ static int shipped(const char* root) {
                 throw std::runtime_error("mission player "+std::to_string(p)+" opens with "+
                     std::to_string(w.player(p).mana)+" mana, not its placed storage "+std::to_string(want[size_t(p)]));
     }
-    std::cout<<"shipped: a skirmish opens with 5000 a player, a mission with its placed storage\n";
+    // 51230c / 429a92 (E): a placed or built wall (isfeature) dies with kind 9
+    // and is its feature: no wall unit stands, nobody counts a loss.
+    const auto liveWalls=[](const World& w) {
+        int n=0;
+        for (const auto& u:w.units()) n+=u.alive() && u.type && u.type->classicFbi.isFeature;
+        return n;
+    };
+    {
+        World w;int human=0;
+        check(setupMission(w,reg,vfs,"takmission02_mt",human,nullptr),"takmission02_mt did not load");
+        std::vector<int> placed;
+        for (const auto& u:w.units()) if (u.type && u.type->classicFbi.isFeature) placed.push_back(u.id);
+        check(!placed.empty(),"takmission02_mt places no wall");
+        for (int i=0;i<2;++i) w.tick(1.f/30.f);
+        int features=0;
+        for (const int id:placed) features+=w.corpseDamage(id)>=0;
+        if (liveWalls(w)!=0 || features!=int(placed.size()))
+            throw std::runtime_error("takmission02_mt's "+std::to_string(placed.size())+" placed walls: "+
+                std::to_string(liveWalls(w))+" still units, "+std::to_string(features)+" features");
+        for (int p=0;p<w.numPlayers();++p) check(w.player(p).losses==0,"a placed wall counted as a loss");
+    }
+    {
+        World w;MatchConfig cfg;cfg.vfs=&vfs;cfg.mapPath=tak::hpi::findMap(vfs,"ulasem arena");
+        MatchSlot s;s.used=true;s.faction=0;cfg.slots.push_back(s);
+        setupMatch(w,reg,cfg);
+        const Unit* monarch=nullptr;
+        for (const auto& u:w.units()) if (u.alive() && u.type && u.type->commander) monarch=&u;
+        check(monarch!=nullptr,"no Monarch");
+        const float mx=monarch->x.toFloat(),mz=monarch->z.toFloat();const int mid=monarch->id;
+        const auto* wall=reg.find("arawall");
+        check(wall!=nullptr,"no arawall");
+        int site=0;
+        for (float dx:{96.f,-96.f,0.f}) for (float dz:{0.f,96.f,-96.f})
+            if (!site && w.canPlace(wall,mx+dx,mz+dz)) site=w.startBuild(mid,wall,mx+dx,mz+dz);
+        check(site>0,"the Monarch could not start a wall");
+        bool finished=false;
+        for (int i=0;i<30*120 && !finished;++i) {
+            w.tick(1.f/30.f);
+            const Unit* u=w.unit(site);
+            finished=!u || !u->alive();
+        }
+        check(finished,"the wall was never finished");
+        if (liveWalls(w)!=0 || w.corpseDamage(site)<0)
+            throw std::runtime_error("a built wall left "+std::to_string(liveWalls(w))+" wall units and "+
+                                     (w.corpseDamage(site)<0 ? "no" : "its")+" feature");
+        check(w.player(0).losses==0,"a built wall counted as a loss");
+    }
+    std::cout<<"shipped: a skirmish opens with 5000 a player, a mission with its placed storage; "
+               "a placed or built wall is its feature\n";
     return 0;
 }
 

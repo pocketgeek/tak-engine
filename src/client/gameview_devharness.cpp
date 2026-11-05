@@ -3013,7 +3013,7 @@
                     const int ox=tak::sim::footprintOrigin(x,l.type->footX),oz=tak::sim::footprintOrigin(z,l.type->footZ);
                     bool found=false;
                     for (const auto& u:world_.units())
-                        if (u.alive() && u.type==l.type && !u.underConstruction && int(u.player)==localPlayer_ &&
+                        if (world_.finishedHere(u) && u.type==l.type && int(u.player)==localPlayer_ &&
                             tak::sim::footprintOrigin(u.x,l.type->footX)==ox && tak::sim::footprintOrigin(u.z,l.type->footZ)==oz)
                             found=true;
                     if (!found) {
@@ -3131,7 +3131,7 @@
             for (const auto& [ox,oz]:uniq) {
                 bool found=false;
                 for (const auto& u:world_.units())
-                    if (u.alive() && u.type==type && !u.underConstruction &&
+                    if (world_.finishedHere(u) && u.type==type &&
                         tak::sim::footprintOrigin(u.x,type->footX)==ox && tak::sim::footprintOrigin(u.z,type->footZ)==oz) found=true;
                 if (found) ++built; else miss+=" "+std::to_string(ox)+","+std::to_string(oz);
             }

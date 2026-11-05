@@ -290,6 +290,11 @@ their validation reports; both live in [`docs/`](docs/).
   with the store of the units the mission gives them (it used to be 500), and a
   unit a mission or a map scenario creates during play brings its store with it
   full. Units you train or build still arrive with nothing.
+- **A finished wall becomes part of the scenery, as in the original game.** A wall
+  you build, and every wall a campaign mission places, now turns into a wall feature
+  as soon as it is finished: it still blocks the way and can be smashed, but it is
+  no longer a unit you can select, that counts against your units, or that enemies
+  pick as a target. Building one no longer counts as a loss.
 - **A unit that changes sides starts afresh, as in the original game.** A unit
   converted by an enemy, given to an ally or taken over by a mission or a map
   scenario keeps its health and the way it faces, but is a new unit to its new

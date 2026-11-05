@@ -934,6 +934,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                         type->experiencePoints, type->noVeteran, unit->vetOverride);   // setLevel 4cd335
                     unit->veteran = unit->veteranLevel();
                     if (type->isStructure()) world.blockFoot(*type, x, z, true);
+                    world.finishAsFeature(id);   // 51230c: a placed wall becomes its feature
                 } else throw std::runtime_error("Could not place scenario unit: " + placed.objectName);
                 if (!world.isNeutralPlayer(placed.player)) {
                     centers[size_t(placed.player)].first += x;
@@ -1560,6 +1561,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
                         const int16_t health = int16_t(std::atoi(u.valueOr("healthpercentage", "100").c_str()));
                         su->hp = Fixed::fromInt(MissionScript::percentHp(*t, health));
                         su->mana = MissionScript::percentMana(*t, int16_t(integer("manapercentage")));
+                        world.finishAsFeature(id);   // 51230c: a placed wall becomes its feature
                     }
                     // InitialMission: the per-unit order queue in the SAME mini-language
                     // the god script's SetMission uses (move/patrol/attack/stance/wait/

@@ -1382,6 +1382,7 @@ struct alignas(64) Unit {
     // weapon can carry -- nothing in the shipped data uses 5 -- it is the engine
     // marking "this unit quit" rather than "this unit was killed".
     static constexpr uint8_t kDeathSelfDestruct = 5;
+    static constexpr uint8_t kDeathBecomeFeature = 9;   // a finished wall (isfeature)
     uint8_t severity = 0;    // retail Killed severity ((overkill% + 1s-ago HP%)/2)
     // Dead but not yet retired (512ae0): its Killed/Dying still runs and its
     // object still lives (+0x130 & 0x1000000), so a shot of its in flight
@@ -2180,6 +2181,15 @@ public:
     // A creation that credits its storage (512060's last argument): the unit's
     // mogriumstorage joins its owner's pool and capacity at once.
     void creditCreationStorage(int unitId);
+    // A finished creation or completion of an isfeature type (the walls):
+    // it dies with kind 9 and leaves its feature.
+    void finishAsFeature(int unitId);
+    // A finished unit stands here, or a finished wall became its feature here
+    // (harness checks of what a build order left behind).
+    bool finishedHere(const Unit& u) const {
+        return u.alive() ? !u.underConstruction :
+            u.deathType==Unit::kDeathBecomeFeature && corpseDamage(u.id)>=0;
+    }
     // CRT ownership transfer: preserves HP/progress, clears the former owner's commands.
     bool scenarioTransfer(int unitId, int newPlayer);
     // The same, telling `notify` (the running mission, or none) of the capture.

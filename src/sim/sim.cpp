@@ -1101,6 +1101,20 @@ void World::creditCreationStorage(int unitId) {
     p.storage=float(storage+double(p.storage));
 }
 
+// A finished creation (512060 at 51230c) and a completion (429990 at 429a92)
+// of a type with isfeature (+0x260 & 0x1000000; the four walls) leave the
+// unit dying with death kind 9, and the update ends with 512610: severity 0,
+// so no Killed, Dying or death credit, nor a loss (512b71's switch leaves 9
+// out), and 512ae0 puts its corpse down at once -- the wall's feature (ARAWALL
+// and the rest: blocking, 30000 damage, not reclaimable). So a built or
+// placed wall is a feature, not a unit (check_construction_completion.py).
+void World::finishAsFeature(int unitId) {
+    Unit* u=unit(unitId);
+    if (!u || !u->type || !u->type->classicFbi.isFeature || !u->alive() || u->underConstruction) return;
+    u->deathType=Unit::kDeathBecomeFeature;
+    u->hp=Fixed();u->overkill=Fixed();
+}
+
 Unit* World::unit(int id) {
     if(id<=0)return nullptr;
     if(size_t(id)<unitSlotById_.size()) {
@@ -9390,6 +9404,7 @@ int World::scenarioCreate(const UnitType* type,int player,int lx,int lz,int hx,i
     };
     const int id=spawn(type,coordinate(cx,type->footX),coordinate(cz,type->footZ),0.f,player);
     creditCreationStorage(id);   // 4caf16: the Create action's 512060 passes 1
+    finishAsFeature(id);         // 51230c: created finished
     return id;
 }
 
@@ -15229,6 +15244,7 @@ bool World::constructionWork(Unit& b, Unit& site, float dt) {
         site.hp = Fixed::fromFloat(site.type->maxHp);
         site.underConstruction = false;
         if (!b.type->isStructure()) joinBuilderGroup(b,site);
+        finishAsFeature(site.id);   // 429a92: a finished wall becomes its feature
         return true;
     }
     return false;
@@ -18148,8 +18164,10 @@ void World::sweepDeath(Unit& u) {
     cancelPath(u);
     refreshMovingSearchBody(u);
     killProductionOutput(u);
-    if (u.player >= 0 && u.player < int(players_.size()))
-        players_[size_t(u.player)].losses++;   // end-of-game "Losses" column
+    // End-of-game "Losses" column; a unit becoming its feature (kind 9) is
+    // none (512b71's switch).
+    if (u.player >= 0 && u.player < int(players_.size()) && u.deathType!=Unit::kDeathBecomeFeature)
+        players_[size_t(u.player)].losses++;
     // 512860 keeps the last hitter only while its object lives; the
     // kill itself is credited at retirement (retireDeath).
     if (!retailHitter(u.lastHitBy,u.lastHitPlayer)) u.lastHitBy=0;
@@ -18234,7 +18252,7 @@ void World::beginUnitDeath(Unit& u) {
         if (dying && !script->deathStopValue) script->state().tick(file,0,host);
         if (!dying && script->deathStopValue!=31) u.deathAnimationTicks=0;
     }
-    if (u.deathType==9 && !u.underConstruction && corpseTypeOf(u.type)>=0)
+    if (u.deathType==Unit::kDeathBecomeFeature && !u.underConstruction && corpseTypeOf(u.type)>=0)
         u.deathHasCorpse=true;
     updateCorpseWindow(u);
     if (u.corpseAnimationTicks()==0 && script) {

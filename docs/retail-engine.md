@@ -3010,6 +3010,39 @@ against `--storage`). Not ported: `51e352` (`51de30`: a unit whose type has
 `+0x268 & 8` makes its side's second named type once, at a set game time
 `5195e0`; World's god summon is its own mechanism) and the `4264a0` cheat.
 
+## A finished wall is a feature (icd, gap hunt 4, 2026-11-05)
+
+`isfeature` is UnitDef `+0x260` bit `0x1000000` (`4c0427..4c0443`); the four
+walls (`arawall`, `tarwall`, `verwall`, `crewall`, both balances) set it. Two
+places act on it, both E:
+
+- `512060` at a finished creation (`51230c`, after `5122e4` tests the sixth
+  argument): the new unit gets death kind 9 (`+0x10f`) and the dying bit
+  (`+0x130 |= 0x1000`), and is not counted in the player's units
+  (`51234c`). `check_new_unit_mana.py` runs `51230c..51232c`.
+- The completion `429990` (`429a92`): the same two writes
+  (`retailCompleteConstruction`, `check_construction_completion.py`).
+
+The unit's update ends with `512610(u, 9)` (`51e357..51e36c`): kind 9 has
+severity 0 and the corpse flag set (`51268a`), so no Killed or Dying runs and
+`512ae0` retires it at once. Its switch (`512b71`, table `512ec4`) leaves 9
+out: no kill credit, score or loss. The corpse is placed (`512dbb`, with the
+smoke step `502be0` skipped for kind 9): the wall's own feature, `ARAWALL`
+and the rest (blocking, `damage=30000`, not reclaimable). So a wall a player
+builds, and each of the 386 walls placed by seven campaign missions, stands as
+a feature, never a unit: nothing selects, orders, targets or counts it, and
+it falls to damage as a feature does.
+
+Ours kept every finished wall as a unit. `World::finishAsFeature` now gives
+kind 9 at the completion (`tickConstruction`) and after a finished creation
+(mission placements and `Create`, the CRT start and its Create action);
+`sweepDeath` already placed a kind-9 corpse, and counts no loss for it.
+Within a tick the death runs at the unit's next update rather than at the end
+of the one that set it (I: at most one tick). Spawning a wall directly (test
+fixtures) still makes a unit. Tests: `new_unit_mana_shipped` (takmission02's
+54 placed walls and a wall the Monarch builds are features, no loss). The
+build-line harnesses count a wall turned feature as built.
+
 ## The Crusades balance swaps only the unit roster (icd, 2026-10-26)
 
 With the Crusades balance on, the unit lookup `0x518080` searches only the

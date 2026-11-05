@@ -166,6 +166,26 @@ def credit_storage(p):
     return run
 
 
+def finished_feature(p):
+    """51230c..51232c natively (reached only for a finished creation, 5122e4
+    tests the sixth argument, S): a type with isfeature (+0x260 & 0x1000000,
+    the four walls) leaves the new unit dying (+0x130 |= 0x1000) with death
+    kind 9 (+0x10f), which its update's 512610 turns into its feature. The
+    completion 429990 does the same (check_construction_completion.py)."""
+    unit, tp = HEAP + 0x40000, HEAP + 0x41000
+    got = []
+    for flags in (0, 0x1000000, 0x40000, 0x1040000):
+        p.uc.mem_write(unit, bytes(0x200)); p.uc.mem_write(tp, bytes(0x300))
+        p.uc.mem_write(unit + 0xb4, struct.pack('<I', tp))
+        p.uc.mem_write(unit + 0x130, struct.pack('<I', 0x1000000))
+        p.uc.mem_write(tp + 0x260, struct.pack('<I', flags))
+        p.uc.reg_write(UC_X86_REG_ESI, unit); p.uc.reg_write(UC_X86_REG_EDI, unit + 0x130)
+        p.uc.emu_start(0x51230c, 0x51232c)
+        got.append((struct.unpack('<I', p.uc.mem_read(unit + 0x130, 4))[0], p.uc.mem_read(unit + 0x10f, 1)[0]))
+    assert got == [(0x1000000, 0), (0x1001000, 9), (0x1000000, 0), (0x1001000, 9)], got
+    return '51230c: a finished isfeature creation is left dying with death kind 9'
+
+
 def init_pool(p):
     pool = HEAP + 0x100
     p.uc.mem_write(pool, struct.pack('<ff', 77.0, 5.0))
@@ -307,6 +327,7 @@ def main():
     print(record_defaults())
     print(regeneration(p))
     print(set_attribute_gate())
+    print(finished_feature(p))
     print(storage_arguments())
     print(empty_resources(p))
     credit = credit_storage(p)

@@ -1077,7 +1077,7 @@ void GameView::buildlineNetProbe() {
                 ++sites;
                 const int ox = tak::sim::footprintOrigin(x, l.type->footX), oz = tak::sim::footprintOrigin(z, l.type->footZ);
                 for (const auto& u : live->units())
-                    if (u.alive() && u.type == l.type && !u.underConstruction && int(u.player) == localPlayer_ &&
+                    if (live->finishedHere(u) && u.type == l.type && int(u.player) == localPlayer_ &&
                         tak::sim::footprintOrigin(u.x, l.type->footX) == ox && tak::sim::footprintOrigin(u.z, l.type->footZ) == oz) {
                         ++built; break;
                     }
