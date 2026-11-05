@@ -7114,9 +7114,75 @@ its row less the target bit the ctor clears (`4d6d66`): AIRSTRIKE class 2,
 0x1000400; AIRTOGROUNDHOVER and AIRTOGROUND class 1, 0x1000000 (E,
 `tools/re/check_air_point_mission.py`). A kamikaze type's ATTACK_KAMIKAZE from
 the resolver is not ported (no shipped use). `m`, `p`, `u` and `b` take the
-same `orderPoint` (since 0.9.20; `m`, `p` and `u` took the cell centre, X*16+8). Not ported: the patrol's time, the selectable bit,
+same `orderPoint` (since 0.9.20; `m`, `p` and `u` took the cell centre, X*16+8). Not ported: the patrol's time,
 BuildWeapon and resurrect; SetMission's owner test (`0x4d37be`: a player of
-kind 1 or 2 only) is not applied.
+kind 1 or 2, a unit this machine runs, so every unit in lockstep) is not
+applied. The selectable bit is ported since gap hunt 5 (below).
+
+### The selectable bit (icd, gap hunt 5, 2026-11-05)
+
+E = emulated, S = static. `tools/re/check_mission_selectable.py` runs the
+parser `513fb0` natively over 62 order strings (every clause letter, the
+lookups answering yes and no) and `401450`, against `mission_orders_test
+--selectable`.
+
+- **Writers** (S, every write of `+0x130` with 0x20 in its mask): a new unit
+  has it (`511990`, `or edx, 0x4021` at `511b21`; a change of owner makes a new
+  object, so it has it again); the parse's end clears it (`514a8d`); the
+  mission MakeSelectable (`401450`, E: `|= 0x20`, `&= ~0x2000`, returns 5)
+  sets it; and a loaded game's flag restore (`5135ba`) and a cheat with no
+  direct caller (`424f20`, every live unit).
+- **The parse** (E): a clause that pushed a mission (`[ebp-4]`) makes the end
+  clear the bit and append MakeSelectable, unless a patrol, an `a X Y` that got
+  an order, an `s` or a `d` (`[ebp-0x20]`, never reset during the parse) was
+  among them. `s` pushes MakeSelectable itself, so `s, m X Y` runs it first and
+  the unit stays selectable. `m`, `ma`, `u`, `g`, `a NAME`/`a TYPE`, `b`, `w`,
+  `wa` and `r` count when they push (`w` and a nameless `wa` always do); `i`,
+  `v`, `o` and `c` never push, and `bw` pushes BuildWeapon without counting.
+  SetMission calls the same parser (`4d37f6`), so a script's orders clear it
+  too. MakeSelectable's descriptor flags are 4: it is kept through a clear and
+  through an embark (`4d49f0`).
+- **Readers** (S, every `test 0x20` of `+0x130`; E where marked):
+  - The owner's selection (`51e01f`: a selected unit loses its selected bit
+    when it is not live, selectable, finished, free and uncarried) and the
+    selection and order UI (`4de055`, `4de2cd`, `4df5c0`, `51fbd2..5243f6`).
+  - Move_Ground's response fallback (`402ece`, E with
+    `probe_move_ground_response.py`) and VTOL_Move's (`418250`): an
+    unselectable unit does not answer its last attacker.
+  - The retail AI: the assignment pass (`40f262`), the base think's member
+    loop (`40b3fd`), two more member loops (`40bc75`, `40bd38`) and the
+    ready counts (`40a7f7`): a unit under a script is no base member.
+  - A computer player's work gates: RESURRECT's end (`406ebb`, VTOL
+    `4204f0`) abandons only a selectable caster's raise; BuildingBuild
+    (`401e77`), MobileBuild (`40595c`) and VTOL_MobileBuild (`41f430`)
+    test it in their own allocation gates, which are not ported (see "Not
+    ported" below).
+  - Ground_Unload and VTOL_Unload (`40902e`, `41b3a6`) compute the full
+    selection predicate for the dropped unit and pass it on to the drop
+    (`51b480`; I: its selection), and PARK (`407d1e`) tests the predicate on
+    its unit; neither changes a mission's course here (not ported).
+
+Shipped data: 3,395 computer and 128 human placements push a mission; most
+human ones start with `s`. Ours, before: no such bit; a mission's units were
+selectable at once, a scripted mover answered its attacker, and the classic
+AI took every scripted computer unit into a base as soon as it was finished.
+Now `Unit::selectable` (hashed when clear), `MissionScript::applyOrders`'
+end rule, `ScriptedOrder::Kind::MakeSelectable` (`World::orderMakeSelectable`),
+`World::retailMoveFallback`, the revive end, `ClassicBrain::squadUnits`' 0x20,
+and the client's selection (the hover kind, box and double-click select, and
+the per-frame prune). A building's `m`/`p` is its rally here (retail pushes
+QMove/QPatrol, which sleeps at the head of its list, `402700`); it counts as a
+push and MakeSelectable follows the building's other orders, where retail's
+sits behind the QMove (not traced further). Test: `mission_orders_test`
+(`selectable`, `setMission`, the shipped keep).
+
+**Not ported: a computer player's allocation gates on production** (S,
+owner question). BuildingBuild's stage 2 (`401e47..401eb1`), after the
+footprint test, abandons the mission (8) when the owner is a seated computer
+(kind 2, `+0x24e7`), the factory selectable, the type's `mogriumincome`
+(`+0x20a`) under 0.01 and the allocation under 0.7/3; MobileBuild
+(`405928..40598f`) and VTOL_MobileBuild (`41f3fc..41f463`) do the same with
+0.7. Only RESURRECT's end is ported (`computerOwned` there).
 
 ## Selection ring (`4fd0d0`)
 

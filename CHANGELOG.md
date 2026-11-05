@@ -357,6 +357,11 @@ their validation reports; both live in [`docs/`](docs/).
     mission also hears that the old owner's unit is gone.
   - The mission Kill command kills every unit on the map, whatever unit it names.
     No original mission uses it.
+  - A unit the mission is giving orders to cannot be selected until those orders
+    are done, as in the original game; a unit sent on a patrol by the mission stays
+    under its control. While its orders run, a moving unit does not turn on whoever
+    shoots at it, and a computer opponent leaves the unit to the mission instead of
+    drafting it into its own army, whose orders replaced the mission's.
 - **Fedora 45 packages.** Fedora 45 now has its own x86-64 and ARM64 RPMs, beside
   Fedora 44's.
 - **Investigated, no change needed:**

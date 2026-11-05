@@ -183,6 +183,10 @@ public:
         const uint32_t s = tak::sim::retailSeed(roomSeed ^ (0x9e3779b9u * uint32_t(player + 1)));
         return s % 0x7fffffffu == 0 ? s ^ 2u : s;
     }
+    // The player's units as the manager reads them, in unit order, with their
+    // squads; members that left the world (or the player) are dropped first.
+    // Public for the tests that check what the manager sees of a unit.
+    std::vector<ClassicSquadUnit> squadUnits(const tak::sim::World& world);
 
 private:
     // 0x40fe00 -> 0x40fd80, retail's AI scheduler: the assignment countdown, then
@@ -196,9 +200,6 @@ private:
     // are ever made formations, so the World is told those squads' members and
     // flags, as Cmd::AiGroup, whenever they differ from what it was last told.
     void publishGroups(const tak::sim::World& world, const std::function<void(const tak::net::Command&)>& sink);
-    // The player's units as the manager reads them, in unit order, with their
-    // squads; members that left the world (or the player) are dropped first.
-    std::vector<ClassicSquadUnit> squadUnits(const tak::sim::World& world);
     // 0x411a90, retail's per-player bookkeeping: the >= 7-tick window (where the
     // world rebuilds its visibility lists) draws rand(30), and 0 recomputes the
     // priorities from the cache as the previous tick left it; then the recount.

@@ -60,12 +60,12 @@ STANCE = {'Hold Position': 0, 'Maneuver': 0x10000, 'Roam': 0x20000}
 FIRE = {'Hold Fire': 0, 'Return Fire': 0x40000, 'Fire At Will': 0x80000}
 
 def run(mode, stance='Roam', fire='Fire At Will', scan_hit=False, attacker=None, inr=False,
-        melee=False, rng=300, leash=200, goal=(1500, 1000), cloaked=False, allied=False):
+        melee=False, rng=300, leash=200, goal=(1500, 1000), cloaked=False, allied=False, selectable=True):
     for a, n in ((U, 0x138), (D, 0x300), (A, 0x138), (AD, 0x300), (OWN, 0x200), (ENEMY, 0x200),
                  (M, 0x80), (WEAP, 0x100), (CLS, 0x10), (MASKS, 0x40)):
         uc.mem_write(a, bytes(n))
     put(U + 0xb4, D); put(U + 0xb8, OWN); put8(OWN + 0xeb, 0)
-    put(U + 0x130, 0x1000000 | 0x8000000 | 0x20 | STANCE[stance] | FIRE[fire] | 1)
+    put(U + 0x130, 0x1000000 | 0x8000000 | (0x20 if selectable else 0) | STANCE[stance] | FIRE[fire] | 1)
     put(U + 0x68, 1000 << 16); put(U + 0x70, 1000 << 16)
     put16(D + 0x232, leash); put(D + 0x264, 0x20)
     for off in (0x9a, 0x8e, 0x92, 0x96): put(D + off, MASKS)
@@ -142,4 +142,8 @@ r = run(1, stance='Maneuver', attacker=150, inr=True, goal=(1000, 1000))
 check(r['target_is_attacker'] and r['origin'] == (1000, 1000), 'mode 1, Maneuver: the fallback attacker 150 px from the goal: taken')
 r = run(1, stance='Maneuver', attacker=250, inr=True, goal=(1000, 1000))
 check(r['attack'] is None, 'mode 1, Maneuver: the fallback attacker 250 px from the goal (leash 200): rejected by the same goal leash')
+# 402ece: the unit itself must be selectable (+0x130 & 0x20); one a mission
+# script runs (the parse cleared it) does not answer its attacker.
+r = run(-1, attacker=250, inr=True, selectable=False)
+check(r['attack'] is None, 'fallback: an unselectable unit (a mission script runs it) does not answer its attacker')
 print(f'PASS: {checks} observations')

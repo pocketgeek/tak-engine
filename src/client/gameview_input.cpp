@@ -505,7 +505,7 @@
                         const UnitR& fu = frameUnit(u.id);
                         SDL_FPoint p = dotsFrame_ ? dotCentre(fu) : unitScreen(fu);
                         cands.push_back({u.id, u.type, u.player == clickOwner,
-                                         !u.underConstruction, p.x, p.y});
+                                         !u.underConstruction && (watchOnly() || u.selectable), p.x, p.y});
                     }
                     matched = tak::client::doubleclick::expand(
                         hit, cands, {float(mapViewW(winW_)), float(mapViewH(winH_))});
@@ -518,7 +518,7 @@
                 lastClickHit_ = -1;
                 for (const UnitR* _up : front().live) {
                     const UnitR& u = *_up;
-                    if (u.alive() && (watchOnly() ? canPickUnit(u) : u.player == localPlayer_) &&
+                    if (u.alive() && (watchOnly() ? canPickUnit(u) : u.player == localPlayer_ && u.selectable) &&
                         !u.underConstruction) {
                         // With Tactical Dots up, a unit is where its dot is drawn.
                         SDL_FPoint p = dotsFrame_ ? dotCentre(frameUnit(u.id))

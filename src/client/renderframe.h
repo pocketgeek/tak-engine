@@ -86,6 +86,7 @@ struct UnitR {
     int weaponSlot = 0;
     std::array<int32_t,3> weaponReloads{};
     bool underConstruction = false, buildBegun = false;
+    bool selectable = true;     // retail +0x130 & 0x20: false while a mission script runs it
     bool cloaked = false, cloakOn = true, active = true;
     float frozenFor = 0, stonedFor = 0, paralyzedFor = 0;
     float selfDestructT = -1;   // >=0 = self-destruct countdown (seconds) armed

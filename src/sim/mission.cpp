@@ -301,10 +301,17 @@ int32_t MissionScript::doCreate(World& w, const std::string& type, const std::ve
 //   i NAME           start aboard the transport NAME
 //   g NAME           guard NAME
 //   u X Y            unload there
-//   s                MakeSelectable: no owner change (selectability is not modelled)
+//   s                MakeSelectable (no owner change): the unit is selectable again
 //   d                self-destruct when the order comes up
 //   c                cloak, if the type can
 //   r ...            resurrect: no shipped mission uses it
+// When any clause pushed a mission, the parse ends by clearing the unit's
+// selectable bit and, unless a patrol, an `a X Y` that got an order, an `s` or
+// a `d` was among them, appending MakeSelectable (514a7d..514aba; E,
+// tools/re/check_mission_selectable.py): its owner cannot select it, and the
+// retail AI leaves it alone, until its script is through. `i`, `v`, `o` and `c`
+// push nothing. A structure's move or patrol is its rally here (retail pushes
+// QMove/QPatrol); it counts as a push.
 // Retail queues every order behind what the unit already has (4d78a0 with its
 // queue flag set). Names (i, g, wa, a) resolve against the placed units only
 // in an InitialMission: SetMission's call passes retail an empty unit table.
@@ -392,6 +399,8 @@ MissionScript::Point MissionScript::createPoint(const UnitType& t, int x, int z)
 void MissionScript::applyOrders(World& w, int unitId, const std::string& orders, bool initial) {
     if (!w.unit(unitId)) return;
     const bool queue = true;   // retail appends; it never clears the unit's orders
+    bool pushed = false;       // 514a7d's [ebp-4]: a clause pushed a mission
+    bool held = false;         // [ebp-0x20]: a patrol, a given `a X Y`, `s` or `d`
     size_t at = 0;
     while (at < orders.size()) {
         while (at < orders.size() && std::isspace((unsigned char)orders[at])) ++at;
@@ -406,6 +415,8 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
         const char c = char(std::tolower((unsigned char)clause[0]));
         const char c2 = clause.size() > 1 ? char(std::tolower((unsigned char)clause[1])) : 0;
         ClauseScan scan{clause, 1};
+        const size_t ordersBefore = u->orders.size(), rallyBefore = u->rally.size();
+        bool holds = false;
         float fx = 0, fz = 0;
         int n = 0;
         std::string nm;
@@ -431,7 +442,7 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
                 // No order given: the clause does nothing and the next one still
                 // reads. A kamikaze type's ATTACK_KAMIKAZE is not ported (no
                 // shipped use).
-                w.suppress(unitId, orderPoint(fx), orderPoint(fz), queue);
+                holds = w.suppress(unitId, orderPoint(fx), orderPoint(fz), queue);
                 break;
             }
             if (!scan.name(nm, true)) break;
@@ -472,6 +483,7 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
         case 'p': {                                       // 514307: p X Y [T]
             if (!scan.number(fx) || !scan.number(fz)) break;
             w.patrolTo(unitId, orderPoint(fx), orderPoint(fz), queue);
+            holds = true;   // 5143ad, when it pushed
             break;
         }
         case 'w': {                                       // 514787
@@ -524,9 +536,12 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
             if (scan.number(fx) && scan.number(fz)) w.unloadAt(unitId, orderPoint(fx), orderPoint(fz), {}, queue);
             break;
         case 's':                                         // 514876: MakeSelectable
+            w.orderMakeSelectable(unitId);
+            holds = true;
             break;
         case 'd':                                         // 514858: SelfDestructFG
             w.orderSelfDestruct(unitId, queue);
+            holds = true;
             break;
         case 'c':                                         // 514a48: cloak if cloakcost > 0
             w.setCloak(unitId, true);
@@ -534,6 +549,16 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
         default:                                          // 'r' and any other letter
             break;
         }
+        if (c == 'i') continue;   // 51b4f0 is no push (and clears the queue)
+        if (const Unit* now = w.unit(unitId);
+            now && (now->orders.size() > ordersBefore || now->rally.size() > rallyBefore)) {
+            pushed = true;
+            held = held || holds;
+        }
+    }
+    if (pushed) {
+        if (Unit* u = w.unit(unitId)) u->selectable = false;
+        if (!held) w.orderMakeSelectable(unitId);
     }
     // Orders queued aboard a transport wait there (retail's BeCarried heads the
     // queue): no search for a route from inside the hold.

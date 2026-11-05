@@ -5890,6 +5890,20 @@ void World::orderSelfDestruct(int unitId, bool queue) {
     u->orders.push_back(o);
 }
 
+void World::orderMakeSelectable(int unitId) {
+    OrdersNote note{*this,unitId};
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type) return;
+    ScriptedOrder s;
+    s.kind = ScriptedOrder::Kind::MakeSelectable;
+    Order o;
+    o.x = u->x;
+    o.z = u->z;
+    o.scripted = addScriptedOrder(s);
+    if (!o.scripted) return;
+    u->orders.push_back(o);
+}
+
 // 0x51b4f0(passenger, carrier, -1, 0, 1) -> 51b5a0: the attach itself, at once.
 // Retail checks only that both live, that they differ and that neither carries
 // or rides already; nothing about owners, capacity or distance. Ours also wants
@@ -5963,6 +5977,12 @@ void World::tickScriptedOrder(Unit& u) {
         // The caller ends the update with the death (51e36c).
         done();
         selfDestructHit(u);
+        return;
+    case ScriptedOrder::Kind::MakeSelectable:
+        // 401450: +0x130 |= 0x20 (0x2000, which no shipped placement sets, is
+        // cleared too), and the mission ends (5).
+        u.selectable = true;
+        done();
         return;
     case ScriptedOrder::Kind::Train: {
         Order& o = u.orders.front();
@@ -7999,9 +8019,10 @@ bool World::retailAnswersAttacker(const Unit& e,const Unit& a,int s,bool mobile)
 
 int World::retailMoveFallback(const Unit& u) const {
     // 402f..: +0xf8 alive, not dying, finished, of a player not allied; the
-    // unit armed and not carried. Then the hit response's reach and weapon
-    // tests on the scanning slot (402f9f..40302b).
-    if (!u.lastHitBy || u.type->weapons.empty() || u.embarked() || u.underConstruction) return 0;
+    // unit armed, selectable (402ece; VTOL_Move's 418250), finished and not
+    // carried. Then the hit response's reach and weapon tests on the scanning
+    // slot (402f9f..40302b).
+    if (!u.lastHitBy || u.type->weapons.empty() || !u.selectable || u.embarked() || u.underConstruction) return 0;
     const Unit* a=unit(u.lastHitBy);
     if (!a || a==&u || !a->alive() || a->hp<=Fixed() || !a->type || a->underConstruction ||
         allied(u.player,a->player)) return 0;
@@ -9573,6 +9594,7 @@ bool World::changeOwner(Unit& u, int newPlayer, MissionScript* notify) {
     u.frozenFor = u.stonedFor = u.paralyzedFor = 0;
     u.cloakOn = u.type->initCloaked; u.cloakBlockedUntil = 0;   // 511c77
     u.mana = 0;
+    u.selectable = true;   // 511b21: a new object is selectable, whatever its script did
     u.hpPct1s = u.hpPctCur = 0;
     u.healCarry = 0;
     u.airTraffic = 0;
@@ -15999,7 +16021,8 @@ void World::tickAbilities(float) {
         // the owner's allocation (0x406d3b: work -= ftol(allocation x 65536)),
         // so a starved economy slows it and an empty, contested store stops
         // it. Nothing checks distance once it runs. At the end (0x406e79) a
-        // computer player whose allocation is under 0.7 abandons it unraised.
+        // computer player's selectable caster (406ebb; a caster under a
+        // mission script keeps on) abandons it unraised under allocation 0.7.
         // However it ends, reviveTarget goes to 0, the leg's stage to 5, and
         // tickReclaim retires the leg on its next wake.
         Unit* c = unit(u.reviveTarget);
@@ -16015,7 +16038,7 @@ void World::tickAbilities(float) {
         // Work left: the caster stays visible 300 ticks (0x406e45, 0x420477).
         if (u.reviveWork > 0) { blockCloak(u, 300); continue; }
         ended();
-        if (computerOwned(u.player) && double(allocation) < 0.7) continue;
+        if (computerOwned(u.player) && u.selectable && double(allocation) < 0.7) continue;
         // 0x406f0c creates the unit through 0x512060, which refuses one
         // past the type's totalallowed or the player's unit limit: the
         // revive ends unraised (UNITCHATTER_NOMOREUNITS) and the corpse
@@ -21497,6 +21520,7 @@ uint64_t World::stateHash() const {
         mix(uint64_t(u.veteran));
         if (u.xp) { mix(0x5645545845504552ull); mix(uint32_t(u.xp)); }
         if (u.vetOverride != 0.0f) { mix(0x5645544f56524445ull); mixf(u.vetOverride); }
+        if (!u.selectable) mix(0x554e53454c454354ull);
         if (u.scenarioArmor != 1.0f || u.scenarioWeapon != 1.0f) {
             mix(0x4352545354415453ull);
             mix(std::bit_cast<uint32_t>(u.scenarioArmor));

@@ -286,11 +286,12 @@ namespace {
 
     // The hovered unit as the selector sees it from the local player's side:
     // Select needs our own FINISHED unit (0x4de03b's test); anything else of
-    // ours or an ally's is friendly, the rest enemy.
+    // ours or an ally's is friendly, the rest enemy. One a mission script runs
+    // (+0x130 & 0x20 clear) is not selectable.
     tak::client::HoverKind GameView::cursorHoverKind(const UnitR* u) const {
         using tak::client::HoverKind;
         if (!u) return HoverKind::None;
-        if (u->player == localPlayer_ && !u->underConstruction && !u->embarked())
+        if (u->player == localPlayer_ && !u->underConstruction && !u->embarked() && u->selectable)
             return HoverKind::OwnSelectable;
         return worldTables().allied(u->player, localPlayer_) ? HoverKind::Friendly : HoverKind::Enemy;
     }

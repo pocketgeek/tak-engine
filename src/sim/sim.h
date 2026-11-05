@@ -715,7 +715,7 @@ inline constexpr uint32_t kVtolPatrolFlags = 0x1000412u;
 inline constexpr uint32_t kVtolMoveFlags = 0x1000402u;
 
 struct ScriptedOrder {
-    enum class Kind : uint8_t { AttackType, Train, WaitAttack, WaitNear, SelfDestruct };
+    enum class Kind : uint8_t { AttackType, Train, WaitAttack, WaitNear, SelfDestruct, MakeSelectable };
     Kind kind = Kind::AttackType;
     const UnitType* type = nullptr;
     int32_t count = 0;
@@ -1599,6 +1599,15 @@ struct alignas(64) Unit {
     // shows full rank and kills no longer change either. A noveteran type
     // ignores it, as both helpers test that bit first. Hashed when set.
     float vetOverride = 0.0f;
+    // Retail's selectable bit (unit +0x130 & 0x20). Every new unit has it
+    // (511990, 511b21), a change of owner included; only a mission's order
+    // parse clears it (513fb0's end, 514a7d: when a clause pushed a mission,
+    // InitialMission and SetMission alike), and MakeSelectable (401450) sets it
+    // again when it comes up. Without it the owner cannot select the unit, its
+    // move answers no attacker (Move_Ground 402ece, VTOL_Move 418250), the
+    // retail AI leaves it out of its bases, and a computer's revive is never
+    // abandoned (406ebb). Hashed when clear.
+    bool selectable = true;
     const std::string& displayName() const { return scenarioName.empty() ? type->name : scenarioName; }
     bool alive() const { return deadFor < 0; }
     int32_t maximumHp() const { return retailSite ? int32_t(retailSite->type.maxHp) : type->maxHp; }
@@ -3148,6 +3157,10 @@ public:
     // Queue a self-destruct (SetMission "d", SelfDestructFG): when it comes up
     // the unit dies as a Ctrl+D countdown ends, with no wreck and no credit.
     void orderSelfDestruct(int unitId, bool queue);
+    // A mission's MakeSelectable (401450, descriptor flags 4: kept through a
+    // clear): when it comes up the unit is selectable again and the next
+    // order runs.
+    void orderMakeSelectable(int unitId);
     // Put `passengerId` straight into `transportId`'s hold (InitialMission
     // "i NAME", retail 51b4f0): no pickup, and its later orders wait aboard.
     bool embarkInto(int passengerId, int transportId);

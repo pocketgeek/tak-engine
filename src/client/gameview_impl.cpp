@@ -1026,6 +1026,7 @@
         for(size_t w=0;w<s.weaponReloads.size();++w)
             s.weaponReloads[w]=u.reloads[w];
         s.underConstruction = u.underConstruction; s.buildBegun = u.buildBegun;
+        s.selectable = u.selectable;
         s.replacementModel=nullptr;s.replacementOpacity=-1;
         if (u.underConstruction && u.lodestoneReplacement) {
             const float progress=u.constructionFraction();
@@ -3475,9 +3476,12 @@
         if (!gameStartMs_ && front().gameTick > 0) gameStartMs_ = SDL_GetTicks64();
         if (replayInTransit_) return;   // a frame on the way says nothing about the landing
         // A previously selected enemy must stop exposing its live state on leaving sight.
+        // An own unit a mission script takes over drops out (51e01f: the selected
+        // bit goes with the selectable one).
         std::erase_if(selection_, [this](int id) {
             const auto* u = frameUnitP(id);
-            return !u || !u->alive() || !canPickUnit(*u);
+            return !u || !u->alive() || !canPickUnit(*u) ||
+                   (!watchOnly() && u->player == localPlayer_ && !u->selectable);
         });
         keepOneWatchOwner();   // a capture or a gift can split a watcher's selection
     }

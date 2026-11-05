@@ -162,10 +162,21 @@ static tdf::Node mapDataHeader() {
     return header;
 }
 
+// The MakeSelectable a parse appends (514a7d) at the end of a unit's queue.
+// The checks of the other clauses look at the queue the clauses themselves
+// made, so startMission takes it off unless asked to keep it (selectable()).
+static void dropMakeSelectable(World& w, int id) {
+    Unit* u = w.unit(id);
+    if (!u || u->orders.empty() || !isKind(w, u->orders.back(), ScriptedOrder::Kind::MakeSelectable)) return;
+    u->orders.pop_back();
+    u->selectable = true;
+}
+
 // Spawn `placed` in file order and start a mission whose only script is their
 // InitialMission strings.
 static std::unique_ptr<sim::MissionScript> startMission(Fixture& f, World& w, std::vector<Placed>& placed,
-                                                        const tdf::Node& header = mapDataHeader()) {
+                                                        const tdf::Node& header = mapDataHeader(),
+                                                        bool keepSelectable = false) {
     std::vector<sim::MissionScript::Placement> table;
     std::vector<std::pair<int, std::string>> orders;
     for (auto& p : placed) {
@@ -177,6 +188,7 @@ static std::unique_ptr<sim::MissionScript> startMission(Fixture& f, World& w, st
     m->setInitialOrders(std::move(orders));
     m->setPlacements(std::move(table));
     m->start(w);
+    if (!keepSelectable) for (const auto& p : placed) dropMakeSelectable(w, p.id);
     return m;
 }
 
@@ -746,6 +758,134 @@ static void selectAndDestruct(Fixture& f) {
     check(!d->alive() && d->deathType == Unit::kDeathSelfDestruct, "then self-destructs");
 }
 
+// ---- 9b. the selectable bit ---------------------------------------------------------------
+// 513fb0's end (514a7d): a parse that pushed a mission clears +0x130 & 0x20 and,
+// unless a patrol, a given `a X Y`, `s` or `d` was among the clauses, appends
+// MakeSelectable (401450), which sets it again when it comes up.
+
+static bool makesSelectable(const World& w, const Unit& u) {
+    return !u.orders.empty() && isKind(w, u.orders.back(), ScriptedOrder::Kind::MakeSelectable);
+}
+
+// The table tools/re/check_mission_selectable.py compares with retail's parser:
+// each order string with the lookups answering yes (1) or no (0).
+struct SelectableCase { const char* label; int answer; const char* subject; const char* orders; };
+static const SelectableCase kSelectableCases[] = {
+    // "yes": a mover / the named unit exists / the type is known; "no": the
+    // resolver gives nothing (a building for m, u on a non-transport, a melee
+    // unit's a X Y) or the name or type does not resolve.
+    {"m 5 7", 1, "soldier", "m 5 7"}, {"m 5 7", 0, "tower", "m 5 7"},
+    {"ma 5 7", 1, "soldier", "ma 5 7"}, {"ma 5 7", 0, "tower", "ma 5 7"},
+    {"u 5 7", 1, "wagon", "u 5 7"}, {"u 5 7", 0, "soldier", "u 5 7"},
+    {"p 5 7", 1, "soldier", "p 5 7"}, {"p 5 7", 0, "tower", "p 5 7"},
+    {"p 5 7 9", 1, "soldier", "p 5 7 9"}, {"p 5 7 9", 0, "tower", "p 5 7 9"},
+    {"a 5 7", 1, "archer", "a 5 7"}, {"a 5 7", 0, "soldier", "a 5 7"},
+    {"a NAMEU", 1, "soldier", "a FOE"}, {"a NAMEU", 0, "soldier", "a NOBODY"},
+    {"g NAMEU", 1, "soldier", "g FRIEND"}, {"g NAMEU", 0, "soldier", "g NOBODY"},
+    {"w 30", 1, "soldier", "w 30"}, {"w 30", 0, "soldier", "w 30"},
+    {"w 60 20", 1, "soldier", "w 60 20"}, {"w 60 20", 0, "soldier", "w 60 20"},
+    {"wa", 1, "soldier", "wa"}, {"wa", 0, "soldier", "wa"},
+    {"wa NAMEU", 1, "soldier", "wa FRIEND"}, {"wa NAMEU", 0, "soldier", "wa NOBODY"},
+    {"b ARATYPE 2", 1, "fort", "b soldier 2"}, {"b ARATYPE 2", 0, "fort", "b nosuchtype 2"},
+    {"b ARATYPE 1 5 7", 1, "builder", "b hut 1 60 60"}, {"b ARATYPE 1 5 7", 0, "builder", "b nosuchtype 1 60 60"},
+    {"s", 1, "soldier", "s"}, {"s", 0, "soldier", "s"},
+    {"d", 1, "soldier", "d"}, {"d", 0, "soldier", "d"},
+    {"i NAMEU", 1, "soldier", "i CART"}, {"i NAMEU", 0, "soldier", "i NOBODY"},
+    {"v 1.5", 1, "soldier", "v 1.5"}, {"v 1.5", 0, "soldier", "v 1.5"},
+    {"o 2", 1, "soldier", "o 2"}, {"o 2", 0, "soldier", "o 2"},
+    {"o 1 2", 1, "soldier", "o 1 2"}, {"o 1 2", 0, "soldier", "o 1 2"},
+    {"c", 1, "soldier", "c"}, {"c", 0, "soldier", "c"},
+    {"w 30, m 5 7", 1, "soldier", "w 30, m 5 7"}, {"w 30, m 5 7", 0, "tower", "w 30, m 5 7"},
+    {"m 5 7, p 9 9", 1, "soldier", "m 5 7, p 9 9"}, {"m 5 7, p 9 9", 0, "tower", "m 5 7, p 9 9"},
+    {"s, m 5 7", 1, "soldier", "s, m 5 7"}, {"s, m 5 7", 0, "tower", "s, m 5 7"},
+    {"m 5 7, s", 1, "soldier", "m 5 7, s"}, {"m 5 7, s", 0, "tower", "m 5 7, s"},
+    {"i NAMEU, m 5 7", 1, "soldier", "i CART, m 5 7"}, {"i NAMEU, m 5 7", 0, "tower", "i NOBODY, m 5 7"},
+    {"v 1.0, o 2", 1, "soldier", "v 1.0, o 2"}, {"v 1.0, o 2", 0, "soldier", "v 1.0, o 2"},
+    {"w 30, d", 1, "soldier", "w 30, d"}, {"w 30, d", 0, "soldier", "w 30, d"},
+    {"a 5 7, m 9 9", 1, "archer", "a 5 7, m 9 9"}, {"a 5 7, m 9 9", 0, "hut", "a 5 7, m 9 9"},
+    {"o 2, wa, ", 1, "soldier", "o 2, wa, "}, {"o 2, wa, ", 0, "soldier", "o 2, wa, "},
+    {"c, w 30", 1, "soldier", "c, w 30"}, {"c, w 30", 0, "soldier", "c, w 30"},
+};
+
+// One case: the subject, plus FOE (an enemy), FRIEND (an own soldier) and
+// CART (an own wagon) to name. A building's `m` is a rally only when it
+// produces (ours counts that as retail's QMove push), so the "no" rows use a
+// tower or a hut, which produce nothing (and a hut has no weapon for `a X Y`).
+static void selectableRow(Fixture& f, const SelectableCase& c) {
+    auto w = makeWorld();
+    std::vector<Placed> p = {
+        {c.subject, 20, 20, 0, "SUBJECT", c.orders},
+        {"target", 40, 40, 1, "FOE", ""},
+        {"soldier", 24, 20, 0, "FRIEND", ""},
+        {"wagon", 16, 24, 0, "CART", ""},
+    };
+    auto m = startMission(f, *w, p, mapDataHeader(), true);
+    const Unit* u = w->unit(p[0].id);
+    // The parse's own MakeSelectable: those in the queue less the `s` clauses'.
+    int made = 0, own = 0;
+    for (const Order& o : u->orders) made += isKind(*w, o, ScriptedOrder::Kind::MakeSelectable);
+    for (const char* q = c.orders; *q; ++q)
+        if ((q == c.orders || q[-1] == ',' || q[-1] == ' ') && (*q == 's' || *q == 'S') &&
+            (!q[1] || q[1] == ',' || q[1] == ' ')) ++own;
+    std::printf("'%s' %d selectable=%d tail=%d\n", c.label, c.answer, int(u->selectable), int(made > own));
+}
+
+static void selectable(Fixture& f) {
+    std::printf("the selectable bit:\n");
+    auto w = makeWorld();
+    std::vector<Placed> p = {
+        {"soldier", 20, 20, 0, "", "w 1, m 24 20"},
+        {"soldier", 20, 30, 0, "", "w 1, p 24 30"},
+        {"soldier", 20, 40, 0, "", "s, w 1, m 24 40"},
+        {"soldier", 20, 50, 0, "", "o 2, v 1.5, c"},
+        {"soldier", 20, 60, 0, "", "w 1, d"},
+    };
+    auto m = startMission(f, *w, p, mapDataHeader(), true);
+    const Unit* moved = w->unit(p[0].id);
+    check(!moved->selectable && makesSelectable(*w, *moved) && moved->orders.size() == 3,
+          "w 1, m: not selectable, MakeSelectable queued behind the move");
+    check(!w->unit(p[1].id)->selectable && !makesSelectable(*w, *w->unit(p[1].id)),
+          "a patrol holds MakeSelectable back");
+    check(!w->unit(p[2].id)->selectable && !makesSelectable(*w, *w->unit(p[2].id)),
+          "s, ...: the s is the only MakeSelectable, at the front");
+    check(w->unit(p[3].id)->selectable && w->unit(p[3].id)->orders.empty(), "o, v and c push nothing: selectable");
+    check(!w->unit(p[4].id)->selectable && w->unit(p[4].id)->orders.size() == 2, "w 1, d: no MakeSelectable");
+    tickN(*w, 2);
+    check(w->unit(p[2].id)->selectable, "the leading s comes up at once");
+    tickN(*w, 300);
+    check(w->unit(p[0].id)->selectable && w->unit(p[0].id)->orders.empty(),
+          "the waited move done, MakeSelectable comes up: selectable again");
+    check(!w->unit(p[1].id)->selectable, "the patroller never is");
+    // The retail AI reads the bit (its assignment 40f262, member loops 40b3fd,
+    // 40bc75, 40bd38, ready counts 40a7f7): the patroller is no candidate.
+    {
+        ai::ClassicBrain brain(0, 1);
+        const auto units = brain.squadUnits(*w);
+        auto flags = [&](int id) {
+            for (const auto& c : units) if (c.id == id) return c.flags;
+            return 0u;
+        };
+        check(!(flags(p[1].id) & ai::ClassicSquadUnit::kSelectable) && (flags(p[0].id) & ai::ClassicSquadUnit::kSelectable),
+              "the retail AI sees the patroller unselectable, the mover selectable again");
+    }
+    // A change of owner makes a new object: selectable again (511b21).
+    check(w->scenarioTransfer(p[1].id, 1) && w->unit(p[1].id)->selectable, "a unit that changes sides is selectable");
+    // Move_Ground's fallback (402ece): an unselectable unit on a move does not
+    // answer its last attacker; the same unit selectable does.
+    for (int scripted = 0; scripted < 2; ++scripted) {
+        auto v = makeWorld();
+        const int a = v->spawn(f.t("archer"), cell(20), cell(20), 0.0f, 0);
+        const int e = v->spawn(f.t("target"), cell(30), cell(20), 0.0f, 1);
+        Unit* u = v->unit(a);
+        u->lastHitBy = e; u->lastHitPlayer = 1;
+        u->selectable = scripted == 0;
+        const int found = v->retailMoveFallback(*u);
+        check(scripted ? found == 0 : found == e,
+              scripted ? "a scripted (unselectable) mover does not answer its attacker (402ece)"
+                       : "the same mover selectable answers it");
+    }
+}
+
 // ---- 10. a hold keeps its place --------------------------------------------------------------
 // The leg behind a scripted hold must not start: a route installed for it replaces
 // every order up to it (replaceLeg), the hold included.
@@ -784,9 +924,13 @@ static void setMission(Fixture& f) {
     m.start(*w);
     m.step(*w, 1.0f / 30.0f);
     const Unit* u = w->unit(unit);
-    check(u->orders.size() == 2 && u->orders[0].wait > 0 && isKind(*w, u->orders[1], ScriptedOrder::Kind::AttackType),
+    check(u->orders.size() == 3 && u->orders[0].wait > 0 && isKind(*w, u->orders[1], ScriptedOrder::Kind::AttackType),
           "it queues behind what the unit has; its NAMEs resolve to nothing",
           std::to_string(u->orders.size()) + " order(s)");
+    // It parses through 513fb0 as an InitialMission does (4d37f6): the attack
+    // pushed, so the unit is not selectable and MakeSelectable follows.
+    check(!u->selectable && u->orders.size() == 3 && isKind(*w, u->orders[2], ScriptedOrder::Kind::MakeSelectable),
+          "and its pushed order clears the selectable bit, MakeSelectable behind it");
 }
 
 // ---- 12. a long mission does not run out of order slots -----------------------------------------
@@ -1160,10 +1304,13 @@ static void shipped(const char* data) {
                   "at 370,225", std::to_string(sim::footprintOrigin(build->buildX, arassh->footX)) + "," +
                                 std::to_string(sim::footprintOrigin(build->buildZ, arassh->footZ)));
         const Unit* k = w.unit(keep);
-        const ScriptedOrder* first = k->orders.size() == 3 ? w.scriptedOrder(k->orders[0]) : nullptr;
+        // Its last order is the parse's MakeSelectable (514a7d): the keep is
+        // not selectable until it has built them.
+        const ScriptedOrder* first = k->orders.size() == 4 ? w.scriptedOrder(k->orders[0]) : nullptr;
         check(first && first->kind == ScriptedOrder::Kind::WaitNear && first->radius == 80 &&
               w.scriptedOrder(k->orders[1]) && w.scriptedOrder(k->orders[1])->kind == ScriptedOrder::Kind::Train &&
-              w.scriptedOrder(k->orders[1])->count == 15 && k->buildQueue.empty(),
+              w.scriptedOrder(k->orders[1])->count == 15 && k->buildQueue.empty() && !k->selectable &&
+              isKind(w, k->orders[3], ScriptedOrder::Kind::MakeSelectable),
               "the keep waits (5 cells) before it builds 15 swordsmen, then 20 archers",
               std::to_string(k->orders.size()) + " order(s)");
         const Unit* tower = w.unit(towers.front());
@@ -1247,6 +1394,12 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
+    if (argc == 2 && std::string(argv[1]) == "--selectable") {
+        // tools/re/check_mission_selectable.py: the port's side of its table.
+        Fixture f;
+        for (const auto& c : kSelectableCases) selectableRow(f, c);
+        return 0;
+    }
     if (argc == 3 && std::string(argv[1]) == "--data") {
         std::printf("mission_orders_test (shipped missions)\n");
         shipped(argv[2]);
@@ -1272,6 +1425,7 @@ int main(int argc, char** argv) {
         airUnit(f);
         strippedAttack(f);
         selectAndDestruct(f);
+        selectable(f);
         holds(f);
         setMission(f);
         tableCompacts(f);

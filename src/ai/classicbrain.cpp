@@ -321,11 +321,11 @@ std::vector<ClassicSquadUnit> ClassicBrain::squadUnits(const tak::sim::World& wo
         const bool structure = t->isStructure();
         const bool armed = info ? info->armed : !t->weapons.empty();
         // The port's readings of the unit bits (docs/classic-ai-plan.md U6): a unit
-        // in the World is a live slot, a dead one still listed is dying; every unit
-        // is selectable, as retail creates each one with 0x20 (0x511990, U16; every
-        // test of it here also asks for a finished unit).
+        // in the World is a live slot, a dead one still listed is dying; 0x20 is
+        // the World's selectable bit (made with every unit, 0x511990, U16; cleared
+        // while a mission script runs the unit, so the AI leaves it alone).
         s.flags = ClassicSquadUnit::kLive | (u.alive() ? 0u : ClassicSquadUnit::kDying) |
-                  ClassicSquadUnit::kSelectable |
+                  (u.selectable ? ClassicSquadUnit::kSelectable : 0u) |
                   (structure ? ClassicSquadUnit::kStructure : 0u) | (armed ? ClassicSquadUnit::kArmed : 0u);
         s.commander = info ? info->commander : t->commander;
         s.sacredSite = info && info->manaSite;
