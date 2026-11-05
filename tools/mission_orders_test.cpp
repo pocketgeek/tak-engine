@@ -45,7 +45,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using namespace tak;
@@ -764,6 +766,51 @@ static void placement() {
     check(createdAt(2, 2, 0, 3, -1, 64, 0), "a building's too, a negative cell included");
 }
 
+// A placed unit's Angle against the headings World gives its own units: 511990's
+// birth heading 0x8000 is Angle 180, and the ground kernel 4d9ad0 turns a unit
+// walking east to 0xc000 (Angle 270) and one walking west to 0x4000 (Angle 90), all
+// E (tools/re/check_mission_facing.py).
+static void facings(Fixture& f) {
+    std::printf("Angle against the birth heading and the walking ones:\n");
+    using sim::MissionScript;
+    using sim::retailHeadingToPort;
+    auto hex = [](uint16_t v) { char s[8]; std::snprintf(s, sizeof s, "%#06x", v); return std::string(s); };
+    {
+        auto w = makeWorld();
+        const Unit* u = w->unit(w->spawn(f.t("soldier"), cell(20), cell(20), std::nullopt, 0));
+        check(u->heading == retailHeadingToPort(MissionScript::placedHeading(180)),
+              "a freshly built unit faces as Angle 180 does", hex(sim::portHeadingToRetail(u->heading)));
+    }
+    // Placed with the Angle as matchsetup places it (514d02's word over the birth
+    // heading), a unit sent due east / west must need no turn: it walks the line
+    // without leaving it and keeps that heading. With the wrong word it would
+    // turn first and its turning arc would take it off the line.
+    for (const auto& [angle, dx, name] : {std::tuple{270, 1, "east"}, std::tuple{90, -1, "west"}}) {
+        auto w = makeWorld();
+        const int id = w->spawn(f.t("soldier"), cell(64), 1040.0f, std::nullopt, 0);
+        w->unit(id)->heading = retailHeadingToPort(MissionScript::placedHeading(angle));
+        w->unit(id)->tickStartHeadingBam = uint16_t(w->unit(id)->heading.v);
+        w->order(id, cell(float(64 + dx * 40)), 1040.0f, false);
+        tickN(*w, 60);
+        const Unit* u = w->unit(id);
+        const bool along = (dx > 0 ? u->x > Fixed::fromFloat(cell(66)) : u->x < Fixed::fromFloat(cell(62))) &&
+                           u->z == Fixed::fromInt(1040);
+        check(along && u->speed > Fixed() && u->heading == retailHeadingToPort(MissionScript::placedHeading(angle)),
+              std::string("a unit placed at Angle ") + std::to_string(angle) + " walks due " + name +
+              " without turning", hex(sim::portHeadingToRetail(u->heading)) + " at " +
+              std::to_string(u->x.toFloat()) + "," + std::to_string(u->z.toFloat()));
+    }
+    // And the other way round: Angle 90 sent east turns and leaves the line.
+    {
+        auto w = makeWorld();
+        const int id = w->spawn(f.t("soldier"), cell(64), 1040.0f, std::nullopt, 0);
+        w->unit(id)->heading = retailHeadingToPort(MissionScript::placedHeading(90));
+        w->order(id, cell(104), 1040.0f, false);
+        tickN(*w, 60);
+        check(w->unit(id)->z != Fixed::fromInt(1040), "(a unit facing west sent east turns, off the line)");
+    }
+}
+
 // ---- 14. trigger regions and UnitCreated -----------------------------------------------------------
 
 // A cob from scripts and a name table (MAP_COMMAND indexes the names).
@@ -1080,6 +1127,7 @@ int main(int argc, char** argv) {
         setMission(f);
         tableCompacts(f);
         placement();
+        facings(f);
         creates(f);
         regions(f);
     }

@@ -6558,7 +6558,13 @@ for every unit through 0.9.19 (mobiles off by 8,8, even footprints by 8 on that
 axis) and turned Angle into a port heading directly, a half turn from retail's
 (our port heading 0 is retail 0x8000, Angle 180; 5418 of the 7341 placed units
 use 180). `MissionScript::placedPoint` / `placedHeading` and `footprintSnap`
-port it (`mission_orders_test`, `tools/re/check_mission_regions.py`). Skirmish
+port it (`mission_orders_test`, `tools/re/check_mission_regions.py`). The
+Angle word faces the way retail's own units do (E,
+`tools/re/check_mission_facing.py`): Angle 180's 0x8000 is `511990`'s birth
+heading for orientation 0 and buildangle 0 (a freshly built unit), and the
+ground kernel `4d9ad0` turns a unit walking due east to 0xc000 (Angle 270) and
+due west to 0x4000 (Angle 90), from any start heading; World's `steerGround`
+gives the same, and `mission_orders_test` walks a unit both ways. Skirmish
 start positions are unaffected: this path only reads a mission's `.ota`.
 
 **`Create` (2026-11-04, E).** `4d35c0` takes 3 args (player = a0's low byte,
