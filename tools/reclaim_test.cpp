@@ -305,6 +305,38 @@ int main(int argc,char**) {
               (!u || u->corpseUntil==0),
               "a reclaimed corpse fades out with no rubble and does not decay meanwhile");
     }
+    // ---- a sinking corpse: the fade's new record stops it ------------------
+    // 494ce0 mode 1 replaces the body's record (494e08..494ed8): it stays at
+    // the height it had sunk to, its own fade ends, and it goes when the
+    // reclaim's fade does (check_corpse_sink.py, reclaim cases).
+    {
+        sim::World w;
+        w.setTerrain(std::vector<uint8_t>(kW*kW,0),kW,kW,120);   // a sea bed the builder walks
+        sim::FeatType wreck;wreck.name="wreck";wreck.reclaimable=true;wreck.fx=wreck.fz=2;wreck.energy=0;
+        w.setFeatureTypes({wreck});
+        sim::UnitType soldier;soldier.id="soldier";soldier.maxHp=100;soldier.canMove=true;
+        soldier.maxVel=sim::Fixed::fromInt(1);
+        w.mapCorpse(&soldier,0);
+        const int dead=w.spawn(&soldier,at(32,1),at(30,1),0.0f,1);
+        auto* body=w.unit(dead);body->hp={};body->deadFor=120;body->corpseUntil=INT32_MAX;
+        body->groundY=sim::Fixed::fromInt(120);
+        check(Probe::corpse(w,*body,0) && w.corpseSink(dead),"the wreck in water sinks");
+        auto type=builderType(2);
+        const int id=w.spawn(&type,at(30,2),at(30,2),0.0f,0);
+        w.reclaim(id,-dead,false);
+        int end=-1,retired=-1;int32_t at_end=0;bool still=true,fadeOff=true;
+        for (int tick=0;tick<900 && retired<0;++tick) {
+            w.tick(1.f/30);
+            const auto* sink=w.corpseSink(dead);
+            if (!w.unit(dead)) break;
+            if (end<0 && w.unit(dead)->corpseFading) { end=tick;at_end=sink ? sink->y : -1; }
+            else if (end>=0 && sink) { still&=sink->y==at_end && sink->vy==0;fadeOff&=!sink->fading; }
+            if (end>=0 && !Probe::hasCorpseFootprint(w,dead)) retired=tick;
+        }
+        check(end>=0 && at_end>0 && at_end<(120<<16),"the wreck was reclaimed while it sank");
+        check(still && fadeOff,"a reclaimed wreck stops sinking where it is, its own fade over");
+        check(retired-end==sim::kReclaimFadeTicks,"a reclaimed wreck goes with the reclaim's fade");
+    }
     std::printf(failures ? "\nFAILED (%d)\n" : "\nall passed\n",failures);
     return failures ? 1 : 0;
 }

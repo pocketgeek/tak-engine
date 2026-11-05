@@ -13,6 +13,15 @@ built into tools/re/corpse_sink_driver.cpp). Cases: random shores and sea
 beds (many of height 0 or 1), the body at the ground, at sea level, under
 it, and above it as a flyer would be; corpses and statues; the walls'
 isfeature, which keeps no velocity.
+
+Reclaims: in about 30% of the cases the real 494ce0 (mode 1) reclaims the
+body at a random tick, before that tick's update. It must take a new record
+(the free list's head), copy the position and free the old one; then the
+reclaim fade's 34 passes run to 494f00 (an observation boundary) and are
+compared with World's port (retailFeatureSinkReclaim: the body stops). In a
+third of them the new slot still holds the sinking velocity of a record
+freed while it moved; those are counted, not compared (World has no record
+pool): how often the body sinks on, and how often its fade starts again.
 Observation only: nothing from the binary is copied into the engine.
 
     python3 -B tools/re/check_corpse_sink.py [--cases N] [--build DIR]
@@ -39,7 +48,7 @@ def main():
     p = Icd()
     def put(addr, v, f='<I'): p.uc.mem_write(addr, struct.pack(f, v))
     def get(addr, f='<I'): return struct.unpack(f, p.uc.mem_read(addr, struct.calcsize(f)))[0]
-    state = dict(record=0, removed=False)
+    state = dict(record=0, removed=False, reclaimed=False)
     def install(uc, sp):
         cell, ftype, pos, _orient, _owner = struct.unpack('<5I', uc.mem_read(sp, 20))
         rec = state['record']
@@ -47,12 +56,19 @@ def main():
         uc.mem_write(rec + 0x2c, struct.pack('<H', ftype & 0xffff))
         index = (cell - CELLS) // 14
         uc.mem_write(rec + 0x28, struct.pack('<hh', index % W, index // W))
+        # 495360's cell side: the type, the record and the object bit.
+        uc.mem_write(cell + 8, struct.pack('<HH', ftype & 0xffff, (rec - RECS) // 0x60))
+        uc.mem_write(cell + 0xd, bytes([uc.mem_read(cell + 0xd, 1)[0] | 8]))
         return 5, rec
     def remove(uc, sp):
         state['removed'] = True
         return 2, 1
     p.hooks[0x495360] = install
     p.hooks[0x496380] = remove
+    def replaced(uc, sp):
+        state['reclaimed'] = True
+        return 3, 0
+    p.hooks[0x494f00] = replaced
     p.hooks[0x495f30] = lambda uc, sp: (0, 0)
     p.hooks[0x502be0] = lambda uc, sp: (4, 0)
     p.freeze_hooks()
@@ -70,8 +86,8 @@ def main():
             out.append(i); i = get(RECS + i * 0x60, '<h')
         return out
 
-    rng = random.Random(0x4959c0)
-    stats = dict(water=0, removed=0, settled=0, above_sea=0, landed_fading=0, fade_settled=0, popped=0)
+    rng = random.Random(0x4959c0); rrng = random.Random(0x494ce0)
+    stats = dict(water=0, removed=0, settled=0, above_sea=0, landed_fading=0, fade_settled=0, popped=0, reclaimed=0, stale=0, stale_restarted=0, stale_moved=0)
     for case in range(a.cases):
         sea = rng.choice((0, 1, 2, 10, 30, 40, 50, 120, 255))
         def pick():
@@ -108,7 +124,7 @@ def main():
         put(GAME + 0x19e7c, -1, '<i'); put(GAME + 0x19e80, -1, '<i'); put(GAME + 0x19e84, 0, '<i')
         idx, err = p.call(0x4949c0, ())
         assert not err and idx == 0, (idx, err)
-        state['record'] = RECS; state['removed'] = False
+        state['record'] = RECS; state['removed'] = False; state['reclaimed'] = False
         x = rng.randrange(-8, W * 16 + 8) << 16 | rng.randrange(0, 65536)
         z = rng.randrange(-8, H * 16 + 8) << 16 | rng.randrange(0, 65536)
         if rng.random() < 0.9:
@@ -126,6 +142,10 @@ def main():
              lambda: rng.randrange(1, 1500) * 0x2ccc][kind]()  # whole steps to a sea bed of 0
         y &= 0xffffffff
         isfeature = rng.random() < 0.05
+        # A reclaim of the body (494ce0 mode 1) at a random tick, from its own
+        # stream; in some, the slot it takes was last freed while it moved.
+        reclaim = rrng.randrange(0, 120) if rrng.random() < 0.3 else -1
+        stale = reclaim >= 0 and rrng.random() < 0.3
         put(TYPE + 0x260, 0x1000000 if isfeature else 0)
         put(UNIT + 0x68, x); put(UNIT + 0x6c, y); put(UNIT + 0x70, z)
         put(UNIT + 0x74, cx, '<h'); put(UNIT + 0x76, cz, '<h')
@@ -135,27 +155,48 @@ def main():
         assert get(RECS + 0x2c, '<H') == (3, 4, 5)[statue]
         if get(RECS + 0x18) == 0xffffd334: stats['water'] += 1
         ticks = 3000
-        text = '%d %d %d %d %d %d %d %d\n' % (W, H, sea, gravity, int(isfeature), struct.unpack('<i', struct.pack('<I', x))[0],
-                                            struct.unpack('<i', struct.pack('<I', y))[0], struct.unpack('<i', struct.pack('<I', z))[0])
+        if stale: put(RECS + 0x60 + 0x18, 0xffffd334)   # the next free slot (1) kept a sinking velocity
+        text = '%d %d %d %d %d %d %d %d %d\n' % (W, H, sea, gravity, int(isfeature), struct.unpack('<i', struct.pack('<I', x))[0],
+                                            struct.unpack('<i', struct.pack('<I', y))[0], struct.unpack('<i', struct.pack('<I', z))[0],
+                                            reclaim)
         text += ' '.join(str(heights[zz][xx]) for zz in range(H) for xx in range(W)) + '\n%d\n' % ticks
-        ours.stdin.write(text); ours.stdin.flush()
         mine = []
-        while True:
-            line = ours.stdout.readline().strip()
-            if line == 'end': break
-            mine.append(line)
-        theirs = []; landed_while_fading = False
+        if not stale:
+            ours.stdin.write(text); ours.stdin.flush()
+            while True:
+                line = ours.stdout.readline().strip()
+                if line == 'end': break
+                mine.append(line)
+        theirs = []; landed_while_fading = False; index = 0; restarted = False
         for t in range(ticks):
+            if t == reclaim:
+                if state['removed']: break
+                cell = CELLS + (get(RECS + 0x2a, '<h') * W + get(RECS + 0x28, '<h')) * 14
+                r, err = p.call(0x494ce0, (get(RECS + 0x28, '<h'), get(RECS + 0x2a, '<h'), 1))
+                assert not err, err
+                index = get(cell + 0xa, '<H')
+                assert index == 1 and get(GAME + 0x19e84, '<i') == 0, 'a new record, the old one freed'
+                assert get(RECS + 0x60 + 0xc, '<i') == get(RECS + 0xc, '<i') and get(RECS + 0x60 + 0x2e, '<B') == 1
             r, err = p.call(0x4959c0, ())
             assert not err, err
-            rec = RECS
+            rec = RECS + index * 0x60
             if state['removed']: st = 2
-            elif 0 not in moving_list(): st = 1
+            elif state['reclaimed']: st = 3
+            elif index == 0 and 0 not in moving_list(): st = 1
             else: st = 0
             theirs.append('%d %d %d %u %d' % (get(rec + 0xc, '<i'), get(rec + 0x18, '<i'), get(rec + 0x2f, '<B'),
                                               get(rec + 0x30), st))
+            if index and get(rec + 0x2f, '<B'): restarted = True
             if st == 0 and get(rec + 0x2f, '<B') and get(rec + 0x18) == 0: landed_while_fading = True
-            if st: break
+            if st == 2 or st == 3 or (st == 1 and reclaim < 0): break
+        if stale:
+            # Not ported (World has no record pool): the body sinks on from
+            # the copied position, and over a bed of 0 its fade starts again
+            # from alpha 1.0 on top of the reclaim's.
+            stats['stale'] += 1; stats['stale_restarted'] += restarted
+            stats['stale_moved'] += reclaim < len(theirs) - 1 and theirs[reclaim].split()[0] != theirs[-1].split()[0]
+            continue
+        if reclaim >= 0: stats['reclaimed'] += 1
         if theirs != mine:
             for i, (u, v) in enumerate(zip(theirs, mine)):
                 if u != v: print('first difference at tick', i, 'retail', u, 'ours', v); break

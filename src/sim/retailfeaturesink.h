@@ -68,6 +68,23 @@ RetailSinkResult retailFeatureSinkStep(RetailFeatureSink& f, Ground ground, uint
     return RetailSinkResult::Moving;
 }
 
+// A reclaim's fade (494ce0 mode 1, 494e08..494ed8) takes a NEW record from
+// the free list (4949c0: +0x2e/+0x2f reset, the velocity left as its last
+// user had it), copies the position and model over and frees the old one: the
+// sink's own fade ends, and the body stays where it is unless that slot still
+// held a velocity (a record freed while it moved). World takes the slot's
+// velocity as 0 (I: it has no model of retail's record pool).
+inline void retailFeatureSinkReclaim(RetailFeatureSink& f) {
+    f.vx = f.vy = f.vz = 0; f.fading = false; f.alpha = 1.0f; f.step = 0.0f;
+}
+
+// Display only: the model draw's vertex alpha for a fading record,
+// ftol(alpha * 255.0f) (4ed056..4ed05f; the x87 product of a float and 255
+// is exact, _ftol truncates).
+inline uint8_t retailFadeByte(float alpha) {
+    return alpha > 0.0f ? uint8_t(int(double(alpha) * 255.0)) : uint8_t(0);
+}
+
 // 511260: the cell under (x, z) -- the high word of each coordinate divided by
 // 16 toward zero -- and the mean of its lowest and highest corner (the cell's
 // +6 and +5, from 50ed60), or -1 off the map.

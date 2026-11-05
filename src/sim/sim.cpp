@@ -12550,6 +12550,11 @@ void World::finishReclaim(Unit&,int target) {
         Unit* c=unit(-target);
         if (!c) return;
         c->corpseFading=true;
+        // A sinking body's record is replaced by the fade's (494e08..494ed8):
+        // it stops where it is and its own fade ends (retailFeatureSinkReclaim).
+        if (auto sink=corpseSinks_.find(c->id);sink!=corpseSinks_.end()) {
+            retailFeatureSinkReclaim(sink->second.motion);sink->second.settled=true;
+        }
         // deadFor advances later this tick: the body retires kReclaimFadeTicks on.
         c->corpseUntil=c->deadFor+int32_t(kReclaimFadeTicks)+1;
         return;
