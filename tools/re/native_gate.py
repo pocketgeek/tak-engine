@@ -54,7 +54,9 @@ class NativeGate:
         self.p.uc.mem_write(self.gate+0x74,struct.pack('<4h',self.x,self.z,self.fx,self.fz))
         self.put(self.gate+0xb4,self.kind);self.put(self.gate+0xb8,self.player)
         self.put(self.gate+0xbc,self.vm);self.put(self.gate+0x130,0x3800001)
-        self.p.uc.mem_write(self.gate+0x114,bytes([int(fields.get('activatewhenbuilt','1'))&1]))
+        # A new unit's +0x114 is 0 (511990); only activatewhenbuilt (4c033e,
+        # default 0, check_change_owner.py) activates it at creation.
+        self.p.uc.mem_write(self.gate+0x114,bytes([int(fields.get('activatewhenbuilt','0'))&1]))
         self.put(self.kind+0x264,0x40000000);self.put(self.kind+0x12a,self.yard)
         codes={'.':0,'o':0x2f,'c':0x2d,'C':0x35,'y':0x29,'Y':0x31,'w':0x37}
         self.p.uc.mem_write(self.yard,bytes(codes[c] for c in self.yard_text))

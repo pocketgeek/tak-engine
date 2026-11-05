@@ -318,16 +318,21 @@ void ScenarioScript::evaluate(World& w, bool initial) {
 void ScenarioScript::unitDied(World& w, int id) {
     const Unit* u = w.unit(id);
     if (!u || !u->type) return;
-    std::string ty = u->type->id; // CRT operands identify FBI types, not localized display names
-    if (u->player >= 0 && u->player < int(state_.size())) {
-        auto& state=state_[size_t(u->player)];
+    objectDied(u->type, u->player, u->lastHitPlayer);
+}
+
+void ScenarioScript::objectDied(const UnitType* type, int owner, int lastHitPlayer) {
+    if (!type) return;
+    const std::string& ty = type->id; // CRT operands identify FBI types, not localized display names
+    if (owner >= 0 && owner < int(state_.size())) {
+        auto& state=state_[size_t(owner)];
         if(state.firstLost.empty())state.firstLost=ty;
         state.lost[ty]++;
     }
     // Native 4cd626 uses the owner recorded by the hit, not the attacker's
     // current owner (the attacker may since have been captured or retired).
-    const int killer=u->lastHitPlayer;
-    if (killer>=0 && killer<int(state_.size()) && killer!=u->player) {
+    const int killer=lastHitPlayer;
+    if (killer>=0 && killer<int(state_.size()) && killer!=owner) {
         auto& state=state_[size_t(killer)];
         if(state.firstKilled.empty())state.firstKilled=ty;
         state.killed[ty]++;

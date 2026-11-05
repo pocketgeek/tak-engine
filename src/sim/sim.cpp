@@ -378,7 +378,11 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 for (size_t i = 0; i < 3; ++i) t.badTargetCats[i] = tokens(info->valueOr(bad[i], ""));
             }
             t.onOffable = info->numberOr("onoffable", 0) != 0;
-            t.activateWhenBuilt = info->numberOr("activatewhenbuilt", 1) != 0;
+            // 4c033e: UnitDef +0x260 & 0x40000, default 0. A unit is created
+            // inactive (511990 zeroes +0x114) and only this activates it, at
+            // a finished creation (512301) or completion (429990): the four
+            // gates, onoffable without the key, start closed.
+            t.activateWhenBuilt = info->numberOr("activatewhenbuilt", 0) != 0;
             t.cantBeStoned = info->numberOr("cantbestoned", 0) != 0;
             t.cantBeFrozen = info->numberOr("cantbefrozen", 0) != 0;
             // Retail forces both on Monarchs (icd: def bit18 -> cantbestoned +
@@ -982,13 +986,6 @@ void World::transferEntitySlot(Unit& u,int newPlayer) {
 int World::spawn(const UnitType* type, float x, float z, std::optional<float> heading, int player) {
     Unit u;
     u.groundGradeTick=tickCounter_;
-    if (type) {                      // the type's standing orders are the unit's
-        u.standingOrder = type->defaultStandingOrder;
-        u.moveState = type->defaultMove;
-        u.fireState = type->defaultFire;
-        // The displayed stance is whichever button retail would light up.
-        u.stance = u.fireState == 0 ? 2 : (u.moveState == 0 ? 1 : 0);
-    }
     // Clamp to a valid player slot: every players_[u.player] index downstream is
     // unchecked, so an out-of-range owner would read/write past the vector.
     if (!validUnitOwner(player)) {
@@ -1018,10 +1015,8 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
     players_[size_t(player)].unitCount++;   // keep the cap count exact within a tick
     players_[size_t(player)].built++;        // end-of-game "Units" column
     u.player = player;
-    if (type && type->canSetStance && players_[size_t(player)].defensiveAi) {
-        u.moveState=0;u.fireState=2;u.stance=1;u.standingOrder=1;
-    }
     u.type = type;
+    startObjectOrders(u);
     startObjectStats(u);
     if (retailAllocation_ && players_[size_t(player)].buildCache) {
         const auto& entries=players_[size_t(player)].buildCache->entries;
@@ -1050,7 +1045,13 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
         u.flightNavigation={{u.x.v,u.flightY.v,u.z.v},{},portHeadingToRetail(u.heading)};
     }
     u.hp = Fixed::fromFloat(type ? type->maxHp : 100.0f);
-    u.mana = type ? type->maxMana : 0;   // casters start with a full pool
+    // Casters start with a full pool. Retail's 511990 starts it empty (401000
+    // sets +0xd8 to 0 and only the maximum +0xdc from MaxMana; a placement's
+    // ManaPercentage, default 0, or SetAttribute fills it); not ported, see
+    // docs/retail-engine.md "A change of owner is a new object". The HP
+    // samples +0x110/+0x111 the death severity reads start at 0 (511b40).
+    u.mana = type ? type->maxMana : 0;
+    u.hpPct1s = 0; u.hpPctCur = 0;
     u.active = type ? type->activateWhenBuilt : true;
     u.homeX = Fixed::fromFloat(x);
     u.homeZ = Fixed::fromFloat(z);
@@ -8997,21 +8998,8 @@ bool World::canGiveUnit(int unitId, int fromPlayer, int toPlayer) const {
 
 bool World::giveUnit(int unitId, int fromPlayer, int toPlayer) {
     if (!canGiveUnit(unitId, fromPlayer, toPlayer)) return false;
-    Unit& u = *unit(unitId);
-    cancelBuilds(unitId);
-    stop(unitId);
-    if (players_[size_t(fromPlayer)].unitCount > 0) --players_[size_t(fromPlayer)].unitCount;
-    ++players_[size_t(toPlayer)].unitCount;
-    transferEntitySlot(u,toPlayer);
-    u.player = toPlayer;
-    startObjectStats(u);   // ShareUnits gives a new object (514da0 at 4b6b33)
-    u.rally.clear();
-    u.selfDestructT = -1;
-    u.squad = 0;
-    u.lastHitBy = 0;
-    u.lastHitPlayer = -1;
-    gPlayersValid_ = false;
-    return true;
+    // ShareUnits (4b6a80) gives each unit through 514da0 (4b6b33).
+    return changeOwner(*unit(unitId), toPlayer, mission_.get());
 }
 
 // Native 4cc3c0 searches the primary unit grid, not terrain/build eligibility.
@@ -9121,84 +9109,145 @@ void World::scenarioAdjustHealth(int unitId,uint16_t amount,bool heal) {
     }
 }
 
-// Native CRT ownership uses 514da0, which preserves health rather than applying
-// charm's half-health floor. Keep stable engine IDs while removing owner commands.
+// The CRT transfer (4cb0c4) and the mission Capture (4d3d40) both go through
+// 514da0 (changeOwner).
 bool World::scenarioTransfer(int unitId, int newPlayer) {
     return scenarioTransfer(unitId, newPlayer, mission_.get());
 }
 
 bool World::scenarioTransfer(int unitId, int newPlayer, MissionScript* notify) {
     Unit* u = unit(unitId);
-    if (!u || !u->type || !u->alive() || u->hp <= Fixed() ||
-        !validUnitOwner(newPlayer) || u->player == newPlayer || atUnitCap(newPlayer)) return false;
-    const int oldPlayer = u->player;
-    // Retail transfers allocate a new object; old construction workers lose
-    // their target. Stable engine IDs must not keep those old jobs attached.
+    return u && changeOwner(*u, newPlayer, notify);
+}
+
+// The charm (52da10, success at 52db08) changes the owner through 514da0.
+void World::captureUnit(Unit& t, int newPlayer) {
+    changeOwner(t, newPlayer, mission_.get());
+}
+
+// Retail's change of owner, 514da0 (tools/re/check_change_owner.py runs it
+// natively). It does nothing for a unit the new owner already has, or one
+// not alive or dying (514dae..514dce). It hands the old object to the
+// conditions' capture event (523570) before anything else, then makes a new
+// object of the same type for the new owner at the same place (512060, with
+// "finished" set and the flight bits +0x130 & 3): refused, changing nothing
+// more, at the new owner's unit cap or its count of the type at
+// totalallowed (5120f6). It copies onto the new object only the movement
+// bits from the type, +0x12b (the individual speed), HP raw and the
+// construction left (514f8a..514fa1), the angles +0x7c..+0x81 and the
+// activation byte +0x114 (51e4d0 twice, so its Activate or Deactivate runs
+// on an edge), and kills the old object with 30000 of kind 6 (514fc2). With
+// severity 0 that one retires at once (512610 -> 512ae0): no corpse, no
+// credit, no death weapon, and the conditions, the mission's UnitDestroyed
+// and the scenario's tallies hear of a death of its type under the old
+// owner, with the last hitter it had.
+//
+// World keeps the unit's id (retail's new object takes a new slot) and
+// resets in place what the new object starts with fresh: the creation's draws
+// (the slot's CRT draw, then rand(buildangle), rand(65536) for +0x82 and
+// rand(201) for the speed, which +0x12b then overwrites), a new script
+// (511d00: Create, then SetMaxReloadTime from 52aae0, and Activate for an
+// activatewhenbuilt type, 512301), no orders, rally, production or work, no
+// statuses (paralysis and cloaking are missions), the type's standing orders,
+// fresh weapon records (52aae0, 51a880, 519b10), an empty mana pool (+0xd8),
+// no experience, the scenario's stats for the type, no last hitter, no squad,
+// no scenario name (+4), HP samples, self-repair carry, cloak delay and
+// air-traffic count at 0 (511990), and the trigger latch (+0xd4) at 0, so the
+// mission's next sweep fires UnitCreated for the new owner and its regions
+// again. The body's place in the world (ground, sight, air occupancy, mover)
+// is kept.
+bool World::changeOwner(Unit& u, int newPlayer, MissionScript* notify) {
+    if (!u.type || u.player == newPlayer || !u.alive() || u.hp <= Fixed() || !validUnitOwner(newPlayer))
+        return false;
+    if (notify) notify->unitCaptured(*this, u.id);
+    if (atUnitCap(newPlayer) || atTypeCap(newPlayer, u.type)) return false;
+    const int unitId = u.id, oldPlayer = u.player;
+    // The old object's death: its builders lose their target, a factory's
+    // BuildingBuild aborts and its unfinished output dies.
     for (auto& builder:units_) if (builder.id!=unitId &&
         (builder.buildSiteId==unitId || builder.repairId==unitId ||
          (builder.retailBuild && builder.retailBuild->target==unitId))) {
         if (builder.buildSiteId==unitId) builder.buildSiteId=0;
         cancelBuilds(builder.id);builder.productionSiteId=0;
     }
-    if (u->retailSite) u->retailSite->builder=0;
+    if (u.retailSite) u.retailSite->builder=0;
+    killProductionOutput(u,true);
     cancelBuilds(unitId);
     stop(unitId);
+    noteOrders(unitId);
+    replacedObjects_.push_back({unitId, u.type, oldPlayer, u.lastHitPlayer});
     if (validUnitOwner(oldPlayer) && players_[size_t(oldPlayer)].unitCount > 0)
         --players_[size_t(oldPlayer)].unitCount;
     ++players_[size_t(newPlayer)].unitCount;
-    if (notify) notify->unitCaptured(*this, unitId);
-    transferEntitySlot(*u,newPlayer);
-    u->player = newPlayer;
-    startObjectStats(*u);
-    u->rally.clear();
-    u->selfDestructT = -1;
-    u->squad = 0;
-    u->lastHitBy = 0;
-    u->lastHitPlayer = -1;
+    // The new object (512060 -> 511f60 -> 511990), in its draw order.
+    transferEntitySlot(u,newPlayer);
+    u.player = newPlayer;
     gPlayersValid_ = false;
+    gameRand(int32_t(u.type->buildAngle));            // 511baa: the birth heading, overwritten (+0x7e)
+    u.variationPhase = uint16_t(gameRand(65536));     // 511cae: +0x82
+    if (u.type->maxVel > Fixed()) gameRand(201);      // 512430: the speed, overwritten (+0x12b)
+    startObjectOrders(u);
+    startObjectStats(u);
+    u.lastHitBy = 0; u.lastHitPlayer = -1;
+    u.squad = 0;
+    u.selfDestructT = -1;
+    u.scenarioName.clear();   // 511990 zeroes the name pointer +4 (51f4c0's)
+    u.frozenFor = u.stonedFor = u.paralyzedFor = 0;
+    u.cloakOn = false; u.cloakBlockedUntil = 0;
+    u.mana = 0;
+    u.hpPct1s = u.hpPctCur = 0;
+    u.healCarry = 0;
+    u.airTraffic = 0;
+    u.missionEvents = 0;
+    u.homeX = u.x; u.homeZ = u.z;
+    u.reviveTarget = 0; u.reviveMode = 0; u.reviveWork = 0;
+    u.conjureHoverTarget = 0; u.conjureHoverGoal.reset();
+    u.guardHelpTick = 0; u.guardHeard = 0; u.attackedTick = 0;
+    u.doorYieldFactory = 0; u.doorYieldSerial = 0;
+    u.blockedTarget = 0; u.blockedShots = 0; u.repositions = 0; u.searchFailed = 0;
+    u.standbyState = {}; u.guardNoMoveState = {}; u.guardNoMoveActive = false;
+    // 52aae0, 51a880, 519b10: fresh weapon records, every slot auto.
+    u.weaponSlot = 0; u.weaponAuto = true;
+    u.reloads[0] = u.reloads[1] = u.reloads[2] = 0;
+    u.slotTarget = {}; u.slotAuto = 7; u.slotManual = 0; u.slotPoint = 0; u.slotPointAt = {};
+    u.aimWait = {}; u.faceRequest = -1; u.scriptAimTarget = 0;
+    u.weaponAim = {{{0,0,0},{0,0,1},{0,0,2}}};
+    // 511d00: a new script, which has heard nothing of the old one's life.
+    if (const auto* file = u.type->script()) {
+        const auto old = unitScripts_.find(unitId);
+        const bool wasActive = old != unitScripts_.end() ? old->second.activated : u.active;
+        auto [it,inserted] = unitScripts_.try_emplace(unitId,*file);
+        if (!inserted) it->second = UnitScript(*file);
+        if (unitScriptById_.size()<=size_t(unitId)) unitScriptById_.resize(size_t(unitId)+1,nullptr);
+        unitScriptById_[size_t(unitId)]=&it->second;
+        if (scriptYardById_.size()<=size_t(unitId)) scriptYardById_.resize(size_t(unitId)+1,0);
+        scriptYardById_[size_t(unitId)]=it->second.yardOpen;
+        it->second.state().vm.start(*file,file->scriptIndex("Create"));
+        it->second.state().startArguments(*file,file->scriptIndex("SetMaxReloadTime"),
+                                          {uint32_t(u.type->maxWeaponReloadMs),0,0,0},1);
+        // 512301: an activatewhenbuilt type is activated at its creation;
+        // then 514fd2 / 514fe4 give it the old object's activation bit.
+        if (u.type->activateWhenBuilt) { it->second.activated = true; notifyUnitScript(u,"Activate"); }
+        if (wasActive != it->second.activated) {
+            it->second.activated = wasActive;
+            notifyUnitScript(u, wasActive ? "Activate" : "Deactivate");
+        }
+    }
+    if (notify) notify->objectReplaced(unitId);
+    if (mission_ && mission_.get() != notify) mission_->objectReplaced(unitId);
     return true;
 }
 
-// Switch a unit's allegiance after a mind-control charm. Retail's ownership change
-// (514da0) builds a NEW object for the new owner (512060) and copies only HP --
-// raw, with no healing (514f8a) --, construction progress, facing and activation
-// onto it before killing the old one. So the converted unit keeps its damage,
-// drops its old orders, starts with no experience (511990 zeroes +0xf4, which
-// getLevel 519310 reads, and 514da0 does not copy it), and forgets who last hit
-// it (so the new owner isn't credited a kill on its own unit). The engine keeps
-// the same unit id instead of allocating a new one.
-void World::captureUnit(Unit& t, int newPlayer) {
-    if (!t.type || t.player == newPlayer) return;
-    // Already dead, just not swept yet (alive() reads deadFor, which tick() sets):
-    // capturing would steal a corpse.
-    if (t.hp <= Fixed()) return;
-    // Move the unit between the two owners' live counts NOW, the way spawn() does.
-    // The counts only re-sync from a full walk at end of tick, so without this an
-    // area mind control -- which converts a whole blob inside ONE applyHit -- reads
-    // the same stale count for every victim and can carry its new owner far past
-    // the lobby unit cap.
-    if (t.alive()) {
-        if (t.player >= 0 && t.player < int(players_.size()) &&
-            players_[size_t(t.player)].unitCount > 0)
-            players_[size_t(t.player)].unitCount--;
-        if (newPlayer >= 0 && newPlayer < int(players_.size()))
-            players_[size_t(newPlayer)].unitCount++;
+void World::startObjectOrders(Unit& u) {
+    if (!u.type) return;
+    u.standingOrder = u.type->defaultStandingOrder;   // the type's standing orders are the unit's
+    u.moveState = u.type->defaultMove;
+    u.fireState = u.type->defaultFire;
+    // The displayed stance is whichever button retail would light up.
+    u.stance = u.fireState == 0 ? 2 : (u.moveState == 0 ? 1 : 0);
+    if (u.type->canSetStance && validUnitOwner(u.player) && players_[size_t(u.player)].defensiveAi) {
+        u.moveState=0;u.fireState=2;u.stance=1;u.standingOrder=1;
     }
-    if (mission_) mission_->unitCaptured(*this,t.id);
-    // Retail's ownership change (514da0) kills the old object, so a factory's
-    // BuildingBuild aborts and its unfinished output dies (killProductionOutput).
-    killProductionOutput(t,true);
-    transferEntitySlot(t,newPlayer);
-    t.player = newPlayer;
-    gPlayersValid_=false;
-    t.orders.clear();
-    // The new object's experience and multipliers, exactly as spawn() starts a unit.
-    startObjectStats(t);
-    t.lastHitBy = 0; t.lastHitPlayer = -1;
-    t.squad = 0;             // no longer in its old owner's control group
-    t.buildQueue.clear();    // and not still producing for them
-    t.buildProgress = 0; t.buildFraction = 0;
-    t.productionSiteId = 0;
 }
 
 // A new object's scenario stats (512060 -> the scenario's 4cd590): no
@@ -19427,9 +19476,12 @@ void World::tick(float dt) {
         // not canhover, through 51a140 with no hitter and damage kind 13: no
         // hit response (51a333), the death kind 13 that 512610 then gets
         // (51a348 -> 51e36c), the last hitter kept, credited nothing. A
-        // carried unit is skipped: World does not keep its height.
-        if (const uint16_t water = u.embarked() ? 0 : retailDeadlyWaterDamage(tickCounter_,
-                (u.type->canFly ? u.flightY : u.groundY).v, seaLevel_, u.type->canHover,
+        // carried unit is no exception: its height is the attach point its
+        // mover committed last (4dad30, run after this check in 51de30's
+        // update, below as here), so cargo on a ship at sea level is hurt
+        // and cargo of a flyer aloft is not.
+        if (const uint16_t water = retailDeadlyWaterDamage(tickCounter_,
+                (u.type->canFly && !u.embarked() ? u.flightY : u.groundY).v, seaLevel_, u.type->canHover,
                 waterDamage_ != 0, waterDamage_)) {
             // As hurt: 64-bit, clamped so that -hp is representable.
             u.hp = Fixed::raw(int32_t(std::clamp<int64_t>(int64_t(u.hp.v) - int64_t(water) * Fixed::kOne,
@@ -20149,6 +20201,9 @@ void World::tick(float dt) {
         if (probe::kPmu) { probe::pmuAdd(probe::kSep, _pmuSep); probe::pmuAdd(probe::kTotal, _pmuTick); }
 #endif
     }
+    // The old objects of this tick's changes of owner retired too (changeOwner).
+    const auto replaced=std::move(replacedObjects_);
+    replacedObjects_.clear();
     // Campaign mission runner: feed this tick's deaths into the "god" script,
     // then advance it (VM + UnitCreated/trigger sweep + win/lose). Runs on every
     // peer (events queue VM threads; the spawns/orders happen in step()), so the
@@ -20156,12 +20211,14 @@ void World::tick(float dt) {
     if (mission_) {
         TAK_PASS();
         for (int id : justDied_) mission_->unitDied(*this, id);
+        for (const auto& o : replaced) mission_->replacedObjectDied(*this, o.id, o.type, o.owner);
         mission_->step(*this, dt);
     }
     // Scenario (.crt) trigger runner: same lockstep contract as the mission
     // runner -- built identically on every peer, ticked here, hashed below.
     if (scenario_) {
         for (int id : justDied_) scenario_->unitDied(*this, id);
+        for (const auto& o : replaced) scenario_->objectDied(o.type, o.owner, o.lastHitPlayer);
         scenario_->step(*this, dt);
         updateOutcome(); // Rules can change results and unit counts this tick.
     }
@@ -20558,6 +20615,8 @@ uint64_t World::stateHash() const {
     }
     checkpoint("grades");
     if(!retiredOwners_.empty()) {mix(0x52455449524544ull);mix(retiredHash_);mix(uint32_t(nextId_));}
+    // Old objects of changes of owner whose death is still to be heard.
+    for (const auto& o:replacedObjects_) {mix(0x5245504cull);mix(uint32_t(o.id));mix(uint32_t(o.owner));mix(uint32_t(o.lastHitPlayer));}
     TAK_PASS();
     for (const auto& u : units_) {
         mix(uint64_t(u.id));

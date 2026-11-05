@@ -218,7 +218,22 @@ their validation reports; both live in [`docs/`](docs/).
   and it is not stronger for a veteran.
 - **Deadly water hurts once a second**, as in the original game: the map's whole
   water damage each second to anything standing at or below the water line that
-  cannot hover, ships included.
+  cannot hover, ships included, and troops carried on a ship too (a flyer's
+  passengers high above the water are safe).
+- **Gates are built closed and switched off**, as in the original game. A new gate
+  used to count as switched on with its doors shut, so the first click on its ON
+  button did nothing.
+- **A unit that changes sides starts afresh, as in the original game.** A unit
+  converted by an enemy, given to an ally or taken over by a mission or a map
+  scenario keeps its health and the way it faces, but is a new unit to its new
+  owner: its mana pool starts empty, it is no longer paralysed, cloaked by order or
+  set to its old owner's stance (it takes its type's), its weapons start with no
+  reload, it loses a mission-given name, and its animations start over. Its old
+  owner loses the unit: missions and map scenarios count it as a loss for the old
+  owner (a mission's "kill N of these" goal counts a converted enemy, and the last
+  player to hit it is credited in a scenario's tallies), but no one is credited a
+  kill. A unit no longer changes sides to a player who already has the one copy of
+  it a player may have (such as a dragon).
 - **Sound and music at full quality.** In-game music used to be turned into 11 kHz
   mono. The game now mixes at 44.1 kHz: the original's music plays in
   stereo at its own rate, a mod's 44.1 kHz or surround sounds and music keep their
@@ -263,6 +278,9 @@ their validation reports; both live in [`docs/`](docs/).
     20's scripted event can happen.
   - A captured or given unit takes its type's mission bonuses, rather than keeping
     the armour and weapon bonuses its old owner's mission placed it with.
+  - A unit that changes sides is announced to the mission again for its new owner,
+    and sets off the trigger areas it stands in again, as in the original game; the
+    mission also hears that the old owner's unit is gone.
   - The mission Kill command kills every unit on the map, whatever unit it names.
     No original mission uses it.
 - **Fedora 45 packages.** Fedora 45 now has its own x86-64 and ARM64 RPMs, beside

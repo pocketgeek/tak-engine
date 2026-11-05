@@ -11,6 +11,7 @@
 #include "sim/retailhweffectdata.h"
 #include "sim/retailanimationqueries.h"
 #include "sim/retaildeath.h"
+#include "sim/retailtransport.h"
 #include <algorithm>
 #include <bit>
 #include <cctype>
@@ -453,6 +454,17 @@ int main(int argc,char** argv) {
         uint32_t tick;int32_t height,amount;int sea,hover,enabled;
         while (std::cin>>tick>>height>>sea>>hover>>enabled>>amount)
             std::cout<<tak::sim::retailDeadlyWaterDamage(tick,height,sea,hover!=0,enabled!=0,amount)<<'\n';
+        return 0;
+    }
+    // tools/re/check_kill_credit.py: deadly water on a unit carried at a host
+    // height (the attach point World commits for its cargo) -> the damage.
+    if (argc==2 && std::string(argv[1])=="--carried-water") {
+        int32_t height,amount;int floater,waterline,sea;uint32_t tick;
+        while (std::cin>>height>>floater>>waterline>>sea>>amount>>tick) {
+            const auto at=tak::sim::retailAttachedPosition(tak::sim::retailAttachPoint({4096<<16,height,2048<<16},{},{},-1,0),
+                floater!=0,uint8_t(waterline),uint8_t(sea));
+            std::cout<<tak::sim::retailDeadlyWaterDamage(tick,at[1],sea,false,true,amount)<<'\n';
+        }
         return 0;
     }
     // tools/re/check_veterancy.py: one row per case, answered in its order.

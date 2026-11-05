@@ -49,6 +49,13 @@ public:
     void start(World& w);              // first-tick hook (arms "start of game")
     void step(World& w, float dt);     // evaluate every player's rule groups
     void unitDied(World& w, int id);   // death -> per-player/type kill & loss tallies
+    // The same tallies (4cd600) for a death World no longer has a unit for:
+    // the old object of a change of owner (514da0), which retires under its
+    // old owner with the last hitter it had (+0xfc).
+    void objectDied(const UnitType* type, int owner, int lastHitPlayer);
+    // Tests: a player's tally of one type's units lost / killed.
+    int32_t lostCount(int player, const std::string& type) const { return tally(player, type, false); }
+    int32_t killedCount(int player, const std::string& type) const { return tally(player, type, true); }
     void foldHash(uint64_t& h) const;  // fold flag/timer/disabled/outcome state
 
     // Cosmetic display messages queued since the last drain (game time, target
@@ -94,6 +101,12 @@ private:
     bool typeMatches(const Unit& unit, const std::string& name) const;
     bool regionBounds(const std::string& name,int& x1,int& z1,int& x2,int& z2) const;
     int32_t deathCount(const PState& state,bool killed,const std::string& type) const;
+    int32_t tally(int player, const std::string& type, bool killed) const {
+        if (player < 0 || player >= int(state_.size())) return 0;
+        const auto& values = killed ? state_[size_t(player)].killed : state_[size_t(player)].lost;
+        const auto it = values.find(type);
+        return it == values.end() ? 0 : it->second;
+    }
     bool inRegion(World& w, const Unit& unit, const std::string& loc) const;
     bool regionCenter(const std::string& loc, float& x, float& z) const;
     int parsePlayer(const std::string& s) const;   // "Player N"->N-1, "All..."->-1

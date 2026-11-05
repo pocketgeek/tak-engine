@@ -81,6 +81,14 @@ public:
     void step(World& w, float dt);     // tick the VM, sweep triggers, evaluate conditions
     void unitCaptured(World& w, int id); // called before changing ownership
     void unitDied(World& w, int id);   // a unit died -> UnitDestroyed(id)
+    // A change of owner (514da0) is a new object (512060) and the old one's
+    // death. The new object's trigger latch (+0xd4) starts at 0 (511990), so
+    // the next sweep fires UnitCreated for its new owner and TriggerHit for
+    // every armed region holding it again: objectReplaced, at the change. The
+    // old object retires with death kind 6 (512ae0): the condition deaths for
+    // its old owner and UnitDestroyed (replacedObjectDied, with the deaths).
+    void objectReplaced(int id);
+    void replacedObjectDied(World& w, int id, const UnitType* type, int oldPlayer);
 
     int outcome() const { return outcome_; }   // 0 running / +1 victory / -1 defeat
     // Run one MAP_COMMAND by its name, as the script would (tests).
@@ -131,6 +139,10 @@ private:
     void emitConditionSound(World& w, Cond& condition);
     void parseConditions(const tak::tdf::Node& header);
     int conditionOwner(int player) const;
+    // The condition deaths (523510) of a unit of `type` owned by `player`;
+    // `dead` is the id whose unit no longer stands (0: none, the old object
+    // of a change of owner, whose id the new object now holds).
+    void conditionDeaths(World& w, const UnitType* type, int player, int dead);
 
     const UnitType* findType(const std::string& name) const;   // registry lookup (lowercased)
     float orderPoint(float cell) const { return orderPoint(cell, pointScale_); }

@@ -542,7 +542,9 @@ struct UnitType {
     // player. Without it, a multi-weapon unit fires every weapon independently.
     bool  weaponSwitching = false;
     bool  onOffable = false;      // onoffable: can be toggled active/inactive
-    bool  activateWhenBuilt = true;   // activatewhenbuilt (default on)
+    // activatewhenbuilt (the parser's default is retail's, off; a type built
+    // in code keeps this on)
+    bool  activateWhenBuilt = true;
     bool  cantBeStoned = false, cantBeFrozen = false;
     bool  cantBeCaptured = false, cantBeTransported = false;
     // immunetoparalyzer (UnitDef+0x260 bit 26): paralyzer weapons (damage
@@ -2601,6 +2603,7 @@ public:
         paths_.clear();legion_.reset();convoys_.clear();
         searchGrades_.clear(); activeSearchGrade_=-1;
         units_.clear();unitSlotById_.clear();retiredOwners_.clear();retiredHash_=0;
+        replacedObjects_.clear();
         groundOwner_.clear();groundLinkSerial_=0;
         projectiles_.clear();flames_.clear();
         hits_.clear();
@@ -3319,6 +3322,14 @@ private:
     void clearScriptWeaponTarget(Unit& u,bool fromCommand=false);
     // Convert a unit to another player (contact charm + mind-control weapons).
     void captureUnit(Unit& t, int newPlayer);
+    // Retail's change of owner 514da0, under ShareUnits, the CRT transfer, the
+    // mission Capture and the charm: the old object retires with death kind 6
+    // and a new one is made for the new owner (World keeps the id). `notify`
+    // hears the capture first (523570). False when nothing changed.
+    bool changeOwner(Unit& u, int newPlayer, MissionScript* notify);
+    // A new object's standing orders: its type's (511990 +0x130 bits 30-31,
+    // +0x134 cleared), or Defensive under a defensive AI.
+    void startObjectOrders(Unit& u);
     // The experience of the new object retail makes for a unit (512060): none
     // (511990 zeroes +0xf0 and +0xf4), then its type's scenario level (4cd5f4).
     void startObjectStats(Unit& u);
@@ -4138,6 +4149,12 @@ private:
     LeftEmptyOnCopy<std::unique_ptr<ScenarioScript>> scenario_; // optional .crt trigger runner
     std::vector<uint8_t> forcedDefeat_;        // scenario Victory/Defeat: forced-defeated slots
     std::vector<int> justDied_;                // unit ids that died this tick (mission/scenario hook)
+    // The old objects of changes of owner (514da0, changeOwner) whose death
+    // (kind 6, retired at once) the mission and scenario have yet to hear:
+    // their id (which the new object keeps), type, old owner and last hitter's
+    // player. Consumed with justDied_; one made after that waits a tick.
+    struct ReplacedObject { int id; const UnitType* type; int owner, lastHitPlayer; };
+    std::vector<ReplacedObject> replacedObjects_;
     std::vector<std::pair<float, float>> manaSpots_;
     std::vector<SacredSite> sacredSites_;
     // sacredIncomeMultiplier's index, derived from sacredSites_ (never hashed): the

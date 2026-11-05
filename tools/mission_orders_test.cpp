@@ -939,12 +939,15 @@ static std::vector<uint8_t> recorderCob() {
                       Map = 0x10073000, Return = 0x10065000 };
     const std::vector<std::string> names = {"ReadValue hits", "WriteValue hits", "WriteValue region",
         "WriteValue unit", "WriteValue owner", "ReadValue created", "WriteValue created",
-        "ReadValue owners", "WriteValue owners"};
+        "ReadValue owners", "WriteValue owners", "ReadValue destroyed", "WriteValue destroyed",
+        "WriteValue dunit"};
     const std::vector<uint32_t> hit = {Map, 0, 0, Const, 1, Add, Map, 1, 1, Pop,
         Local, 0, Map, 2, 1, Pop, Local, 1, Map, 3, 1, Pop, Local, 2, Map, 4, 1, Pop, Const, 0, Return};
     const std::vector<uint32_t> created = {Map, 5, 0, Const, 1, Add, Map, 6, 1, Pop,
         Map, 7, 0, Local, 1, Add, Map, 8, 1, Pop, Const, 0, Return};
-    return buildCob({{"TriggerHit", hit}, {"UnitCreated", created}}, names);
+    const std::vector<uint32_t> destroyed = {Map, 9, 0, Const, 1, Add, Map, 10, 1, Pop,
+        Local, 0, Map, 11, 1, Pop, Const, 0, Return};
+    return buildCob({{"TriggerHit", hit}, {"UnitCreated", created}, {"UnitDestroyed", destroyed}}, names);
 }
 
 static void creates(Fixture& f) {
@@ -1064,6 +1067,33 @@ static void regions(Fixture& f) {
     check(cargo.value("hits") == 1 && cargo.value("unit") == rider && ride->unit(rider)->embarked(),
           "carried into it, the passenger fires at its own cell under the carrier (ours skipped it)",
           std::to_string(cargo.value("hits")) + " hits, last unit " + std::to_string(cargo.value("unit")));
+
+    // A change of owner (514da0) makes a new object, whose trigger latch +0xd4
+    // starts at 0 (511990, E: tools/re/check_change_owner.py): the sweep fires
+    // UnitCreated with the new owner byte and the region it stands in again.
+    // The old object retires with kind 6, which starts UnitDestroyed for it.
+    auto turn = makeWorld();
+    const int convert = turn->spawn(f.t("soldier"), at(11), at(21), 0.0f, 0);
+    turn->spawn(f.t("soldier"), at(60), at(60), 0.0f, 1);
+    auto owned = std::make_unique<sim::MissionScript>(recorderCob(), tdf::Node{}, f.reg, 0, "owner fixture",
+                                                      std::vector<int>{-1, 1, 0});
+    sim::MissionScript& mission = *owned;
+    turn->setMission(std::move(owned));
+    mission.command(*turn, "SetTrigger", {3, 10, 20, 12, 22});
+    tickN(*turn, 2);
+    check(mission.value("created") == 2 && mission.value("hits") == 1 && mission.value("owners") == 1,
+          "before the change: each unit created once, the soldier in the region hit once",
+          std::to_string(mission.value("created")) + " created, " + std::to_string(mission.value("hits")) + " hits");
+    mission.command(*turn, "Capture", {convert, 1});
+    tickN(*turn, 2);
+    check(turn->unit(convert)->player == 1 && mission.value("created") == 3 && mission.value("owners") == 1 &&
+          mission.value("hits") == 2 && mission.value("owner") == 0 && mission.value("unit") == convert,
+          "the captured soldier is created again for its new owner (byte 0) and its region fires again",
+          std::to_string(mission.value("created")) + " created, " + std::to_string(mission.value("hits")) +
+          " hits, owner " + std::to_string(mission.value("owner")));
+    check(mission.value("destroyed") == 1 && mission.value("dunit") == convert,
+          "and the old object's retirement starts UnitDestroyed",
+          std::to_string(mission.value("destroyed")) + " destroyed");
 }
 
 // ---- shipped missions -----------------------------------------------------------------------------
