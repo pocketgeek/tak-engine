@@ -8438,6 +8438,10 @@ void World::tickPointWeapons(Unit& u) {
 
 World::SuppressRule World::suppressRule(const UnitType& t, int weaponSlot) {
     if (t.weapons.empty()) return SuppressRule::None;
+    // 4c18d7..4c18ff: an armed type with bmcode 0 (+0x24a) and a canbuild menu
+    // (+0x12e > 0) loses canattack at load, and 4de62d then gives no order. No
+    // shipped type is one; a mod's armed factory would be.
+    if (t.buildMovementCode == 0 && !t.buildMenu.empty()) return SuppressRule::None;
     // 4de530 kind 3 with a point, by the selected slot's weapon (519ac0: a
     // switcher's selected slot, else the first).
     const int n=int(std::min<size_t>(3,t.weapons.size()));

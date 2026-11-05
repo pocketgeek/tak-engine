@@ -81,6 +81,7 @@ struct Fixture {
                ("tak-mission-orders-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(root / "units");
         std::filesystem::create_directories(root / "canbuild" / "builder");
+        std::filesystem::create_directories(root / "canbuild" / "fort");
         auto fbi = [&](const char* name, const std::string& body, const std::string& weapon = {}) {
             std::ofstream f(root / "units" / (std::string(name) + ".fbi"));
             f << "[UNITINFO]\n{\nunitname=" << name << ";\nobjectname=" << name << ";\n" << body << "}\n" << weapon;
@@ -97,6 +98,13 @@ struct Fixture {
         fbi("archer", mobile, ranged(""));
         fbi("flak", mobile, ranged("toairweapon=1;\n"));
         fbi("tower", "footprintx=2;\nfootprintz=2;\nmaxdamage=2000;\nsightdistance=400;\n", ranged(""));
+        // An armed factory (no shipped one has a [WEAPON1]; a mod's could).
+        fbi("fort", "footprintx=4;\nfootprintz=4;\nmaxdamage=5000;\nsightdistance=400;\nbuilder=1;\nworkertime=10;\n",
+            ranged(""));
+        const std::string flyer = mobile + "canfly=1;\ncruisealt=80;\nacceleration=0.2;\nbrakerate=0.2;\n";
+        fbi("hawk", flyer, ranged(""));
+        fbi("hoverer", flyer + "hoverattack=1;\n", ranged(""));
+        fbi("bomber", flyer, ranged("dropped=1;\n"));
         fbi("target", mobile);
         fbi("stubborn", mobile + "unitstandorders=0;\n", melee);
         fbi("plain", mobile + "noveteran=1;\n", melee);
@@ -107,6 +115,7 @@ struct Fixture {
         fbi("keep", "footprintx=4;\nfootprintz=4;\nmaxdamage=5000;\nbuilder=1;\nworkertime=10;\n");
         fbi("hut", "footprintx=2;\nfootprintz=2;\nmaxdamage=1000;\nbuildtime=60;\nbuildcost=10;\n");
         std::ofstream(root / "canbuild" / "builder" / "hut.tdf") << "[Menu]\n{\nPriority=1;\n}\n";
+        std::ofstream(root / "canbuild" / "fort" / "soldier.tdf") << "[Menu]\n{\nPriority=1;\n}\n";
         vfs.addLayer(hpi::MountSet(root));
         reg.loadDir(vfs, "units");
         reg.loadBuildTree(vfs, "canbuild");
@@ -473,10 +482,89 @@ static void attackPoint(Fixture& f) {
           "in reach it fires at the point from where it stands, and keeps the order",
           std::to_string(shots) + " shot tick(s)");
     check(towerShots > 0, "and so does the tower", std::to_string(towerShots) + " shot tick(s)");
+    // 4c18d7..4c18ff: an armed type with bmcode 0 and a canbuild menu loses
+    // canattack at load, and the resolver (4de62d) then gives no order.
+    {
+        auto w2 = makeWorld();
+        std::vector<Placed> q = {
+            {"fort", 60, 60, 0, "", "a 70 60, m 64 70"},
+            {"target", 120, 120, 1, "", ""},
+        };
+        auto m2 = startMission(f, *w2, q);
+        const Unit* fort = w2->unit(q[0].id);
+        check(fort->type->producesUnits() && !fort->type->weapons.empty() &&
+              World::suppressRule(*fort->type, 0) == World::SuppressRule::None &&
+              !w2->suppressAccepts(q[0].id, 70 * 16.0f, 60 * 16.0f),
+              "an armed factory with a build menu gets no fire at a point (canattack cleared at load)");
+        check(std::none_of(fort->orders.begin(), fort->orders.end(), [](const Order& o) { return o.suppress; }),
+              "and a X Y puts no SUPPRESS on it", std::to_string(fort->orders.size()) + " order(s)");
+        check(World::suppressRule(*f.t("tower"), 0) == World::SuppressRule::Fire,
+              "an armed building with no build menu still fires at a point");
+    }
     const auto seen = ai::ClassicBrain::firstMissionOf(*w, *gun);
     check(seen == std::pair<uint8_t, uint32_t>{1, 0x1000410},
           "the Retail AI reads it as SUPPRESS (row 0x5eb8b8: class 1, 0x1000410; it read a move)",
           std::to_string(seen.first) + " " + std::to_string(seen.second));
+}
+
+// ---- 8b'. m / p / u take X*16, Y*16 --------------------------------------------------------
+// 514120, 514307 and 5141d3 scale the point as 5143b5 does: no half cell (E,
+// tools/re/check_mission_attack_point.py).
+
+static void clausePoints(Fixture& f) {
+    std::printf("m X Y / p X Y / u X Y (the point):\n");
+    auto w = makeWorld();
+    std::vector<Placed> p = {
+        {"target", 20, 20, 0, "", "m 50 40"},
+        {"target", 30, 20, 0, "", "p 60 41"},
+        {"wagon", 40, 20, 0, "", "u 70 42"},
+    };
+    auto m = startMission(f, *w, p);
+    const Unit* mover = w->unit(p[0].id);
+    check(!mover->orders.empty() && mover->orders.back().clickX.toFloat() == 800.0f &&
+              mover->orders.back().clickZ.toFloat() == 640.0f,
+          "m 50 40 moves to 800, 640 (it took the cell centre, 808, 648)",
+          mover->orders.empty() ? "no order" : std::to_string(mover->orders.back().clickX.toFloat()));
+    const Unit* patrol = w->unit(p[1].id);
+    check(!patrol->orders.empty() && patrol->orders.back().patrol && patrol->orders.back().x.toFloat() == 960.0f &&
+              patrol->orders.back().z.toFloat() == 656.0f,
+          "p 60 41 patrols to 960, 656",
+          patrol->orders.empty() ? "no order" : std::to_string(patrol->orders.back().x.toFloat()));
+    const Unit* wagon = w->unit(p[2].id);
+    check(!wagon->orders.empty() && wagon->orders.back().unload && wagon->orders.back().x.toFloat() == 1120.0f &&
+              wagon->orders.back().z.toFloat() == 672.0f,
+          "u 70 42 unloads at 1120, 672",
+          wagon->orders.empty() ? "no order" : std::to_string(wagon->orders.back().x.toFloat()));
+}
+
+// ---- 8c. a X Y on a flyer: its air attack at the point -----------------------------------
+// 4de770..4de7e3 gives AIRSTRIKE for a `dropped` weapon, AIRTOGROUNDHOVER for a
+// hoverattack type, else AIRTOGROUND; the Retail AI reads that mission's class
+// and flags (E, tools/re/check_air_point_mission.py), not a move's.
+
+static void airPoint(Fixture& f) {
+    std::printf("a X Y (a flyer):\n");
+    auto w = makeWorld();
+    std::vector<Placed> p = {
+        {"bomber", 20, 20, 0, "", "a 40 40"},
+        {"hoverer", 30, 20, 0, "", "a 40 40"},
+        {"hawk", 40, 20, 0, "", "a 40 40"},
+        {"target", 120, 120, 1, "", ""},
+    };
+    auto m = startMission(f, *w, p);
+    const struct { int i; uint8_t kind; std::pair<uint8_t, uint32_t> mission; const char* what; } rows[] = {
+        {0, Order::kAirStrike, {2, 0x1000400}, "a dropped weapon: AIRSTRIKE, read as class 2, 0x1000400 (it read a move)"},
+        {1, Order::kAirHover, {1, 0x1000000}, "a hoverattack type: AIRTOGROUNDHOVER, class 1, 0x1000000"},
+        {2, Order::kAirRun, {1, 0x1000000}, "else AIRTOGROUND, class 1, 0x1000000"},
+    };
+    for (const auto& r : rows) {
+        const Unit* u = w->unit(p[size_t(r.i)].id);
+        const auto seen = ai::ClassicBrain::firstMissionOf(*w, *u);
+        check(u->orders.size() == 1 && u->orders.front().airPoint == r.kind &&
+              u->orders.front().attackPointX.toFloat() == 640.0f && seen == r.mission, r.what,
+              std::to_string(u->orders.size()) + " order(s), " + std::to_string(seen.first) + " " +
+              std::to_string(seen.second));
+    }
 }
 
 // ---- 9. s and d ----------------------------------------------------------------------------
@@ -675,6 +763,8 @@ int main(int argc, char** argv) {
         veterancy(f);
         attacks(f);
         attackPoint(f);
+        clausePoints(f);
+        airPoint(f);
         selectAndDestruct(f);
         holds(f);
         setMission(f);

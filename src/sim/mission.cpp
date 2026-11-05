@@ -329,11 +329,13 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
         std::string nm;
         switch (c) {
         case 'm': {                                       // 514120: m X Y / ma X Y
+            // m, p and u take the point X*16, Y*16 px (scenario +0xdc5 = 16), no
+            // half cell, as a X Y (E, check_mission_attack_point.py).
             const bool fight = c2 == 'a';
             scan.i = fight ? 2 : 1;
             if (!scan.number(fx) || !scan.number(fz)) break;
-            if (fight) w.attackMove(unitId, cellToWorld(fx), cellToWorld(fz), queue);
-            else       w.order(unitId, cellToWorld(fx), cellToWorld(fz), queue);
+            if (fight) w.attackMove(unitId, fx * 16.0f, fz * 16.0f, queue);
+            else       w.order(unitId, fx * 16.0f, fz * 16.0f, queue);
             break;
         }
         case 'a': {                                       // 5143b5
@@ -386,7 +388,7 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
         }
         case 'p': {                                       // 514307: p X Y [T]
             if (!scan.number(fx) || !scan.number(fz)) break;
-            w.patrolTo(unitId, cellToWorld(fx), cellToWorld(fz), queue);
+            w.patrolTo(unitId, fx * 16.0f, fz * 16.0f, queue);
             break;
         }
         case 'w': {                                       // 514787
@@ -436,7 +438,7 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
             break;
         }
         case 'u':                                         // 5141d3: u X Y
-            if (scan.number(fx) && scan.number(fz)) w.unloadAt(unitId, cellToWorld(fx), cellToWorld(fz), {}, queue);
+            if (scan.number(fx) && scan.number(fz)) w.unloadAt(unitId, fx * 16.0f, fz * 16.0f, {}, queue);
             break;
         case 's':                                         // 514876: MakeSelectable
             break;

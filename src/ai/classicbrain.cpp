@@ -114,6 +114,14 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
     else if (o.suppress || o.suppressApproach) {
         m.cls = 1; m.flags = 0x1000410; m.goalX = o.attackPointX.v; m.goalZ = o.attackPointZ.v;
     }
+    // A flyer's attack at a point: AirStrike (row 0x5ebd69: class 2, 0x1000600),
+    // else AirToGroundHover / AirToGround (0x5ebdb4 / 0x5ebd9b: class 1,
+    // 0x1000200), less the target bit 0x200 the ctor clears with no target (4d6d66).
+    else if (o.airPoint) {
+        const bool strike = o.airPoint == tak::sim::Order::kAirStrike;
+        m.cls = strike ? 2 : 1; m.flags = strike ? 0x1000400 : 0x1000000;
+        m.goalX = o.attackPointX.v; m.goalZ = o.attackPointZ.v;
+    }
     else { m.cls = 14; m.flags = 0x3000400; }   // a move
     m.kind = m.cls == 14 ? moveKind(u.type->canFly) : m.cls == 7 ? kKindPatrol : otherKind(m.cls);
     // Only the World's auto-attacks (and the return move behind a leashed one):
