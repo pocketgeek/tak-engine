@@ -3139,7 +3139,9 @@ void formationreform() {
 }
 // The classic AI's squads are Retail's formations while the AI flags them (Cmd::AiGroup, World::aiFormation: a
 // strike squad attacking): in Legion a flagged squad's member shoved out of its slot walks back as an Alt+N member
-// does; an unflagged squad's member stays where it was left.
+// does, and its member that never moved with it is gathered by the W6 rest-time
+// rejoin as an Alt+N formation's is; an unflagged squad's members stay where
+// they were left.
 void formationreformai() {
     Fixture f(128,112);
     f.publish();
@@ -3148,9 +3150,12 @@ void formationreformai() {
     std::vector<int> flagged,plain;
     for(int i=0;i<6;++i)flagged.push_back(f.spawn(type,10+(i%3)*3,20+(i/3)*3,1));
     for(int i=0;i<6;++i)plain.push_back(f.spawn(type,10+(i%3)*3,80+(i/3)*3,1));
+    // A member of each squad that never moves with it (a straggler the squad was given far off).
+    const int lone=f.spawn(type,100,60,1),loneP=f.spawn(type,100,100,1);
     f.start();
     for(int id:flagged)f.world.setAiGroup(1,id,23,false);
     for(int id:plain)f.world.setAiGroup(1,id,24,false);
+    f.world.setAiGroup(1,lone,23,false);f.world.setAiGroup(1,loneP,24,false);
     f.world.setAiGroup(1,0,23,true);
     check(f.world.aiFormation(1,23)&&!f.world.aiFormation(1,24),"formationreformai: the AI squad flags");
     for(int id:flagged)f.world.order(id,40*16,24*16,false);
@@ -3181,6 +3186,15 @@ void formationreformai() {
         fxLen(ub.x-bx,ub.z-bz).toFloat());
     check(walksA==1&&ua.orders.empty()&&back<=32.f,"formationreformai: the flagged AI squad member did not walk back");
     check(walksB==0&&ub.x==bx&&ub.z==bz,"formationreformai: an unflagged AI squad member re-formed");
+    // The stragglers: the flagged squad's is gathered to its point by the W6 rest-time rejoin, as an Alt+N
+    // formation's is; the unflagged squad's stays where it was put.
+    const auto& ul=*f.world.unit(lone);const auto& up=*f.world.unit(loneP);
+    const float gathered=fxLen(ul.x-Fixed::fromInt(40*16),ul.z-Fixed::fromInt(24*16)).toFloat();
+    std::printf("formationreformai stragglers: flagged from_point_px=%.1f idle=%d | unflagged at %.0f,%.0f idle=%d\n",
+        gathered,int(ul.orders.empty()),up.x.toFloat()/16,up.z.toFloat()/16,int(up.orders.empty()));
+    check(ul.orders.empty()&&gathered<=16*16.f,"formationreformai: the flagged squad's straggler was not gathered");
+    check(up.orders.empty()&&up.x==Fixed::fromInt(100*16)&&up.z==Fixed::fromInt(100*16),
+          "formationreformai: the unflagged squad's straggler moved");
 }
 }
 
