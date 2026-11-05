@@ -242,6 +242,7 @@ static void cloakSpendsUnitMana() {
     spyType.id = "spy"; spyType.canCloak = true; spyType.cloakCost = 15; spyType.cloakCostMove = 21;
     spyType.maxMana = 10; spyType.manaRegen = 3;
     const int spy = w.spawn(&spyType, 300, 300, 0, 0);
+    w.unit(spy)->mana = 10;   // a new unit's pool starts empty (511990)
     w.player(0).mana = 50;
     w.setCloak(spy, true);
     w.tick(1.0f / 30);
@@ -637,6 +638,7 @@ static void cloakStepFollowsRetail() {
         creeper.canCloak = true; creeper.cloakCost = 3; creeper.cloakCostMove = 30;
         creeper.maxMana = 1000; creeper.manaRegen = 0;
         const int id = w.spawn(&creeper, 300, 300, 0, 0);
+        w.unit(id)->mana = 1000;   // a new unit's pool starts empty (511990)
         w.setCloak(id, true);
         w.order(id, 300, 800, false);
         for (int t = 0; t < 30; ++t) w.tick(1.0f / 30);
@@ -656,6 +658,7 @@ static void cloakStepFollowsRetail() {
         spy.maxMana = 1000; spy.manaRegen = 300;
         UnitType enemy = soldierType(); enemy.id = "enemy";
         const int id = w.spawn(&spy, 300, 300, 0, 0);
+        w.unit(id)->mana = 1000;   // a new unit's pool starts empty (511990)
         w.spawn(&enemy, 330, 300, 0, 1);
         w.setCloak(id, true);
         int cloaked = 0;

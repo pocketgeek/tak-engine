@@ -53,6 +53,7 @@ long reachCase(const tak::sim::TypeRegistry& registry,const char* id,bool hold,i
     const float innerZ=4096-(pad>0.0f ? reach+pad*0.5f : reach-20.0f);
     w.spawn(&mobile,4096-8.0f*float(building.footX)-64.0f,innerZ,0,0);
     w.player(0).mana=100000;
+    w.unit(a)->mana=type.maxMana;   // a new unit's pool starts empty (511990)
     if(hold)w.unit(a)->moveState=0;
     if(slot>=0)w.setWeapon(a,slot);
     long damage=0;
@@ -205,7 +206,7 @@ int main(int argc,char** argv) {
                 const float dx=direction==0?distance:direction==1?-distance:0;
                 const float dz=direction==2?distance:direction==3?-distance:0;
                 int a=w.spawn(&type,4096,4096,0,0),b=w.spawn(&victim,4096+dx,4096+dz,0,1);
-                w.player(0).mana=100000;
+                w.player(0).mana=100000;w.unit(a)->mana=type.maxMana;   // a new pool starts empty (511990)
                 const auto initial=w.unit(a)->heading;
                 w.attack(a,b,false);
                 bool fired=false,turned=false;
