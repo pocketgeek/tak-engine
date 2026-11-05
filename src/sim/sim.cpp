@@ -21888,7 +21888,8 @@ uint64_t World::stateHash() const {
         mix(uint32_t(corpse.corpseStatue));mix(corpse.corpseFading);mix(corpse.corpseBlocks);
         mix(uint32_t(corpse.deathAnimationTicks));mix(corpse.deathHasCorpse);
     }
-    mix(corpseSinks_.size());
+    // Folded only when a grave sinks, so a game without one hashes as before.
+    if (!corpseSinks_.empty()) mix(corpseSinks_.size());
     for (const auto& [id,sink]:corpseSinks_) {
         const auto& f=sink.motion;
         mix(uint32_t(id));mix(uint32_t(f.x));mix(uint32_t(f.y));mix(uint32_t(f.z));
