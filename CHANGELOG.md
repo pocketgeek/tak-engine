@@ -206,6 +206,10 @@ their validation reports; both live in [`docs/`](docs/).
   and attackers, its troops walking to board a transport and its transports on their
   way to pick them up or set them down now count as moving with it, and its guards
   keep to its pace.
+- **In Retail pathfinding, troops riding a transport stay part of their formation**,
+  as in the original game: the formation keeps together around them where the
+  transport carries them, but never waits for them or sends them back to their
+  places while they ride.
 - **In Legion pathfinding, an idle unit in a formation that ends up out of its place
   walks back to it by itself.** This is TAK Engine's own Legion behaviour, matching
   how a formation re-forms in Retail pathfinding and the original game: when a unit
@@ -259,6 +263,12 @@ their validation reports; both live in [`docs/`](docs/).
   fallen unit's body sinks now depends on the height of the ground right under it,
   as in the original game, so bodies lying level with the water sink, and bodies on
   dry ground beside a deep spot stay to be raised or reclaimed.
+- **Bodies and statues in water sink as in the original game.** A body that falls
+  in water, and now also a unit turned to stone or ice there, sinks slowly to the
+  sea bed and stays there to be raised or reclaimed, where before every body in
+  water vanished after two and a half seconds and a statue stood on the water for
+  good. Over the deepest water (a sea bed at the very bottom) it fades away as it
+  reaches the bottom instead.
 - **Deadly water hurts once a second**, as in the original game: the map's whole
   water damage each second to anything standing at or below the water line that
   cannot hover, ships included, and troops carried on a ship too (a flyer's
