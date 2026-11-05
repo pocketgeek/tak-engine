@@ -350,6 +350,9 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // that no simulation code reads -- only a "CAPTURE" button no shipped
             // .gui has. A Harpy converts with its mind-control weapon alone.
             t.canCloak = info->numberOr("cancloak", 0) != 0;
+            // init_cloaked's low bit is UnitDef +0x260 & 0x40 (4c0100); 511990
+            // copies it to the new unit's cloak order bit (+0x130 & 0x200, 511c77).
+            t.initCloaked = (int32_t(info->numberOr("init_cloaked", 0)) & 1) != 0;
             t.cloakCost = float(info->numberOr("cloakcost", 0));
             // Retail (0x4c01a1) reads cloakcost, scales it by 1/30 to a per-tick
             // cost, and passes that SCALED value as cloakcostmoving's default before
@@ -1054,6 +1057,7 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
     u.mana = 0;
     u.hpPct1s = 0; u.hpPctCur = 0;
     u.active = type ? type->activateWhenBuilt : true;
+    u.cloakOn = type && type->initCloaked;   // 511c77: the cloak order from init_cloaked
     u.homeX = Fixed::fromFloat(x);
     u.homeZ = Fixed::fromFloat(z);
     units_.push_back(u);
@@ -9567,7 +9571,7 @@ bool World::changeOwner(Unit& u, int newPlayer, MissionScript* notify) {
     u.selfDestructT = -1;
     u.scenarioName.clear();   // 511990 zeroes the name pointer +4 (51f4c0's)
     u.frozenFor = u.stonedFor = u.paralyzedFor = 0;
-    u.cloakOn = false; u.cloakBlockedUntil = 0;
+    u.cloakOn = u.type->initCloaked; u.cloakBlockedUntil = 0;   // 511c77
     u.mana = 0;
     u.hpPct1s = u.hpPctCur = 0;
     u.healCarry = 0;

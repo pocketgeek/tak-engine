@@ -206,6 +206,16 @@ int main(int argc,char** argv) try {
         w.spawn(&keep,600,600,0,0);
         check(w.player(0).mana==310,"a plain creation credited storage");
     }
+    {
+        // 511c77 (S): a new unit's cloak order bit (+0x130 & 0x200) is the type's
+        // init_cloaked (+0x260 & 0x40); no shipped unit sets it. Ours always
+        // started with the order off.
+        World w;terrain(w);
+        UnitType spy=t;spy.id="spy";spy.canCloak=true;spy.initCloaked=true;
+        const int id=w.spawn(&spy,400,400,0,0);
+        check(w.unit(id)->cloakOn,"an init_cloaked unit did not start with its cloak order on");
+        check(!w.unit(w.spawn(&t,600,600,0,0))->cloakOn,"a plain unit started cloaked");
+    }
     std::cout<<"all passed\n";
     return 0;
 } catch (const std::exception& e) {

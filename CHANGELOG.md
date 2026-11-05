@@ -295,6 +295,8 @@ their validation reports; both live in [`docs/`](docs/).
   as soon as it is finished: it still blocks the way and can be smashed, but it is
   no longer a unit you can select, that counts against your units, or that enemies
   pick as a target. Building one no longer counts as a loss.
+- **A modded unit with `init_cloaked` starts with its cloak switched on**, as the
+  original game does (no unit of the original game uses it).
 - **A unit that changes sides starts afresh, as in the original game.** A unit
   converted by an enemy, given to an ally or taken over by a mission or a map
   scenario keeps its health and the way it faces, but is a new unit to its new

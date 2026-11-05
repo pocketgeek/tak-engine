@@ -186,6 +186,24 @@ def finished_feature(p):
     return '51230c: a finished isfeature creation is left dying with death kind 9'
 
 
+def cloak_order(p):
+    """511c04..511c90 natively: the new unit's cloak order bit (+0x130 & 0x200)
+    is UnitDef +0x260 & 0x40, init_cloaked (parsed at 4c0100), whatever the
+    unit held before."""
+    unit, tp = HEAP + 0x42000, HEAP + 0x43000
+    got = []
+    for flags, before in ((0, 0), (0x40, 0), (0, 0x200), (0x40, 0x200), (0xffffffbf, 0x200)):
+        p.uc.mem_write(unit, bytes(0x200)); p.uc.mem_write(tp, bytes(0x300))
+        p.uc.mem_write(unit + 0xb4, struct.pack('<I', tp))
+        p.uc.mem_write(unit + 0x130, struct.pack('<I', before))
+        p.uc.mem_write(tp + 0x260, struct.pack('<I', flags))
+        p.uc.reg_write(UC_X86_REG_ESI, unit); p.uc.reg_write(UC_X86_REG_EBX, 0)
+        p.uc.emu_start(0x511c04, 0x511c90)
+        got.append(bool(struct.unpack('<I', p.uc.mem_read(unit + 0x130, 4))[0] & 0x200))
+    assert got == [False, True, False, True, False], got
+    return '511c77: a new unit starts with its cloak order on exactly when its type has init_cloaked'
+
+
 def init_pool(p):
     pool = HEAP + 0x100
     p.uc.mem_write(pool, struct.pack('<ff', 77.0, 5.0))
@@ -328,6 +346,7 @@ def main():
     print(regeneration(p))
     print(set_attribute_gate())
     print(finished_feature(p))
+    print(cloak_order(p))
     print(storage_arguments())
     print(empty_resources(p))
     credit = credit_storage(p)

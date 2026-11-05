@@ -507,6 +507,7 @@ struct UnitType {
     bool  canReclaim = false; // canreclaim: builder can reclaim corpses/features for mana
     bool  canResurrect = false;   // canresurrect: can revive nearby corpses
     bool  canCloak = false;       // cancloak
+    bool  initCloaked = false;    // init_cloaked: a new unit's cloak order starts on
     float cloakCost = 0;          // cloakcost: the unit's OWN mana/sec while cloaked and idle
     float cloakCostMove = 0;      // cloakcostmoving: the same while moving (default cloakcost/30)
     int32_t minCloakDist = 0;     // mincloakdistance (readInt): retail only draws it round a cloaked unit

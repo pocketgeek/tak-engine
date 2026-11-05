@@ -2849,7 +2849,9 @@ experience `+0xf0`/`+0xf4`, the last hitter (`+0xf8` 0, `+0xfc` 10), the
 unit's kill count `+0xfe`, the self-repair carry `+0x10e`, the HP samples
 `+0x110`/`+0x111`, `+0x113`, `+0x104`, the weapon flags `+0xd0`, the air
 traffic count `+0x12a` and occupancy `+0x117..+0x128`, the scenario name
-`+4`, the cloak order bit `+0x130 & 0x200`, and the standing orders (`+0x130`
+`+4`, the cloak order bit `+0x130 & 0x200` (set from the type's
+`init_cloaked`, `+0x260 & 0x40`, at `511c77`, E; no shipped unit sets it, and
+ours started every unit with the order off until gap hunt 4), and the standing orders (`+0x130`
 bits 30-31 from the type, `+0x134 & 0xf` cleared). Its missions are new
 (none; paralysis and cloaking are missions, S), and so are its weapon
 records (every slot auto, no reload, no target or point, S).
