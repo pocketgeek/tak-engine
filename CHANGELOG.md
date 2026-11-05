@@ -301,6 +301,10 @@ their validation reports; both live in [`docs/`](docs/).
   as soon as it is finished: it still blocks the way and can be smashed, but it is
   no longer a unit you can select, that counts against your units, or that enemies
   pick as a target. Building one no longer counts as a loss.
+- **Priests, the Lihr, the Zhon Shaman and the Aramon Smith have their auras again.**
+  Earlier changes in this release left every healing and armour or attack aura
+  switched off. They work as in the original game: a paralysed priest still
+  heals, and so does a Sacred Fire you switch off.
 - **A selected unit of yours shows how many enemies it has killed**, beside its health
   and mana bars, as in the original game (once it has a kill). A unit that changes
   sides starts again from none.

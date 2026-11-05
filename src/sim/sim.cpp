@@ -15655,13 +15655,24 @@ void World::setRepeat(int builderId, const UnitType* type) {
 // `adjustment * falloff / N`, paying its own owner's mana at the target's
 // buildcost/buildtime rate (KINGDOMS.icd 0x51d3e0 -> 0x51f7b0 -> 0x429d90). Dividing
 // by the full count -- damaged or not -- is what stops it being absurd in a crowd.
+// An aura emitter (51d3e0's walk, 51d535..51d560, S; the callbacks 51f5e9,
+// 51f6c9 and 51f7cc test only that it is not carried, +0x130 & 3, E for the Joy
+// one in ~/tak-tmp/retail-checks/hunt7/probe_aura_gate.py): alive, not dying,
+// finished, not carried. No activation test: an emitter made inactive
+// (511990, the shipped priests, shamans and smiths) or switched off still
+// emits, and so does a paralysed one. A statue is dying (51a61a): stone and
+// freeze stand for that until the sweep.
+bool World::retailAuraEmits(const Unit& s) {
+    return s.alive() && !s.embarked() && !s.underConstruction && s.frozenFor <= 0 && s.stonedFor <= 0;
+}
+
 void World::tickHealAuras() {
     // The emitters alone, in unit order (UnitClassLists: every unit whose type
     // has auras). Nothing here spawns.
     syncUnitLists();
     for (const int id : unitLists_.emitters) {
         Unit& s = *unit(id);
-        if (!s.alive() || s.embarked() || s.underConstruction || !s.active || s.incapacitated())
+        if (!retailAuraEmits(s))
             continue;
         for (const Aura& a : s.type->auras) {
             if (a.kind != Aura::Kind::Joy || a.radius <= 0 || a.amount <= 0) continue;
@@ -15764,7 +15775,7 @@ void World::tickAuras(float dt) {
     // (a unit both buffed and debuffed takes a max and a min, which do not
     // commute). applyAuraTiles folds them per unit.
     auto gather = [&](const Unit& s, auto&& hit) {
-        if (!s.alive() || s.embarked() || s.underConstruction || !s.active || s.incapacitated())
+        if (!retailAuraEmits(s))
             return;
         for (const Aura& a : s.type->auras) {
             if (a.kind == Aura::Kind::Joy || a.radius <= 0) continue;  // morale: not modelled
@@ -15853,7 +15864,7 @@ bool World::prepareAuraSources() {
     };
     for (const int id : unitLists_.emitters) {
         const Unit& s = *unitNoRepair(id);
-        if (!s.alive() || s.embarked() || s.underConstruction || !s.active || s.incapacitated())
+        if (!retailAuraEmits(s))
             continue;
         for (const Aura& a : s.type->auras) {
             if (a.kind == Aura::Kind::Joy || a.radius <= 0) continue;

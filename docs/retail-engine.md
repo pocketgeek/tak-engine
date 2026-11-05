@@ -5361,6 +5361,20 @@ by their own healtime. One Divine Lodestone spent 75 one-second windows above
 because a priest returned 1066 a second. Our `tickHealAuras` matches that
 formula, so nothing there changed.
 
+Which emitters emit (gap hunt 7): `51d3e0`'s walk takes an emitter that is
+alive, not dying and finished (`51d535..51d560`, S), and each aura callback
+(`51f5e9`, `51f6c9`, `51f7cc`) also requires `+0x130 & 3` (the body's layer
+from `51b3b0`; 0 is carried). Nothing tests the activation byte `+0x114` or
+a paralysis (E for the Joy callback: 32 emitter states,
+`~/tak-tmp/retail-checks/hunt7/probe_aura_gate.py`). Ours skipped an inactive
+or incapacitated emitter, which since the `activatewhenbuilt` default (0, so
+every shipped emitter is made inactive) left the priests, the Lihr, the
+shaman and the smith with no aura at all, and before it left a Sacred Fire
+switched off, or a paralysed emitter, without one. `World::retailAuraEmits`
+now asks retail's question (stone and freeze stand for the statue's dying
+bit until the sweep). Tests: `aura_recipient_test` (eligibility),
+`new_unit_mana_shipped` (an inactive, paralysed Lihr heals).
+
 ## The enemy-hover cursor: a unit that can move never shows "too far" (icd, 2026-10-19)
 
 Selector `0x4dd780` (sole caller `0x521de6`, inside the selected-unit

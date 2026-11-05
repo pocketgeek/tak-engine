@@ -9,8 +9,8 @@
 // and with 1, 3 and 7:
 //   * order: one unit under a buff and a debuff of the same stat, from emitters
 //     in both unit orders -- the result follows the emitter order exactly;
-//   * eligibility: dead, embarked, unbuilt, inactive and frozen emitters emit
-//     nothing; a unit that dies or embarks after the grid is built takes nothing;
+//   * eligibility: dead, embarked, unbuilt, frozen and stoned emitters emit
+//     nothing, an inactive or paralysed one does (51d3e0); a unit that dies or embarks after the grid is built takes nothing;
 //   * same-tick spawn: a unit spawned after rebuildGrid (as tickAbilities spawns
 //     its revives) emits on that pass but is no recipient until the next grid;
 //   * random scenes: clustered bodies, emitters of every kind and state, bodies
@@ -67,7 +67,7 @@ struct RetailReplayProbe {
         if (w.gW_ <= 0) return out;
         for (const Unit& s : units) {
             if (!s.type || s.type->auras.empty()) continue;
-            if (!s.alive() || s.embarked() || s.underConstruction || !s.active || s.incapacitated()) continue;
+            if (!World::retailAuraEmits(s)) continue;
             for (const Aura& a : s.type->auras) {
                 if (a.kind == Aura::Kind::Joy || a.radius <= 0) continue;
                 const float x = s.x.toFloat(), z = s.z.toFloat(), radius = float(a.radius);
@@ -458,13 +458,18 @@ void eligibilityAndSpawn(const Types& t) {
         w->unit(muted[0])->deadFor = 10;          // dead
         w->unit(muted[1])->inTransport = quiet;   // embarked
         w->unit(muted[2])->underConstruction = true;
-        w->unit(muted[3])->active = false;
+        w->unit(muted[3])->stonedFor = 30;
         w->unit(muted[4])->frozenFor = 30;
         // Bodies the pass still finds in the grid but must skip: they die or embark after it.
         const int source = w->spawn(&t.flatBuff, 1600.0f, 1600.0f, 0.0f, 0);
         const int dies = w->spawn(&t.filler, 1620.0f, 1600.0f, 0.0f, 0);
         const int boards = w->spawn(&t.filler, 1600.0f, 1630.0f, 0.0f, 0);
         const int near = w->spawn(&t.filler, 1640.0f, 1660.0f, 0.0f, 1);
+        // 51d3e0 tests no activation and no paralysis: an emitter made inactive
+        // (as every shipped emitter is) or paralysed still emits.
+        const int dormant = w->spawn(&t.flatBuff, 2600.0f, 400.0f, 0.0f, 0);
+        w->unit(dormant)->active = false;w->unit(dormant)->paralyzedFor = 30;
+        const int lit = w->spawn(&t.filler, 2620.0f, 400.0f, 0.0f, 0);
         // The revive case: spawned after the grid, beside a unit it reaches.
         const int target = w->spawn(&t.filler, 2000.0f, 2000.0f, 0.0f, 1);
         RetailReplayProbe::grid(*w);
@@ -480,6 +485,8 @@ void eligibilityAndSpawn(const Types& t) {
         const Aura& attack = t.flatBuff.auras[1];
         const Unit& n = *w->unit(near);
         if (!same(n.armBuff, strength(armour, 40, 60))) fails.push_back("the live source missed its neighbour");
+        if (!same(w->unit(lit)->armBuff, strength(armour, 20, 0)))
+            fails.push_back("an inactive, paralysed emitter did not reach its neighbour");
         const Unit& tg = *w->unit(target);
         if (!same(tg.armBuff, strength(armour, 40, 30)) || !same(tg.atkBuff, strength(attack, 40, 30)))
             fails.push_back("a unit spawned after the grid did not emit");

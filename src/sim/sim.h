@@ -2204,6 +2204,8 @@ public:
     // starts the script's Activate. A new unit's activation byte is 0
     // (511990), so this is the only thing that turns one on unasked.
     void activateBuilt(int unitId);
+    // Whether an aura emitter's auras reach anyone this pass (51d3e0).
+    static bool retailAuraEmits(const Unit& s);
     // Whether the unit's script has been activated (its +0x114 bit 1); tests.
     bool unitScriptActivated(int unitId) const {
         const auto* script=unitScript(unitId);

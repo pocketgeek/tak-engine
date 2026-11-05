@@ -180,6 +180,25 @@ static int shipped(const char* root) {
         check(done,"the Pillar of Light was never finished");
         if (!w.unit(site)->active || !w.unitScriptActivated(site))
             throw std::runtime_error("a built Pillar of Light was not activated at its completion");
+        // 51d3e0 tests no activation (nor paralysis) on an aura emitter: a
+        // Lihr, made inactive as every unit without activatewhenbuilt is,
+        // heals the hurt beside it (AdjustJoy). Ours skipped inactive emitters,
+        // so since that default no priest, Lihr, shaman or smith had an aura.
+        w.destroy(site);   // the Pillar heals too (AdjustJoy)
+        for (int i=0;i<90;++i) w.tick(1.f/30.f);
+        const auto* lihr=reg.find("verlihr");const auto* sword=reg.find("versword");
+        check(lihr && sword && !lihr->auras.empty(),"no Lihr or its aura");
+        const int healer=w.spawn(lihr,mx+300,mz+300,0,0);
+        check(!w.unit(healer)->active,"a Lihr was made active");
+        w.unit(healer)->paralyzedFor=300;
+        const int nearId=w.spawn(sword,mx+340,mz+300,0,0),farId=w.spawn(sword,mx-600,mz-600,0,0);
+        for (const int id:{nearId,farId}) w.unit(id)->hp=Fixed::fromInt(sword->maxHp/4);
+        for (int i=0;i<90;++i) w.tick(1.f/30.f);
+        const Fixed nearHp=w.unit(nearId)->hp,farHp=w.unit(farId)->hp;
+        std::cout<<"aura: beside a Lihr "<<nearHp.toFloat()<<", far off "<<farHp.toFloat()<<"\n";
+        if (!(nearHp>farHp))
+            throw std::runtime_error("an inactive, paralysed Lihr's aura healed nothing: "+
+                                     std::to_string(nearHp.toFloat())+" beside it, "+std::to_string(farHp.toFloat())+" far off");
     }
     std::cout<<"shipped: a skirmish opens with 5000 a player, a mission with its placed storage; "
                "a placed or built wall is its feature; a Pillar of Light is activated when made finished "
