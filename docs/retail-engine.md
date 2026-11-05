@@ -2964,6 +2964,52 @@ Aramon seed now ends at 120.7 minutes, an even war (kills 152 / 132 at 45
 minutes) in which at most one caster a side stood on a slot it could not
 pay yet at any 5-minute sample. The duel test's cap is 150 minutes.
 
+## A game opens with its starting units' storage (icd, gap hunt 4, 2026-11-05)
+
+A player's resource object (`0x190` bytes, record `+0x10c`) is made for each
+of the ten records by `4f6910` (from the game start `525a45`) with the
+constructor `401240`, which zeroes it: the pool (`+0`), capacity (`+4`) and
+lifetime total (`+0x18`, a double) are 0 (E, `check_new_unit_mana.py`). Only
+`4f6948` then sets the capacity to 1.0. Nothing writes the pool before the
+units are made except a saved game's `Mogrium` key (`4f78c7`, the loader
+`4f76d0` under `4c2f80`).
+
+`512060`'s tenth argument (`[ebp+0x2c]`) decides the rest (`5123ce..512417`,
+E): when set, the new unit's `mogriumstorage` (type `+0x206`, parsed at
+`4bfee3`) is added to its owner's pool, its lifetime total and its capacity at
+once, whether or not the unit is finished. The next economy pass (`51d7d3`)
+recounts the capacity from the units. The callers (S, every call; the first
+of the ten pushes):
+
+| passes 1 | passes 0 |
+|---|---|
+| the skirmish/multiplayer start `4d3200` (`4d3293`) and its map-mode-3 twin `4d2faf` | the factory's exit `401eeb` |
+| a mission placement record `514c83` | the mobile and VTOL builders `4059ca`, `406f0c`, `41f49e`, `420541` |
+| the mission `Create` `4d36cd` | `513431` (`513330`) |
+| the CRT's start units `4cd307` and its Create action (case 7) `4caf16`, `4cbc03` | the change of owner `514eeb` |
+| `426582` (`4264a0`) and `51e352` (`51de30`) | |
+
+So a skirmish or multiplayer player opens with the Monarch's storage: 5000 for
+all five (`araking`, `tarnecro`, `vermage`, `zonhunt`, `cresage`), the pool
+and the capacity both. A campaign mission opens each player with the summed
+storage of the units placed for it, a CRT game with its start units', and a
+unit a script creates later brings its storage into the pool full.
+
+Ours opened a skirmish with a fixed 2800 (`MatchConfig::startMana`, a tuning
+of the first opening AI, never from retail), a campaign mission with
+`Player::mana`'s default 500, and credited no creation. Now
+`MatchConfig::startMana` is the pool before the credits (0) and
+`World::creditCreationStorage` runs after the Monarch spawn, the CRT start and
+placement, its Create action (`scenarioCreate`), the mission placements and
+`Create`. Mana stays a double (a retail-resources player rounds as the float
+object does). Tests: `new_unit_mana_test` (a CRT Create credits, a plain
+creation does not), `new_unit_mana_shipped` (Ulasem Arena opens all five
+Monarchs' players at 5000; takmission01_mt each player at its placed
+storage), `check_new_unit_mana.py` (the arguments, `401240`, and 48 credits
+against `--storage`). Not ported: `51e352` (`51de30`: a unit whose type has
+`+0x268 & 8` makes its side's second named type once, at a set game time
+`5195e0`; World's god summon is its own mechanism) and the `4264a0` cheat.
+
 ## The Crusades balance swaps only the unit roster (icd, 2026-10-26)
 
 With the Crusades balance on, the unit lookup `0x518080` searches only the

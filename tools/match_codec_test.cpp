@@ -173,12 +173,12 @@ static void replayHeaders() {
 static void matchConfigs() {
     SlotInfo full[kMaxSlots], empty[kMaxSlots]; fxSlots(full, false); fxSlots(empty, true);
     struct { uint8_t stress; bool empty; const char* want; } cases[] = {
-        {1, false, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {1, true, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x1.5ep+11 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
-        {2, false, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {2, true, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x1.5ep+11 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
-        {0, false, "cap=48879 mx=1 ds=1 pm=4 st=0 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {0, true, "cap=48879 mx=1 ds=1 pm=4 st=0 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x1.5ep+11 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
+        {1, false, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x0p+0 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {1, true, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x0p+0 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
+        {2, false, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x0p+0 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {2, true, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x0p+0 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
+        {0, false, "cap=48879 mx=1 ds=1 pm=4 st=0 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x0p+0 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {0, true, "cap=48879 mx=1 ds=1 pm=4 st=0 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x0p+0 pr=1 svp=-1 n=1;[0 0 7 3f800000 0 0]"},
     };
     for (const auto& c : cases) {
         const std::string got = dumpCfg(matchConfigFor(fxOpts(c.stress), c.empty ? empty : full, 0x5EED1234));
@@ -192,10 +192,10 @@ static void replayLoader() {
     const fs::path path = fs::temp_directory_path() / ("tak-match-codec-" + tak::crypto::toHex(tak::crypto::randomVec(8)) + ".takrep");
     SlotInfo slots[kMaxSlots]; fxSlots(slots, false);
     struct { const char* mission; uint8_t stress; const char* want; } cases[] = {
-        {"", 1, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {"", 2, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {"camp03", 1, "cap=48879 mx=1 ds=0 pm=0 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=0 pc=0 pmr=0 rmr=0 rlo=0 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
-        {"camp03", 2, "cap=48879 mx=1 ds=0 pm=0 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=0 pc=0 pmr=0 rmr=0 rlo=0 mana=0x1.5ep+11 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {"", 1, "cap=48879 mx=1 ds=1 pm=4 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x0p+0 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {"", 2, "cap=48879 mx=1 ds=1 pm=4 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=1 pc=1 pmr=1 rmr=1 rlo=0 mana=0x0p+0 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {"camp03", 1, "cap=48879 mx=1 ds=0 pm=0 st=1 si=1 bm=11 rs=1 seed=1592594996 crt=1 ms=0 pc=0 pmr=0 rmr=0 rlo=0 mana=0x0p+0 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
+        {"camp03", 2, "cap=48879 mx=1 ds=0 pm=0 st=1 si=0 bm=11 rs=1 seed=1592594996 crt=1 ms=0 pc=0 pmr=0 rmr=0 rlo=0 mana=0x0p+0 pr=1 svp=-1 n=6;[1 2 1 3f800000 0 0][1 4 0 40000000 1 0][0 2 6 3f800000 0 0][1 3 2 3f800000 1 1][0 1 5 3f800000 0 0][1 1 3 3f800000 1 0]"},
     };
     for (const auto& c : cases) {
         GameOptions o = fxOpts(c.stress); o.doubleSight = 1;

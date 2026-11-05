@@ -1084,6 +1084,8 @@ int main(int argc, char** argv) {
             cfg.mapPath = kMap;
             cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
             sim::setupMatch(w, reg, cfg);
+            // No Monarch here, so the pool starts empty (retail): give it some.
+            w.player(0).mana = 2800;
             int pid = w.spawn(pri, 600, 600, 0, 0);
             int vid = w.spawn(vic, 660, 600, 0, 0);   // well inside radius 200
             (void)pid;

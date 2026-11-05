@@ -25,7 +25,12 @@ four small routines are all that write it: 401000 (current 0, maximum given),
   * runs SetAttribute from its unit lookup (4d3dd0..4d3f59) (E): only a unit
     whose object lives, a dying one too, is written (4d3e27);
   * runs the regeneration step 401160 (E): ManaRechargeRate is added only when
-    the construction left (+0x108) is 0, and the sum is capped at MaxMana.
+    the construction left (+0x108) is 0, and the sum is capped at MaxMana;
+  * reads the tenth argument of every 512060 call (S) and runs the player's
+    resource object constructor 401240 (E, an empty pool) and 512060's storage
+    credit 5123ce..512417 (E) against `new_unit_mana_test --storage`
+    (World::creditCreationStorage): a game opens with its starting units'
+    mogriumstorage, 5000 for a Monarch.
 
     python3 tools/re/check_new_unit_mana.py [build-o2/new_unit_mana_test]
 """
@@ -72,6 +77,93 @@ def static_writers():
     return ('the pool is written only by 401000 (511990), 401120 (514cf2 placement, 4d3ed2 SetAttribute), '
             '401100 (40119e regeneration, 4263c8 ManaMe) and 4010d0 (spending); 511990 runs under 511f60 '
             'from 512060 and 512460 only')
+
+
+# 512060's tenth argument (the first push before each call), S: 1 credits the
+# new unit's mogriumstorage to its owner at once (5123ce), 0 does not.
+CREDITS = {0x401eeb: 0, 0x4059ca: 0, 0x406f0c: 0, 0x41f49e: 0, 0x420541: 0, 0x426582: 1,
+           0x4caf16: 1, 0x4cbc03: 1, 0x4cd307: 1, 0x4d2faf: 1, 0x4d3293: 1, 0x4d36cd: 1,
+           0x513431: 0, 0x514c83: 1, 0x514eeb: 0, 0x51e352: 1}
+
+
+# The stdcalls made between 512060's pushes, with their argument counts (S:
+# 5085c0 ret 8, 515ac0 ret 4, 5389c0 ret 8).
+NESTED = {0x5085c0: 2, 0x515ac0: 1, 0x5389c0: 2}
+
+
+def storage_arguments():
+    """Every call of 512060 and the value its first push (the tenth argument,
+    [ebp+0x2c]) carries."""
+    data = open(ICD, 'rb').read()
+    vma, size, off = TEXT
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    assert sorted(calls((0x512060,))[0x512060]) == sorted(CREDITS), 'the callers of 512060 changed'
+    for site, want in CREDITS.items():
+        # 512060 is stdcall with ten dwords: the first of the ten pushes before
+        # the call (sub esp, 0xc counts three) is the tenth argument.
+        start = site - 0x80
+        code = list(md.disasm(data[off + start - vma:off + site - vma + 5], start))
+        while code and code[-1].address != site:
+            code.pop()
+        pushed, first, skip = 0, None, 0
+        for i in reversed(code[:-1]):
+            if i.mnemonic == 'call':
+                # a nested stdcall's own arguments come just before it
+                skip = NESTED[int(i.op_str, 16)]
+                continue
+            if i.mnemonic == 'push' and skip:
+                skip -= 1
+                continue
+            if i.mnemonic == 'push':
+                pushed += 1
+            elif i.mnemonic == 'sub' and i.op_str == 'esp, 0xc':
+                pushed += 3
+            if pushed == 10:
+                first = i
+                break
+        assert first is not None and first.mnemonic == 'push' and first.op_str in ('0', '1'), (hex(site), first)
+        assert int(first.op_str) == want, (hex(site), first.op_str, want)
+    return ('512060 credits storage (tenth argument 1) from the skirmish start 4d3200, the placement record '
+            '514b40, Create 4d35c0, the CRT 4cad50/4cd080, 4264a0 and 51de30; production, the builders, 513330 '
+            'and the change of owner pass 0')
+
+
+def empty_resources(p):
+    """401240, the player's resource object (4f6910 makes one for each of the
+    ten records before the game starts): its pool starts at 0."""
+    obj = HEAP + 0x20000
+    p.uc.mem_write(obj, b'\xff' * 0x190)
+    _, error = p.call(0x401240, (), ecx=obj)
+    assert not error, error
+    stored, capacity = struct.unpack('<ff', p.uc.mem_read(obj, 8))
+    total = struct.unpack('<d', p.uc.mem_read(obj + 0x18, 8))[0]
+    assert (stored, capacity, total) == (0.0, 0.0, 0.0), (stored, capacity, total)
+    return '401240: a player starts with an empty pool (stored, capacity and lifetime total 0)'
+
+
+def credit_storage(p):
+    """5123ce..512417 natively: (flag, storage, stored, capacity, total) -> the
+    resource object after."""
+    unit, tp, record, obj, frame = (HEAP + 0x30000 + i * 0x1000 for i in range(5))
+
+    def run(flag, storage, stored, capacity, total):
+        for a in (unit, tp, record, obj):
+            p.uc.mem_write(a, bytes(0x400))
+        p.uc.mem_write(unit + 0xb4, struct.pack('<I', tp))
+        p.uc.mem_write(unit + 0xb8, struct.pack('<I', record))
+        p.uc.mem_write(record + 0x10c, struct.pack('<I', obj))
+        p.uc.mem_write(tp + 0x206, struct.pack('<f', storage))
+        p.uc.mem_write(obj, struct.pack('<ff', stored, capacity))
+        p.uc.mem_write(obj + 0x18, struct.pack('<d', total))
+        p.uc.mem_write(frame + 0x2c, struct.pack('<I', flag))
+        p.uc.reg_write(UC_X86_REG_ESI, unit)
+        p.uc.reg_write(UC_X86_REG_EBP, frame); p.uc.reg_write(UC_X86_REG_ESP, frame - 0x100)
+        p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
+        p.uc.emu_start(0x5123ce, 0x512417)
+        s, c = struct.unpack('<II', p.uc.mem_read(obj, 8))
+        t = struct.unpack('<Q', p.uc.mem_read(obj + 0x18, 8))[0]
+        return s, c, t
+    return run
 
 
 def init_pool(p):
@@ -215,6 +307,26 @@ def main():
     print(record_defaults())
     print(regeneration(p))
     print(set_attribute_gate())
+    print(storage_arguments())
+    print(empty_resources(p))
+    credit = credit_storage(p)
+    rows, expected = [], []
+    for flag in (0, 1):
+        for storage in (0.0, 100.0, 300.0, 5000.0, 0.5, 333.3):
+            for stored, capacity, total in ((0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (2799.5, 5000.0, 123.25),
+                                            (16777215.0, 3.0, 1e9)):
+                rows.append('%d %d %d %d %d' % (flag, *(struct.unpack('<I', struct.pack('<f', v))[0]
+                                                        for v in (storage, stored, capacity)),
+                                                struct.unpack('<Q', struct.pack('<d', total))[0]))
+                expected.append('%d %d %d' % credit(flag, storage, stored, capacity, total))
+    binary = sys.argv[1] if len(sys.argv) > 1 else 'build-o2/new_unit_mana_test'
+    out = subprocess.run([binary, '--storage'], input='\n'.join(rows) + '\n', text=True,
+                         capture_output=True, check=True).stdout.splitlines()
+    assert len(out) == len(expected), (len(out), len(expected))
+    for row, got, want in zip(rows, out, expected):
+        if got.strip() != want:
+            raise AssertionError('storage %s\n  port   %s\n  native %s' % (row, got, want))
+    print('PASS: %d creation storage credits match retail 5123ce (pool, capacity, lifetime total)' % len(rows))
     placed, scripted = percentages(p)
     rows, expected = [], []
     for maxmana in (0.0, 20.0, 150.0, 1000.0, 5000.0, 333.3, 0.7):

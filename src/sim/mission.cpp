@@ -270,6 +270,7 @@ int32_t MissionScript::doCreate(World& w, const std::string& type, const std::ve
     // it is. No heading is given, so the unit keeps its birth heading (511990).
     const Point at = createPoint(*t, cx, cy);
     int id = w.spawn(t, at.x.toFloat(), at.z.toFloat(), std::nullopt, player);
+    w.creditCreationStorage(id);   // 4d36cd: Create's 512060 passes 1
     if (id >= 0) getUnitContext_ = id;
     return id >= 0 ? id : 0;
 }

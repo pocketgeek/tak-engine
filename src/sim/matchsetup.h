@@ -70,7 +70,9 @@ struct MatchConfig {
     bool roomMapRevealed = false, roomLosOff = false;
     ScenarioScript::TraceSink scenarioTrace; // local diagnostics only, installed before initial rules
     int scenarioViewPlayer = -1;     // cosmetic message filtering only; never hashed
-    float startMana = 2800;
+    // The pool every player holds before the units a game opens with credit
+    // their mogriumstorage (World::creditCreationStorage): 0, as retail.
+    float startMana = 0;
     int unitCap = 2000;             // per-player live-unit limit (0 = unlimited)
     bool monarchExpendable = true;  // false = losing your Monarch loses the game
     PathfindingMode pathfindingMode = PathfindingMode::Retail;

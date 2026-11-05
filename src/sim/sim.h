@@ -2177,6 +2177,9 @@ class World {
     friend class LegionNavigator;
 public:
     int spawn(const UnitType* type, float x, float z, std::optional<float> heading = {}, int player = 0);
+    // A creation that credits its storage (512060's last argument): the unit's
+    // mogriumstorage joins its owner's pool and capacity at once.
+    void creditCreationStorage(int unitId);
     // CRT ownership transfer: preserves HP/progress, clears the former owner's commands.
     bool scenarioTransfer(int unitId, int newPlayer);
     // The same, telling `notify` (the running mission, or none) of the capture.

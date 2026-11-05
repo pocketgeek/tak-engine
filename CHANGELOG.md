@@ -284,6 +284,12 @@ their validation reports; both live in [`docs/`](docs/).
   its costly spells, and a spy's cloak, wait until it has the mana. Mission units
   start with the mana the mission gives them (usually none), and a mission's
   health setting gives whole hit points as in the original.
+- **Every game opens with the mana its starting units can store, as in the original
+  game.** A skirmish or multiplayer game used to open with 2800 mana a player; it now
+  opens with 5000, the Monarch's whole store. A campaign mission opens each player
+  with the store of the units the mission gives them (it used to be 500), and a
+  unit a mission or a map scenario creates during play brings its store with it
+  full. Units you train or build still arrive with nothing.
 - **A unit that changes sides starts afresh, as in the original game.** A unit
   converted by an enemy, given to an ally or taken over by a mission or a map
   scenario keeps its health and the way it faces, but is a new unit to its new

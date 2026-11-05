@@ -27,9 +27,10 @@ import subprocess
 import tempfile
 from server_public_test import server
 
-# Units each AI builds within two minutes in this game (seat -> units).
+# Units each AI builds within two minutes in this game (seat -> units). With the
+# 5000 mana a game opens with, the Normal seat starts on a Temple.
 EASY_SEAT, NORMAL_SEAT = 0, 1
-WATCHED = {EASY_SEAT: ('araat', 'aralode'), NORMAL_SEAT: ('tarcage', 'targarg')}
+WATCHED = {EASY_SEAT: ('araat', 'aralode'), NORMAL_SEAT: ('tarhell', 'tarlode')}
 SECONDS = '120'
 MAP = 'AI Circle'
 GAME_TIMEOUT = 240   # per game; ctest allows 900 s for all three

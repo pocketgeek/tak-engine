@@ -1076,6 +1076,31 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
     return u.id;
 }
 
+// 512060's last argument (5123ce..512417): set, the new unit's mogriumstorage
+// (type +0x206) is added at once to its owner's pool, its lifetime total and
+// its capacity, which the next economy pass (51d7d3) recounts. The skirmish
+// and multiplayer start's Monarch (4d3200), a mission's placement record
+// (514b40) and Create (4d35c0), and the CRT's start units (4cd080) and Create
+// action (4cad50 case 7) pass 1; production, the builders, a revive and a
+// change of owner pass 0 (check_new_unit_mana.py storage). So a game opens
+// with the pool its starting units can store: 5000, the Monarch's.
+void World::creditCreationStorage(int unitId) {
+    const Unit* u=unit(unitId);
+    if (!u || !u->type || !validUnitOwner(u->player)) return;
+    auto& p=players_[size_t(u->player)];
+    const double storage=double(u->type->storage);
+    if (p.retailResources) {
+        auto& r=*p.retailResources;
+        r.stored=float(storage+double(r.stored));
+        r.totalProduced+=storage;
+        r.capacity=float(storage+double(r.capacity));
+        p.mana=r.stored;p.storage=r.capacity;
+        return;
+    }
+    p.mana+=storage;
+    p.storage=float(storage+double(p.storage));
+}
+
 Unit* World::unit(int id) {
     if(id<=0)return nullptr;
     if(size_t(id)<unitSlotById_.size()) {
@@ -9363,7 +9388,9 @@ int World::scenarioCreate(const UnitType* type,int player,int lx,int lz,int hx,i
     const auto coordinate=[](int cell,int footprint) {
         return Fixed::raw(std::bit_cast<int32_t>(uint32_t(cell)*0x100000u+uint32_t(footprint)*0x80000u)).toFloat();
     };
-    return spawn(type,coordinate(cx,type->footX),coordinate(cz,type->footZ),0.f,player);
+    const int id=spawn(type,coordinate(cx,type->footX),coordinate(cz,type->footZ),0.f,player);
+    creditCreationStorage(id);   // 4caf16: the Create action's 512060 passes 1
+    return id;
 }
 
 void World::scenarioDestroy(int unitId,uint8_t deathType) {

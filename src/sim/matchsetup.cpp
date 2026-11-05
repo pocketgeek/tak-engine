@@ -828,6 +828,10 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         world.setTeam(i, cfg.slots[i].team);
         world.player(i).cacheClock.enabled=true;
         world.player(i).manaMult = cfg.slots[i].manaMult;   // Absurd AI = 2x income
+        // Every player's pool starts empty (the resource object 401240 zeroes,
+        // allocated for all ten records at 4f6910); the units a game opens with
+        // fill it from their mogriumstorage (World::creditCreationStorage).
+        world.player(i).mana = cfg.startMana;
         world.player(i).automaticGates = cfg.slots[i].automaticGates;
         world.player(i).defensiveAi = cfg.slots[i].defensiveAi;
     }
@@ -913,6 +917,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 const auto* type = reg.find(name);
                 const float x = float(placed.x) * 16 + type->footX * 8, z = float(placed.z) * 16 + type->footZ * 8;
                 const int id = world.spawn(type, x, z, float(placed.angle) * 3.14159265f / 180.0f, placed.player);
+                world.creditCreationStorage(id);   // 4cd307: the CRT start's 512060 passes 1
                 if (auto* unit = world.unit(id)) {
                     // Native 51f4c0 keeps at most 31 bytes; this is a display label.
                     unit->scenarioName = placed.uniqueName.substr(0,31);
@@ -944,7 +949,6 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
             std::vector<std::pair<float,float>> assigned;
             const auto starts = parseStartPositions(vfs, cfg.mapPath);
             for (size_t p = 0; p < cfg.slots.size(); ++p) if (cfg.slots[p].used) {
-                world.player(int(p)).mana = cfg.startMana;
                 if (counts[p]) assigned.push_back({centers[p].first / counts[p], centers[p].second / counts[p]});
                 else assigned.push_back(p < starts.size() ? starts[p] : std::pair<float,float>{float(map.width)*8, float(map.height)*8});
             }
@@ -1236,8 +1240,9 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         // spot would point the opening view at the lake the Monarch was just moved out
         // of. Unchanged whenever the spot was already good, which is every real map.
         assigned.push_back({mx, mz});
-        world.spawn(monarch, mx, mz, 0, i);
-        world.player(i).mana = cfg.startMana;
+        // 4d3200's 512060 passes 1: the Monarch's mogriumstorage (5000 for all
+        // five) is the pool a skirmish or multiplayer game opens with.
+        world.creditCreationStorage(world.spawn(monarch, mx, mz, 0, i));
 #ifndef NDEBUG
         // Harness fixture (TAK_START_FLYERS=N, at most 16): every player also
         // starts with N finished flying builders of its side (every other one at
@@ -1539,6 +1544,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
                 int player = mapPlayer(int(u.numberOr("player", 1)));
                 const uint16_t angle = MissionScript::placedHeading(integer("angle"));
                 int id = world.spawn(t, at.x.toFloat(), at.z.toFloat(), std::nullopt, player);
+                world.creditCreationStorage(id);   // 514c83: the placement's 512060 passes 1
                 if (id >= 0) {
                     ++spawned;
                     placements.back().unitId = id;
