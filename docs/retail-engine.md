@@ -96,6 +96,15 @@ until gap hunt 7: `Unit::kills` (not hashed, like the players' kill counts),
 `World::creditKill`, the HUD's `KillCount`; `check_veterancy.py` compares it
 (E), `kill_credit_test` counts a carrier's passengers and resets it on a change
 of owner.
+The panel's name line (`UnitText`, `4b2513..4b2551`, S): when the map mode
+(`[game+0x175dc]+0`) is 3, multiplayer, and the type has `showplayername` or
+`commander` (UnitDef `+0x264` bits 17 and 18, `4c08bd` / `4c08dd`), it shows
+the owner record's name (`+0x54`, which the player initializer `4f6578` fills
+with "Player %d" and the game with the player's name) instead of the type's.
+Ours showed the Monarch's own name in every game until gap hunt 7
+(`tak::client::panelName`, the HUD's `!singlePlayer_`; no shipped type sets
+`showplayername`, which is not parsed).
+
 The panel's veteran mark (the `.gui`'s `Experience`, `UnitLevels` frames)
 is frame `_ftol(level / 10.0 * 3) - 1` and hidden when that is 0
 (`4b26c0..4b26ef`, E over ranks 0..10: ranks 0-3 show none, 4-6 the first

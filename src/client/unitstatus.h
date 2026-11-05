@@ -3,6 +3,7 @@
 // ActionText), split out of the GameView so a test can read it.
 #include "client/renderframe.h"
 #include <cstdint>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -14,6 +15,15 @@ namespace tak::client {
 inline float selfDestructSeconds(int32_t ticks) {
     if (ticks == -1) return -1.0f;
     return ticks < 0 ? 0.0f : float(ticks) / 30.0f;
+}
+
+// The panel's name line (UnitText, 4b2513..4b2551): in a multiplayer game
+// (map mode 3) a commander (UnitDef +0x264 & 0x40000; `showplayername`,
+// 0x20000, which no shipped unit sets, is not parsed here) shows its owner's
+// player name (owner record +0x54) instead of its own name.
+inline const std::string& panelName(const UnitR& u, bool multiplayer, const std::string& ownerName) {
+    if (multiplayer && u.type && u.type->commander && !ownerName.empty()) return ownerName;
+    return u.displayName();
 }
 
 // The panel's veteran mark (the .gui's Experience, UnitLevels frames) for a

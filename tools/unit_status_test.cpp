@@ -44,6 +44,16 @@ int main() try {
     UnitR on = snapshot(*w.unit(g)); on.active = true;
     const std::string onText = tak::client::unitStatusLabel(on);
     check(onText == "STANDBY", "a gate switched on reads " + onText + ", not STANDBY");
+    // 4b2513..4b2551: a multiplayer game names a commander after its player.
+    {
+        UnitType king; king.id = king.name = "monarch"; king.commander = true;
+        UnitR r; r.type = &king;
+        using tak::client::panelName;
+        check(panelName(r, true, "Kirenna") == "Kirenna", "a multiplayer Monarch is not shown by its player's name");
+        check(panelName(r, false, "Kirenna") == "monarch", "a skirmish Monarch is shown by its player's name");
+        UnitR a; a.type = &archer;
+        check(panelName(a, true, "Kirenna") == "archer", "a multiplayer archer is shown by its player's name");
+    }
     // 4b26c0..4b26ef: no mark below rank 4, then one frame per three ranks.
     using tak::client::experienceFrame;
     const int marks[11]={-1,-1,-1,-1,0,0,0,1,1,1,2};

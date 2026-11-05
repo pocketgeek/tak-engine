@@ -308,6 +308,8 @@ their validation reports; both live in [`docs/`](docs/).
 - **A selected unit of yours shows how many enemies it has killed**, beside its health
   and mana bars, as in the original game (once it has a kill). A unit that changes
   sides starts again from none.
+- **In a multiplayer game a selected Monarch shows its player's name**, as in the
+  original game, instead of the Monarch's own name.
 - **The rank mark on a unit's picture follows the original game**: none until rank 4,
   then one mark for ranks 4 to 6, the next for 7 to 9 and the last at rank 10. It
   used to show from the first rank and reach the last at rank 7.

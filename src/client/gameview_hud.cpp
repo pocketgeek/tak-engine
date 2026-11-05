@@ -1453,7 +1453,8 @@ namespace {
                 blockText(text, nr.x, nr.y, std::max(1.0f, px), {236, 226, 192, 255});
             };
             if (int t1 = guiIdxLeft("UnitText"); u && !multi && t1 >= 0)
-                nameText(t1, u->displayName(), guiIdxRight("UnitText"), guiIdxLeft("HealthBar"));
+                nameText(t1, tak::client::panelName(*u, !singlePlayer_, playerName_[u->player & 7]),
+                         guiIdxRight("UnitText"), guiIdxLeft("HealthBar"));
             else if (const std::string sq = multi ? selSquadLabel() : std::string(); !sq.empty() && t1 >= 0)
                 nameText(t1, sq, guiIdxRight("UnitText"), guiIdxLeft("HealthBar"));
             // HP with anything selected; mana only for a pool (the group's casters).
