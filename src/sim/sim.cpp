@@ -3652,11 +3652,16 @@ const World::LegionFlightStation* World::legionFlightStation(const Unit& u) cons
 // keep their own stations (planLegionFlightStations) and are never re-ordered
 // (the W6 rejoin's rule too), and the AI's squads are not Legion formations.
 //
-// Each tick (before the unit loop) a member's slot follows the goal of its
-// plain move while it walks one and the goal its settled arrival completed on
-// once it is idle; any other order (an attack, a step-out, a build) leaves the
-// slot where it was, so the member comes back from it. The areas and movers
-// of each formation's ground and boat classes are rebuilt with it.
+// Each tick (before the unit loop) a member's slot is the footprint it stood
+// on when its move's settled arrival began (LegionNavigator::anchorGoal names
+// the arrival): its own place on the formation's point, or the place short of
+// it where Legion settled it -- never a goal Legion judged it should not
+// press on to. A plain move under way drops it (the arrival gives the next
+// one; a member stopped short of it has none, as a formation the player stops
+// where it stands keeps none to walk back to); any other order (an attack, a
+// step-out, a build) leaves it where it was, so the member comes back from
+// wherever that order took it. The areas and movers of each formation's
+// ground and boat classes are rebuilt with it.
 void World::updateLegionFormationSlots() {
     for (auto& player:legionFormationClasses_) for (auto& formation:player) formation={};
     if (!legion_) return;
@@ -3672,9 +3677,6 @@ void World::updateLegionFormationSlots() {
         c.area+=member.area;
         const uint32_t flags=retailMissionFlags(u);
         if ((flags&0x1000000u) && !(flags&0x4000000u)) { ++c.moving;c.movingArea+=member.area; }
-        int32_t x=0,z=0;
-        const bool walking=groundMissionOrder(u)!=nullptr && legion_->goalPoint(u.id,x,z);
-        const bool have=walking || legion_->anchorGoal(u.id,x,z);
         auto found=legionFormationSlots_.find(u.id);
         if (found!=legionFormationSlots_.end() && found->second.state!=kSlotHeld) {
             // Its walk back (or the slot it gave up on) stands until the
@@ -3684,11 +3686,18 @@ void World::updateLegionFormationSlots() {
             if (leg.groundMission && leg.issuedTick==found->second.returnTick) continue;
             found->second.state=kSlotHeld;
         }
-        if (!have) continue;
-        if (found==legionFormationSlots_.end())
-            legionFormationSlots_.emplace(u.id,LegionFormationSlot{u.squad,kSlotHeld,x,z,0});
-        else if (found->second.x!=x || found->second.z!=z)
-            found->second=LegionFormationSlot{u.squad,kSlotHeld,x,z,0};
+        int32_t x=0,z=0;
+        if (groundMissionOrder(u)!=nullptr && legion_->goalPoint(u.id,x,z)) {
+            if (found!=legionFormationSlots_.end()) legionFormationSlots_.erase(found);
+            continue;
+        }
+        if (!legion_->anchorGoal(u.id,x,z)) continue;
+        if (found!=legionFormationSlots_.end() && found->second.arrivalX==x && found->second.arrivalZ==z) continue;
+        const int fx=u.type->footX,fz=u.type->footZ;
+        const LegionFormationSlot slot{u.squad,kSlotHeld,Fixed::fromInt(footprintOrigin(u.x,fx)*16+fx*8).v,
+                                       Fixed::fromInt(footprintOrigin(u.z,fz)*16+fz*8).v,0,x,z};
+        if (found==legionFormationSlots_.end()) legionFormationSlots_.emplace(u.id,slot);
+        else found->second=slot;
     }
 }
 
@@ -21408,6 +21417,7 @@ uint64_t World::stateHash() const {
         for (const auto& [id,slot]:legionFormationSlots_) {
             mix(uint32_t(id));mix(uint32_t(uint8_t(slot.squad)));mix(uint32_t(slot.state));
             mix(uint32_t(slot.x));mix(uint32_t(slot.z));mix(slot.returnTick);
+            mix(uint32_t(slot.arrivalX));mix(uint32_t(slot.arrivalZ));
         }
     }
     checkpoint("players");

@@ -2242,6 +2242,7 @@ public:
         uint8_t state=0;        // kSlotHeld, kSlotReturning, kSlotGivenUp
         int32_t x=0,z=0;        // the slot footprint's centre (raw Fixed)
         uint32_t returnTick=0;  // the tick the walk back was ordered (kSlotReturning)
+        int32_t arrivalX=0,arrivalZ=0;   // the arrival's goal centre (anchorGoal) the slot was taken at
     };
     static constexpr uint8_t kSlotHeld=0,kSlotReturning=1,kSlotGivenUp=2;
     const LegionFormationSlot* legionFormationSlot(int unitId) const {
@@ -4421,8 +4422,8 @@ private:
     bool legionFlightStationsLive_=false;
     // Legion's formation re-form (ours, mirroring Retail's standby group
     // check; see legionStandbyCheck). legionFormationSlots_: each Alt+N
-    // formation ground member's slot -- the goal footprint of its last plain
-    // move, settled or still walking -- by unit id. Persistent, hashed.
+    // formation ground member's slot -- the footprint it stood on when its
+    // last settled arrival began -- by unit id. Persistent, hashed.
     // legionFormationClasses_: [player][formation 1..10][ground, boat], the
     // standby test's areas and movers. Rebuilt each tick before the unit loop
     // from hashed state; not hashed.

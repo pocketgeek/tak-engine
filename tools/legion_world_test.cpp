@@ -3022,7 +3022,8 @@ void squadformation() {
 // slot at a standby wake; a Ctrl group member shoved the same way stays where
 // it was left. Then the slot is walled off with the member shoved outside the
 // wall: it walks once, gives the slot up and is never re-ordered again. A
-// member whose slot a body stands on waits (no walk) until the body leaves.
+// member whose slot a body stands on waits (no walk) until the body leaves. A
+// formation stopped short of its point keeps no slot to walk to or back to.
 void formationreform() {
     Fixture f(128,112);
     f.publish();
@@ -3089,14 +3090,30 @@ void formationreform() {
     const float freedBack=fxLen(f.world.unit(a)->x-ax,f.world.unit(a)->z-az).toFloat();
     std::printf("formationreform freed: walks=%d back_px=%.1f\n",freed,freedBack);
     check(freed==1&&freedBack<=32.f,"formationreform: the member did not walk back once its slot was free");
+    // Stopped short: the formation is sent 60 cells east and stopped a third of the way. No member walks on
+    // to the slot it was heading for, nor back to the one it left. Then it is sent home again.
+    for(int id:form)f.world.order(id,100*16,24*16,false);
+    for(int t=0;t<180;++t)f.world.tick(1.f/30);
+    for(int id:form)f.world.stop(id);
+    int stopped=0;float away=0;
+    for(int id:form)stopped+=watch(id,900);
+    away=fxLen(f.world.unit(a)->x-ax,f.world.unit(a)->z-az).toFloat();
+    std::printf("formationreform stopped: walks=%d from_old_slot_px=%.1f\n",stopped,away);
+    check(away>=16*12.f,"formationreform: the stopped formation did not get far enough to test");
+    check(stopped==0,"formationreform: a formation stopped short walked on or back");
+    for(int id:form)f.world.order(id,40*16,24*16,false);
+    for(int t=0;t<1800;++t)f.world.tick(1.f/30);
+    for(int id:form)check(f.world.unit(id)->orders.empty(),"formationreform: the formation never settled again");
+    const int e=east(form);
+    const Fixed hx=f.world.unit(e)->x,hz=f.world.unit(e)->z;
     // Give up: shove it 16 cells out, wall a ring 14 cells round the point (its slot inside, itself outside).
-    shove(a,16);
+    shove(e,16);
     for(int i=-14;i<=14;++i) {f.wall(40+i,24-14);f.wall(40+i,24+14);f.wall(40-14,24+i);f.wall(40+14,24+i);}
     f.publish();
-    const int tries=watch(a,2400),later=watch(a,1800);
-    const auto& ug=*f.world.unit(a);
+    const int tries=watch(e,2400),later=watch(e,1800);
+    const auto& ug=*f.world.unit(e);
     std::printf("formationreform walled: walks=%d later=%d idle=%d from_slot_px=%.1f\n",tries,later,int(ug.orders.empty()),
-        fxLen(ug.x-ax,ug.z-az).toFloat());
+        fxLen(ug.x-hx,ug.z-hz).toFloat());
     check(tries==1,"formationreform: a member whose slot is walled off did not walk exactly once");
     check(later==0&&ug.orders.empty(),"formationreform: a member that gave its slot up was re-ordered");
 }
