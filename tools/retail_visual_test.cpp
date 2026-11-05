@@ -1596,6 +1596,41 @@ int main(int argc,char** argv) {
     if(flame.frame(12)!=0 || !flame.tick() || flame.position[0]!=65536 || flame.frame(12)!=4)return 1;
     if(!flame.tick() || flame.frame(12)!=8 || flame.tick() || flame.position[0]!=131072)return 1;
     std::puts("PASS: flame particles advance, select lifetime-scaled frames and expire before final motion");
+    // 0x5ad930 judges the turn by acos of a FLOAT cosine. Three native updates
+    // (tools/re/probe_guided_projectile.py): a target a few raw units off dead
+    // ahead whose cosine rounds to 1 (no turn: velocity kept), one exactly ahead
+    // off every axis whose cosine is one float step under 1, and one on the Y
+    // axis whose float dot rounds below |a||b| (both snap to steps*speed). The
+    // true angle (atan2 of cross and dot) turned the first and kept the others.
+    struct GuidedRow {
+        std::array<int32_t,3> position,velocity;std::array<uint16_t,3> angles;
+        std::array<int32_t,3> target;float turn;int32_t speed;uint32_t steps;
+        std::array<uint16_t,3> spin;bool updateAngles;
+        std::array<int32_t,3> wantPosition,wantVelocity;std::array<uint16_t,3> wantAngles;
+    };
+    const GuidedRow guidedRows[]={
+        {{-15925248,34734080,33030144},{2128713,3633724,-3757669},{0,27390,7263},
+         {-11667821,42001529,25514807},0.2f,5644191,4,{3,65535,65530},false,
+         {-7410396,49268976,17999468},{2128713,3633724,-3757669},{12,27386,7239}},
+        {{47251456,190709760,41943040},{6767941,5188678,834962},{0,15176,6753},
+         {74323220,211464472,45282888},0.002f,8569687,4,{8,7,8},false,
+         {155549548,273737068,55303792},{27074523,20756827,3340188},{32,15204,6785}},
+        {{-170393600,-16842752,108331008},{0,-1159817,0},{0,0,49152},
+         {-170393600,-21482020,108331008},1.2f,1159817,2,{4,8,65531},true,
+         {-170393600,-21482020,108331008},{0,-2319634,0},{8,16,49142}},
+    };
+    for(const auto& row:guidedRows) {
+        tak::sim::RetailGuidedShot shot{row.position,row.velocity,row.angles};
+        tak::sim::retailGuidedTick(shot,row.target,row.turn,row.speed,row.steps,row.spin,
+            row.updateAngles,[](const auto&,int32_t&) {return 0;});
+        if(shot.position!=row.wantPosition || shot.velocity!=row.wantVelocity || shot.angles!=row.wantAngles) {
+            std::printf("FAIL: guided update near dead ahead: velocity %d %d %d, native %d %d %d\n",
+                shot.velocity[0],shot.velocity[1],shot.velocity[2],
+                row.wantVelocity[0],row.wantVelocity[1],row.wantVelocity[2]);
+            return 1;
+        }
+    }
+    std::puts("PASS: guided steering judges a near-ahead target by the native float cosine");
     tak::RetailVisualQuality state;unsigned calls=0;
     for (int i=0;i<24;++i) state.choose(101,0.824,40,5,[&](uint32_t) { ++calls;return 12345u; });
     if (state.smoothedFps!=36 || calls!=5) return 1;
