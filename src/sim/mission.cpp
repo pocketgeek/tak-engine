@@ -540,7 +540,9 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
 
 void MissionScript::doSetAttribute(World& w, const std::string& sub, int unitId, int pct) {
     Unit* u = w.unit(unitId);
-    if (!u || !u->type) return;
+    // 4d3e27: only a unit whose object lives, a dying one too; a retired one
+    // is left as it is (E, check_new_unit_mana.py setattribute).
+    if (!u || !World::retailObjectLives(*u)) return;
     float f = float(pct) / 100.0f;
     if (ieq(sub, "healthpercentage"))     u->hp = Fixed::fromInt(percentHp(*u->type, pct));
     else if (ieq(sub, "manapercentage"))  u->mana = percentMana(*u->type, pct);

@@ -2902,7 +2902,10 @@ fills nothing (`429990` calls none of the four). What fills it afterwards:
   `401120`, which caps it at MaxMana. 70 of the shipped records give 100, one
   gives 1, the other 7270 give 0.
 - A mission `SetAttribute` (`4d3e6a`, `4d3eb9`, E): the same two formulas on
-  an int percentage.
+  an int percentage. It writes only a unit whose object lives (`4d3e27`,
+  +0x130 & 0x1000000), a dying one too, never a retired one (E,
+  `check_new_unit_mana.py`); ours wrote any unit it was handed until gap
+  hunt 3 (`new_unit_mana_test`).
 - The ManaMe cheat (`426390`) and nothing else.
 
 Ours filled every spawned caster's pool, let a unit being built regenerate,

@@ -3227,6 +3227,11 @@ public:
     const Unit* unit(int id) const {
         return const_cast<World*>(this)->unit(id);
     }
+    // Whether a unit's retail object still lives (+0x130 & 0x1000000): alive,
+    // or dead with its retirement still to come.
+    static bool retailObjectLives(const Unit& u) {
+        return u.type && (u.alive() || (u.deathPending && u.deadFor<kRetiredTicks));
+    }
     // unit(id) without its lookup-table repair, so it never writes: safe on
     // SimPool workers, with the same result.
     Unit* unitNoRepair(int id);
@@ -3393,11 +3398,6 @@ private:
     void creditKill(const Unit& victim);
     // Retail's retirement 512ae0 for a unit whose death has started.
     void retireDeath(Unit& u);
-    // Whether a unit's retail object still lives (+0x130 & 0x1000000): alive,
-    // or dead with its retirement still to come.
-    static bool retailObjectLives(const Unit& u) {
-        return u.type && (u.alive() || (u.deathPending && u.deadFor<kRetiredTicks));
-    }
     // 51a1c0 / 51a281: the hitter a hit names, only while its object lives. A
     // unit that changed sides is a new object to retail (514da0), so a shot
     // fired for its old player names nobody, though World keeps its id.

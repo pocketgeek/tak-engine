@@ -72,6 +72,21 @@ int main(int argc,char** argv) try {
         check(MissionScript::percentMana(t,150)==150,"ManaPercentage over 100 is not capped at MaxMana");
         check(MissionScript::percentMana(t,1)==double(float(150.0*1.0*double(0.01f))),"ManaPercentage 1 rounds differently");
     }
+    {
+        // 4d3e27 (E): SetAttribute writes only a unit whose object lives; a
+        // retired unit keeps what it has.
+        World w;terrain(w);
+        const int live=w.spawn(&t,400,400,0,0),gone=w.spawn(&t,600,400,0,0);
+        w.unit(gone)->hp=Fixed();w.unit(gone)->deathType=1;w.tick(1.f/30.f);
+        check(!w.unit(gone)->alive() && !w.unit(gone)->deathPending,"the fixture did not retire");
+        TypeRegistry registry;
+        MissionScript mission(std::vector<uint8_t>{},tak::tdf::Node{},registry,0,"setattribute fixture");
+        mission.command(w,"SetAttribute HealthPercentage",{live,25});
+        mission.command(w,"SetAttribute HealthPercentage",{gone,25});
+        mission.command(w,"SetAttribute ManaPercentage",{gone,100});
+        check(w.unit(live)->hp==Fixed::fromInt(162),"SetAttribute did not set a live unit's hit points");
+        check(w.unit(gone)->hp<=Fixed() && w.unit(gone)->mana==0,"SetAttribute wrote a retired unit");
+    }
     std::cout<<"all passed\n";
     return 0;
 } catch (const std::exception& e) {

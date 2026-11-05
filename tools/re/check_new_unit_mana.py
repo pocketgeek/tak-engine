@@ -22,6 +22,8 @@ four small routines are all that write it: 401000 (current 0, maximum given),
     MaxMana, maxdamage and percentages, and requires the same pool bits and
     hit points from `new_unit_mana_test --native` (MissionScript::percentMana /
     percentHp);
+  * runs SetAttribute from its unit lookup (4d3dd0..4d3f59) (E): only a unit
+    whose object lives, a dying one too, is written (4d3e27);
   * runs the regeneration step 401160 (E): ManaRechargeRate is added only when
     the construction left (+0x108) is 0, and the sum is capped at MaxMana.
 
@@ -165,6 +167,44 @@ def regeneration(p):
     return '401160: ManaRechargeRate is added only with no construction left (+0x108 == 0), capped at MaxMana'
 
 
+def set_attribute_gate():
+    """4d3dd0..4d3f59, SetAttribute with two arguments, from the unit lookup
+    on (the attribute's name 5389a0 and the CRT stricmp 5d5bb0 answered): it
+    writes a unit whose object lives (+0x130 & 0x1000000), a dying one too
+    (+0x1000), and leaves a freed one as it was."""
+    from unicorn import UC_HOOK_CODE
+    p = Icd()
+    game, units, tp, args, name = (HEAP + 0x10000 + i * 0x4000 for i in range(5))
+    p.uc.mem_write(0x62d55c, struct.pack('<I', game))
+    p.uc.mem_write(game + 0x14e84, struct.pack('<II', units, units + 7 * 0x138))
+    p.uc.mem_write(name, b'HealthPercentage\0')
+    p.hooks[0x5389a0] = lambda uc, sp: (2, name)
+
+    def stricmp(uc, sp):
+        a, b = struct.unpack('<2I', uc.mem_read(sp, 8))
+        text = [bytes(uc.mem_read(x, 32)).split(b'\0')[0].lower() for x in (a, b)]
+        return 0, int(text[0] != text[1])
+    p.hooks[0x5d5bb0] = stricmp
+    p.freeze_hooks()
+    for end in (0x4d3e8a, 0x4d3ed7, 0x4d3f51):
+        p.uc.hook_add(UC_HOOK_CODE, lambda uc, *_: uc.emu_stop(), begin=end, end=end)
+    got = {}
+    for label, flags in (('live', 0x1000000), ('dying', 0x1001000), ('freed', 0)):
+        u = units + 0x138
+        p.uc.mem_write(u, bytes(0x138)); p.uc.mem_write(tp, bytes(0x300))
+        p.uc.mem_write(u + 0x130, struct.pack('<I', flags)); p.uc.mem_write(u + 0xb4, struct.pack('<I', tp))
+        p.uc.mem_write(tp + 0x1be, struct.pack('<I', 200)); p.uc.mem_write(u + 0x10c, struct.pack('<H', 7))
+        p.uc.mem_write(args, struct.pack('<HHi', 1, 0, 50))
+        frame = STACK + STACK_SZ - 0x3000
+        p.uc.mem_write(frame + 0xc, struct.pack('<II', 2, args)); p.uc.mem_write(frame - 0x1c, struct.pack('<I', 2))
+        p.uc.reg_write(UC_X86_REG_EBP, frame); p.uc.reg_write(UC_X86_REG_ESP, frame - 0x400)
+        p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
+        p.uc.emu_start(0x4d3dd0, 0x4d3f59, count=500)
+        got[label] = struct.unpack('<H', p.uc.mem_read(u + 0x10c, 2))[0]
+    assert got == {'live': 100, 'dying': 100, 'freed': 7}, got
+    return '4d3e27: SetAttribute writes a live or dying unit, never a freed one'
+
+
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else 'build-o2/new_unit_mana_test'
     print(static_writers())
@@ -174,6 +214,7 @@ def main():
     print(init_pool(p))
     print(record_defaults())
     print(regeneration(p))
+    print(set_attribute_gate())
     placed, scripted = percentages(p)
     rows, expected = [], []
     for maxmana in (0.0, 20.0, 150.0, 1000.0, 5000.0, 333.3, 0.7):
