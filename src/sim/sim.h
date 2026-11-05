@@ -59,6 +59,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <tuple>
 #include <memory>
 #include <set>
 #include <source_location>
@@ -2235,14 +2236,16 @@ public:
     const RetailGroupRecord* retailGroupRecord(int unitId) const {
         const Unit* u=unit(unitId);return u?retailGroupOf(*u):nullptr;
     }
-    // Legion mode's formation slot for a member of an Alt+N formation (the
-    // standby re-form, legionStandbyCheck): null when it has none.
+    // Legion mode's formation slot for a member of a formation -- an Alt+N
+    // formation or a classic AI squad flagged as one (legionFormationGroup) --
+    // for the standby re-form (legionStandbyCheck): null when it has none.
     struct LegionFormationSlot {
-        int8_t squad=0;         // the formation (Unit::squad) the slot was taken in
+        int8_t group=0;         // the formation (retailGroupSlot's group, 1..99) the slot was taken in
         uint8_t state=0;        // kSlotHeld, kSlotReturning, kSlotGivenUp
         int32_t x=0,z=0;        // the slot footprint's centre (raw Fixed)
         uint32_t returnTick=0;  // the tick the walk back was ordered (kSlotReturning)
         int32_t arrivalX=0,arrivalZ=0;   // the arrival's goal centre (anchorGoal) the slot was taken at
+        int32_t destX=0,destZ=0;         // that move's requested point (arrivalPoint), shared by the formation
     };
     static constexpr uint8_t kSlotHeld=0,kSlotReturning=1,kSlotGivenUp=2;
     const LegionFormationSlot* legionFormationSlot(int unitId) const {
@@ -4421,14 +4424,20 @@ private:
     std::vector<LegionFlightStation> legionFlightStations_;
     bool legionFlightStationsLive_=false;
     // Legion's formation re-form (ours, mirroring Retail's standby group
-    // check; see legionStandbyCheck). legionFormationSlots_: each Alt+N
-    // formation ground member's slot -- the footprint it stood on when its
-    // last settled arrival began -- by unit id. Persistent, hashed.
-    // legionFormationClasses_: [player][formation 1..10][ground, boat], the
-    // standby test's areas and movers. Rebuilt each tick before the unit loop
-    // from hashed state; not hashed.
+    // check; see legionStandbyCheck). legionFormationSlots_: each formation
+    // ground member's slot -- the footprint it stood on when the settled
+    // arrival of its last formation move began -- by unit id. Persistent,
+    // hashed. legionFormationClasses_: [player][formation 1..99][ground,
+    // boat], the standby test's areas and movers; legionSlotDests_: how many
+    // of a formation's slots share each move's point ([player, formation,
+    // x, z]). Both rebuilt each tick before the unit loop from hashed state;
+    // not hashed.
     std::map<int,LegionFormationSlot> legionFormationSlots_;
-    std::array<std::array<std::array<LegionSlotClass,2>,11>,kMaxPlayers> legionFormationClasses_{};
+    std::array<std::array<std::array<LegionSlotClass,2>,100>,kMaxPlayers> legionFormationClasses_{};
+    std::map<std::tuple<int,int,int32_t,int32_t>,int> legionSlotDests_;
+    // The formation a unit belongs to (retailGroupSlot with the formation
+    // flag: Alt+N, or an AI squad while the AI flags it), 0 for none.
+    int legionFormationGroup(const Unit& u) const;
     void updateLegionFormationSlots();
     // At a ground standby's wake, where Retail runs its group check: 5 when
     // the member's walk back to its slot was ordered (the standby retires and
