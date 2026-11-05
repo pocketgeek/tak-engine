@@ -1612,9 +1612,10 @@ Checked:
   (no damage before either).
 
 Not ported or still deviating:
-- The group check (`51d1e0`, VTOL_Move_Formation). (AirToGround's is ported
-  since protocol 312. Stage 2's air-traffic step-out is ported since protocol 307: see "Air
-  traffic" below.)
+- (The group check (`51d1e0`, VTOL_Move_Formation, `41ccde`) is ported since
+  the 0.9.20 batch, as AirToGround's since protocol 312: pathfinding-port.md's
+  table of `51d1e0` sites. Stage 2's air-traffic step-out is ported since
+  protocol 307: see "Air traffic" below.)
 - (A lost target pushes VTOL_SEEKATTACK (`41d654`): ported since protocol 305,
   next section.)
 - The retarget scan is World's target scan (`findTarget`, as the ground
@@ -1700,8 +1701,8 @@ Not ported or deviating:
   the point.
 - (AirToGroundHover (`41d820`) pushes the seek too (`41e301`, `41e35f`):
   ported since protocol 307, with the mission, "Air traffic" below.)
-- The group check (only its flag's rand(10) runs; AirToGround's is ported
-  since protocol 312).
+- (The group check (`4194f9`) is ported since the 0.9.20 batch: pathfinding-port.md's
+  table of `51d1e0` sites.)
 
 ## Air traffic: flyers step out of a stack (icd + emulation, 2026-10-31, protocol 307)
 
@@ -1980,11 +1981,11 @@ Checked:
   at an unexplored site).
 
 Not ported or still deviating:
-- The group check (`51d1e0`) is ported for AirToGroundHover (with
-  VTOL_Move's) and, since protocol 312, AirToGround, AirStrike and SUPPRESS
-  ("Flyers at a point" under the SUPPRESS port); not for AirToAir,
-  VTOL_SeekAttack or VTOL_SeekGuard: those fly as if in formation (only the
-  flag's clearing draw runs, rand(10) for the seek).
+- (The group check (`51d1e0`) is ported for every flyer mission that makes
+  one: AirToGroundHover (with VTOL_Move's), AirToGround, AirStrike and SUPPRESS
+  since protocol 312, and AirToAir, VTOL_Evade, VTOL_SeekAttack, VTOL_SeekGuard,
+  VTOL_Follow, VTOL_Patrol, VTOL_Standby and VTOL_LandIfCan in the 0.9.20 batch:
+  pathfinding-port.md's table of `51d1e0` sites.)
 - The flying builders' jobs keep World's approach and work stage: the check
   runs at the ticks that are retail's wakes (above), and the job restarts
   from World's approach (a help leg accepting inside 2 x builddistance, or
@@ -2880,8 +2881,13 @@ further). A carrier changing sides (the charm, Capture, the CRT transfer;
 ShareUnits refuses one) loses its passengers since gap hunt 3: the old
 object's `512610` hands them its death packet (`512860`, kind 8, see "A
 carrier's passengers"), at the change here rather than at the old object's
-update; a commander changing sides does not
-run `512610`'s commander rule (`5131b0`, I). Tests: `owner_change_test`,
+update. `512610`'s commander rule (`5131b0`) tests no death kind (S,
+`512800..512852`), so the old object's kind-6 death runs it too: a commander,
+or a carrier with a live one aboard, changing sides ends the old owner's army
+where the rule applies. No path of ours reaches that outside its gates:
+ShareUnits and the charm refuse a commander, Capture is campaign-only and the
+CRT transfer runs in scenario rooms; a charmed carrier's Monarch dies as its
+passenger (kind 8) and runs the rule itself (gap hunt 4). Tests: `owner_change_test`,
 `campaign_conditions_test` (a capture is a KillUnitType death; the capture
 event comes first), `mission_orders_test` (UnitCreated and the region fire
 again, UnitDestroyed for the old object).
