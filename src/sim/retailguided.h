@@ -106,10 +106,6 @@ inline bool retailGuidedTick(RetailGuidedShot& shot,const std::array<int32_t,3>&
     }
     {
         const double angle=detail::retailGuidedAngle(current,desired);
-        std::array<float,3> axis={current[1]*desired[2]-current[2]*desired[1],
-            current[2]*desired[0]-current[0]*desired[2],
-            current[0]*desired[1]-current[1]*desired[0]};
-        const float crossLength=detail::retailGuidedLength(axis);
         if(angle!=0.0) {
             if(angle<=double(turnRadians)) {
                 // 0x52e108: once within the cap, snap to the target vector and
@@ -124,16 +120,27 @@ inline bool retailGuidedTick(RetailGuidedShot& shot,const std::array<int32_t,3>&
                     const float unit=float(double(desired[a])/length);
                     shot.velocity[a]=detail::retailGuidedTruncate(double(unit)*scale*65536.0);
                 }
-            } else if(turnRadians>0.0f) {
+            } else {
                 // 0x52e16b: quaternion(axis=current x desired, angle=turnRate)
                 // rotated the existing velocity; this path preserves its speed.
-                if(crossLength==0.0f) {
-                    // With an exactly antiparallel vector native normalizes a
-                    // zero quaternion axis. Its observed transform is zero
-                    // velocity (unless the optional BAM refresh then faults).
+                // It runs for a zero turn rate too (a Lightning Ball has none):
+                // a rotation by 0. 0x5ad8a0 forms each axis part from the exact
+                // float products in double and stores it as a float; 0x5ad720
+                // divides by its 53-bit length.
+                std::array<float,3> axis={
+                    float(double(current[1])*desired[2]-double(current[2])*desired[1]),
+                    float(double(current[2])*desired[0]-double(current[0])*desired[2]),
+                    float(double(current[0])*desired[1]-double(current[1])*desired[0])};
+                const double crossLength=detail::retailGuidedLength53(axis);
+                if(crossLength==0.0) {
+                    // A target exactly in line (antiparallel, or ahead with a
+                    // float cosine under 1 and a turn rate under that angle,
+                    // as with a zero one): native normalizes a zero quaternion
+                    // axis. Its observed transform is zero velocity (unless
+                    // the optional BAM refresh then faults).
                     shot.velocity={0,0,0};
                 } else {
-                    for(float& value:axis)value/=crossLength;
+                    for(float& value:axis)value=float(double(value)/crossLength);
                     const float sine=detmath::sin(turnRadians);
                     const float cosine=detmath::cos(turnRadians);
                     const std::array<float,3> cross={axis[1]*current[2]-axis[2]*current[1],

@@ -1602,6 +1602,7 @@ int main(int argc,char** argv) {
     // off every axis whose cosine is one float step under 1, and one on the Y
     // axis whose float dot rounds below |a||b| (both snap to steps*speed). The
     // true angle (atan2 of cross and dot) turned the first and kept the others.
+    // The last two are a zero turn rate's turn by 0.
     struct GuidedRow {
         std::array<int32_t,3> position,velocity;std::array<uint16_t,3> angles;
         std::array<int32_t,3> target;float turn;int32_t speed;uint32_t steps;
@@ -1618,6 +1619,15 @@ int main(int argc,char** argv) {
         {{-170393600,-16842752,108331008},{0,-1159817,0},{0,0,49152},
          {-170393600,-21482020,108331008},1.2f,1159817,2,{4,8,65531},true,
          {-170393600,-21482020,108331008},{0,-2319634,0},{8,16,49142}},
+        // Turn rate 0 (a Lightning Ball has none) with the target exactly in
+        // line in float: native still turns by 0 onto a zero axis, and the
+        // shot stops. World skipped the turn and flew on.
+        {{47251456,190709760,41943040},{6767941,5188678,834962},{0,15176,6753},
+         {54019397,195898438,42778002},0.0f,8569687,4,{65529,8,7},false,
+         {47251456,190709760,41943040},{0,0,0},{65508,15208,6781}},
+        {{35436388,-45555584,61307816},{-870556,-401280,424872},{65530,53968,61395},
+         {-3738633,-63613185,80427056},0.0f,1048576,1,{65530,6,65529},false,
+         {35436388,-45555584,61307816},{0,0,0},{65524,53974,61388}},
     };
     for(const auto& row:guidedRows) {
         tak::sim::RetailGuidedShot shot{row.position,row.velocity,row.angles};

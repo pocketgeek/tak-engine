@@ -17,6 +17,8 @@ Three more modes follow (2026-11-04):
   at a NON-axis-aligned direction. 0x5ad930 takes acos(dot/(|a||b|)) with the
   cosine stored as a float, so whether native turns (and so snaps to
   substeps*speed) here depends on that cosine's rounding, not on the true angle.
+  With a zero turn rate native makes a turn by 0, and onto a zero axis (the
+  target exactly in line) that stops the shot.
 - carried: the target is first put aboard a host by the native attach 0x51b5a0
   (its +0x130 alive/dying bits are kept), its carried bits (+0x114 0x14) are set,
   and its +0x68 is the host's point (0x4dad30's commit for attach piece -1, see
@@ -224,8 +226,12 @@ for case in range(cases + special):
         # A launch off every axis, so the velocity has three non-zero parts.
         body, heading = 0, rng.randrange(0x400, 0x3c00) + rng.choice((0, 0x4000, 0x8000, 0xc000))
         pitch = rng.choice((rng.randrange(0x200, 0x3000), (-rng.randrange(0x200, 0x3000)) & 0xffff))
-        turn = rng.choice((0.002, 0.05, 0.1047, 0.2, 0.35, rng.random() * 0.45 + 0.001))
-        update_angles = case % 3 != 0
+        # Turn rate 0 too (a Lightning Ball has none): a turn by 0 that native
+        # still makes, onto a zero axis when the target is exactly in line.
+        turn = rng.choice((0.0, 0.002, 0.05, 0.1047, 0.2, 0.35, rng.random() * 0.45 + 0.001))
+        # The zero-axis turn's BAM refresh takes the degenerate quaternion
+        # path (0x2023bc) and faults, as for the antiparallel case.
+        update_angles = case % 3 != 0 and turn != 0.0
     if mode == 'ahead':
         # An axis-aligned launch. Native 5ad930 takes acos of the float
         # dot/(|a||b|), which is usually exactly 1 here, but not always: a
@@ -314,7 +320,9 @@ for case in range(cases + special):
             target_point = ported_target = tuple(
                 signed(py_state[0][i] + ahead * py_state[1][i]) for i in range(3))
         elif mode == 'nudge':
-            ahead = rng.randrange(2, 60)
+            # Keep the point from wrapping: off the int32 range it is no
+            # longer ahead (and takes the inexact quaternion turn).
+            ahead = min(rng.randrange(2, 60), (1 << 30) // max(1, max(map(abs, py_state[1]))))
             nudge = rng.choice((1, 4, 16, 64, 256))
             target_point = ported_target = tuple(
                 signed(py_state[0][i] + ahead * py_state[1][i] + rng.randrange(-nudge, nudge + 1))

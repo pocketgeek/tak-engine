@@ -6855,9 +6855,17 @@ Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
   floats and truncates their product with the speed without a float store,
   as `52e108` does. Every update that skips steering or snaps now matches the
   native bits (the probe requires 0 raw difference for those modes); the
-  quaternion turn (`52e16b`, float axis, `fsin`/`fcos` of half the rate) keeps
-  its float port, within 10 raw units on the probe. `retail_visual_test` holds
-  three native rows that the old angle got wrong.
+  quaternion turn (`52e16b`, `fsin`/`fcos` of half the rate stored as floats)
+  keeps its float rotation, within 8 raw units on the probe; its axis is now
+  formed as `5ad8a0` forms it (exact float products in double, stored as
+  floats, divided by the 53-bit length). That turn runs for a zero turn rate
+  too (no `TurnRate` > 0 test; the Zhon Lightning Ball, `zonhunt` and
+  `zonhurt`, has none; the constructor `52e000` reads `TurnRate` with default 0
+  and scales it by pi/180/30, S): a turn by 0, which leaves the velocity, except onto a zero axis
+  (the target exactly in line in float, cosine under 1), where the shot stops
+  dead, as the antiparallel case does. World skipped the turn for a zero rate
+  until 2026-11-04. `retail_visual_test` holds five native rows the old code
+  got wrong.
 - Campaign `a X Y` gives this order too (`mission.cpp`, `mission_orders_test`).
 
 `suppress_test` checks it in both pathfinding modes.
