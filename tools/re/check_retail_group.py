@@ -9,7 +9,8 @@ helpers in src/sim/retailgroup.h and retailGroundFormation:
              notification (game+0x3070 bit 0, navigator vt+0x30/vt+0x38)
   world      the World's squad -> record mapping (retailGroupSlot): a Ctrl
              group +N is a plain record N (+8 clear), a formation -N record
-             N with +8 set; 51b890 then 51d1e0 / 51c700 per grouped unit
+             N with +8 set, a computer player's AI squad its own record with
+             the AI's flag; 51b890 then 51d1e0 / 51c700 per grouped unit
   query      51c700 centre, 51ce40 radius, 51d1e0 out-of-slot
   check      402b00 head: Move_Ground's two group checks (+50c480 on cancel)
   formation  402880 Move_Ground_Formation, all four stages
@@ -269,21 +270,27 @@ def main():
     wrng = random.Random(0x50b700)
     counts['world'] = 0; stats['plain'] = 0
     for case in range(a.cases):
-        h.put('I', GAME + 0x3070, 0); h.uc.mem_write(PLAYER + 0xea, bytes([1, 0]))
-        numbers = wrng.sample(range(1, 11), 3)
+        # A computer player's case (owner kind 3): its AI's squads 1..99
+        # (Unit::aiGroup), each flagged by set-active 50b700 or not
+        # (World::aiFormation).
+        computer = wrng.random() < 0.4
+        h.put('I', GAME + 0x3070, 0); h.uc.mem_write(PLAYER + 0xea, bytes([3 if computer else 1, 0]))
+        numbers = wrng.sample(range(1, 100) if computer else range(1, 11), 3)
         kinds = {g: wrng.choice([1, -1]) for g in numbers}          # +N plain, -N formation
         n = wrng.randrange(2, 14)
         units = []
         for _ in range(n):
             g = wrng.choice(numbers + [0])
-            u = random_unit(wrng, g); u['squad'] = g * kinds[g] if g else 0
+            u = random_unit(wrng, g)
+            u['squad'] = g * kinds[g] if g and not computer else 0
+            u['ai'] = g if computer else 0; u['aiFormation'] = int(bool(g) and computer and kinds[g] < 0)
             if wrng.random() < 0.7: u['flags'] = wrng.choice([0x3000400, 0x3000400, 0x15000400]); u['mission'] = True
             units.append(u)
         for u in units[: n // 2]: u['fixed'] = tuple(((300 + wrng.randrange(40)) << 16) for _ in range(3))
         recs = {}
         for g in range(1, 100):
             r = random_record(wrng); r['active'] = False; r['changed'] = False
-            r['formation'] = int(any(u['squad'] == -g for u in units))
+            r['formation'] = int(any(u['squad'] == -g or (u['ai'] == g and u['aiFormation']) for u in units))
             recs[g] = r; h.load_record(g, r)
         for i, u in enumerate(units): h.load_unit(i, u)
         h.put('I', PLAYER + 0x74, UNITS); h.put('I', PLAYER + 0x78, UNITS + (n - 1) * STRIDE)
@@ -298,13 +305,14 @@ def main():
             h.call(0x51c700, (HEAP + 0xb0000, addr, 0, 1))
             cx, _, cz = (s16(v >> 16) for v in h.get('3i', HEAP + 0xb0000))
             want_units.append('%d %d %d %d' % (s3, s4, cx, cz))
-            if u['squad'] > 0:
+            if u['squad'] > 0 or (u['ai'] and not u['aiFormation']):
                 # Retail itself: a plain group gets no check and no pacing bit.
                 if s3 or s4 or fb.get(i, 0): raise AssertionError(('retail paced a plain group', case, i))
                 stats['plain'] += 1
         text = 'world\n' + '\n'.join(record_text(recs[g]) for g in range(1, 100))
-        text += '\n%d\n' % n + '\n'.join('%d %d %s %d %d' % (u['squad'], int(eligible(u)), member_text(u),
-                                          u['flags'] if u['mission'] else 0, scaled(u)) for u in units)
+        text += '\n%d\n' % n + '\n'.join('%d %d %d %d %s %d %d' % (
+            u['squad'], u['ai'], u['aiFormation'], int(eligible(u)), member_text(u),
+            u['flags'] if u['mission'] else 0, scaled(u)) for u in units)
         out = ask(text, 100 + n)
         mine = [[int(v) for v in line.split()] for line in out[:99]]
         for g in range(99):

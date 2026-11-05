@@ -59,6 +59,11 @@ enum class Cmd : uint8_t {
     // (retail 4de530 kind 3 with a point: SUPPRESS, World::suppress). An
     // ordinary PlayerCommands item (base layout); an order verb (Shared).
     AttackGround,
+    // Protocol 312: the server's classic (Retail) AI tells the sims its squads
+    // (World::setAiGroup): unitId != 0 puts that unit in squad targetId (0
+    // none); unitId == 0 sets squad targetId's formation flag to queue != 0.
+    // Applied only for a computer-owned player; never accepted from a client.
+    AiGroup,
 };
 
 struct SelectionOrder;

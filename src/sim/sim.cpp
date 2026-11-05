@@ -2955,11 +2955,12 @@ std::pair<int,int> World::cellHeightRange(size_t cell) const {
     return {std::min(std::min(a,b),std::min(c,d)),std::max(std::max(a,b),std::max(c,d))};
 }
 
-// Retail group pacing (Retail mode only). A Ctrl-group (+N) is native group
-// N; our separate formation squads (-N) become groups 10+N, since retail has
-// a single kind of group (522170 assigns Ctrl+N from the selection).
+// Retail group pacing (Retail mode only). A Ctrl group (+N) is native group
+// N without the formation flag, so it is never paced; a formation (-N) is
+// group N with it; a computer player's strike and VTOL squads are their own
+// records, flagged by its AI (retailGroupSlot).
 int World::retailGroupIndex(const Unit& u) {
-    return retailGroupSlot(u.squad).group;
+    return retailGroupSlot(u.squad,u.aiGroup).group;
 }
 
 RetailGroupMember World::retailGroupMember(const Unit& u) const {
@@ -3082,17 +3083,17 @@ uint32_t World::retailMissionFlags(Unit& u) {
 // 51c612 (navigator vt+0x38) has no movement consumer and is not modelled.
 void World::tickRetailGroups() {
     retailGroupPaced_.assign(units_.size(),0);
-    std::array<std::array<bool,100>,kMaxPlayers> members{};
+    std::array<std::array<bool,100>,kMaxPlayers> formation{};
     std::array<std::vector<RetailGroupUnit>,kMaxPlayers> roster;
     std::array<std::vector<size_t>,kMaxPlayers> index;
     TAK_PASS();
     for (size_t i=0;i<units_.size();++i) {
         Unit& u=units_[i];
         if (!u.alive() || !u.type || u.player<0 || u.player>=kMaxPlayers) continue;
-        const auto slot=retailGroupSlot(u.squad);
+        const auto slot=retailGroupSlot(u.squad,u.aiGroup,aiFormation(u.player,u.aiGroup));
         const int g=slot.group;
         if (g<1 || g>=100) continue;
-        members[size_t(u.player)][size_t(g)]|=slot.formation;
+        formation[size_t(u.player)][size_t(g)]|=slot.formation;
         RetailGroupUnit entry;
         entry.group=g;
         entry.eligible=!u.underConstruction && !u.embarked() && !u.type->isStructure();
@@ -3105,7 +3106,7 @@ void World::tickRetailGroups() {
     }
     std::vector<uint8_t> paced;
     for (int player=0;player<kMaxPlayers;++player) {
-        retailGroupTick(roster[size_t(player)],members[size_t(player)],retailGroups_[size_t(player)],paced);
+        retailGroupTick(roster[size_t(player)],formation[size_t(player)],retailGroups_[size_t(player)],paced);
         for (size_t k=0;k<paced.size();++k) retailGroupPaced_[index[size_t(player)][k]]=paced[k];
     }
 }
@@ -5938,6 +5939,18 @@ void World::setActive(int unitId, bool on) {
     if (auto script=unitScripts_.find(u->id);script!=unitScripts_.end())
         script->second.activated=on;
     notifyUnitScript(*u,on ? "Activate" : "Deactivate");
+}
+
+void World::setAiGroup(int player, int unitId, int slot, bool formation) {
+    if (player<0 || player>=kMaxPlayers || size_t(player)>=players_.size() || !players_[size_t(player)].automaticGates ||
+        slot<0 || slot>=100) return;
+    if (!unitId) {
+        if (slot>0) aiFormation_[size_t(player)].set(size_t(slot),formation);
+        return;
+    }
+    Unit* u=unit(unitId);
+    if (!u || !u->alive() || u->player!=player) return;
+    u->aiGroup=int8_t(slot);
 }
 
 void World::setSquad(int unitId, int squad) {
@@ -9009,6 +9022,7 @@ bool World::giveUnit(int unitId, int fromPlayer, int toPlayer) {
     u.rally.clear();
     u.selfDestructT = -1;
     u.squad = 0;
+    u.aiGroup = 0;
     u.lastHitBy = 0;
     u.lastHitPlayer = -1;
     gPlayersValid_ = false;
@@ -9154,6 +9168,7 @@ bool World::scenarioTransfer(int unitId, int newPlayer, MissionScript* notify) {
     u->rally.clear();
     u->selfDestructT = -1;
     u->squad = 0;
+    u->aiGroup = 0;
     u->lastHitBy = 0;
     u->lastHitPlayer = -1;
     gPlayersValid_ = false;
@@ -9197,6 +9212,7 @@ void World::captureUnit(Unit& t, int newPlayer) {
     startObjectStats(t);
     t.lastHitBy = 0; t.lastHitPlayer = -1;
     t.squad = 0;             // no longer in its old owner's control group
+    t.aiGroup = 0;
     t.buildQueue.clear();    // and not still producing for them
     t.buildProgress = 0; t.buildFraction = 0;
     t.productionSiteId = 0;
@@ -20358,6 +20374,7 @@ void World::hashTrace() const {
         hUnitMisc = fnv(hUnitMisc, uint64_t(uint32_t(u.repairId)));
         hUnitMisc = fnv(hUnitMisc, u.workScriptWorking);
         hUnitMisc = fnv(hUnitMisc, uint64_t(uint32_t(int32_t(u.squad))));
+        if (u.aiGroup) hUnitMisc = fnv(fnv(hUnitMisc, 0x41494750u), uint64_t(uint8_t(u.aiGroup)));
     }
     uint64_t hProj = fnv(seed, projectiles_.size());
     for (const auto& p : projectiles_) {
@@ -20983,6 +21000,7 @@ uint64_t World::stateHash() const {
         mix(uint64_t(uint32_t(u.repairId)));   // build-power target -> HP/mana divergence
         mix(u.workScriptWorking);
         mix(uint64_t(uint32_t(int32_t(u.squad))));   // control squad: formation<0 drives movement
+        if (u.aiGroup) { mix(0x41494750u); mix(uint64_t(uint8_t(u.aiGroup))); }   // retail AI squad
     }
     checkpoint("units");
     // Projectiles: count alone hides same-count divergence, so fold owner and
@@ -21126,6 +21144,11 @@ uint64_t World::stateHash() const {
         // from setup -- fold it in so a lobby/config mismatch faults immediately
         // as a desync instead of diverging mysteriously.
         mix(uint64_t(uint32_t(t.team)));
+    }
+    // The retail AI squads' formation flags (setAiGroup), when any is set.
+    for (size_t p=0;p<aiFormation_.size();++p) if (aiFormation_[p].any()) {
+        mix(0x41494646u);mix(p);
+        for (size_t g=1;g<100;++g) if (aiFormation_[p].test(g)) mix(g);
     }
     checkpoint("players");
     // Reclaimable features: fold a cheap signature so a reclaim divergence faults as

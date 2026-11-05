@@ -42,6 +42,7 @@
 #include "sim/powercodes.h"
 
 #include <array>
+#include <bitset>
 #include <cstddef>
 #include <span>
 #include <algorithm>
@@ -1573,6 +1574,12 @@ struct alignas(64) Unit {
     // Set at each refusal from hashed state (the script's point) and read only
     // while that refusal lasts, so not hashed (as builtBy).
     int32_t refusedSiteX = 0, refusedSiteZ = 0;
+    // On a computer player's unit: its retail AI squad (unit+0xc8, written by
+    // the AI's set-squad 0x50b4f0) when that squad is a strike or a VTOL squad,
+    // the only kinds whose record the AI makes a formation (World::aiFormation,
+    // 50b700); else 0, as the other squads' plain records pace nothing. Set by
+    // Cmd::AiGroup (World::setAiGroup); hashed with a tag when set.
+    int8_t aiGroup = 0;
     // A campaign mission's fixed veterancy multiplier (SetMission/InitialMission
     // `v F`, unit +0xf4, set by icd 0x5148e1). Not 0: getMult (0x5193c0) answers
     // it instead of 1 + level/10 and getLevel (0x519310) answers 10, so the unit
@@ -3110,6 +3117,14 @@ public:
     void setCloak(int unitId, bool on);     // canCloak unit: enable/disable cloaking
     void setActive(int unitId, bool on);    // onOffable unit: power on/off
     void setSquad(int unitId, int squad);   // control squad: 0 none, +N group N, -N formation N
+    // A computer player's retail AI squads (Cmd::AiGroup, from the server's
+    // classic AI): unitId != 0 puts that unit in squad `slot` (0 none,
+    // Unit::aiGroup); unitId == 0 sets squad `slot`'s formation flag (record
+    // +8, 50b700). Only for a computer-owned player (automaticGates).
+    void setAiGroup(int player, int unitId, int slot, bool formation);
+    bool aiFormation(int player, int slot) const {
+        return player>=0 && player<kMaxPlayers && slot>0 && slot<100 && aiFormation_[size_t(player)].test(size_t(slot));
+    }
     // Attack order on an enemy unit.
     void attack(int unitId, int targetId, bool queue);
     // Board/unload through a friendly transport; queue=true appends the paired
@@ -4372,6 +4387,7 @@ private:
     // formation bit (vt+0x30): the current mission has 0x2000000.
     std::array<std::array<RetailGroupRecord,100>,kMaxPlayers> retailGroups_{};
     std::vector<uint8_t> retailGroupPaced_;
+    std::array<std::bitset<100>,kMaxPlayers> aiFormation_{};   // retail AI records' +8 (setAiGroup)
     Fixed retailGroupMaximum_;   // 4d95f0 cap for the unit being moved; 0 = none
     // Legion: where a flyer in a mixed formation (squad < 0 with ground
     // members) keeps station this tick, by unit index. Rebuilt each tick from

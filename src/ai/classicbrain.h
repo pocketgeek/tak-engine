@@ -44,9 +44,11 @@
 // retail gives each start and site of a navigator grid at map load), with the
 // escort following it.
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <map>
 #include <optional>
 #include <unordered_map>
 #include <utility>
@@ -187,6 +189,13 @@ private:
     // each squad whose deadline has come (the shared sim templates).
     void scheduler(const tak::sim::World& world, uint32_t simTick,
                    const std::function<void(const tak::net::Command&)>& sink);
+    // Retail's AI squads are the player's group records (unit+0xc8 by set-squad
+    // 0x50b4f0, record +8 by set-active 0x50b700), and the Retail movement paces
+    // a formation's members (51b890, the Move_Ground and attack group checks).
+    // Only a strike squad (while attacking) and a VTOL squad (while it has units)
+    // are ever made formations, so the World is told those squads' members and
+    // flags, as Cmd::AiGroup, whenever they differ from what it was last told.
+    void publishGroups(const tak::sim::World& world, const std::function<void(const tak::net::Command&)>& sink);
     // The player's units as the manager reads them, in unit order, with their
     // squads; members that left the world (or the player) are dropped first.
     std::vector<ClassicSquadUnit> squadUnits(const tak::sim::World& world);
@@ -315,6 +324,10 @@ private:
     std::vector<int> visible_;
     uint32_t visibleStamp_ = 0;
     std::unordered_map<int, int32_t> squadOf_;
+    // What the World was last told of the squads it paces (publishGroups):
+    // each strike or VTOL squad member's squad, and each squad's formation flag.
+    std::map<int, int> groupSent_;
+    std::array<bool, 100> formationSent_{};
     int32_t startIndex_ = -1;
     int32_t scenarioMode_ = 2;   // retail's skirmish map mode
 };

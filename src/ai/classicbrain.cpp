@@ -410,10 +410,43 @@ void ClassicBrain::scheduler(const tak::sim::World& world, uint32_t simTick,
                     }
                 });
         });
+    publishGroups(world, sink);
     if (!snapshot) return;
     for (const auto& u : units) {
         if (u.squad) squadOf_[u.id] = u.squad;
         else squadOf_.erase(u.id);
+    }
+}
+
+void ClassicBrain::publishGroups(const tak::sim::World& world,
+                                 const std::function<void(const tak::net::Command&)>& sink) {
+    using K = tak::sim::RetailAiSquadKind;
+    auto send = [&](int unitId, int slot, bool formation) {
+        tak::net::Command c;
+        c.kind = tak::net::Cmd::AiGroup; c.player = uint8_t(player_);
+        c.unitId = unitId; c.targetId = slot; c.queue = formation ? 1 : 0;
+        sink(c);
+    };
+    std::map<int, int> want;
+    for (int slot = 1; slot < 100; ++slot) {
+        const auto& squad = squads_.squads[size_t(slot)];
+        const bool paced = squad.kind == K::Strike || squad.kind == K::Vtol;
+        const bool formation = paced && squad.active != 0;
+        if (formation != formationSent_[size_t(slot)]) {
+            send(0, slot, formation);
+            formationSent_[size_t(slot)] = formation;
+        }
+        if (paced) for (const int id : squad.members) want[id] = slot;
+    }
+    for (auto it = groupSent_.begin(); it != groupSent_.end();) {
+        if (want.count(it->first)) { ++it; continue; }
+        // Left its squad: told so while it is still this player's unit.
+        if (const auto* u = world.unit(it->first); u && u->alive() && u->player == player_) send(it->first, 0, false);
+        it = groupSent_.erase(it);
+    }
+    for (const auto& [id, slot] : want) {
+        auto& sent = groupSent_[id];
+        if (sent != slot) { send(id, slot, false); sent = slot; }
     }
 }
 

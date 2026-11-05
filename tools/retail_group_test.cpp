@@ -9,11 +9,12 @@ bool formationMission(const Unit& u) {
     return std::any_of(u.orders.begin(),u.orders.end(),[](const Order& o){return o.formationLevel!=0;});
 }
 
-// A Ctrl-group (+N) paces at the slowest member's type speed.
+// A formation (-N, retail "CreateSquad N f") paces at the slowest member's
+// type speed.
 void slowest() {
     World world;setup(world,PathfindingMode::Retail);auto slow=mover(1),fast=mover(0);
     const int a=world.spawn(&slow,640,2048,std::nullopt,0),b=world.spawn(&fast,640,2096,std::nullopt,0);
-    for(int id:{a,b}){world.setSquad(id,1);world.order(id,3200,2072,false);}
+    for(int id:{a,b}){world.setSquad(id,-1);world.order(id,3200,2072,false);}
     known(world);Fixed maximum;
     int reform=0;
     for(int tick=0;tick<600;++tick){const auto x=world.unit(b)->x,z=world.unit(b)->z;
@@ -50,7 +51,7 @@ void straggler(PathfindingMode selected) {
     World world;setup(world,selected);auto type=mover(1);std::vector<int> ids;
     for(int i=0;i<3;++i)ids.push_back(world.spawn(&type,float(1200),float(2000+i*48),std::nullopt,0));
     ids.push_back(world.spawn(&type,600,2048,std::nullopt,0));
-    for(int id:ids){world.setSquad(id,2);world.order(id,3600,2048,false);}
+    for(int id:ids){world.setSquad(id,-2);world.order(id,3600,2048,false);}
     known(world);world.tick(1.f/30);
     const auto* record=world.retailGroupRecord(ids[0]);
     if(selected!=PathfindingMode::Retail) {
@@ -80,6 +81,66 @@ void straggler(PathfindingMode selected) {
         require(retired,"Move_Ground_Formation never retired");
     }
     std::printf("scenario=straggler mode=%d reformed=%d retired=%d tick=%u\n",int(selected),reformed,retired,world.tickCount());
+}
+
+// A Ctrl group (+N) is retail's plain group ("CreateSquad N", record +8
+// clear): 51b890 never aggregates it, so it is never active, never capped,
+// and never re-forms. The slow and fast members and the straggler from the
+// scenes above all walk at their own speeds.
+void plain() {
+    World world;setup(world,PathfindingMode::Retail);auto slow=mover(1),fast=mover(0);
+    std::vector<int> ids{world.spawn(&slow,640,2048,std::nullopt,0),world.spawn(&fast,640,2096,std::nullopt,0),
+                         world.spawn(&fast,200,2096,std::nullopt,0)};
+    for(int id:ids){world.setSquad(id,1);world.order(id,3200,2072,false);}
+    known(world);
+    Fixed fastest;bool reformed=false;
+    for(int tick=0;tick<300;++tick){
+        world.tick(1.f/30);
+        fastest=fxMax(fastest,world.unit(ids[1])->speed);
+        for(int id:ids)reformed|=formationMission(*world.unit(id));
+        const auto* record=world.retailGroupRecord(ids[0]);
+        require(record&&!record->active&&record->all[0].count==0,"a Ctrl group's record was aggregated");
+    }
+    require(!reformed,"a Ctrl group member re-formed");
+    require(fastest>slow.maxVel+Fixed::fromFloat(0.5f),"a Ctrl group was paced at its slowest member");
+    std::printf("scenario=plain fast_max=%.4f slow_type=%.4f\n",fastest.toFloat(),slow.maxVel.toFloat());
+}
+
+// A computer player's AI squads (Cmd::AiGroup): a strike or VTOL squad is
+// its own record, a formation only while the AI flags it (50b700). Its
+// members are aggregated and get the group checks, but owner kind 3 takes no
+// speed cap (4d95f0 -> navigator vt+0x3c, 0 on the ground). A human player
+// cannot use it.
+void aiSquads() {
+    World world;setup(world,PathfindingMode::Retail);world.setPlayerCount(2);
+    world.player(0).automaticGates=true;
+    auto slow=mover(1),fast=mover(0);
+    const int a=world.spawn(&slow,640,2048,std::nullopt,0),b=world.spawn(&fast,640,2096,std::nullopt,0);
+    const int h=world.spawn(&fast,640,1500,std::nullopt,1);
+    for(int id:{a,b}){world.setAiGroup(0,id,23,false);world.order(id,3200,2072,false);}
+    world.setAiGroup(1,h,23,false);world.setAiGroup(1,0,23,true);
+    require(world.unit(a)->aiGroup==23 && world.unit(b)->aiGroup==23,"AI squad membership");
+    require(world.unit(h)->aiGroup==0 && !world.aiFormation(1,23),"a human player took an AI squad");
+    known(world);
+    world.tick(1.f/30);
+    const auto* record=world.retailGroupRecord(a);
+    require(record && !record->active,"an unflagged AI squad was aggregated");
+    world.setAiGroup(0,0,23,true);
+    require(world.aiFormation(0,23),"AI squad formation flag");
+    Fixed fastest;
+    for(int tick=0;tick<120;++tick){world.tick(1.f/30);fastest=fxMax(fastest,world.unit(b)->speed);}
+    record=world.retailGroupRecord(a);
+    require(record && record->active && record->all[0].count==2 && record->groundSpeed==slow.maxVel.v,
+            "a flagged AI squad is not a paced formation");
+    require(fastest>slow.maxVel+Fixed::fromFloat(0.5f),"a computer player's formation took the speed cap");
+    const auto before=world.stateHash();
+    world.setAiGroup(0,0,23,false);
+    require(world.stateHash()!=before,"the AI formation flag is not hashed");
+    world.setAiGroup(0,0,23,true);
+    require(world.stateHash()==before,"the AI formation flag hash");
+    world.setAiGroup(0,a,0,false);
+    require(world.unit(a)->aiGroup==0 && world.stateHash()!=before,"leaving an AI squad");
+    std::printf("scenario=aiSquads fast_max=%.4f\n",fastest.toFloat());
 }
 
 // Native slot geometry spot checks (51c700/51ce40/51d1e0).
@@ -144,7 +205,7 @@ void attackHead() {
 
 int main() {
     try {
-        geometry();attackHead();slowest();
+        geometry();attackHead();slowest();plain();aiSquads();
         straggler(PathfindingMode::Retail);
     } catch(const std::exception& error) {std::fprintf(stderr,"FAIL: %s\n",error.what());return 1;}
     std::puts("retail group pacing: PASS");

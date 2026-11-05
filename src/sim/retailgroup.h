@@ -166,32 +166,43 @@ struct RetailGroupUnit {
     int32_t typeMaximum=0;
 };
 
-// The record a unit belongs to (unit+0xc8) and whether that record paces
-// (record +8). squad is Unit::squad: +N a Ctrl group, -N a formation.
+// The record a unit belongs to (unit+0xc8) and whether that record is a
+// formation (record +8). Retail has one record per number, written by the
+// console's CreateSquad (48e170 -> 522170 -> 50b4f0 for the members, 50b700
+// for +8): "CreateSquad N" rebuilds group N from the selection as a plain
+// group (+8 clear), "CreateSquad N f" as a formation (+8 set), each replacing
+// the other. Only a formation is ever aggregated, made active or paced; a
+// plain group behaves as no group. squad is Unit::squad: +N a Ctrl group
+// (plain group N), -N a formation (group N with +8). A computer player's
+// units are in its AI's squads instead (aiGroup, Unit::aiGroup; the AI's
+// set-squad 50b4f0 overwrites unit+0xc8), whose +8 the AI sets through
+// set-active 50b700: a strike squad while it attacks (state 2), a VTOL squad
+// while it has units (aiFormation, World::aiFormation).
 struct RetailGroupSlot { int group=0; bool formation=false; };
-constexpr RetailGroupSlot retailGroupSlot(int squad) {
-    if (squad>0) return {squad,true};
-    if (squad<0) return {10-squad,true};
+constexpr RetailGroupSlot retailGroupSlot(int squad,int aiGroup=0,bool aiFormation=false) {
+    if (aiGroup>0) return {aiGroup,aiFormation};
+    if (squad>0) return {squad,false};
+    if (squad<0) return {-squad,true};
     return {};
 }
 
-// 51b890 for one player: groups with members (record+8) are rebuilt from
-// their eligible units in unit order, then paced members out of slot at
-// level 4 apply the straggler slowdown. paced receives each unit's
+// 51b890 for one player: formation groups (record +8) are rebuilt from
+// their eligible units in unit order (a record without +8 goes inactive),
+// then paced members out of slot at level 4 apply the straggler slowdown. paced receives each unit's
 // navigator formation bit (vt+0x30). Returns whether any record's active
 // flag or speed changed (the record+0xb0 "changed" flag, 50b7a0/50bbc0/50bfe0).
-template<class Units,class Members>
-bool retailGroupTick(const Units& units,const Members& hasMembers,
+template<class Units,class Formations>
+bool retailGroupTick(const Units& units,const Formations& formation,
                      std::array<RetailGroupRecord,100>& records,std::vector<uint8_t>& paced) {
     struct Sum { int64_t x=0,y=0,z=0; int32_t count=0,area=0; };
     std::array<std::array<Sum,3>,100> all{},moving{};
     std::array<int32_t,100> ground{},boat{};
     paced.assign(units.size(),0);
     bool any=false;
-    for (size_t g=1;g<100;++g) any|=bool(hasMembers[g]);
+    for (size_t g=1;g<100;++g) any|=bool(formation[g]);
     if (any) for (size_t i=0;i<units.size();++i) {
         const auto& u=units[i];
-        if (!u.eligible || u.group<1 || u.group>=100 || !hasMembers[size_t(u.group)]) continue;
+        if (!u.eligible || u.group<1 || u.group>=100 || !formation[size_t(u.group)]) continue;
         const size_t g=size_t(u.group);const auto& m=u.member;
         paced[i]=(u.missionFlags&0x2000000u)!=0;
         const auto add=[&](Sum& s) { ++s.count;s.area+=m.area;s.x+=m.position.x;s.y+=m.position.y;s.z+=m.position.z; };
@@ -206,7 +217,7 @@ bool retailGroupTick(const Units& units,const Members& hasMembers,
     for (size_t g=1;g<100;++g) {
         auto& record=records[g];
         bool active=false;
-        if (hasMembers[g]) {
+        if (formation[g]) {
             for (size_t c=0;c<3;++c) {
                 const auto write=[](RetailGroupAggregate& a,const Sum& s) {
                     a.count=s.count;a.area=s.area;
@@ -228,7 +239,7 @@ bool retailGroupTick(const Units& units,const Members& hasMembers,
     if (any) for (size_t i=0;i<units.size();++i) {
         const auto& u=units[i];
         if (!u.eligible || !paced[i] || u.member.kind==RetailGroupClass::Flyer ||
-            u.group<1 || u.group>=100 || !hasMembers[size_t(u.group)]) continue;
+            u.group<1 || u.group>=100 || !formation[size_t(u.group)]) continue;
         auto& record=records[size_t(u.group)];
         if (!record.active) continue;
         if (!retailGroupOutOfSlot(record,u.member,true,4,(u.missionFlags&0x4000000u)!=0)) continue;

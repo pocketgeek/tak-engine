@@ -49,15 +49,16 @@ int main() {
             std::printf("\n");
         } else if (op=="world") {
             // The World's own mapping (retailGroupSlot): each unit's engine
-            // squad picks its record and whether that record paces (+8);
+            // squad, or its AI squad and that squad's formation flag, picks
+            // its record and whether that record paces (+8);
             // the records' own +8 inputs are ignored. Then 51b890 and, per
             // grouped unit, 51d1e0(u,1,3), 51d1e0(u,0,4) and 51c700(u,0,1).
             int n;
             std::array<RetailGroupRecord,100> records{};std::array<bool,100> formation{};
             for (int g=1;g<100;++g) {bool m;records[size_t(g)]=readRecord(std::cin,m);}
             std::cin>>n;std::vector<RetailGroupUnit> units(static_cast<size_t>(n));
-            for (auto& u:units) {int squad,e;std::cin>>squad>>e;
-                const auto slot=retailGroupSlot(squad);
+            for (auto& u:units) {int squad,ai,aiFormation,e;std::cin>>squad>>ai>>aiFormation>>e;
+                const auto slot=retailGroupSlot(squad,ai,aiFormation);
                 u.group=slot.group;
                 if (slot.group>0 && slot.group<100) formation[size_t(slot.group)]|=slot.formation;
                 u.eligible=e;u.member=readMember(std::cin);std::cin>>u.missionFlags>>u.typeMaximum;}
