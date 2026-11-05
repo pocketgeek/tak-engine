@@ -6782,10 +6782,25 @@ Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
   a unit on SUPPRESS or on a flyer's attack only, the walk back its group
   check put ahead of either included (the formation waits on no 0x40, so the
   bit stays until the attack, from stage 0 again, takes it). A walker's unit attack
-  runs per tick on the selected slot (`tickCombat`), which aims the new slot
-  on the next tick as Attack_Chase does, with no mission to take the bit; set
-  there it would linger and wake a later order. A commandfire shot's 0x40000
-  is passed only for a point target.
+  runs per tick on the selected slot (`tickCombat`), with no mission to take
+  the bit; set there it would linger and wake a later order. A commandfire
+  shot's 0x40000 is passed only for a point target.
+- E (`probe_attack_chase_stop.py --switch-tick`, 2026-11-04), a walker's
+  switch: Attack_Chase waits in its fire stage on 0x1f40068 (`404493`), its
+  approach stages on 0x700 only. A switch right after `52ae90` (as the mana
+  fallback makes it) wakes it in the same dispatch: the head reads the new
+  selected slot (`403bed`) and the stage gives it the target at once
+  (`51a700`, `40448e`) when it is in reach (`52adf0`, `52ad60`). With the bit
+  taken away the slot waits for the stage's own wake, 3 to 8 ticks on. The
+  probe runs VERMAGE natively (52ae90, the COB VM, 4d8450, the mover) with a
+  second slot and switches at six ticks of an engagement: the target goes
+  to slot 1 in the switch's own tick every time. Ours: `tickCombat` aims the
+  new slot (`tickScriptWeapon`) in the update its weapons switched it, as the
+  stage-1 aim (World's aim start reaches the script at the next COB pass, as
+  52ae90's does); until 2026-11-04 it waited for the next update
+  (`retail_script_test`). I: a switch to a melee slot hands over to
+  Attack_Melee (`403c17`) in the same dispatch in retail, in World on the
+  next update.
 - E (`check_retail_group.py` suppress mode, 2026-11-04), the group check
   (`404e12..404f1b`), after the 0x40000 exit, on EVERY handler call, chained
   stage calls in one dispatch included: `51d1e0(unit, 1, 4)`. Out of the slot

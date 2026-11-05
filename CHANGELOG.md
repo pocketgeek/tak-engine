@@ -225,7 +225,8 @@ their validation reports; both live in [`docs/`](docs/).
   computer's switched only later. A shot the unit cannot quite pay for still leaves
   without taking mana, so mana no longer drops below zero, and veterans pay less per
   shot, as in the original game. A flyer attacking a unit now restarts its attack on
-  the new weapon at once.
+  the new weapon at once, and a unit on foot aims the new weapon at once instead of
+  a moment later.
 - **Campaign units go to the exact spot the mission gives.** A mission's scripted
   moves, fight-moves, patrols and unloads went to the middle of the named map square;
   as in the original game they now go to its corner, half a square up and left, and

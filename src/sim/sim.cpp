@@ -5854,8 +5854,9 @@ bool World::switchWeaponSlot(Unit& u,int slot,bool fromCommand) {
     // AirToGroundHover 41da9d, AirStrike 41b728, AirToAir 41ccc4). Only a
     // unit on one gets it: a walker's unit attack (Attack_Chase,
     // Attack_Melee) answers it in the same dispatch, and World runs that
-    // attack per tick (tickCombat on u.weaponSlot) with no mission to take
-    // the bit, which would otherwise linger and wake a later order. A
+    // attack per tick (tickCombat on u.weaponSlot, which aims a slot its own
+    // weapons switched in the same update) with no mission to take the bit,
+    // which would otherwise linger and wake a later order. A
     // formation the attack's group check put ahead of it waits on no 0x40:
     // the bit stays until the attack, back from stage 0, takes it.
     if (!u.orders.empty()) {
@@ -8505,6 +8506,17 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     if (u.type->weaponSwitching && slot!=u.weaponSlot && u.weaponSlot<int(u.type->weapons.size())) {
         slot=u.weaponSlot;
         sel=&u.type->weapons[size_t(slot)];
+        // E (probe_attack_chase_stop.py --switch-tick): the switch's 0x40
+        // (51a8b0) wakes Attack_Chase, waiting in its fire stage on
+        // 0x1f40068 (404493), in this same dispatch, and the stage gives the
+        // new selected slot the target at once (51a700, 40448e) when it is
+        // in reach (52adf0, 52ad60); without the bit it would wait for the
+        // stage's own wake, rand(6) + 3 ticks on. World's aim start on that
+        // tick is the stage-1 aim's (above): it reaches the script at the
+        // next COB pass, as 52ae90's does in retail. A melee slot's hand
+        // over to Attack_Melee (403c17) still waits for the next tick.
+        if (chaseMission && !sel->melee && !(u.slotAuto>>slot&1) && slotAims(slot))
+            tickScriptWeapon(u,*target,slot);
     }
     if (airRun && !u.orders.empty() && u.orders.front().targetId==target->id) {
         tickAirToGround(u,target,sel);
