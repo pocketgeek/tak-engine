@@ -522,10 +522,52 @@ void transports() {
     std::printf("scenario=transports\n");
 }
 
+// A passenger stays in its group (51b890's member filter, 51ba44..51ba8f,
+// never reads the carrier +0xa8; check_retail_group.py carried): it counts
+// in the group's aggregate at its +0x68, the attach point that follows the
+// carrier, as a member that is not moving -- its mission aboard is BeCarried
+// (row flags 0x24), which runs no group check, so it never re-forms.
+void carried() {
+    World world;setup(world,PathfindingMode::Retail);
+    auto t=mover(0),wagon=mover(0);
+    t.transportLandEligible=true;t.transportSize=1;
+    wagon.canTransport=true;wagon.maxTransportSize=4;wagon.transportCap=4;wagon.transportSizeCap=8;
+    wagon.transportDist=60;
+    const int a=world.spawn(&t,640,1900,std::nullopt,0),w=world.spawn(&wagon,1600,1900,std::nullopt,0);
+    const int b=world.spawn(&t,640,1948,std::nullopt,0);
+    for (int id:{a,w,b}) world.setSquad(id,-1);
+    known(world);
+    require(world.embarkInto(a,w),"the soldier did not board the wagon");
+    world.order(w,3000,2400,false);
+    bool reformed=false;
+    for (int tick=0;tick<240;++tick) {
+        world.tick(1.f/30);
+        reformed|=!world.unit(a)->orders.empty();
+        const auto* record=world.retailGroupRecord(b);
+        require(record && record->active,"the group is not active");
+        const auto& all=record->all[size_t(RetailGroupClass::Ground)];
+        require(all.count==3 && all.area==2*t.footX*t.footZ+wagon.footX*wagon.footZ,
+                "a passenger is not counted in its group");
+        require(record->moving[size_t(RetailGroupClass::Ground)].count<=1,"a passenger counts as moving");
+        require(!world.retailGroupPaced(a),"a passenger is paced");
+    }
+    require(!reformed,"a passenger re-formed while carried");
+    // The centre is taken before the units move, the passenger where its
+    // wagon carried it.
+    const auto ax=world.unit(a)->x.floorInt(),az=world.unit(a)->z.floorInt();
+    const auto wx=world.unit(w)->x.floorInt(),wz=world.unit(w)->z.floorInt();
+    const auto bx=world.unit(b)->x.floorInt(),bz=world.unit(b)->z.floorInt();
+    require(std::abs(ax-wx)<8 && std::abs(az-wz)<8 && (ax!=640 || az!=1900),"the passenger did not ride along");
+    world.tick(1.f/30);
+    const auto& centre=world.retailGroupRecord(b)->all[size_t(RetailGroupClass::Ground)].centre;
+    require(centre.x==(ax+wx+bx)/3 && centre.z==(az+wz+bz)/3,"a passenger is not in its group's centre");
+    std::printf("scenario=carried centre=%d,%d\n",centre.x,centre.z);
+}
+
 int main() {
     try {
         geometry();attackHead();airHeads();slowest();plain();aiSquads();replayReset();
-        flyerMove();flyerPatrol();groundPatrol();groundGuard();transports();standbys(false);standbys(true);
+        flyerMove();flyerPatrol();groundPatrol();groundGuard();transports();carried();standbys(false);standbys(true);
         straggler(PathfindingMode::Retail);
     } catch(const std::exception& error) {std::fprintf(stderr,"FAIL: %s\n",error.what());return 1;}
     std::puts("retail group pacing: PASS");

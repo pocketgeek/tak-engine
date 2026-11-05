@@ -937,6 +937,27 @@ Retail's system, read statically and partly emulated:
   group speed (`50bbc0`/`50bc20`), `+0x84` is the boat group speed
   (`50bfe0`/`50c040`), `+0xa4` is the centre (`50c340`) and `+0xb0` is a changed
   flag (`50c440`/`50c400`).
+- **Passengers stay members** (fx-sink, protocol 312). The member filter
+  (`51ba44..51ba8f`) tests alive (`0x1000000`), not dying (`0x1000`),
+  finished (`+0x108`), a mover (`+8`) and the record, never the carrier
+  `+0xa8` (E: `check_retail_group.py` carried, 400 ticks with passengers that
+  have `+0xa8` and every `+0x114` bit set). A passenger therefore counts in
+  "all" at its own `+0x68`, the attach point its mover commits from the
+  carrier (`4dad30`). Its mission aboard is BeCarried: the attach (`51b4f0`
+  -> `51b5a0`, `51b847..51b876`) calls `4d49f0` for an owner of kind 1 or 2
+  whose carrier is no airbase (`isairbase`, type `+0x260 & 0x200`, which no
+  shipped unit sets), which cancels the queue but for the flag-4 missions
+  (`4d6a50(unit, 0)`) and puts `BECARRIED` in front (`4d7750`) (E:
+  `check_retail_group.py` becarried). BeCarried's row (`5eb69f`) has handler
+  `4024a0` and flags `0x24` (S): neither moving nor paced. The handler
+  returns 5 once `+0xa8` is clear, else stage 0 calls `519b70(unit, 3)` and
+  stage 1 sleeps 10; it never runs a group check (E). The unit update runs
+  the dispatcher (`51de30` -> `4d8450`) for a carried unit too, with no
+  `+0xa8` test on the way (S), so BeCarried is all a passenger runs: it
+  neither pushes a formation move nor is paced. World kept every embarked
+  unit out of the aggregate; `tickRetailGroups` now counts it with
+  BeCarried's flags (`kRetailBeCarriedFlags`) and runs no missions aboard,
+  as before. Test: `retail_group_test` carried.
 - **Per-tick aggregation** happens in `51b890`, called from `526389` before
   `51d3e0` (movers). It runs for players whose `+0xea` is 1, 2 or 3. For each
   formation group (`+8`), it walks alive, completed units with a mover. Navigator

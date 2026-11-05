@@ -3255,10 +3255,17 @@ void World::tickRetailGroups() {
         formation[size_t(u.player)][size_t(g)]|=slot.formation;
         RetailGroupUnit entry;
         entry.group=g;
-        entry.eligible=!u.underConstruction && !u.embarked() && !u.type->isStructure();
+        // 51ba44..51ba8f: alive, not dying, finished, with a mover; the
+        // carrier (+0xa8) is not read, so a passenger stays a member at its
+        // +0x68, the attach point World's cargo step keeps. Its mission is
+        // BeCarried, which the attach (51b5a0 -> 4d49f0) puts in front: row
+        // flags 0x24 (5eb6b0), no moving or paced bit, and no group check
+        // (4024a0) -- World runs no missions aboard (E: check_retail_group.py
+        // carried, becarried).
+        entry.eligible=!u.underConstruction && !u.type->isStructure();
         if (entry.eligible) {
             entry.member=retailGroupMember(u);
-            entry.missionFlags=retailMissionFlags(u);
+            entry.missionFlags=u.embarked() ? kRetailBeCarriedFlags : retailMissionFlags(u);
             entry.typeMaximum=(u.type->maxVel*groundTerrainMultiplier(u)).v;
         }
         roster[size_t(u.player)].push_back(entry);index[size_t(u.player)].push_back(i);
