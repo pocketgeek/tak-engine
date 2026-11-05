@@ -102,11 +102,49 @@ void geometry() {
     require(retailGroupSpeedCap(10000,117964,117964,117964)==int32_t((int64_t(65536)*29491)>>16),"25% floor");
     require(retailGroupSpeedCap(200000,117964,117964,117964)==0,"no cap above own maximum");
 }
+
+// The attacks' group check (retailAttackGroupCheck: SUPPRESS 404e12, the
+// flyer attacks 41c19a / 41b7a4 / 41dafa): its three outcomes.
+void attackHead() {
+    struct Calls { std::vector<int> bounds; int leaves=0,formations=0; };
+    const auto run=[](uint32_t& flags,bool out,uint32_t next,int draw,Calls& c) {
+        return retailAttackGroupCheck(flags,out,next,3,15,[&](int n){c.bounds.push_back(n);return draw;},
+            [&]{++c.leaves;},[&]{++c.formations;return true;});
+    };
+    // Out of its slot, not yet flagged: no draw, the flag set, the formation
+    // pushed, 0 (the attack starts again at stage 0).
+    {uint32_t f=0x1000410u;Calls c;
+     require(run(f,true,0,0,c)==0 && f==0x9000410u && c.formations==1 && c.bounds.empty() && !c.leaves,
+             "out of slot unflagged: formation, flag, 0");}
+    // Flagged and out again: rand(3) == 0 leaves (8); 50c480 unless the next
+    // mission moves with the group.
+    for (const uint32_t next:{0u,0x5012000u,0x15000400u,0x3000400u,0x11000000u}) {
+        uint32_t f=0x9000410u;Calls c;
+        const bool mover=(next&0x1000000u) && !(next&0x4000000u);
+        require(run(f,true,next,0,c)==8 && c.bounds==std::vector<int>{3} && c.leaves==int(!mover) && !c.formations,
+                "flagged out of slot, rand(3) == 0: leave (50c480 by the next mission), 8");
+    }
+    {uint32_t f=0x9000410u;Calls c;
+     require(run(f,true,0,2,c)==0 && c.formations==1 && c.bounds==std::vector<int>{3} && !c.leaves,
+             "flagged out of slot, rand(3) != 0: formation again");}
+    // In its slot: the stages run (-1); a flagged mission clears on rand(15) == 0.
+    {uint32_t f=0x9000410u;Calls c;
+     require(run(f,false,0,0,c)==-1 && f==0x1000410u && c.bounds==std::vector<int>{15},
+             "in slot flagged, rand(15) == 0: cleared");}
+    {uint32_t f=0x9000410u;Calls c;
+     require(run(f,false,0,7,c)==-1 && f==0x9000410u,"in slot flagged, rand(15) != 0: kept");}
+    {uint32_t f=0x1000410u;Calls c;
+     require(run(f,false,0,0,c)==-1 && c.bounds.empty(),"in slot unflagged: no draw");}
+    // A formation that cannot be built ends the list (7), the flag already set.
+    {uint32_t f=0x1000410u;
+     require(retailAttackGroupCheck(f,true,0,2,25,[](int){return 0;},[]{},[]{return false;})==7 &&
+             (f&0x8000000u),"an unbuilt formation: 7");}
+}
 }
 
 int main() {
     try {
-        geometry();slowest();
+        geometry();attackHead();slowest();
         straggler(PathfindingMode::Retail);
     } catch(const std::exception& error) {std::fprintf(stderr,"FAIL: %s\n",error.what());return 1;}
     std::puts("retail group pacing: PASS");

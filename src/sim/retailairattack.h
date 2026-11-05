@@ -2,6 +2,7 @@
 
 #include "sim/retailconstruction.h"
 #include "sim/retailflight.h"
+#include "sim/retailgroup.h"
 #include "sim/retailmission.h"
 #include "sim/retailmotion.h"
 #include <bit>
@@ -44,8 +45,8 @@ namespace tak::sim {
 //
 // Every draw is 535cc0, the shared game random number generator. The host
 // has made the head's checks (a live target that cannot fly, the leash);
-// the group check (51d1e0) is not ported, so the 0x8000000 flag it sets is
-// never set here.
+// the group check after them (41c19a, retailAttackGroupCheck) is the
+// hover's: VTOL_Move_Formation ahead of a member out of its slot.
 struct RetailAirRun {
     RetailFlightVector position;   // unit +0x68
     RetailFlightVector target;     // mission +0x22, the target's position at this wake
@@ -67,18 +68,32 @@ inline RetailFlightVector retailAirRunPoint(RetailFlightVector from, int32_t y, 
             std::bit_cast<int32_t>(uint32_t(from.z)-uint32_t(retailScaledCosine(heading,magnitude)))};
 }
 
+// The flyer attacks' group check (AirToGround 41c19a, AirStrike 41b7a4,
+// AirToGroundHover 41dafa), after their exits and the leash:
+// retailAttackGroupCheck at level 5, leave on rand(2), clear on rand(25).
+// Host: outOfSlot() (51d1e0(unit, 1, 5)); nextFlags() (the next mission's
+// +0x5a, 0 for none); leave() (50c480); formation() (VTOL_Move_Formation,
+// level -4, pushed ahead: false when it could not be built).
+template<class Host>
+int retailAirGroupCheck(RetailMissionState& m,Host& host) {
+    return retailAttackGroupCheck(m.flags,host.outOfSlot(),host.nextFlags(),2,25,
+        [&](int n) { return host.random(n); },[&] { host.leave(); },[&] { return host.formation(); });
+}
+
 // Host: random(bound); beginFlight() (416c50); slotsAuto() (519b10(3));
 // aimSlot() (519b70 and 51a700 on the selected slot); install(goal) (4d4d40,
 // which also clears the mission's pending controller events 0x3700);
 // retarget() (4d8370, then 4d7de0(unit, found, 0, 0, 1, 0) for a found unit
 // that is not the target: true when it put an attack ahead); stepOut(D)
-// (VTOL_StepOut built and pushed ahead, 4d7750: false when it could not be).
+// (VTOL_StepOut built and pushed ahead, 4d7750: false when it could not be);
+// the group check's outOfSlot(), nextFlags(), leave() and formation(), as
+// AirToGroundHover's.
 template<class Host>
 int retailAirToGround(RetailMissionState& m, int32_t& count, uint32_t tick, uint32_t events,
                       const RetailAirRun& run, Host& host) {
     if (events&0x2a) return 5;                               // 41c00c -> 41c8f6
     if (events&0x40) { m.sleep(tick,1); return 0; }          // 41c122
-    if ((m.flags&0x8000000u) && host.random(25)==0) m.flags&=~0x8000000u;   // 41c29f
+    if (const int result=retailAirGroupCheck(m,host);result>=0) return result;   // 41c19a..41c2ba
     auto install=[&](RetailFlightVector point,int radius) {
         host.install(RetailFlightGoal{point,0x30,0,int16_t(radius)});
     };
@@ -233,10 +248,8 @@ struct RetailAirHover {
 };
 
 // Host: random(bound); lostTarget() (the exit 41e28f: it may push
-// VTOL_SEEKATTACK and answers 5); outOfSlot() (51d1e0(unit, 1, 5));
-// leave() (50c480, when the next mission does not move with the group);
-// formation() (VTOL_Move_Formation, level -4, pushed ahead: false when it
-// could not be built); beginFlight() (416c50); slotsAuto() (519b10(3));
+// VTOL_SEEKATTACK and answers 5); the group check's (retailAirGroupCheck)
+// outOfSlot(), nextFlags(), leave() and formation(); beginFlight() (416c50); slotsAuto() (519b10(3));
 // aim() (519b70 and 51a700 on the selected slot, 51a770 without a target);
 // targetPoint() (the target's +0x68); lead() (51aa50: the selected slot's led
 // SweetSpot); retarget() (4d8370 and 4d7de0(unit, found, 0, 0, 1, 0) for a
@@ -255,16 +268,7 @@ int retailAirToGroundHover(RetailMissionState& m,int32_t& count,RetailFlightVect
         return 2;
     }
     if (events&0x40) { m.sleep(tick,1); return 0; }                      // 41da9d
-    if (host.outOfSlot()) {                                              // 41dafa
-        if ((m.flags&0x8000000u) && host.random(2)==0) {                 // 41db0c
-            host.leave();
-            return 8;
-        }
-        m.flags|=0x8000000u;                                             // 41db51
-        if (!host.formation()) return 7;
-        return 0;
-    }
-    if ((m.flags&0x8000000u) && host.random(25)==0) m.flags&=~0x8000000u;   // 41dbff
+    if (const int result=retailAirGroupCheck(m,host);result>=0) return result;   // 41dafa..41dc1b
     const int32_t d=in.distance;
     auto whole=[&](RetailFlightVector p) {
         const double dx=double(std::bit_cast<int32_t>(uint32_t(p.x)-uint32_t(in.position.x)));
@@ -350,8 +354,8 @@ int retailAirToGroundHover(RetailMissionState& m,int32_t& count,RetailFlightVect
 //            the last mission (+0x66 is 0) and ends (5). Event 0x40: a tick's
 //            sleep, stage 0. The target's position is the point (+0x22). A
 //            leash (+0x56) ends it (5) once the flyer's whole-pixel distance
-//            from the origin (+0x2e/+0x30) reaches it. Then the group check
-//            51d1e0(unit, 1, 5) and its flag's rand(25).
+//            from the origin (+0x2e/+0x30) reaches it. Then the group check,
+//            AirToGroundHover's (retailAirGroupCheck).
 //   stage 0: no mover or not canfly ends the list (7); 416c50 takes off.
 //   stage 1: every slot automatic (519b10(3)), the selected one manual
 //            (519b70); within 480 px of the point (the 16.16 distance,
@@ -379,8 +383,7 @@ int retailAirToGroundHover(RetailMissionState& m,int32_t& count,RetailFlightVect
 //            and not on Hold Fire, VTOL_SEEKATTACK goes in behind it (4d77b0)
 //            at the point, carrying the target when it is alive and not
 //            dying; the strike ends (5) either way.
-// Every draw is 535cc0. Not ported: the group check, whose flag 0x8000000 is
-// therefore never set here, as in AirToGround.
+// Every draw is 535cc0.
 struct RetailAirStrike {
     RetailFlightVector position;   // unit +0x68
     uint16_t heading=0;            // unit +0x7e
@@ -435,7 +438,8 @@ inline int32_t retailStrikeRelease(const RetailAirStrike& in) {
 // retarget() (4d8370, then 4d7de0(unit, found, 0, 0, 1, 0) for a found unit
 // that is not the target: true when it put an attack ahead); stepOut(D)
 // (VTOL_StepOut built and pushed ahead, 4d7750: false when it could not be);
-// seek(target, point) (VTOL_SEEKATTACK inserted behind the strike, 4d77b0).
+// seek(target, point) (VTOL_SEEKATTACK inserted behind the strike, 4d77b0);
+// the group check's outOfSlot(), nextFlags(), leave() and formation().
 // `point` is mission +0x22.
 template<class Host>
 int retailAirStrike(RetailMissionState& m,RetailFlightVector& point,uint32_t tick,uint32_t events,
@@ -457,7 +461,7 @@ int retailAirStrike(RetailMissionState& m,RetailFlightVector& point,uint32_t tic
         const RetailGroundPoint here{int16_t(uint32_t(in.position.x)>>16),int16_t(uint32_t(in.position.z)>>16)};
         if (int32_t(retailGroundDistance(here,in.origin))>=in.leash) return 5;
     }
-    if ((m.flags&0x8000000u) && host.random(25)==0) m.flags&=~0x8000000u;   // 41b8a4
+    if (const int result=retailAirGroupCheck(m,host);result>=0) return result;   // 41b7a4..41b8d4
     switch (m.stage) {
     case 0:                                                              // 41b8d4
         if (!in.flies) return 7;

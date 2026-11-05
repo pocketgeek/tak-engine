@@ -762,13 +762,35 @@ way, as in retail.
 
 Not ported:
 - VTOL_Patrol's identical head (`419fa0`/`41a162`);
-- the single checks in the air attack missions (`41c19f`, `41cce3`, `41daff`,
-  `41e55f`);
+- the single checks in AirToAir (`41cce3`) and VTOL_SeekAttack (`41e55f`).
+  AirToGroundHover's (`41daff`) was ported with its mission (protocol 307),
+  AirToGround's (`41c19f`) and AirStrike's (`41b7a4`) since protocol 312
+  (below);
 - the VTOL_Move_FormationStandby branch (`41797e`, only pushed by the landing
   search).
 
 Our flyer fight-move is not a VTOL_Move. Retail-mode fight and patrol orders
 are therefore unchanged.
+
+**The attacks' single check (fx-groupcheck, 2026-11-04, protocol 312).**
+SUPPRESS (`404e12`) and the flyer attacks AirToGround (`41c19f`), AirStrike
+(`41b7a4`) and AirToGroundHover (`41daff`) run one check at their head, on
+every handler call: `51d1e0(unit, 1, 4)` for SUPPRESS, `(unit, 1, 5)` for the
+flyers. Out of the slot on a mission already flagged `0x8000000`,
+`rand(3) == 0` (SUPPRESS) or `rand(2) == 0` (flyers) gives the order up (8),
+`50c480` first unless the next mission moves with the group. Otherwise out of
+the slot it flags the mission and pushes Move_Ground_Formation at level -3
+(response mode 0) or VTOL_Move_Formation at level -4 and returns 0, so the
+attack starts again at stage 0 when the formation retires; in the slot,
+`rand(15)` / `rand(25)` clears the flag. Emulated (`check_retail_group.py`
+suppress mode, `check_air_attack_run.py`, `check_air_traffic.py`) and ported
+as `retailAttackGroupCheck`. These missions are group movers (SUPPRESS
+`0x1000410`, AirToGround and AirToGroundHover `0x1000200`, AirStrike
+`0x1000600`): `retailMissionFlags` reports them, SUPPRESS's approach leg as
+SUPPRESS, so they now count in the moving aggregate of a Ctrl group. The
+formation leaves the attack's weapon slots as they are, and a SUPPRESS walker
+fires at its point on the way back; docs/retail-engine.md ("SUPPRESS port")
+has the details. Legion has no group record: unchanged.
 
 Original mapping (audit 2026-10-06):
 

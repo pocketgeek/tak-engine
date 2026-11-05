@@ -173,7 +173,12 @@ their validation reports; both live in [`docs/`](docs/).
   weapon. An armed Attack (A) clicked on the ground or on a friendly unit, in the
   view or on the minimap, now gives it to each selected unit that can, under an
   Attack cursor; Shift queues it, Ctrl puts it first, and Shift or Ctrl on a
-  queued point takes it back.
+  queued point takes it back. As in the original game, a unit in a Ctrl group that
+  finds itself left behind walks back to its group first, still firing at the spot
+  when its weapon can aim without turning the body, and then fires on from there; now
+  and then it gives up the order instead. Flyers attacking in a group, at a spot or
+  at a unit, fly back to their group the same way, and keep firing at what they
+  had aimed at while they do.
 - **Holding Shift shows a cloaked unit's decloak range.** While Shift is held, each
   of your selected units, and your unit under the pointer, that is cloaked now shows a
   white circle at its decloak distance, as in the original game. A `kamikaze` unit
@@ -189,6 +194,18 @@ their validation reports; both live in [`docs/`](docs/).
   quality, and the original's 11 kHz unit sounds keep their pitch and length with a
   cleaner top end. On 6.1 speakers the surrounds of 5.1 music now play at full level.
   Video streams carry the same 44.1 kHz sound.
+- **A homing shot with a model points along its flight every tick.** It used to do so
+  only on a tick it turned, so a mod's spinning homing shot kept spinning once its
+  target died. As in the original game, the model now faces the way it flies.
+- **A unit short of mana after a shot falls back to a cheaper weapon.** As in the
+  original game, a unit that switches weapons (every Monarch and dragon) and has too
+  little mana left for another shot of its weapon now switches at once to the best
+  cheaper one it can afford, or to its first, whether it is yours or the computer's.
+  Your units used to wait on the dear weapon until their mana came back, and the
+  computer's switched only later. A shot the unit cannot quite pay for still leaves
+  without taking mana, so mana no longer drops below zero, and veterans pay less per
+  shot, as in the original game. A flyer attacking a unit now restarts its attack on
+  the new weapon at once.
 - **Fedora 45 packages.** Fedora 45 now has its own x86-64 and ARM64 RPMs, beside
   Fedora 44's.
 - **Investigated, no change needed:**

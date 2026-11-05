@@ -1263,8 +1263,10 @@ Still deviating:
   next section.)
 - (When the target is lost, AirToGround pushes `VTOL_SEEKATTACK` (`4192f0`):
   ported since protocol 305, see "VTOL_SeekAttack" below.)
-- The group check (`51d1e0`, VTOL_Move_Formation) is not ported. (Stage 4's
-  air-traffic step-out is, since protocol 307: see "Air traffic" below.)
+- (The group check (`41c19a`, `51d1e0(unit, 1, 5)` and VTOL_Move_Formation)
+  is ported since protocol 312: see "Flyers at a point" under the SUPPRESS
+  port. Stage 4's air-traffic step-out is, since protocol 307: see "Air
+  traffic" below.)
 - Off the map, World flies at the clamped sector's cruise height (retail: the
   off-map cell's height 0 plus cruisealt), and its velocity kernel keeps the
   vertical control that `4dab71` skips for an off-map unit.
@@ -1438,8 +1440,8 @@ Checked:
   (no damage before either).
 
 Not ported or still deviating:
-- The group check (`51d1e0`, VTOL_Move_Formation), as for AirToGround.
-  (Stage 2's air-traffic step-out is ported since protocol 307: see "Air
+- The group check (`51d1e0`, VTOL_Move_Formation). (AirToGround's is ported
+  since protocol 312. Stage 2's air-traffic step-out is ported since protocol 307: see "Air
   traffic" below.)
 - (A lost target pushes VTOL_SEEKATTACK (`41d654`): ported since protocol 305,
   next section.)
@@ -1526,7 +1528,8 @@ Not ported or deviating:
   the point.
 - (AirToGroundHover (`41d820`) pushes the seek too (`41e301`, `41e35f`):
   ported since protocol 307, with the mission, "Air traffic" below.)
-- The group check, as for AirToGround.
+- The group check (only its flag's rand(10) runs; AirToGround's is ported
+  since protocol 312).
 
 ## Air traffic: flyers step out of a stack (icd + emulation, 2026-10-31, protocol 307)
 
@@ -1793,10 +1796,11 @@ Checked:
   at an unexplored site).
 
 Not ported or still deviating:
-- The group check (`51d1e0`) is ported for AirToGroundHover only (with
-  VTOL_Move's), not for AirToGround, AirToAir, VTOL_SeekAttack,
-  VTOL_SeekGuard or AirStrike: those fly as if in formation (only the flag's
-  clearing draw runs, rand(10) for the seek, rand(25) for the strike).
+- The group check (`51d1e0`) is ported for AirToGroundHover (with
+  VTOL_Move's) and, since protocol 312, AirToGround, AirStrike and SUPPRESS
+  ("Flyers at a point" under the SUPPRESS port); not for AirToAir,
+  VTOL_SeekAttack or VTOL_SeekGuard: those fly as if in formation (only the
+  flag's clearing draw runs, rand(10) for the seek).
 - The flying builders' jobs keep World's approach and work stage: the check
   runs at the ticks that are retail's wakes (above), and the job restarts
   from World's approach (a help leg accepting inside 2 x builddistance, or
@@ -6226,9 +6230,9 @@ SUPPRESS is registry row `0x5eb8b8` (`UNITMISSIONCODE_SUPPRESS`, handler
 codes are the dispatcher's (`sim/retailmission.h`).
 
 - **Head.** For a weapon switcher the slot is the selected one (`519ac0`).
-  Event 0x40000 ends the order (5). The group check (`51d1e0(unit,1,4)`)
-  puts Move_Ground_Formation (`0x604d70`) in front, its flag 0x8000000
-  re-rolled with `rand(3)` / `rand(15)`, as in the other ground missions.
+  Event 0x40000 ends the order (5). Then the group check, on every handler
+  call (chained stage calls in one dispatch included): see "SUPPRESS port"
+  below.
 - **Stage 0.** A flyer: 8 (the order goes). Else reach left = the slot's
   range minus its minimum range (`52aba0` - `52abd0`).
 - **Stage 1.** Melee: no clearable blocking feature at the point, 5. Else
@@ -6494,14 +6498,108 @@ Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
   itself, as RECLAIM's.
 - I: a slot's point (`Unit::slotPoint`) is dropped, with TargetCleared, as soon
   as the SUPPRESS that aimed it is not the current leg, including when the
-  order has gone to the back behind another kind of order.
-- I: the 0x40 event (`51a8b0`'s weapon switch) is raised only for a unit on
-  SUPPRESS, and a commandfire shot's 0x40000 only for a point target; no
-  unit-target mission reads either.
-- I: the group check `51d1e0(unit,1,4)` and its Move_Ground_Formation are not
-  ported (as in AirToGround).
-- I: a Guided shot at a point flies without homing (its update steers only at
-  a live target).
+  order has gone to the back behind another kind of order; but not while the
+  group check's formation leads with SUPPRESS right behind it (below).
+- E (`probe_mana_fallback.py`, 2026-11-04), the mana fallback after a shot:
+  in `52ae90` (`52af6c..52afa1`), after the release `530220` of a slot whose
+  record holds SET 23 (flag 0x10), whether or not a shot could be allocated
+  and whatever the reload, a switcher steps down from the fired slot while
+  the slot's cost (`531ea0`: manapershot `+0xd4` over `5193c0`, 1.0 for
+  noveteran, else `+0xf4` when set, else 1 + 0.1 x level) is above the mana
+  left, and `51a8b0` selects the slot it lands on: the highest cheaper slot it
+  can afford, or slot 0 when none is (a dearer slot in between is skipped);
+  slot 0 never switches. A unit without weaponswitching has selector 3
+  (`511a4f..511ab0`) and never switches. It reads no mission (`+0x60`) and no
+  owner (`+0xb8`): a player's switcher falls back as an AI's does, at a point
+  or on a unit. The release pays through `4010d0`, which subtracts only a cost
+  the mana covers and whose result is ignored: the shot leaves unpaid and mana
+  never goes negative (readiness `52fff0` asks for the cost). World's
+  `manaFallback` follows the script release (`tickScriptWeapon`) and every
+  non-script shot; `fire` pays as `4010d0` and uses the divided cost, as does
+  readiness. `tools/re/check_mana_fallback.py` compares 614 fixtures with the
+  native routine. Until 2026-11-04 World had no fallback (a player's switcher
+  waited for mana, an AI's dropped only when the weapon sweep `40f411` next
+  visited it), a script release took mana below zero and the cost ignored the
+  veteran multiplier.
+- E, `51a8b0` raises 0x40 (`+0xd0`) on every switch and no other bit. Its
+  readers sleep a tick and restart at stage 0: SUPPRESS (stage 4), and
+  AirToGround (`41c122`), AirToGroundHover (`41da9d`), AirStrike (`41b728`)
+  and AirToAir (`41ccc4`) at a point or on a unit; Attack_Chase (stage 1,
+  mask 0x1f40068) and Attack_Melee (0x40068) take it in the same dispatch
+  (missions run after `52ae90`) and aim the new slot. I: World raises it for
+  a unit on SUPPRESS or on a flyer's attack only, the walk back its group
+  check put ahead of either included (the formation waits on no 0x40, so the
+  bit stays until the attack, from stage 0 again, takes it). A walker's unit attack
+  runs per tick on the selected slot (`tickCombat`), which aims the new slot
+  on the next tick as Attack_Chase does, with no mission to take the bit; set
+  there it would linger and wake a later order. A commandfire shot's 0x40000
+  is passed only for a point target.
+- E (`check_retail_group.py` suppress mode, 2026-11-04), the group check
+  (`404e12..404f1b`), after the 0x40000 exit, on EVERY handler call, chained
+  stage calls in one dispatch included: `51d1e0(unit, 1, 4)`. Out of the slot
+  on a mission already flagged 0x8000000, `rand(3) == 0`: `50c480` unless the
+  next mission (`+0x66`) is a group mover (0x1000000 without 0x4000000), and 8
+  (the order goes). Otherwise out of the slot: the flag set,
+  Move_Ground_Formation (row `0x604d70`, handler `402880`) pushed in front
+  (`4d7750`) at level -3 with response mode 0 (no target scan), and 0: SUPPRESS
+  starts again at stage 0, with a fresh reach budget, when the formation
+  retires at level 3. In the slot, a flagged mission clears on `rand(15) ==
+  0`. All draws are `535cc0`. `4d7640` discards the push unless the owner's
+  player kind is 1 or 2; World's AI units are never grouped, so it does not
+  matter. The row's flags are 0x1000410 (a group mover), Move_Ground_Formation's
+  0x11000400.
+- E (`walkback/probe_walk_fire.py`, `probe_resume.py`, 2026-11-04), firing on
+  the walk back: the push touches no weapon slot, and the per-tick weapon
+  update (`52ae90`) reads no mission. The manual slot stays aimed at the point
+  and fires per reload: a turret type (turninplacerate 0) whatever the body's
+  heading, a turninplacerate type only while |body heading - direction to the
+  point| <= max(aimtol, 512); the body does not turn to face while walking
+  (`4d9b6a` turns only a stopped unit). The walk's 0x10000 / 0x100000 stay in
+  the event word (SUPPRESS does not wait on them) until the stage-3 re-aim
+  (`51a770`, mask 0xfe08ffff). The formation's retirement: `4d6da0`,
+  `519b10(3)` (every slot automatic) and `51a7f0`, one TargetCleared per slot
+  holding the point; SUPPRESS then runs stages 0..4 in the same dispatch and
+  re-aims, its reload carried over (no second shot, no gap).
+- Ours, Retail pathfinding only (Legion has no group record):
+  `retailAttackGroupCheck` (`sim/retailgroup.h`) is the head, shared with the
+  flyer attacks; `suppressStage` runs it after the 0x40000 exit and
+  `pushSuppressFormation` puts the formation leg ahead (deferred as the stage-4
+  approach is). The leg runs on the Move_Ground host (`retailGroundFormation`,
+  level -3, mode 0) from `tickCombat`, after the weapons, as retail's dispatch
+  follows `52ae90`; the main loop's call skips it. `syncSlotMode` keeps the
+  slots manual and their point while it leads with SUPPRESS right behind it
+  (`World::formationAttack`, which knows the leg by `Order::attackFormation`,
+  set at the push: a Move's formation left ahead of a queued attack when the
+  Move is taken back stays a Move's and retires); `tickPointWeapons` fires
+  them and posts the facing request, and SUPPRESS's brake does not apply. A
+  body turns to the request only stopped with an idle navigator: with no
+  orders, or (`tickAttackWalk`) with the formation's controller let go (at the
+  centre, asleep in stage 2). Its retirement sets every slot automatic
+  with TargetCleared, and SUPPRESS runs from stage 0 in the same tick. The
+  pushed leg takes SUPPRESS's melee rectangle and route with it (stage 1 makes
+  them again). The leg is not an issued one: Shift on the point removes
+  SUPPRESS and the leg together; Ctrl drops it (the order behind starts again
+  at stage 0, as from an approach); result 6 rotates only SUPPRESS, which
+  never runs while the leg leads. `retailMissionFlags` reports 0x1000410 for
+  SUPPRESS and for its approach leg (the approach is its own controller in
+  retail). `suppress_test` checks a spread Ctrl group: a turret outlier
+  fires on the walk back and again once back, a shot due on the tick the
+  formation retires leaves then and once, the outlier counts as a moving
+  member, one that must face holds fire on the move and turns once stopped
+  at the centre, a weapon switch on the walk leaves 0x40 for SUPPRESS, a
+  patrolling group makes it leave the order (flagged and out of its slot),
+  Shift and Ctrl on the walk, and a Move's formation left ahead of an attack
+  still retires; Legion: none of it.
+- E, as retail (`tools/re/probe_guided_projectile.py`, 2026-11-04): a Guided
+  shot at a point flies straight. `52e030` steers only when `+0x78` holds a
+  target with 0x1000000 (alive) and without 0x1000 (dying); a point shot has
+  none. World passes the shot's own position for a point shot or a dead
+  target, so `retailGuidedTick` makes no turn either. A modelled shot
+  (`+0x93`; only the Tracking Arrow, `araarrow2`, has a model) still rebuilds
+  yaw and pitch from its velocity on every update (`52e23d`), with no target,
+  a dead or dying one, or a zero turn angle; World did so only after a turn
+  until 2026-11-04. The probe checks all four cases against the native
+  routine.
 - Campaign `a X Y` still walks into reach and fights (`mission.cpp`).
 
 `suppress_test` checks it in both pathfinding modes.
@@ -6553,10 +6651,41 @@ null target; `Order::airPoint`):
 - I: the slots' point is held only while the attack is the front order: a
   step-out ahead of it drops it (TargetCleared), and the mission's restart at
   stage 1 aims it again.
-- I: the weapon-switch event 0x40 is raised for a flyer on an attack at a
-  point, as for SUPPRESS (it restarts the mission), not on a unit attack.
-- I: the group check (`51d1e0`) is as on the unit-target missions: ported
-  for the hover, not for AirToGround and AirStrike.
+- The weapon-switch event 0x40 is raised for a flyer on an attack at a
+  point or on a unit, as for SUPPRESS (it restarts the mission); see the
+  SUPPRESS port.
+- E (`check_air_attack_run.py`, `check_air_traffic.py`, 2026-11-04), the
+  group check of AirToGround (`41c19a`) and AirStrike (`41b7a4`) is the hover's
+  (`41daff`): after the `+0x56` leash, `51d1e0(unit, 1, 5)`; out of the slot
+  and flagged, `rand(2) == 0` leaves (8, `50c480` by the next mission's flags
+  as SUPPRESS's); else the flag set, VTOL_Move_Formation (`0x6054b8`) pushed at
+  level -4, and 0; in the slot `rand(25)` clears the flag. For a unit and a
+  point alike. Row flags: AirToGround and AirToGroundHover 0x1000200,
+  AirStrike 0x1000600 (at a point the ctor clears 0x200). Ours: the three
+  templates share `retailAirGroupCheck`, the hosts `World::AirAttackGroup`;
+  `retailMissionFlags` counts the three missions as group movers. The checks
+  answer `51d1e0` at random and compare every result, flag, draw, leave and
+  push with the drivers. The formation leg keeps the attack's slots as they
+  are (the push touches none): a slot on a point fires on the way
+  (`tickPointWeapons`), and a manual slot the attack gave its unit target
+  (`51a700`, `Unit::slotTarget`) aims and fires on it per reload
+  (`tickAttackWalkWeapons`); one the push came before has no target and does
+  not. The leg is dispatched from `tickCombat` after the weapons
+  (`tickAttackWalk`), as SUPPRESS's is, so a shot due on the tick it retires
+  leaves before `4d6da0` drops the aim (TargetCleared on a unit target's
+  slots). `suppress_test`: an all-flyer Ctrl group's outlier flies back on
+  VTOL_Move_Formation and attacks again, at a point and at a unit, for each
+  of the three; one left behind after it has aimed fires on the way back
+  (AirToGround at either, the hover at a point), and a shot due as the
+  formation retires leaves then, once. I: the formation is pushed after the
+  dispatch and first runs at the next tick; retail's dispatcher runs it at
+  once.
+- S, the registry rows (read statically, 2026-11-04): VTOL_SEEKATTACK
+  (`4192f0`) and VTOL_SEEKGUARD (`4197d0`) both carry
+  0x1000600, so a seek is a group mover; whether their ctor clears 0x200
+  without a target is not read, and the group check reads only 0x1000000
+  and 0x4000000. `retailOrderFlags` and `retailMissionFlags` give World's
+  seeks (which carry no target unit) that row.
 
 `suppress_test` (both modes): `creaeri` flies runs over the
 point and hits it (24 shots, 4 px off); a Tarbeak hovers ~134 px off a point

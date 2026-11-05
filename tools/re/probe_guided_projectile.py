@@ -5,6 +5,12 @@ The source muzzle, current target SweetSpot and per-substep collision result are
 controlled sinks. Native 0x52c540, 0x52e030 and 0x52c6d0 remain executable;
 the probe compares their fixed-point XYZ/BAM records with retail_visual_test's
 guided-projectile mode. No retail GUI is launched.
+
+After the random tracking cases come the updates that skip steering: no target
+(+0x78 null), a dead target (+0x130 without 0x1000000), a dying one (0x1000)
+and a target dead ahead (zero turn angle). World passes the shot's own position
+for the first three, as it does for a dead target or a point shot. A modelled
+shot (+0x93) must still rebuild yaw/pitch from its velocity (0x52e23d).
 """
 import random
 import struct
@@ -111,8 +117,11 @@ rng = random.Random(0x52e03052c6d0)
 rows = []
 expected = []
 cases = 384
+modes = ('none', 'dead', 'dying', 'ahead')
+special = 48 * len(modes)
 binary = sys.argv[1] if len(sys.argv) > 1 else 'build/retail_visual_test'
-for case in range(cases):
+for case in range(cases + special):
+    mode = 'track' if case < cases else modes[case % len(modes)]
     # Include flat ground, flyers with positive/negative vertical separation,
     # straight/vertical headings, moving SweetSpots, and exact/near turn caps.
     origin = tuple(rng.randrange(-3000, 3000) * 65536 for _ in range(3))
@@ -126,12 +135,16 @@ for case in range(cases):
         # Current velocity points +Z and the target lies exactly on -Z.
         # The cross axis is zero while dot is negative (the antiparallel edge).
         body, heading, pitch, turn = 0, 0, 0, 0.2
-    update_angles = case % 2 == 0
+    update_angles = case % 2 == 0 if mode == 'track' else case % 3 != 0
     if case in (1, 2):
         # Keep the native zero-axis antiparallel case with refresh disabled;
         # refreshing its BAM direction takes a native degenerate quaternion
         # path (0x2023bc) and faults before the base movement routine.
         update_angles = case == 2
+    if mode == 'ahead':
+        # An axis-aligned launch: native 5ad930 takes acos(dot/(|a||b|)), so
+        # only a single-component velocity gives an exactly zero angle there.
+        body, heading, pitch = 0, rng.choice((0, 0x4000, 0x8000, 0xc000)), rng.choice((0, 0x4000, 0xc000))
     putf(p.uc, guided + 4, turn)
     put(p.uc, data + 0xcc, speed)
     put(p.uc, data + 0xd0, steps)
@@ -160,7 +173,8 @@ for case in range(cases):
     target_point = tuple(origin[i] + (dx, dy, dz)[i] for i in range(3))
     p.uc.mem_write(shot, bytes(0xb0))
     put(p.uc, shot, data)
-    put(p.uc, shot + 0x78, target)
+    put(p.uc, shot + 0x78, 0 if mode == 'none' else target)
+    put(p.uc, target + 0x130, {'dead': 0, 'dying': 0x01001000}.get(mode, 0x01000000))
     put(p.uc, shot + 0x7c, owner)
     put(p.uc, shot + 0x80, 123)
     origin_saved = origin
@@ -173,6 +187,8 @@ for case in range(cases):
     put(p.uc, shot + 0x70, 10000)
     initial = (i32s(p.uc, shot + 4), i32s(p.uc, shot + 0x1c), u16s(p.uc, shot + 0x34))
     assert initial[0] == origin_saved, (case, initial, origin_saved)
+    if mode == 'ahead':
+        assert sum(v != 0 for v in initial[1]) == 1, (case, initial)
     rows.append(f'L {origin_saved[0]} {origin_saved[1]} {origin_saved[2]} {body} {heading} {pitch} {speed}')
     expected.append((initial, None, None))
 
@@ -190,6 +206,14 @@ for case in range(cases):
         elif case == 2 and update == 0:
             delta = (300, 0, -900)  # finite cross axis near antiparallel, refresh enabled
         target_point = tuple(origin_saved[i] + delta[i] * 65536 for i in range(3))
+        ported_target = target_point
+        if mode in ('none', 'dead', 'dying'):
+            ported_target = py_state[0]  # World: no live target -> the shot's own position
+        elif mode == 'ahead':
+            # Four current velocities ahead along the launch axis: the turn
+            # angle is exactly 0 in both native and World.
+            target_point = ported_target = tuple(
+                signed(py_state[0][i] + 4 * py_state[1][i]) for i in range(3))
         collision_calls = impact_events = 0
         collision_rows.clear()
         collision_at = (1 if case % 34 == 0 else max(1, steps // 2)) if case % 17 == 0 and update == 1 else 0
@@ -200,7 +224,7 @@ for case in range(cases):
             collision_rows[-1:] if collision_rows else [])
         native = (i32s(p.uc, shot + 4), i32s(p.uc, shot + 0x1c), u16s(p.uc, shot + 0x34))
         rows.append('T ' + ' '.join(map(str, (*py_state[0], *py_state[1], *py_state[2],
-            *target_point, format(turn, '.9g'), speed, steps, *spin, int(update_angles),
+            *ported_target, format(turn, '.9g'), speed, steps, *spin, int(update_angles),
             collision_at))))
         expected.append((native, collision_calls, bool(collision_at)))
         if collision_at:
@@ -237,6 +261,7 @@ for index, (actual, (native, collisions, hit)) in enumerate(zip(ported_rows, exp
             delta = ((actual[field] - want[field] + 0x8000) & 0xffff) - 0x8000
             worst[field] = max(worst[field], abs(delta))
             assert abs(delta) <= 3, (index, field, actual, want, delta)
-print(f'PASS: {cases} native guided launches plus {len(expected)-cases} moving/vertical XYZ updates; '
+print(f'PASS: {cases + special} native guided launches plus {len(expected)-cases-special} XYZ updates '
+      f'({special} launches with no, dead or dying target or a target dead ahead); '
       f'position/velocity max raw deltas={worst[:6]}, BAM deltas={worst[6:]}; '
       'native collision callback admitted every substep and stopped correctly on code 2')

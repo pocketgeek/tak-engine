@@ -1022,6 +1022,11 @@ struct alignas(64) Order {
     // Hashed with a tag when set.
     static constexpr uint8_t kAirStrike = 1, kAirHover = 2, kAirRun = 3;
     uint8_t airPoint = 0;
+    // A formation leg an attack's group check put ahead of the attack
+    // (SUPPRESS's Move_Ground_Formation, a flyer attack's
+    // VTOL_Move_Formation; World::formationAttack), not one a Move's group
+    // check made. Hashed with a tag when set.
+    bool attackFormation = false;
 
     // A build leg Ctrl interrupted after its site went down (insertOrderFront):
     // that site. When the leg runs again it helps the site if it still stands
@@ -1061,7 +1066,7 @@ TAK_ORDER_LINE(orderSerial, 4);
 static_assert(offsetof(Order, mission) == 128, "line 1 ends at byte 127; line 2 starts with mission");
 TAK_ORDER_LINE(suppress, 5); TAK_ORDER_LINE(suppressFeature, 5); TAK_ORDER_LINE(suppressSlot, 5);
 TAK_ORDER_LINE(suppressReach, 5); TAK_ORDER_LINE(suppressApproach, 5); TAK_ORDER_LINE(suppressInner, 5);
-TAK_ORDER_LINE(airPoint, 5); TAK_ORDER_LINE(resumeSite, 5);
+TAK_ORDER_LINE(airPoint, 5); TAK_ORDER_LINE(attackFormation, 5); TAK_ORDER_LINE(resumeSite, 5);
 static_assert(offsetof(Order, suppress) == 320, "lines 0-4 are full; line 5 starts with SUPPRESS");
 static_assert(sizeof(Order) == 384, "Order is six cache lines (line 5 has room left); a new field names its line above");
 #undef TAK_ORDER_LINE
@@ -3232,8 +3237,10 @@ private:
                       int& x, int& z) const;
     void leaveFactoryYard(int helperId);
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
-    void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false) { fire(u,WeaponTarget{&target},slot,scriptTriggered); }
-    void fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered=false);
+    // False when no shot left (a charm it cannot take, or a non-script shot
+    // it cannot pay for).
+    bool fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false) { return fire(u,WeaponTarget{&target},slot,scriptTriggered); }
+    bool fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered=false);
     bool tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept=false,const WeaponAimSolution* given=nullptr) {
         return tickScriptWeapon(u,WeaponTarget{&target},slot,swept,given);
     }
@@ -3245,6 +3252,15 @@ private:
     // and 52ffd3's refusal (event 0x100000) when the point is out of reach
     // or inside the minimum range.
     void tickPointWeapons(Unit& u);
+    // 52ae90 for the manual slots of a flyer's unit attack while the
+    // formation its group check put ahead of it leads: they keep the target,
+    // aim and fire per reload on the way back.
+    void tickAttackWalkWeapons(Unit& u,Unit& target);
+    // The walk back an attack's group check put ahead of it (formationAttack),
+    // after the weapons: SUPPRESS's on the ground, a flyer attack's in the
+    // air, then the turn an idle navigator makes to its facing request
+    // (4d9b6a). False once the formation has retired (the attack runs on).
+    bool tickAttackWalk(Unit& u);
     void setSlotPoint(Unit& u,int slot,RetailGroundPoint p);   // 51a770
     void dropSlotPoint(Unit& u,int slot);                      // 51a7f0 on a point
     // 530630 / vtable +0x10 (530500, BallisticWeapon 52bbb0, MeleeWeapon
@@ -3257,6 +3273,7 @@ private:
     bool clearableBlockerAt(Fixed x,Fixed z,std::array<int,4>* footprint=nullptr) const;
     int suppressStage(Unit& u,Order& o,RetailMissionState& m,uint32_t events);
     void pushSuppressApproach(Unit& u,Fixed x,Fixed z,int32_t outer,int32_t inner);
+    void pushSuppressFormation(Unit& u);
     // The approach ring of a SUPPRESS approach leg (Order::suppressInner).
     std::optional<RetailRingGoal> suppressRing(const Unit& u,const Order& goal) const;
     void legionAimStall(Unit& u,int slot,bool available);
@@ -3725,7 +3742,9 @@ private:
     bool requestPath(Unit& u, float x, float z);   // true iff a search was queued
     static Order* groundMissionOrder(Unit& u, bool includeCombatMoves = false);
     static bool groundMissionAccepts(const Unit&,const Order&);
-    void tickGroundMission(Unit& u);
+    // attackWalk: the call tickCombat makes, after the weapons, for a
+    // formation leg SUPPRESS put ahead of itself (the main loop's skips it).
+    void tickGroundMission(Unit& u,bool attackWalk=false);
     // 4d856a: an empty mission list gets the FBI default mission (Standby /
     // VTOL_Standby), even while VTOL_UNLOAD's step-out controller still flies.
     bool standbyEligible(const Unit& u) const;
@@ -3830,6 +3849,11 @@ private:
     // 51a8b0 (SwitchWeapon): the command and AI paths share it. fromCommand
     // routes the clear/switch animations through pendingWeaponAnimations.
     bool switchWeaponSlot(Unit& u,int slot,bool fromCommand);
+    // 531ea0: a slot's manapershot over the veteran multiplier (5193c0).
+    static float manaShotCost(const Unit& u,int slot);
+    // 52af72..52af9a: after a release, a switcher that cannot pay for its
+    // weapon again drops to a cheaper slot.
+    void manaFallback(Unit& u,int slot);
     // 40f411..40fb92: a computer-owned switcher's per-visit weapon choice.
     void retailAiWeaponSwitch(Unit& u);
     // 409a50: the victim's response to a hit -- the AI Monarch block, the
@@ -4308,6 +4332,29 @@ private:
     RetailGroupMember retailGroupMember(const Unit& u) const;
     const RetailGroupRecord* retailGroupOf(const Unit& u) const;
     uint32_t retailMissionFlags(Unit& u);
+    // The registry flags (+0x5a) of the mission an order runs: its
+    // Order::mission.flags, with the row's own flags for SUPPRESS and the
+    // flyer attacks, which World does not keep there.
+    uint32_t retailOrderFlags(const Unit& u,const Order& o) const;
+    // The next mission's flags (+0x66's +0x5a) behind orders[index]; 0 for none.
+    uint32_t retailNextMissionFlags(const Unit& u,size_t index) const;
+    // 51d1e0(unit, 1, level) for an attack's group check (its flags lack 0x4000000).
+    bool retailAttackOutOfSlot(const Unit& u,int level) const;
+    // The attack a formation leg its group check put ahead of it leads
+    // (SUPPRESS, a flyer's attack), or null: the push left its slots as they were.
+    static const Order* formationAttack(const std::vector<Order>& orders);
+    // The flyer attacks' group check (retailAirGroupCheck), shared by the
+    // AirToGround, AirStrike and AirToGroundHover hosts: VTOL_Move_Formation
+    // (level -4) goes ahead once the dispatch is done (push).
+    struct AirAttackGroup {
+        World& w; Unit& u;
+        bool formationTo=false;
+        bool outOfSlot() const { return w.retailAttackOutOfSlot(u,5); }
+        uint32_t nextFlags() const { return w.retailNextMissionFlags(u,0); }
+        void leave() const { w.leaveRetailGroupCentre(u); }
+        bool formation() { formationTo=true;return true; }
+        void push();
+    };
     void tickRetailGroups();
     void planLegionFlightStations();
     // Legion: a standing ground unit's aim its script has not accepted for

@@ -70,8 +70,8 @@ inline RetailSeekPush retailAirLostTarget(const RetailAirLoss& in) {
 //            at 5 or more, VTOL_StepOut goes ahead (D = (rand(15) + footX) x
 //            16) and the seek starts again at stage 0 a tick after it ends.
 // Every draw is 535cc0, the shared game random number generator. Not ported:
-// the group check (51d1e0), whose flag 0x8000000 is therefore never set here,
-// as in AirToGround.
+// the group check (51d1e0), whose flag 0x8000000 is therefore never set here
+// (AirToGround's is ported: retailAirGroupCheck).
 struct RetailAirSeek {
     RetailFlightVector position;   // unit +0x68
     int32_t range=0;               // the selected slot's WeaponType +0x90 (519ac0)

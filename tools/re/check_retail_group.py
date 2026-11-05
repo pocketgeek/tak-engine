@@ -13,6 +13,11 @@ helpers in src/sim/retailgroup.h and retailGroundFormation:
   vtolcheck  417c20's head (417e02..418052): VTOL_Move's two group checks,
              with flyer altitudes (the same helper as 402b00)
   vtolform   417750 VTOL_Move_Formation (retailFlightFormation)
+  suppress   404d70's head (404e12..404f1b): SUPPRESS's group check
+             (retailAttackGroupCheck: 51d1e0(unit, 1, 4), rand(3), 50c480 by
+             the next mission's flags, the Move_Ground_Formation push at
+             level -3 with no target scan, rand(15)), stopped at its stage
+             jump table
 
 Observation only: nothing from the binary is copied into the engine.
 
@@ -208,6 +213,11 @@ def main():
         ours.stdin.write(text + '\n'); ours.stdin.flush()
         return [ours.stdout.readline().strip() for _ in range(lines)]
     h = Harness(); rng = random.Random(0x51b890); counts = dict(tick=0, query=0, check=0, formation=0)
+    # For the suppress mode; added before any code runs, as Unicorn keeps the
+    # blocks it has translated (50c480 runs natively in the check mode too).
+    h.uc.hook_add(1 << 2, lambda uc, address, size, _: (h.events.append(('stages',)), uc.emu_stop()),
+                  begin=0x404f1b, end=0x404f1b)
+    h.uc.hook_add(1 << 2, lambda uc, address, size, _: h.events.append(('leave',)), begin=0x50c480, end=0x50c480)
     stats = dict(notified=0, slowed=0, reform=0, wait=0, cancel=0)
     # 51b890 tick
     for case in range(a.cases):
@@ -381,6 +391,43 @@ def main():
             raise AssertionError(('vtolform', case, dict(stage=stage, level=level), (result, stage_after, gx, gz, calls, radii), out))
         key = 'vf%d' % result; stats[key] = stats.get(key, 0) + 1
         counts['vtolform'] += 1
+    # 404d70's head: SUPPRESS's group check, then its stages (stopped at 404f1b).
+    counts['suppress'] = 0
+    following = MISSIONS + 0x100
+    for case in range(a.cases * 10):
+        rec = random_record(rng, spread=rng.choice([100, 400, 1500])); rec['active'] = rng.random() < 0.95
+        g = rng.randrange(1, 99); h.load_record(g, rec)
+        u = random_unit(rng, g, spread=400); u['mover'] = rng.random() < 0.97; u['mission'] = True
+        u['flags'] = 0x1000410 | (0x8000000 if rng.random() < 0.5 else 0); u['ustate'] = 0x1000000
+        u['tflags'] = rng.choice([0, 0, 0, 0x80000]); u['fixed'] = (u['fixed'][0], 0, u['fixed'][2])
+        addr = h.load_unit(0, u); ms = MISSIONS
+        nxt = rng.choice([None, 0x3000400, 0x5012000, 0x0, 0x1000410, 0x15000400, 0x11000000])
+        h.uc.mem_write(following, b'\0' * 0x80)
+        if nxt is None: h.put('I', ms + 0x66, 0)
+        else: h.put('I', ms + 0x66, following); h.put('I', following + 0x5a, nxt)
+        h.uc.mem_write(ms + 5, bytes([rng.randrange(5)]))
+        ev = rng.choice([0, 0x10000, 0x100000, 0x40, 0x700])
+        draw = rng.randrange(15); h.draws = [draw]; h.events.clear()
+        ret, err = h.p.call(0x404d70, (addr, ms, ev), allow_early_stop=True)
+        if err and 'UC_ERR_OK' not in err: raise AssertionError(err)
+        calls = ''
+        for e in h.events:
+            if e[0] == 'rand': calls += 'rand%d,' % e[1]
+            elif e[0] == 'leave': calls += 'leave,'
+            elif e[0] == 'formation':
+                if e[1:] != (0, -3): raise AssertionError(('suppress formation args', case, e))
+                calls += 'formation,'
+        kinds = [e[0] for e in h.events]
+        if 'formation' in kinds and 'push' not in kinds: raise AssertionError(('suppress push', case, h.events))
+        want = (-1 if 'stages' in kinds else ret, h.get('I', ms + 0x5a)[0], calls or '-')
+        rec_after = h.read_record(g)
+        out = ask('suppresshead %s %s %d %d %d' % (record_text(rec), member_text(u), u['flags'], nxt or 0, draw), 2)
+        r, f, c = out[0].split(); rmine = [int(v) for v in out[1].split()]
+        if (int(r), int(f), c) != want or rmine != rec_after:
+            raise AssertionError(('suppress', case, want, (r, f, c), nxt, rec_after, rmine))
+        key = {-1: 'sin', 8: 'sleave', 0: 'sform'}.get(want[0], 's%d' % want[0])
+        stats[key] = stats.get(key, 0) + 1
+        counts['suppress'] += 1
     ours.stdin.close(); ours.wait()
     print('PASS: %s; %s' % (', '.join('%s %d' % kv for kv in counts.items()),
                             ', '.join('%s %d' % kv for kv in stats.items())))

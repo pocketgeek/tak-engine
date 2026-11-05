@@ -35,7 +35,9 @@ retailVtolSeekGuard (src/sim/retailairseek.h).
    stopped where it goes on without a step-out (check_mission_checks).
 5. VTOL_SeekGuard (4197d0) whole on random states (check_seek_guard).
 6. AirStrike (41b5e0) whole on random states, the release ring's x87
-   sequence native (check_air_strike).
+   sequence native, the group check (51d1e0) answered in or out of the slot
+   with the next mission (+0x66) a group mover or not, the leave (50c480)
+   recorded (check_air_strike).
 
     python3 tools/re/check_air_traffic.py [build-dbg/retail_motion_test]
 """
@@ -980,8 +982,14 @@ def check_air_strike(binary):
     p.hooks[0x51a7f0] = lambda uc, a: (record('clear', (get(a), get(a + 4) & 0xff)), (2, 0))[1]
     p.hooks[0x4d8370] = scan
     p.hooks[0x4d7de0] = attack
-    p.hooks[0x51d1e0] = lambda uc, a: (record('group'), (3, 0))[1]
-    p.hooks[0x50c480] = lambda uc, a: (_ for _ in ()).throw(AssertionError('unexpected 50c480'))
+    def group(uc, args):               # 51d1e0(unit, 1, 5)
+        if (get(args), get(args + 4), get(args + 8)) != (unit, 1, 5):
+            raise AssertionError('unexpected 51d1e0 arguments')
+        record('group')
+        return 3, 1 if answer['out'] else 0
+
+    p.hooks[0x51d1e0] = group
+    p.hooks[0x50c480] = lambda uc, a: (record('leave', get(a)), (1, 0))[1]
     p.freeze_hooks()
     draws = [0]
     p.uc.hook_add(UC_HOOK_CODE, lambda uc, a, s, d: draws.__setitem__(0, draws[0] + 1), begin=0x535cc0, end=0x535cc0)
@@ -1036,7 +1044,9 @@ def check_air_strike(binary):
         traffic = rng.choice((0, 2, 4, 5, 6, 9, 12, -3))
         foot = rng.choice((1, 2, 3, 4))
         seed = rng.randrange(2**32)
-        answer.update(found=rng.choice((0, 1, 2)), attack=rng.random() < 0.5, step=rng.random() < 0.9)
+        answer.update(found=rng.choice((0, 1, 2)), attack=rng.random() < 0.5, step=rng.random() < 0.9,
+                      out=rng.random() < 0.25)
+        nxt = 0 if last else rng.choice((0, 0x3000400, 0x1000400, 0x5012000, 0x15000400))
         put(unit + 0x130, 'I', (0x8000000 if armed else 0) | (0x1000000 if unit_live else 0) | (0x1000 if dying else 0) |
             fire)
         put(kind + 0x260, 'I', 0x800 if flies else 0)
@@ -1063,6 +1073,7 @@ def check_air_strike(binary):
         put(mission + 0x56, 'i', leash)
         put(mission + 0x5a, 'I', flags)
         put(mission + 0x66, 'I', 0 if last else block + 0x40)
+        put(block + 0x40 + 0x5a, 'I', nxt)     # past the 0x72-byte block a push takes
         put(mission + 0x6a, 'I', pending)
         put(controller + 0x26, 'iii', 0, 0, 0)
         put(controller + 0xa, 'h', 0)
@@ -1075,7 +1086,8 @@ def check_air_strike(binary):
         missions = log.get('mission', [])
         steps = [m for m in missions if m[0] == 'VTOL_StepOut']
         seeks = [m for m in missions if m[0] == 'VTOL_SEEKATTACK']
-        if len(steps) + len(seeks) != len(missions):
+        formations = [m for m in missions if m[0] == 'VTOL_Move_Formation']
+        if len(steps) + len(seeks) + len(formations) != len(missions):
             raise AssertionError((i, 'unexpected missions', missions))
         if any(m[1] not in (0, target) for m in seeks):
             raise AssertionError((i, 'seek for another unit', seeks))
@@ -1094,7 +1106,9 @@ def check_air_strike(binary):
                          aims[-1][0] if aims else 0, aims[-1][2] if aims else 0, len(log.get('clear', [])),
                          len(log.get('scan', [])), len(steps), len(seeks), steps[-1][3] if steps else 0,
                          int(bool(seeks and seeks[-1][1])), get(RNG), *(seeks[-1][2] if seeks else (0, 0, 0)),
-                         draws[0], 0))
+                         draws[0], len(log.get('group', [])), len(log.get('leave', [])), len(formations)))
+        if log.get('leave') and log['leave'] != [unit]:
+            raise AssertionError((i, 'leave', log['leave']))
         # The port's retarget() is the scan, the not-the-target test and the
         # attack together: it answers yes only when all three do.
         retargets = int(answer['found'] == 1 and answer['attack'])
@@ -1104,7 +1118,8 @@ def check_air_strike(binary):
                                            int(has_target), int(t_live and not t_dying), int(carried), int(placed),
                                            int(last), leash, ox if ox < 32768 else ox - 65536,
                                            oz if oz < 32768 else oz - 65536, run_length, cruise, gravity, speed,
-                                           traffic, foot, int(automatic), seed, retargets, int(answer['step'])))))
+                                           traffic, foot, int(automatic), seed, retargets, int(answer['step']),
+                                           int(answer['out']), nxt))))
         stages[stage] = stages.get(stage, 0) + 1
     rows = run(binary, '--air-strike', fixtures)
     # The port counts a retarget() call per offer; native scans once and
@@ -1123,9 +1138,10 @@ def check_air_strike(binary):
     def tally(column, value=None):
         return sum(1 for row in expected if (row[column] == value if value is not None else row[column]))
     print('PASS: AirStrike, %d calls (%s), every state, point, controller, slot call, push and draw '
-          '(%d point controllers, %d following controllers, %d aims, %d step-outs, %d seeks, %d ended (5))'
+          '(%d point controllers, %d following controllers, %d aims, %d step-outs, %d seeks, %d ended (5), '
+          '%d group checks, %d leaves, %d formations)'
           % (len(fixtures), ' '.join('%s:%d' % kv for kv in sorted(stages.items())), tally(9), tally(10),
-             tally(18), tally(23), tally(24), tally(0, 5)))
+             tally(18), tally(23), tally(24), tally(0, 5), tally(32), tally(33), tally(34)))
 
 
 def main():
