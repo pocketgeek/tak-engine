@@ -468,20 +468,23 @@ int main(int argc,char** argv) {
         return 0;
     }
     // tools/re/check_veterancy.py: one row per case, answered in its order.
-    //   c kind finished hitter victim killer points xp scoreoff
-    //                                  -> the killer's xp, the hitter player's kills and score after a death
+    //   c kind finished hitter victim killer points xp scoreoff count
+    //                                  -> the killer's xp, the hitter player's kills and score, and the
+    //                                     killer's own kill count (a word) after a death
     //   l xp points noveteran multiplier                 -> level, vetMul's float bits
     //   s xp level points noveteran multiplier           -> xp after setLevel
     if (argc==2 && std::string(argv[1])=="--veterancy") {
         std::string row;
         while (std::cin>>row) {
             if (row=="c") {
-                int kind,finished,hitter,victim,killer,scoreOff;int32_t points,xp;
-                std::cin>>kind>>finished>>hitter>>victim>>killer>>points>>xp>>scoreOff;
-                if (killer && tak::sim::retailKillCreditsExperience(uint8_t(kind),finished!=0,hitter,victim))
+                int kind,finished,hitter,victim,killer,scoreOff;int32_t points,xp;unsigned count;
+                std::cin>>kind>>finished>>hitter>>victim>>killer>>points>>xp>>scoreOff>>count;
+                if (killer && tak::sim::retailKillCreditsExperience(uint8_t(kind),finished!=0,hitter,victim)) {
                     xp=tak::sim::retailAddExperience(xp,points);
+                    count=uint16_t(count+1u);   // World::creditKill's ++kills
+                }
                 const bool counted=tak::sim::retailKillCountsForPlayer(uint8_t(kind),finished!=0,hitter,victim);
-                std::cout<<xp<<' '<<(counted ? 1 : 0)<<' '<<(counted && !scoreOff ? points : 0)<<'\n';
+                std::cout<<xp<<' '<<(counted ? 1 : 0)<<' '<<(counted && !scoreOff ? points : 0)<<' '<<count<<'\n';
             } else if (row=="l") {
                 tak::sim::UnitType type;tak::sim::Unit unit;int noVeteran;
                 std::cin>>unit.xp>>type.experiencePoints>>noVeteran>>unit.vetOverride;

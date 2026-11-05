@@ -301,6 +301,9 @@ their validation reports; both live in [`docs/`](docs/).
   as soon as it is finished: it still blocks the way and can be smashed, but it is
   no longer a unit you can select, that counts against your units, or that enemies
   pick as a target. Building one no longer counts as a loss.
+- **A selected unit of yours shows how many enemies it has killed**, beside its health
+  and mana bars, as in the original game (once it has a kill). A unit that changes
+  sides starts again from none.
 - **A Pillar of Light and a Sacred Fire light up as in the original game.** Both
   switch themselves on when they are finished, whether you build one or a mission
   or map scenario places it, and the original game runs their flames twice over

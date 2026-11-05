@@ -287,6 +287,12 @@ int main(int argc,char** argv) try {
             }
             check(w.player(1).kills==3 && w.player(1).score==300,"the carrier's killer was not credited for its passengers");
             if (shooterLives) check(w.unit(s)->xp==300,"the carrier's killer did not earn its passengers' experience");
+            // 512ccd: its own kill count (+0xfe) counts each under the same gate.
+            if (shooterLives) check(w.unit(s)->kills==3,"the carrier's killer did not count its kills");
+            if (shooterLives) {
+                // 511c16: a new object, a change of owner's too, starts at 0.
+                check(w.scenarioTransfer(s,2) && w.unit(s)->kills==0,"a unit that changed sides kept its kill count");
+            }
             check(w.unit(ship)->cargo.empty(),"the dead carrier kept its passengers");
         }
         // A carrier changing sides: its old object's death packet takes the

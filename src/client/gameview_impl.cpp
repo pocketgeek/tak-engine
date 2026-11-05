@@ -1018,7 +1018,7 @@
         s.gen = fb.gen;
         s.id = u.id; s.type = u.type; s.player = u.player;
         if (s.scenarioName != u.scenarioName) s.scenarioName = u.scenarioName;
-        s.hp = u.hp.toFloat(); s.mana = u.mana; s.veteran = u.veteran;
+        s.hp = u.hp.toFloat(); s.mana = u.mana; s.veteran = u.veteran; s.kills = u.kills;
         s.deadFor = u.deadFor < 0 ? -1.0f : float(u.deadFor) / 30.0f;   // ticks -> seconds
         s.inTransport = u.inTransport; s.squad = u.squad; s.stance = u.stance;
         s.standingOrder = u.standingOrder;

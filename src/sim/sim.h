@@ -1593,6 +1593,12 @@ struct alignas(64) Unit {
     // 50b700); else 0, as the other squads' plain records pace nothing. Set by
     // Cmd::AiGroup (World::setAiGroup); hashed with a tag when set.
     int8_t aiGroup = 0;
+    // Its kill count (+0xfe, a word): 512ccd counts a kill under the same gate
+    // as the experience, a placement's Kills sets it (514cfb), and a new object
+    // starts at 0 (511c16). Shown on the panel's KillCount for the local
+    // player's unit (4b28e8..4b2909). Display only, so not hashed, like
+    // Player::kills.
+    uint16_t kills = 0;
     // A campaign mission's fixed veterancy multiplier (SetMission/InitialMission
     // `v F`, unit +0xf4, set by icd 0x5148e1). Not 0: getMult (0x5193c0) answers
     // it instead of 1 + level/10 and getLevel (0x519310) answers 10, so the unit

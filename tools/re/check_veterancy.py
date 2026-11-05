@@ -49,7 +49,7 @@ def main():
     for player in range(11):   # the per-player totals 512c8b adds the victim's value into
         put(game + 0x2510 + player * 0x110, totals + player * 0x20)
 
-    def credit(kind, finished, hitter, owner_player, has_killer, points, xp, score_off):
+    def credit(kind, finished, hitter, owner_player, has_killer, points, xp, score_off, count):
         p.uc.mem_write(victim, bytes(0x138)); p.uc.mem_write(killer, bytes(0x138))
         for player in range(11):   # the hitter's kill count (+0xa0, word) and score (+0xa4)
             put(game + 0x24a4 + player * 0x110, 0); put(game + 0x24a8 + player * 0x110, 0)
@@ -59,7 +59,7 @@ def main():
         put(victim + 0xfc, hitter, 'B'); put(victim + 0xfd, owner_player, 'B')
         put(victim + 0xf8, killer if has_killer else 0)
         put(victim_type + 0x1c2, points & 0xffffffff)
-        put(killer + 0xb4, killer_type); put(killer + 0xf0, xp & 0xffffffff)
+        put(killer + 0xb4, killer_type); put(killer + 0xf0, xp & 0xffffffff); put(killer + 0xfe, count, 'H')
         put(killer_type + 0x268, 0x10, 'B'); put(killer_type + 0x1c2, 0)
         for reg, value in ((UC_X86_REG_ESI, victim), (UC_X86_REG_EBX, 0),
                            (UC_X86_REG_ESP, STACK_TOP), (UC_X86_REG_EBP, STACK_TOP + 0x100)):
@@ -68,7 +68,8 @@ def main():
         p.uc.emu_start(0x512b71, 0x512d2a, count=400)
         got = get(killer + 0xf0, 'i')
         kills = get(game + 0x24a4 + hitter * 0x110, 'H'); score = get(game + 0x24a8 + hitter * 0x110, 'i')
-        return '%d %d %d' % (got if has_killer else xp, kills, score)
+        own = get(killer + 0xfe, 'H')   # 512ccd: the killer's own kill count, a word
+        return '%d %d %d %d' % (got if has_killer else xp, kills, score, own if has_killer else count)
 
     def call_stub(code):
         p.uc.mem_write(stub, code + b'\xc3')
@@ -107,10 +108,10 @@ def main():
     for kind, finished, (hitter, owner_player), has_killer in itertools.product(
             range(16), (0, 1), ((0, 1), (1, 0), (2, 2), (10, 3), (0, 0), (7, 9)), (0, 1)):
         points = rng.choice(shipped); xp = rng.choice((0, 5, 666, 0x7fffffff - 3, -40))
-        score_off = rng.choice((0, 0, 1))
-        rows.append('c %d %d %d %d %d %d %d %d' % (kind, finished, -1 if hitter == 10 else hitter, owner_player,
-                                                 has_killer, points, xp, score_off))
-        expected.append(credit(kind, finished, hitter, owner_player, has_killer, points, xp, score_off))
+        score_off = rng.choice((0, 0, 1)); count = rng.choice((0, 1, 41, 0xffff))
+        rows.append('c %d %d %d %d %d %d %d %d %d' % (kind, finished, -1 if hitter == 10 else hitter, owner_player,
+                                                    has_killer, points, xp, score_off, count))
+        expected.append(credit(kind, finished, hitter, owner_player, has_killer, points, xp, score_off, count))
     credits = len(rows)
     for _ in range(400):
         points = rng.choice(shipped + (0, -5))
@@ -139,7 +140,7 @@ def main():
     for row, got, want in zip(rows, actual, expected):
         if got != want:
             raise AssertionError('%s\n  port   %s\n  native %s' % (row, got, want))
-    credited = sum(1 for r, w in zip(rows[:credits], expected[:credits]) if w.split()[0] != r.split()[-2])
+    credited = sum(1 for r, w in zip(rows[:credits], expected[:credits]) if w.split()[0] != r.split()[-3])
     kills = sum(1 for w in expected[:credits] if w.split()[1] != '0')
     scored = sum(1 for w in expected[:credits] if w.split()[2] != '0')
     print('veterancy: %d kill-credit cases (%d credited, %d kills counted, %d scored), %d getLevel/getMult, '

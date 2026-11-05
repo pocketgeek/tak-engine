@@ -86,6 +86,16 @@ scenario percentages, and its level. Two deaths no attack causes credit
 nobody: deadly water hurts through 51a140 with no attacker and damage kind 13
 (51e13f), which keeps the last hitter but becomes the death kind (+0x10f,
 512610 at 51e36c); the mission `Kill` verb (0x4d36eb -> 513130) sends kind 10.
+The same gate counts the kill on the killer object itself: its word
+`+0xfe` (`512ccd`), which `511990` zeroes (`511c16`), a placement's `Kills`
+key sets (default 0, `4c8ea6` into the record's `+0x1e`, copied at `514cfb`;
+every shipped record says 0), and the panel shows for a unit whose owner is
+this machine's human (owner `+0xea` 1) when it is not 0, in the `.gui`'s
+`KillCount` text (`4b28c5..4b2909`, `_itoa` base 10). Ours had no such count
+until gap hunt 7: `Unit::kills` (not hashed, like the players' kill counts),
+`World::creditKill`, the HUD's `KillCount`; `check_veterancy.py` compares it
+(E), `kill_credit_test` counts a carrier's passengers and resets it on a change
+of owner.
 Saves store the level, not the points (51f04c). Ours:
 `src/sim/retailveterancy.h`; `tools/re/check_veterancy.py` runs 512ae0's kill
 count, score and experience gates, 519310/5193c0 and 519370 natively against

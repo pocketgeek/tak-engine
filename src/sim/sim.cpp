@@ -9628,6 +9628,7 @@ bool World::changeOwner(Unit& u, int newPlayer, MissionScript* notify) {
     startObjectOrders(u);
     startObjectStats(u);
     u.lastHitBy = 0; u.lastHitPlayer = -1;
+    u.kills = 0;   // 511c16
     u.squad = 0;
     u.aiGroup = 0;
     legionFormationSlots_.erase(unitId);   // no squad, so no Legion formation slot
@@ -9726,6 +9727,7 @@ void World::creditKill(const Unit& victim) {
     if (!killer || !retailObjectLives(*killer) || killer->player != victim.lastHitPlayer || !victim.type ||
         !retailKillCreditsExperience(victim.deathType, !victim.underConstruction, victim.lastHitPlayer, victim.player))
         return;
+    ++killer->kills;   // 512ccd, a word
     killer->xp = retailAddExperience(killer->xp, victim.type->experiencePoints);
     killer->veteran = killer->veteranLevel();
 }

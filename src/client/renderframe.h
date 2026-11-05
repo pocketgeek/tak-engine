@@ -78,6 +78,7 @@ struct UnitR {
     int turnReqBam = 0;                // tick's requested turn (BAM) for TurnDirection anim
     float hp = 0, mana = 0;
     int veteran = 0;
+    int kills = 0;                     // its own kill count (Unit::kills, the KillCount gadget)
     float deadFor = -1;
     int inTransport = 0;
     int8_t squad = 0;

@@ -1464,6 +1464,16 @@ namespace {
                 if (u->type->maxMana > 0)
                     bar(guiIdxLeft("ManaBar"), u->mana / u->type->maxMana, {90, 150, 255, 255});
             }
+            // KillCount (4b28e8..4b2909): the unit's own kills, beside its bars, only
+            // for this player's unit and only once it has one.
+            int killSlot = -1;
+            if (int ki = guiIdx("KillCount"); ki >= 0 && u && !multi && u->player == localPlayer_ && u->kills > 0) {
+                const SDL_FRect kr = place(ki);
+                const std::string k = std::to_string(u->kills);
+                const float px = std::max(1.0f, std::min(tpx, tpx * (kr.w - tpx) / std::max(1.0f, blockWidth(k, tpx))));
+                blockText(k, kr.x, kr.y + (kr.h - 7 * px) * 0.5f, px, {236, 226, 192, 255});
+                killSlot = ki;
+            }
 
             // --- ActionText: status (or the total for a multi-selection) ---
             // Not at the .gui's ActionText spot: that sits on the name row, where a long
@@ -1480,7 +1490,9 @@ namespace {
                 const int rh = guiIdxRight("HealthBar");
                 if (lh >= 0 && lm >= 0 && rh >= 0) {
                     const SDL_FRect a = place(lh), m = place(lm), b = place(rh);
-                    const float l = std::max(a.x + a.w, m.x + m.w), gap = b.x - l;
+                    float l = std::max(a.x + a.w, m.x + m.w);
+                    if (killSlot >= 0) { const SDL_FRect k = place(killSlot); l = std::max(l, k.x + k.w); }
+                    const float gap = b.x - l;
                     if (gap > 0 && !st.empty()) {
                         px = std::max(1.0f, std::min(tpx, tpx * (gap - 2 * tpx) / std::max(1.0f, blockWidth(st, tpx))));
                         x = l + (gap - blockWidth(st, px)) * 0.5f;
