@@ -13,6 +13,7 @@
 #include "client/retaildeathsfx.h"
 #include "client/runtimesettings.h"
 #include "client/chatbox.h"
+#include "client/unitstatus.h"
 #include "sim/retailmotion.h"
 #include <cmath>
 #include <cstdlib>
@@ -3686,41 +3687,9 @@
         }
     }
 
-    // Retail's own mission labels, from translate/unitmissions.tdf -- the table
-    // keyed by the UNITMISSIONCODE_* strings the engine's command table carries.
-    // Several of these used to be reasonable-sounding paraphrases that retail
-    // simply does not use: it says "Clearing" and not RECLAIMING, "Loading" and
-    // not BOARDING, and a half-built unit is an "Intangible Mass".
+    // The status line (unitstatus.h).
     const char* GameView::unitStatusText(const UnitR* u) const {
-        if (!u || !u->type) return "";
-        // UNITMISSIONCODE_SELFDESTRUCT. First, because it is what the unit is
-        // doing -- it has stopped taking orders and is walking out on you.
-        if (u->selfDestructT >= 0) return "LEAVING YOUR COMMAND";
-        if (u->stonedFor > 0) return "PETRIFIED";
-        if (u->frozenFor > 0) return "FROZEN";
-        if (u->paralyzedFor > 0) return "PARALYZED";
-        if (u->underConstruction) return "INTANGIBLE MASS";
-        if (!u->active) return "INACTIVE";
-        if (u->repairId != 0) return "REPAIRING";
-        // UNITMISSIONCODE_RESURRECT: the walk to the body (its route's
-        // waypoints lead the leg) and the channel.
-        for (const auto& o : u->orders)
-            if (o.goal) { if (o.revive) return "RAISING DEAD"; break; }
-        if (u->reclaimId != 0) return "CLEARING";
-        if (u->buildSiteId != 0 || !u->buildQueue.empty()) return "CONJURING";
-        if (!u->orders.empty()) {
-            const auto& o = u->orders.front();
-            if (o.guard) return "GUARDING";
-            if (o.patrol) return "PATROLLING";
-            if (o.load) return "LOADING";
-            if (o.unload) return "UNLOADING";
-            if (o.reclaimFeat || o.reclaimArea) return "CLEARING AREA";
-            if (o.targetId != 0) return "ATTACKING";
-            if (o.attackMove) return "SEEKING TO ATTACK";
-            return "MOVING";
-        }
-        if (u->cloaked) return "CLOAKING";
-        return "STANDBY";   // retail's idle label
+        return u ? tak::client::unitStatusLabel(*u) : "";
     }
 
     bool GameView::handleKey(SDL_Keycode key, uint16_t mod) {
