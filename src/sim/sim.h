@@ -16,6 +16,7 @@
 #include "sim/retailhweffect.h"
 #include "sim/retaileffectclock.h"
 #include "sim/retailheight.h"
+#include "sim/retailfeaturesink.h"
 #include "sim/retailexploration.h"
 #include "sim/retailweaponswitch.h"
 #include "sim/retailflight.h"
@@ -2556,6 +2557,12 @@ public:
         clearFeatureMarks();
     }
     const std::vector<FeatType>& featureTypes() const { return featTypes_; }
+    // A water grave's sinking body (4959c0, retailfeaturesink.h), or null for
+    // a body that does not sink. Its y is where the body is drawn.
+    const RetailFeatureSink* corpseSink(int unitId) const {
+        const auto found=corpseSinks_.find(unitId);
+        return found==corpseSinks_.end() ? nullptr : &found->second.motion;
+    }
     // The weapon damage a dead unit's installed corpse has taken (-1: none installed).
     int32_t corpseDamage(int unitId) const {
         const auto found=corpseFootprints_.find(unitId);
@@ -2686,6 +2693,7 @@ public:
         burnSequence_ = 0; fadingFeatures_ = 0;
         clearFeatureMarks();
         mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();corpseAnchors_.clear();
+        corpseSinks_.clear();
         installedMapFeatures_.clear();sacredUnderlay_.clear();
         explorationHeights_.clear();navigationExplored_.clear();explorationBlocks_.clear();
         viewCounts_.clear();deathSights_.clear();
@@ -4266,6 +4274,11 @@ private:
     struct CorpseFootprint { int x=0,z=0,type=-1; int32_t damage=0; };
     std::unordered_map<int,int> corpseAnchors_; // derived anchor -> unit ID, for weapon hits
     std::map<int,CorpseFootprint> corpseFootprints_; // unit id -> installed feature anchor
+    // Water graves (512ee0's -0x2ccc velocity), by unit id: the feature
+    // record's motion and fade, and whether it has left the moving list
+    // (494a80: settled, never updated again). Hashed.
+    struct CorpseSink { RetailFeatureSink motion; bool settled=false; };
+    std::map<int,CorpseSink> corpseSinks_;
     std::vector<FeatType> featTypes_;           // per-type burn data (setup-time, static)
     std::unordered_map<const UnitType*, int> corpseType_;   // unit -> corpse FeatType
     std::unordered_map<const UnitType*, int> stoneType_, frozenType_;   // statue defs
@@ -4670,6 +4683,8 @@ private:
     void sweepDeath(Unit& unit);
     void killPassengers(Unit& carrier);
     void updateCorpseWindow(Unit& unit);
+    bool waterGrave(const Unit& unit) const;
+    void tickCorpseSinks();
     // Enabled by setupMatch; a bare test World leaves it off.
     bool pathService_ = false;
     // The retry constants that lived here (kPathRetryTicks, kPathFailBackoff)

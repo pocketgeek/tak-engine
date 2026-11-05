@@ -2896,6 +2896,7 @@ private:
     // Snapshot overloads. A FLYER rides the coarse dilated datum, not the relief
     // under its nose -- see flyerGround.
     float uLiftY(const UnitR& u) {
+        if (u.corpsePhase && u.corpseSinking) return std::floor(u.corpseSinkY * kHeightScale_);
         if (u.type && u.type->canFly) return flyerDatum(u) * kHeightScale_;
         return terrainLift(u.x, u.z) - waterSink(u.type, u.x, u.z);
     }

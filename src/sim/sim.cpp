@@ -11902,6 +11902,7 @@ void World::forgetCorpseAt(int cx,int cz) {
         const auto footprint=it->second;
         if (footprint.x!=cx || footprint.z!=cz) { ++it;continue; }
         const auto& type=featTypes_.at(size_t(footprint.type));
+        corpseSinks_.erase(it->first);
         if (auto* corpse=unit(it->first)) {
             corpse->deadFor=kRetiredTicks;
             corpse->corpseUntil=0;
@@ -11934,10 +11935,17 @@ bool World::placeCorpse(Unit& corpse,int type) {
     if (definition.blocking) blockCells(cx,cz,definition.fx,definition.fz,true);
     // 512ee0 passes the original position and orientation to 495360.
     // corpseadjust moves the blocked cells, not the rendered model.
+    // A water grave (512fd9..512fe2), a statue's too but not a wall's
+    // (isfeature, 512fcd), starts sinking from the body's position (+0x68).
+    if (waterGrave(corpse) && !corpse.type->classicFbi.isFeature) {
+        const Fixed y=corpse.type->canFly && !corpse.embarked() ? corpse.flightY : corpse.groundY;
+        corpseSinks_[corpse.id]={RetailFeatureSink{corpse.x.v,y.v,corpse.z.v,0,kRetailSinkVelocity,0},false};
+    }
     return true;
 }
 
 void World::retireCorpse(Unit& corpse) {
+    corpseSinks_.erase(corpse.id);
     const auto found=corpseFootprints_.find(corpse.id);
     if (found!=corpseFootprints_.end()) {
         const auto footprint=found->second;
@@ -18183,15 +18191,42 @@ void World::updateCorpseWindow(Unit& u) {
     if (!u.deathHasCorpse || starts==INT32_MAX) return;
     const int ct=u.corpseStatue>=0 ? u.corpseStatue : corpseTypeOf(u.type);
     if (ct<0) return;
-    // 512ee0 (512f8f..512fab): a corpse is a water grave when the ground
-    // height under the body (511170, interpolated; -1 off the last row or
-    // column) is at or below sea level, not when its cell's corner is below.
-    const bool water=!heights_.empty() && terW_>0 &&
+    // 512ee0 gives a water grave, a statue's too, no decomposition timer
+    // (+0x3c stays 0; only the land branch, 513008, sets it): it lies until
+    // its sinking takes it off the plane (tickCorpseSinks) or for good.
+    const int duration=waterGrave(u) ? 0 : featTypes_[size_t(ct)].decomposeTicks;
+    u.corpseUntil=duration>0 ? int32_t(std::min(int64_t(INT32_MAX),int64_t(starts)+duration)) : INT32_MAX;
+}
+
+// 512ee0 (512f8f..512fab): a body is a water grave when the ground height
+// under it (511170, interpolated; -1 off the last row or column) is at or
+// below sea level, not when its cell's corner is below.
+bool World::waterGrave(const Unit& u) const {
+    return !heights_.empty() && terW_>0 &&
         retailTerrainHeight(u.x.v,u.z.v,terW_,terH_,[&](int x,int z) {
             return int(heights_[size_t(z)*size_t(terW_)+size_t(x)]);
         })<=seaLevel_;
-    const int duration=u.corpseStatue<0 && water ? 75 : featTypes_[size_t(ct)].decomposeTicks;
-    u.corpseUntil=duration>0 ? int32_t(std::min(int64_t(INT32_MAX),int64_t(starts)+duration)) : INT32_MAX;
+}
+
+// The feature update's water graves (4959c0, after the units, as here: at
+// the end of the tick that placed them). retailFeatureSinkStep is the
+// record's pass; a body whose fade ends leaves the plane (496380), one with
+// no velocity left is never updated again (494a80).
+void World::tickCorpseSinks() {
+    for (auto it=corpseSinks_.begin();it!=corpseSinks_.end();) {
+        auto& sink=it->second;
+        if (sink.settled) { ++it;continue; }
+        const auto result=retailFeatureSinkStep(sink.motion,[&](int32_t x,int32_t z) {
+            return retailCellMidHeight(x,z,hW_,hH_,[&](int cx,int cz) {
+                return cellHeightRange(size_t(cz)*size_t(hW_)+size_t(cx));
+            });
+        },uint8_t(seaLevel_),ballisticGravityRaw_);
+        if (result==RetailSinkResult::Settled) sink.settled=true;
+        if (result!=RetailSinkResult::Removed) { ++it;continue; }
+        Unit* corpse=unit(it->first);
+        it=corpseSinks_.erase(it);
+        if (corpse) retireCorpse(*corpse);
+    }
 }
 
 // 512860's passengers (51291d..512990), before the carrier's Killed: each
@@ -20847,6 +20882,7 @@ void World::tick(float dt) {
         TAK_PASS();
         turnBam(0, units_.size());
     }
+    tickCorpseSinks();
     {
         std::optional<PhaseSpan> _compact;
         if (g_phase) _compact.emplace(g_compactMs, probe::kCompact);
@@ -21844,6 +21880,14 @@ uint64_t World::stateHash() const {
         mix(uint32_t(corpse.id));mix(uint32_t(corpse.deadFor));mix(uint32_t(corpse.corpseUntil));
         mix(uint32_t(corpse.corpseStatue));mix(corpse.corpseFading);mix(corpse.corpseBlocks);
         mix(uint32_t(corpse.deathAnimationTicks));mix(corpse.deathHasCorpse);
+    }
+    mix(corpseSinks_.size());
+    for (const auto& [id,sink]:corpseSinks_) {
+        const auto& f=sink.motion;
+        mix(uint32_t(id));mix(uint32_t(f.x));mix(uint32_t(f.y));mix(uint32_t(f.z));
+        mix(uint32_t(f.vx));mix(uint32_t(f.vy));mix(uint32_t(f.vz));
+        mix(uint32_t(f.fading)|uint32_t(sink.settled)<<1);
+        mix(std::bit_cast<uint32_t>(f.alpha));mix(std::bit_cast<uint32_t>(f.step));
     }
     // Every map cell's feature (millions of cells on a big map), empty terrain
     // included, in the same pass as the few footprint-tail and non-world-owned

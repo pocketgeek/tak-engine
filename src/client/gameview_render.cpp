@@ -5229,6 +5229,8 @@
         // surface, so the sink is added where the terrain lift is subtracted.
         // Zero on land and for every type that carries neither canhover nor floater.
         ay += waterSink(u.type, ix, iz) * zm;
+        // A water grave is drawn at its feature's height as it sinks (uLiftY).
+        if (u.corpsePhase && u.corpseSinking) ay = (iz - mapView_.offY()) * zm - uLiftY(u) * zm;
         // Body attitude precedes the animated piece tree for both ground and
         // flying units. Convert the retail mirrored basis at the same boundary.
         // Retail applies the birth heading to buildings as well as movers.

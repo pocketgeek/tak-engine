@@ -1083,6 +1083,11 @@
                                            : world_.corpseTypeOf(u.type);
         s.corpseReclaimable=false;
         s.corpseFading=u.corpseFading;
+        // A water grave sinks to its sea bed (4959c0); the body is drawn at
+        // its feature's height.
+        if (const auto* sink=u.alive() ? nullptr : world_.corpseSink(u.id)) {
+            s.corpseSinking=true;s.corpseSinkY=float(sink->y)/65536.0f;
+        } else s.corpseSinking=false;
         if (!u.alive() && s.corpseFeat>=0 && size_t(s.corpseFeat)<world_.featureTypes().size()) {
             const auto& corpse=world_.featureTypes()[size_t(s.corpseFeat)];
             s.corpseReclaimable=corpse.reclaimable && !u.corpseFading;

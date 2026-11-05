@@ -1096,11 +1096,45 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   `511170`'s interpolated ground height under it (-1 off the last row or
   column) is at or below sea level. Ours asked whether the cell's top-left
   corner was below sea level, which disagreed in 39% of random shore
-  layouts; `World::updateCorpseWindow` now asks retail's question. The
-  sinking itself (the feature update `495bd0..495c8d`: a fall to the sea
-  bed, a fade) is still World's 75-tick window, unverified, and a statue
-  (stone or freeze) in water, which `512ee0` sinks the same way, keeps its
-  permanent window here. Test: `building_death_test`.
+  layouts; `World::updateCorpseWindow` now asks retail's question.
+  Test: `building_death_test`.
+- **The sinking** (fx-sink; E over 3,000 cases, `tools/re/check_corpse_sink.py`,
+  which places the body with the real `512ee0` and runs the whole feature
+  update `4959c0` tick by tick with the real `511260`, `50e600`, `494a80`
+  and the cell extrema of `50ed60`). `512ee0`'s water branch gives the
+  record the velocity (0, -0x2ccc, 0) (`+0x18`, `+0x1c`; `+0x14` is not
+  written, I: 0) and leaves the decomposition timer `+0x3c` at the 0 that
+  `4949c0` gave it (only the land branch, `513008`, sets it from the type's
+  `+0x130`), for a corpse and a statue (stone `+0x250`, freeze `+0x252`)
+  alike; a type with isfeature (`+0x260 & 0x1000000`, the walls) gets no
+  velocity. `4959c0` runs after the units every tick (`526433`) over its
+  moving list. For a record (type `+0x13c` bit 0 clear): a fade (`+0x2f`)
+  first takes the step `+0x34` off the alpha `+0x30` (a float) and at <= 0
+  takes the feature off the plane (`496380`) (`495b81..495bb5`); a record
+  with no velocity goes to the static list (`495c92..495cc4`: `494a80`,
+  when `+0x3c`, `+0x40` and `+0x2e` are 0) and is never updated again;
+  otherwise the position takes the velocity and `511260` (the mean of the
+  cell's lowest and highest corner, the high word over 16 toward zero; -1
+  off the map) is the bed. At or below it the record lands there and its
+  velocity is cleared; below sea level the velocity is reset to
+  (0, -0x2ccc, 0) and, over a bed of exactly 0 and not yet fading, the fade
+  starts with alpha 1.0 and step `0.17498779 / (y * 2^-16)` = 0x2ccc / y
+  (`495c5d..495c77`), so it lasts the rest of the fall; at or above sea
+  level the velocity takes gravity (`game+0x19ecc`). So a grave lies on its
+  sea bed for good, reclaimable and raisable, unless the bed is 0, where it
+  fades out as it reaches it (the fade ends the tick it lands or the next;
+  in 5 of 3,000 cases it landed with alpha left and went the tick after).
+  The float step agrees with the x87's for every y below `256 << 16`
+  (checked exhaustively against 64-bit and 53-bit rounding). Display: the
+  model draw gets `+0x2f` as its `+0x12` and the reclaim fade's `+0x2e` as
+  `+0x13`, which alone picks the blended mode (`4fd844..4fd85f`, `4ec9ba`),
+  so the sinking fade is not seen as a fade (I, not traced further); the
+  body is drawn at its feature height. Ours removed every water corpse 75
+  ticks after its handoff and kept a statue in water for good. Port:
+  `src/sim/retailfeaturesink.h`, `World::tickCorpseSinks` at the end of the
+  tick (hashed: position, velocity, fade and settled state; corpses in
+  water no longer decompose); the client draws the body at its height
+  (`UnitR::corpseSinkY`). Test: `building_death_test`.
 - **Mission Kill** (`513130`): ignores its arguments. For every unit this
   machine runs (owner +0xea 1 or 2; lockstep runs them all): `52ae30(u, 1)`
   removes every shot it fired (`529af0`, no impact); a unit whose Dying runs
