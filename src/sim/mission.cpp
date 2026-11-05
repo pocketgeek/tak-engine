@@ -579,7 +579,9 @@ void MissionScript::sweepTriggers(World& w) {
     // fires UnitCreated(unit, owner) once, then TriggerHit(region, unit, owner)
     // once for each armed region 0..15 that holds its footprint-origin cell.
     // Each fires once per unit (latch +0xd4); leaving and coming back does
-    // not fire again. Units aboard a transport skip the regions. 51d3e0 walks
+    // not fire again. A unit aboard a transport counts too, at its carrier's
+    // attach point with its own footprint (4dad30 -> 51b3b0 keeps its +0x68 and
+    // +0x74 there, E; World's cargo step does the same). 51d3e0 walks
     // the players' pools in owner-byte order, so the handlers start (and run)
     // owner by owner; within a pool, in spawn order.
     if (!vm_) return;
@@ -597,7 +599,6 @@ void MissionScript::sweepTriggers(World& w) {
             getUnitContext_ = u.id;
             if (created) vm_->start("UnitCreated", {u.id, owner});
         }
-        if (u.embarked()) continue;
         const int ox = footprintOrigin(u.x, u.type->footX), oz = footprintOrigin(u.z, u.type->footZ);
         for (size_t rid = 0; rid < regions_.size(); ++rid) {
             const Region& r = regions_[rid];

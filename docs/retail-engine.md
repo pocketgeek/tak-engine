@@ -6609,9 +6609,19 @@ does not fire again). A rectangle (`4d2b20`) holds the footprint-origin cell
 an inverted one never fires (no shipped script has one); a circle when
 max(|dx|,|dz|) + (min >> 2) (`535e90`) <= r, in cells from the origin cell:
 (34,30), (26,27), (30,26) and (33,33) fire for centre (30,30) r 4, (35,30)
-does not. The carried bit (`+0x114` bit 4) is not tested; whether a carried
-unit's `+0x74` follows its transport is not established (I), so ours keeps
-skipping embarked units for regions. Ours through 0.9.19 compared the pixel
+does not. Nothing about being carried is tested (`+0x114`, `+0xa8`), and a
+carried unit's `+0x74` follows its transport (E,
+`tools/re/check_mission_cargo_regions.py`, 648 carriers): every mover tick
+`4dad30`'s attached branch hands the carrier's attach point (piece -1: the
+carrier's own position) to `51b3b0`, which stores it as the passenger's `+0x68`
+and, when the cell changes, the origin cell from the passenger's OWN footprint
+`+0x78` (`51b3cd..51b44e`; `506aa0` / `5066f0` restamp it). So a passenger fires
+the regions its carrier carries it into, at footprintOrigin(carrier, its own
+footprint): a 2x2 soldier on a 3x3 wagon at 184,344 is at cell 11,21, the wagon
+at 10,20. Ours skipped embarked units for regions through 0.9.19 (a transport
+carrying troops into a region fired only for the transport); World's cargo
+step already keeps an embarked unit at its carrier's attach point, and
+`sweepTriggers` now reads it. Ours through 0.9.19 compared the pixel
 position with [x1*16+8, x2*16+8] (min/max), used a Euclidean circle of r*16
 px, fired on every re-entry, looked at unfinished and dying units, re-armed an
 armed slot, and fired `UnitCreated` only when a build finished, with owner 0:

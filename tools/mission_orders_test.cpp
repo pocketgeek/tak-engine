@@ -960,6 +960,27 @@ static void regions(Fixture& f) {
           "the sweep goes owner by owner: owner 0's hit runs before owner 1's (it went in spawn order)",
           std::to_string(order.value("hits")) + " hits, last unit " + std::to_string(order.value("unit")) +
           " (owner-1 unit " + std::to_string(first) + ", owner-0 unit " + std::to_string(second) + ")");
+
+    // A unit aboard a transport counts: 4dad30 commits the carrier's attach point
+    // as its position and 51b3b0 its footprint-origin cell from its OWN footprint,
+    // and 4d33a0 tests nothing about being carried (E,
+    // tools/re/check_mission_cargo_regions.py). The 3x3 wagon at 184,344 has
+    // origin cell 10,20; the 2x2 soldier aboard it 11,21.
+    auto ride = makeWorld();
+    const int wagon = ride->spawn(f.t("wagon"), 184, 600, 0.0f, 0);
+    const int rider = ride->spawn(f.t("soldier"), at(60), at(60), 0.0f, 0);
+    sim::MissionScript cargo(recorderCob(), tdf::Node{}, f.reg, 0, "cargo fixture", {-1, 1, 0});
+    cargo.start(*ride);
+    cargo.command(*ride, "SetTrigger", {3, 11, 21, 11, 21});
+    check(ride->embarkInto(rider, wagon), "the soldier boards the wagon");
+    for (int i = 0; i < 2; ++i) cargo.step(*ride, 1.0f / 30.0f);
+    check(cargo.value("hits") == 0, "aboard, away from the region, it does not fire");
+    ride->unit(wagon)->z = Fixed::fromInt(344);
+    tickN(*ride, 1);
+    for (int i = 0; i < 2; ++i) cargo.step(*ride, 1.0f / 30.0f);
+    check(cargo.value("hits") == 1 && cargo.value("unit") == rider && ride->unit(rider)->embarked(),
+          "carried into it, the passenger fires at its own cell under the carrier (ours skipped it)",
+          std::to_string(cargo.value("hits")) + " hits, last unit " + std::to_string(cargo.value("unit")));
 }
 
 // ---- shipped missions -----------------------------------------------------------------------------
