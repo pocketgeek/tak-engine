@@ -189,11 +189,22 @@ int32_t MissionScript::mapCommand(World& w, int nameIdx, const std::vector<int32
     if (ieq(verb, "capture")) {
         if (!a.empty()) if (Unit* u=w.unit(a[0])) {
             const int next=a.size()>=2 ? a[1] : human_;
-            if(u->player!=next) { unitCaptured(w,u->id);w.transferEntitySlot(*u,next);u->player=next; }
+            // Retail's Capture (0x4d3c30) changes the owner through 514da0, the
+            // CRT transfer's new object: orders, last hitter and experience go.
+            if(u->player!=next) w.scenarioTransfer(u->id,next,this);
         }
         return 0;
     }
-    if (ieq(verb, "kill"))         { if (!a.empty()) if (Unit* u = w.unit(a[0])) u->hp = Fixed(); return 0; }
+    // Retail's Kill (0x4d36eb -> 513130) sends death kind 10 (512610), which
+    // credits no killer and scores nothing (512ae0); it also ignores its
+    // arguments and takes every unit this machine runs -- not ported, and no
+    // shipped mission uses it.
+    if (ieq(verb, "kill")) {
+        if (!a.empty()) if (Unit* u = w.unit(a[0])) {
+            u->hp = Fixed(); u->deathType = 10; u->lastHitBy = 0; u->lastHitPlayer = -1;
+        }
+        return 0;
+    }
     if (ieq(verb, "screenshake")) {
         // Dramatic beats -- quakes, collapses -- asked for a shake and got nothing.
         // Purely cosmetic, but it is the script's only way to punctuate a scripted

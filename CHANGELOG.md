@@ -188,6 +188,15 @@ their validation reports; both live in [`docs/`](docs/).
   ordered your units to attack are gone (the original never marked it; hold Shift and
   the target shows the Attack pointer). Area reclaim and area mana-building boxes are
   drawn in the original's yellow instead of gold and cyan.
+- **Veterans rank up as in the original game.** A unit used to gain one veteran level
+  per kill. Now, as in the original game, each kill earns it the experience the victim
+  is worth, and it reaches a level each time that adds up to its own worth again, up
+  to level 10: killing a unit worth more than itself counts for more than one level,
+  and killing a cheaper one for less. Towers and other buildings now become veterans
+  too. Killing an ally's unit counts as well; killing one of your own, a unit not yet
+  finished, or a unit that self-destructs or drowns in deadly water earns nothing. A
+  unit given to an ally, converted by an enemy or captured by a mission starts again
+  without experience.
 - **Sound and music at full quality.** In-game music used to be turned into 11 kHz
   mono. The game now mixes at 44.1 kHz: the original's music plays in
   stereo at its own rate, a mod's 44.1 kHz or surround sounds and music keep their

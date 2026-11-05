@@ -11,6 +11,7 @@
 #include "sim/retailhweffectdata.h"
 #include "sim/retailanimationqueries.h"
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <cmath>
 #include <iostream>
@@ -440,6 +441,32 @@ int main(int argc,char** argv) {
         while (std::cin>>a>>b>>angle) {
             tak::sim::retailRotatePair(a,b,uint16_t(angle));
             std::cout<<a<<' '<<b<<'\n';
+        }
+        return 0;
+    }
+    // tools/re/check_veterancy.py: one row per case, answered in its order.
+    //   c kind finished hitter victim killer points xp  -> the killer's xp after a death
+    //   l xp points noveteran multiplier                 -> level, vetMul's float bits
+    //   s xp level points noveteran multiplier           -> xp after setLevel
+    if (argc==2 && std::string(argv[1])=="--veterancy") {
+        std::string row;
+        while (std::cin>>row) {
+            if (row=="c") {
+                int kind,finished,hitter,victim,killer;int32_t points,xp;
+                std::cin>>kind>>finished>>hitter>>victim>>killer>>points>>xp;
+                if (killer && tak::sim::retailKillCreditsExperience(uint8_t(kind),finished!=0,hitter,victim))
+                    xp=tak::sim::retailAddExperience(xp,points);
+                std::cout<<xp<<'\n';
+            } else if (row=="l") {
+                tak::sim::UnitType type;tak::sim::Unit unit;int noVeteran;
+                std::cin>>unit.xp>>type.experiencePoints>>noVeteran>>unit.vetOverride;
+                type.noVeteran=noVeteran!=0;unit.type=&type;unit.veteran=unit.veteranLevel();
+                std::cout<<unit.veteran<<' '<<std::bit_cast<uint32_t>(unit.vetMul())<<'\n';
+            } else {
+                int32_t xp,points;int level,noVeteran;float multiplier;
+                std::cin>>xp>>level>>points>>noVeteran>>multiplier;
+                std::cout<<tak::sim::retailExperienceForLevel(xp,level,points,noVeteran!=0,multiplier)<<'\n';
+            }
         }
         return 0;
     }

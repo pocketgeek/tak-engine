@@ -108,20 +108,38 @@ int main(int argc,char** argv) {
         auto m=make("AnyUnitPassesX=0;");m->start(w);m->step(w,1.f/30);
         check(m->outcome()==-1,"enemy axis defeat accepts authored zero line");
     }
-    for(int next:{1,0}) {
-        sim::World w;w.spawn(soldier,100,100,0,0);int enemy=w.spawn(soldier,100,100,0,1);
-        const std::vector<uint32_t> code={0x10021001,uint32_t(enemy),0x10021001,uint32_t(next),
+    // A Start script that runs one MAP_COMMAND `verb`(a0, a1).
+    auto commandScript=[](const char* verb,uint32_t a0,uint32_t a1) {
+        const std::vector<uint32_t> code={0x10021001,a0,0x10021001,a1,
             0x10073000,0,2,0x10024000,0x10021001,0,0x10065000};
         std::vector<uint8_t> cob(512);
         auto put=[&](size_t offset,uint32_t value){std::memcpy(cob.data()+offset,&value,4);};
         put(0,6);put(4,1);put(12,uint32_t(code.size()));put(24,52);put(28,56);
         put(36,128);put(44,60);put(48,1);put(52,0);put(56,72);put(60,80);
-        std::memcpy(cob.data()+72,"Start",6);std::memcpy(cob.data()+80,"Capture",8);
+        std::memcpy(cob.data()+72,"Start",6);std::memcpy(cob.data()+80,verb,std::strlen(verb)+1);
         for(size_t i=0;i<code.size();++i)put(128+i*4,code[i]);
+        return cob;
+    };
+    for(int next:{1,0}) {
+        sim::World w;w.spawn(soldier,100,100,0,0);int enemy=w.spawn(soldier,100,100,0,1);
+        w.unit(enemy)->xp=5*soldier->experiencePoints;w.unit(enemy)->veteran=w.unit(enemy)->veteranLevel();
         tdf::Node header;header.values["captureunittype"]="soldier";
-        sim::MissionScript m(std::move(cob),header,registry,0,"capture fixture");m.start(w);m.step(w,1.f/30);
+        sim::MissionScript m(commandScript("Capture",uint32_t(enemy),uint32_t(next)),header,registry,0,"capture fixture");
+        m.start(w);m.step(w,1.f/30);
         check(m.outcome()==(next==0?1:0) && w.unit(enemy)->player==next,
             next==0?"scripted ownership transfer satisfies capture objective":"same-owner scripted Capture is a no-op");
+        // Retail's Capture goes through 514da0: the new object has no experience.
+        check(next==0 ? w.unit(enemy)->xp==0 && w.unit(enemy)->veteran==0 : w.unit(enemy)->veteran==5,
+            next==0?"scripted Capture kept the unit's experience":"same-owner scripted Capture changed experience");
+    }
+    {
+        // Retail's Kill sends death kind 10 (513130 -> 512610): no kill credit.
+        sim::World w;int mine=w.spawn(soldier,100,100,0,0);int enemy=w.spawn(soldier,300,100,0,1);
+        w.unit(enemy)->lastHitBy=mine;w.unit(enemy)->lastHitPlayer=0;
+        sim::MissionScript m(commandScript("Kill",uint32_t(enemy),0),tdf::Node{},registry,0,"kill fixture");
+        m.start(w);m.step(w,1.f/30);
+        for(int i=0;i<3;++i)w.tick(1.f/30);
+        check(!w.unit(enemy)->alive() && w.unit(mine)->xp==0,"scripted Kill credited the last attacker");
     }
     return failed?1:0;
 }

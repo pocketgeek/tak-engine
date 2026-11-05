@@ -922,8 +922,9 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                     unit->hp = Fixed::fromInt(std::clamp(int(health),0,std::max(0,type->maxHp)));
                     unit->scenarioArmor = float(double(unit->scenarioArmor) * double(std::clamp(placed.armor,0,1000)) * double(0.01f));
                     unit->scenarioWeapon = float(double(unit->scenarioWeapon) * double(std::clamp(placed.weapon,0,1000)) * double(0.01f));
-                    unit->veteran = type->noVeteran ? 0 : std::clamp(placed.veteran, 0, 9);
-                    unit->xp = unit->veteran;
+                    unit->xp = tak::sim::retailExperienceForLevel(unit->xp, std::clamp(placed.veteran, 0, 9),
+                        type->experiencePoints, type->noVeteran, unit->vetOverride);   // setLevel 4cd335
+                    unit->veteran = unit->veteranLevel();
                     if (type->isStructure()) world.blockFoot(*type, x, z, true);
                 } else throw std::runtime_error("Could not place scenario unit: " + placed.objectName);
                 if (!world.isNeutralPlayer(placed.player)) {

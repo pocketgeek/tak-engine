@@ -183,6 +183,9 @@ int main() try {
         check(client.units().size()==2 && client.units()[0].player==0 && client.units()[1].player==1,"authored placements lost or default monarchs added");
         check(positions[0]==std::pair<float,float>{168,200},"camera does not start at authored units");
         check(client.units()[0].hp.toFloat()==75 && client.units()[0].veteran==3,"authored health/veterancy lost");
+        // setLevel 4cd335: the placed level's experience, (3 + 0.5) x experiencepoints.
+        check(client.units()[0].xp==int32_t(3.5*client.units()[0].type->experiencePoints),
+              "authored veterancy did not set the level's experience");
         for(int tick=0;tick<60;++tick) {
             client.tick(1.f/30);server.tick(1.f/30);
             check(client.stateHash()==server.stateHash(),"authored setup or triggers diverged between peers");
@@ -219,7 +222,8 @@ int main() try {
                   "neutral owner became a participant or was reassigned");
             check(w.player(8).unitCount==1 && !w.allied(0,8),"neutral ownership has wrong counters or alliance");
             const auto& u=w.units()[0];
-            check(u.hp.toFloat()==75 && u.type->maxHp==100 && u.veteran==3,
+            check(u.hp.toFloat()==75 && u.type->maxHp==100 && u.veteran==3 &&
+                  u.xp==int32_t(3.5*u.type->experiencePoints),
                   "placement health/veteran failed to replace type defaults");
             check(u.scenarioArmor==1.f && u.scenarioWeapon==.75f,"type and placement combat percentages did not multiply");
             for(int tick=0;tick<60;++tick) {w.tick(1.f/30);peer.tick(1.f/30);check(w.stateHash()==peer.stateHash(),"neutral/stat world diverged");}
