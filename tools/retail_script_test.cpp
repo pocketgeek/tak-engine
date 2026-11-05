@@ -2098,6 +2098,33 @@ int main(int argc,char** argv) {
                 require(cleared && switched,"the fallback clears the fired slot and starts SwitchWeapon on the new one");
                 require(!(unit->missionEvents&0x40u),"a walker's unit attack is not given the 0x40 event");
             }
+            // A walker's unit attack (Attack_Chase) in reach: the switch's 0x40
+            // wakes it in the same dispatch, and its fire stage gives the new
+            // slot the target at once (51a700; E, probe_attack_chase_stop.py
+            // --switch-tick): the new slot's aim starts in the release update.
+            {
+                UnitType type=shooter;type.weaponSwitching=true;type.maxMana=100;
+                type.canMove=true;type.maxVel=Fixed::fromInt(1);type.turnInPlaceRate=0;
+                type.weapons.assign(3,weapon);
+                type.weapons[0].manaCost=0;type.weapons[1].manaCost=10;type.weapons[2].manaCost=30;
+                World live;
+                live.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+                const int from=live.spawn(&type,200,200,{},0),target=live.spawn(&targetType,300,200,{},1);
+                live.setStance(from,2);live.setWeapon(from,2);
+                auto* unit=live.unit(from);unit->mana=40;unit->reloads[2]=0;
+                live.attack(from,target,false);
+                bool released=false,aimed=false;
+                for(int tick=0;tick<40 && !released;++tick) {
+                    live.tick(1.f/30);unit=live.unit(from);
+                    released=unit->justFired;
+                    if(released)
+                        for(unsigned i=0;i<unit->weaponAnimations.count;++i)
+                            aimed|=unit->weaponAnimations.at(i).kind==tak::RetailWeaponAnimation::Aim &&
+                                unit->weaponAnimations.at(i).slot==1;
+                }
+                require(released && unit->weaponSlot==1,"the walker's release falls back to the cheaper weapon");
+                require(aimed,"a walker's attack aims the new slot in the update its switch happened (it waited a tick)");
+            }
             // The 0x40 event reaches a flyer's unit attack (AirToGround's
             // and the other air heads' readers).
             {

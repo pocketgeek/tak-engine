@@ -1757,9 +1757,21 @@ flyer's patrol is VTOL_Patrol, armed or a builder (`plainFlightPatrol`;
 until now only an unarmed flyer that builds nothing ran it): its stage-2
 target scan and job search are World's acquisition and `tickPatrolRepair`. A
 patrol from idle gives its return leg the anchor's flags (0x1000412) and the
-outbound leg 0x4000, so VTOL_Patrol does not append a second anchor and a
-Shift-patrol joins the loop at its tail, as a ground patrol's does (before,
-an unarmed flyer lapped start, B, start, C). A flyer output's rally steps are
+outbound leg the row's flags marked 0x4000 (0x1004412), so VTOL_Patrol does
+not append a second anchor and a Shift-patrol joins the loop at its tail, as
+a ground patrol's does (before, an unarmed flyer lapped start, B, start, C).
+E (`check_air_point_mission.py`, 2026-11-04): VTOL_PATROL's row (`0x5ebd50`)
+is class 7, 0x1000412, which its ctor keeps with a point and no target;
+stage 0 (`41a64f`, `4d6b80`) walks the list for a mission flagged 0x4000,
+appends a VTOL_PATROL at the unit's position (0x1000412) only when none is,
+and ORs 0x4000 into its own flags either way. Until 2026-11-04 the outbound
+leg carried 0x4000 alone and a Shift-queued leg or a flyer output's rally
+patrol step the move's 0x3000400, so a Ctrl group's patrolling flyers left
+its moving aggregate on the way out (the group check reads 0x1000000 and
+0x4000000; `retailMissionFlags`). Every flyer patrol leg now carries the
+row's flags (`kVtolPatrolFlags`); `suppress_test` checks the legs and the
+group's moving count. (VTOL_Patrol's own group checks, `419fa0` / `41a162`,
+are still not ported: docs/pathfinding-port.md.) A flyer output's rally steps are
 VTOL_Move and VTOL_Patrol too: GetBuilt resolves each QMove and QPatrol for
 the output (`4de530` actions 2 and 9, `0x4022ec` / `0x402319`); they used to
 fly with no mission. The group spread (`0x5214b0`, "Group move spread"
@@ -2298,6 +2310,19 @@ Retail has no Attack rally, and a factory gets no order at all there:
   `4df0cb..4df0e9`, and mode 9 QPATROL, `4deb8a..4deba8`; mode 3 has nothing
   alike), and GetBuilt copies only QMove and QPatrol (above). An Attack at a
   point never becomes a retail rally leg.
+* S: the same `canattack` test is the first of mode 3 for a unit target too
+  (`4de623..4de62d`, before the target branch `4de7e6`), and every attack
+  World gives goes through mode 3: a click or `Cmd::Attack` (`521a79`,
+  `4d7a30`), a mission's `a NAME` (`513ec0`) and an automatic attack from a
+  scan or a hit (`4d7de0`, `4d7e46`). So a stripped type never attacks a
+  unit itself; its weapons still fire through the sweep (`40f330` sets slot
+  targets, not missions). Ours: `World::attackStrippedAtLoad` gates
+  `World::attack` (after the producer's rally), `retailIssueAutoAttackAllowed`
+  and `retailBuiltAttack`, as it gates `suppressRule`. For a factory (a
+  producer) a unit attack stays its output's rally (the rally rule, below);
+  a stripped type that holds no rally (a mod's mobile type with a canbuild
+  menu and no `bmcode`, 0 being a building's) gets nothing, where it used to
+  attack. No shipped type is stripped. `mission_orders_test`.
 * S: for an armed repeating mobile builder (Beast Lord: ballistic; Shaman:
   line of sight; Beast Handler: melee) the resolver ignores the repeat:
   SUPPRESS, for melee only over a clearable blocking feature. A plain click
@@ -6835,10 +6860,25 @@ Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
   a unit on SUPPRESS or on a flyer's attack only, the walk back its group
   check put ahead of either included (the formation waits on no 0x40, so the
   bit stays until the attack, from stage 0 again, takes it). A walker's unit attack
-  runs per tick on the selected slot (`tickCombat`), which aims the new slot
-  on the next tick as Attack_Chase does, with no mission to take the bit; set
-  there it would linger and wake a later order. A commandfire shot's 0x40000
-  is passed only for a point target.
+  runs per tick on the selected slot (`tickCombat`), with no mission to take
+  the bit; set there it would linger and wake a later order. A commandfire
+  shot's 0x40000 is passed only for a point target.
+- E (`probe_attack_chase_stop.py --switch-tick`, 2026-11-04), a walker's
+  switch: Attack_Chase waits in its fire stage on 0x1f40068 (`404493`), its
+  approach stages on 0x700 only. A switch right after `52ae90` (as the mana
+  fallback makes it) wakes it in the same dispatch: the head reads the new
+  selected slot (`403bed`) and the stage gives it the target at once
+  (`51a700`, `40448e`) when it is in reach (`52adf0`, `52ad60`). With the bit
+  taken away the slot waits for the stage's own wake, 3 to 8 ticks on. The
+  probe runs VERMAGE natively (52ae90, the COB VM, 4d8450, the mover) with a
+  second slot and switches at six ticks of an engagement: the target goes
+  to slot 1 in the switch's own tick every time. Ours: `tickCombat` aims the
+  new slot (`tickScriptWeapon`) in the update its weapons switched it, as the
+  stage-1 aim (World's aim start reaches the script at the next COB pass, as
+  52ae90's does); until 2026-11-04 it waited for the next update
+  (`retail_script_test`). I: a switch to a melee slot hands over to
+  Attack_Melee (`403c17`) in the same dispatch in retail, in World on the
+  next update.
 - E (`check_retail_group.py` suppress mode, 2026-11-04), the group check
   (`404e12..404f1b`), after the 0x40000 exit, on EVERY handler call, chained
   stage calls in one dispatch included: `51d1e0(unit, 1, 4)`. Out of the slot
@@ -6982,9 +7022,12 @@ null target; `Order::airPoint`):
   VTOL_Move_Formation and attacks again, at a point and at a unit, for each
   of the three; one left behind after it has aimed fires on the way back
   (AirToGround at either, the hover at a point), and a shot due as the
-  formation retires leaves then, once. I: the formation is pushed after the
-  dispatch and first runs at the next tick; retail's dispatcher runs it at
-  once.
+  formation retires leaves then, once. The dispatcher (`4d8450`) re-reads the
+  head (`+0x60`) after the attack returns 0, so the formation `4d7750` put
+  there runs its first stages in the same dispatch (S, as SUPPRESS's):
+  `AirAttackGroup::push` dispatches it (`tickFlightPatrol`) and the mover
+  flies its controller that tick; until 2026-11-04 it first ran at the next
+  tick (`suppress_test`: no formation waits a tick at stage 0).
 - S, the registry rows (read statically, 2026-11-04): VTOL_SEEKATTACK
   (`4192f0`) and VTOL_SEEKGUARD (`4197d0`) both carry
   0x1000600, so a seek is a group mover; whether their ctor clears 0x200
@@ -6996,6 +7039,20 @@ null target; `Order::airPoint`):
   AI reads AIRSTRIKE as class 2, 0x1000400 and AIRTOGROUNDHOVER and
   AIRTOGROUND as class 1, 0x1000000 (`ClassicBrain`'s `firstMission`; it read
   a move before 0.9.20).
+- E (the same check), a flyer's attack on a unit (the resolver's unit branch,
+  `4de8b0..4de9ea`: AIRTOAIR at a flyer, AIRSTRIKE on a selected `dropped`
+  weapon at a unit that cannot fly, else AIRTOGROUNDHOVER / AIRTOGROUND):
+  with a live target each keeps 0x1000200, class 1; AIRSTRIKE is class 2,
+  0x1000600 with a point and 0x1000200 without. A player's order passes the
+  target's position as the point (S, `521a66..521abc` -> `4d7a30` ->
+  `4d78a0`), an automatic attack none (S, `4d7de0`: `4d8027..4d8035`).
+  `firstMission` read every unit attack as Attack_Chase (1, 0x1000280),
+  flyers included; it now reads the air rows (AirStrike's goal its `+0x22`,
+  which follows the target), and a flyer's patrol as VTOL_PATROL (0x1000412,
+  0x4000 once anchored) instead of Patrol's 0x3000410. The AI's readers
+  (0x200, 0x400 with the goal, 0x2000, class 1 or 2) see the same for every
+  shipped type; only a mod's `dropped` flyer (class 2, 0x400) reads
+  differently. `mission_orders_test`.
 
 `suppress_test` (both modes): `creaeri` flies runs over the
 point and hits it (24 shots, 4 px off); a Tarbeak hovers ~134 px off a point

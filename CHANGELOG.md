@@ -179,13 +179,17 @@ their validation reports; both live in [`docs/`](docs/).
   when its weapon can aim without turning the body, and then fires on from there; now
   and then it gives up the order instead. Flyers attacking in a group, at a spot or
   at a unit, fly back to their group the same way, and keep firing at what they
-  had aimed at while they do.
+  had aimed at while they do; they now turn back at once, not a moment later.
+  Patrolling flyers in a Ctrl group now count as moving with their group on the
+  way out as well as on the way back, as in the original game.
 - **Campaign siege units and towers scripted to bombard a spot now fire at it**, as in
   the original game, instead of only walking toward it (or, for a tower, doing
   nothing). A flyer scripted the same way now makes its air attack on the spot
   instead of flying to it, and a computer player sees it as attacking.
 - **An armed factory from a mod gets no Attack Ground order**, as in the original
-  game, which takes the attack command away from any factory.
+  game, which takes the attack command away from any factory. It never attacks an
+  enemy unit itself either, ordered or on its own (an Attack on a unit still sends
+  its new units there), though its weapons still fire at what comes in range.
 - **Holding Shift shows a cloaked unit's decloak range.** While Shift is held, each
   of your selected units, and your unit under the pointer, that is cloaked now shows a
   white circle at its decloak distance, as in the original game. A `kamikaze` unit
@@ -241,7 +245,8 @@ their validation reports; both live in [`docs/`](docs/).
   computer's switched only later. A shot the unit cannot quite pay for still leaves
   without taking mana, so mana no longer drops below zero, and veterans pay less per
   shot, as in the original game. A flyer attacking a unit now restarts its attack on
-  the new weapon at once.
+  the new weapon at once, and a unit on foot aims the new weapon at once instead of
+  a moment later.
 - **Campaign units go to the exact spot the mission gives.** A mission's scripted
   moves, fight-moves, patrols and unloads went to the middle of the named map square;
   as in the original game they now go to its corner, half a square up and left, and

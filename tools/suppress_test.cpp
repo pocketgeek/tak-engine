@@ -290,6 +290,38 @@ Run flyCopy(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim::UnitTy
 void flyerGroups(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim::UnitType& runner,
                  const sim::UnitType& hover);
 
+// A flyer's patrol legs carry VTOL_PATROL's flags (row 0x5ebd50, 0x1000412;
+// tools/re/check_air_point_mission.py): from idle the outbound leg is the
+// row's flags marked anchored (0x1004412) and the return leg is the anchor
+// (0x1000412); a Shift-queued leg and a flyer output's rally patrol step are
+// the row's. So a Ctrl group of patrolling flyers counts in its group's
+// moving aggregate (0x1000000), as a ground patrol (0x3000410) does.
+void flyerPatrols(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim::UnitType& t) {
+    Scene s;
+    build(s, vfs, reg);
+    std::vector<int> ids;
+    for (int i = 0; i < 3; ++i) ids.push_back(s.w.spawn(&t, 300, 300 + float(i) * 64, 1.5707963f, 0));
+    for (int g : ids) { s.w.setSquad(g, 1); s.w.unit(g)->fireState = 0; }
+    for (int i = 0; i < 10; ++i) s.w.tick(kTick);
+    for (int g : ids) s.w.patrol(g, 1100, 400);
+    s.w.queuePatrol(ids[0], 1100, 1100);
+    const auto& o = s.w.unit(ids[0])->orders;
+    std::string flags;
+    for (const auto& q : o) { char b[16]; std::snprintf(b, sizeof b, " %#x", unsigned(q.mission.flags)); flags += b; }
+    check(o.size() == 3 && o[0].mission.flags == 0x1004412u && o[1].mission.flags == sim::kVtolPatrolFlags &&
+          o[2].mission.flags == sim::kVtolPatrolFlags,
+          "a flyer's patrol legs carry VTOL_PATROL's flags: outbound 0x1004412, anchor and a Shift leg 0x1000412",
+          flags);
+    for (int i = 0; i < 3; ++i) s.w.tick(kTick);
+    if (mode == sim::PathfindingMode::Retail) {
+        const auto* g = s.w.retailGroupRecord(ids[0]);
+        const int moving = g ? g->moving[size_t(sim::RetailGroupClass::Flyer)].count : -1;
+        const int all = g ? g->all[size_t(sim::RetailGroupClass::Flyer)].count : -1;
+        check(moving == 3 && all == 3, "a Ctrl group of patrolling flyers is moving with its group",
+              std::to_string(moving) + " moving of " + std::to_string(all));
+    }
+}
+
 void flyers(const hpi::Vfs& vfs, const sim::TypeRegistry& reg) {
     using sim::Order;
     const auto armed = [](const sim::UnitType& t) {
@@ -302,6 +334,7 @@ void flyers(const hpi::Vfs& vfs, const sim::TypeRegistry& reg) {
     std::printf("  flyers: attack runs %s, hover %s\n", runner ? runner->id.c_str() : "-",
                 hover ? hover->id.c_str() : "-");
     if (!runner || !hover) { check(false, "the shipped data has a flyer of each kind"); return; }
+    flyerPatrols(vfs, reg, *runner);
     flyerGroups(vfs, reg, *runner, *hover);
 
     // AIRTOGROUND: attack runs over the point.
@@ -412,6 +445,7 @@ struct GroupRun {
                                  // its slot (51d1e0(unit, 1, 4)), with no formation leading: the leave
     int stoppedTurns = 0;        // walk ticks the body stood, its formation's controller let go, and turned
     int movers = -1, members = -1;   // the group's moving and all ground members, two ticks into the march
+    int pushedIdle = 0;          // formations still at stage 0 with no controller on the tick they went in
     uint64_t hash = 0;
 };
 
@@ -571,6 +605,9 @@ GroupRun flyGroup(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim::
         const bool lead = o.size() > 1 && o[0].formationLevel && attacking(o[1]);
         if (!o.empty() && o[0].formationLevel && !lead) r.otherLegs = true;
         if (lead && !walking) ++r.formations;
+        // The dispatcher goes on to the head it was handed (4d8450): the
+        // formation runs its first stages in the tick it went in.
+        if (lead && !walking && o[0].mission.stage == 0 && !o[0].flightGoal) ++r.pushedIdle;
         if (!lead && walking && !o.empty() && attacking(o[0])) {
             r.retired = true; r.afterShots = 0; r.retireTicks.push_back(now);
         }
@@ -666,11 +703,18 @@ void flyerGroups(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const sim::U
         const GroupRun r = flyGroup(vfs, reg, *t, 2400);
         std::printf("  %s outlier of an all-flyer group: %s\n", name, describe(r).c_str());
         // A strike's passes reach far: it may be sent back again before its
-        // next release, so its shots are counted from the first return.
-        if (mode == sim::PathfindingMode::Retail)
-            check(r.formations >= 1 && !r.otherLegs && r.retired && r.orderAtEnd && r.shotsSince >= 1,
+        // next release, so its shots are counted from the first return, and
+        // out of its slot again once flagged it may give the order up
+        // (rand(2), as at a unit above).
+        if (mode == sim::PathfindingMode::Retail) {
+            check(r.formations >= 1 && !r.otherLegs && r.retired && (r.orderAtEnd || t == &striker) &&
+                      r.shotsSince >= 1,
                   std::string(name) + ": out of its slot it flies back on VTOL_Move_Formation, then attacks again",
                   describe(r) + ", " + std::to_string(r.shotsSince) + " shots since the first return");
+            check(r.formations >= 1 && r.pushedIdle == 0,
+                  std::string(name) + ": the formation runs in the dispatch that pushed it",
+                  std::to_string(r.pushedIdle) + " of " + std::to_string(r.formations) + " waited a tick");
+        }
         else
             check(r.formations == 0 && r.orderAtEnd, std::string(name) + ": Legion has no group check", describe(r));
     }

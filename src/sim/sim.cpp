@@ -2507,7 +2507,7 @@ void World::tickFlightPatrol(Unit& u) {
                 const bool anchored=std::any_of(u.orders.begin(),u.orders.end(),[](const Order& o) {return (o.mission.flags&0x4000u)!=0;});
                 if (!anchored) {
                     Order anchor;anchor.x=u.x;anchor.z=u.z;anchor.goal=anchor.patrol=true;
-                    anchor.mission.flags=0x1000412u;anchor.issuedTick=w.tickCounter_;
+                    anchor.mission.flags=kVtolPatrolFlags;anchor.issuedTick=w.tickCounter_;
                     // A return leg: it belongs to the outbound leg's convoy (and order).
                     anchor.setIdentity(u.orders.front().identity());
                     u.orders.push_back(anchor);
@@ -3026,14 +3026,25 @@ const Order* World::formationAttack(const std::vector<Order>& orders) {
 // 41db51 / 41c1f1 / 41b7f6: VTOL_Move_Formation (row 5ebca1), level -4
 // (+0x56): the moving members' centre until back within level 4; the attack
 // starts again at stage 0 when it retires.
-void World::AirAttackGroup::push() {
-    if (!formationTo) return;
+//
+// The attack returns 0 with the formation at the head (+0x60, 4d7750), and
+// the dispatcher (4d8450) goes on to it in the same dispatch, as SUPPRESS's
+// (tickSuppress): its first stages run now, and the mover flies its
+// controller this tick. The attack's weapons have fired already (52ae90
+// runs first), so only the formation's dispatch and the mover run here.
+bool World::AirAttackGroup::push() {
+    if (!formationTo) return false;
     Order formation;
     formation.x=u.x;formation.z=u.z;formation.goal=formation.flightMoveMission=true;
     formation.formationLevel=-4;formation.mission.flags=0x1000000u;
     formation.attackFormation=true;formation.issuedTick=w.tickCounter_;
     u.orders.insert(u.orders.begin(),formation);
     w.noteOrders(u.id);
+    w.tickFlightPatrol(u);
+    if (w.stepOutFront(u)) w.flyMissionGoal(u,u.orders.front());
+    else if (formationAttack(u.orders)) { w.tickFlightMovement(u);w.notifyFlightOccupancy(u); }
+    else { w.tickFlightBody(u);w.notifyFlightOccupancy(u); }
+    return true;
 }
 
 // Flags of the unit's current mission (+0x5a), for the missions this host
@@ -5365,15 +5376,17 @@ void World::patrol(int unitId, float x, float z) {
     }
     if (u->type->canFly) {
         // VTOL_Patrol (plainFlightPatrol, every flyer's). The return leg where
-        // the flyer stands is the anchor its stage 0 would append (0x1000412),
-        // and the outbound leg is marked anchored (0x4000), so a Shift-patrol
-        // queued behind joins the loop at its tail, as a ground patrol's does,
-        // instead of a second anchor going in behind it.
+        // the flyer stands is the anchor its stage 0 would append (4d6b80:
+        // the row's 0x1000412 at the unit), and the outbound leg is the row's
+        // flags marked anchored (0x1000412 | 0x4000), so a Shift-patrol queued
+        // behind joins the loop at its tail, as a ground patrol's does,
+        // instead of a second anchor going in behind it. Both are group
+        // movers (0x1000000) for the moving aggregate (retailMissionFlags).
         u->orders.clear();cancelPath(*u);
         Order a{u->x,u->z,0},b{Fixed::fromFloat(x),Fixed::fromFloat(z),0};
         a.goal=a.patrol=a.attackMove=true;
         b.goal=b.patrol=b.attackMove=true;
-        a.mission.flags=0x1000412u;b.mission.flags=0x4000u;
+        a.mission.flags=kVtolPatrolFlags;b.mission.flags=kVtolPatrolFlags|0x4000u;
         // The outbound leg joins the click's Patrol convoy; the return leg (the
         // flyer's own position) copies it rather than open a convoy of its own.
         if(isLegionPathfinding(pathfindingMode_)) {const auto id=stampIdentity(*u,ConvoyClass::Patrol,b.x,b.z);a.setIdentity(id);b.setIdentity(id);}
@@ -5408,6 +5421,9 @@ void World::patrolTo(int unitId, float x, float z, bool queue, std::optional<Ord
         u->orders[i].patrol = true;
         u->orders[i].attackMove = true;
         u->orders[i].flightMoveMission = false;
+        // A flyer's leg is VTOL_PATROL at its point (row 0x5ebd50), not the
+        // move's flags order() gave it.
+        if (u->type->canFly) u->orders[i].mission.flags = kVtolPatrolFlags;
     }
 }
 
@@ -5829,8 +5845,9 @@ bool World::switchWeaponSlot(Unit& u,int slot,bool fromCommand) {
     // AirToGroundHover 41da9d, AirStrike 41b728, AirToAir 41ccc4). Only a
     // unit on one gets it: a walker's unit attack (Attack_Chase,
     // Attack_Melee) answers it in the same dispatch, and World runs that
-    // attack per tick (tickCombat on u.weaponSlot) with no mission to take
-    // the bit, which would otherwise linger and wake a later order. A
+    // attack per tick (tickCombat on u.weaponSlot, which aims a slot its own
+    // weapons switched in the same update) with no mission to take the bit,
+    // which would otherwise linger and wake a later order. A
     // formation the attack's group check put ahead of it waits on no 0x40:
     // the bit stays until the attack, back from stage 0, takes it.
     if (!u.orders.empty()) {
@@ -5943,6 +5960,8 @@ void World::attack(int unitId, int targetId, bool queue) {
         return;
     }
     if (u->type->weapon.damage <= 0) return;
+    // 4de62d: no canattack (attackStrippedAtLoad), no attack mission.
+    if (attackStrippedAtLoad(*u->type)) return;
     const Unit* target=unit(targetId);
     const bool converts=std::any_of(u->type->weapons.begin(),u->type->weapons.end(),
                     [](const Weapon& weapon){return weapon.mindControl;});
@@ -7584,6 +7603,8 @@ int World::retailHostScan(Unit& u) {
 
 bool World::retailIssueAutoAttackAllowed(const Unit& u,int targetId,bool forceReturn,bool forced) const {
     if (targetId==u.id) return false;
+    // 4d7de0's 4de530 kind 3: a type stripped of canattack gets none (4de62d).
+    if (attackStrippedAtLoad(*u.type)) return false;
     if (u.moveState==0 && !forceReturn && !forced) return false;
     if (u.fireState==0 && !forced) return false;
     const Unit* t=unit(targetId);
@@ -7626,8 +7647,9 @@ int World::retailMoveFallback(const Unit& u) const {
 std::optional<Order> World::retailBuiltAttack(const Unit& u,int targetId,bool automatic,uint16_t leash,
                                               RetailGroundPoint origin) const {
     const Unit* t=unit(targetId);
-    // 4de530 kind 3 (an attack mission for the pair) -> the closest host test.
-    if (targetId==u.id || !t || !canAttackTarget(u,*t)) return std::nullopt;
+    // 4de530 kind 3 (an attack mission for the pair) -> the closest host test;
+    // none for a type stripped of canattack (4de62d).
+    if (targetId==u.id || !t || attackStrippedAtLoad(*u.type) || !canAttackTarget(u,*t)) return std::nullopt;
     Order attack{Fixed(),Fixed(),targetId};
     attack.goal=true;attack.autoTarget=automatic;attack.issuedTick=tickCounter_;
     if (leash) { attack.chaseLeashed=true;attack.chaseLeash=leash;attack.chaseOrigin=origin; }
@@ -8479,6 +8501,17 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     if (u.type->weaponSwitching && slot!=u.weaponSlot && u.weaponSlot<int(u.type->weapons.size())) {
         slot=u.weaponSlot;
         sel=&u.type->weapons[size_t(slot)];
+        // E (probe_attack_chase_stop.py --switch-tick): the switch's 0x40
+        // (51a8b0) wakes Attack_Chase, waiting in its fire stage on
+        // 0x1f40068 (404493), in this same dispatch, and the stage gives the
+        // new selected slot the target at once (51a700, 40448e) when it is
+        // in reach (52adf0, 52ad60); without the bit it would wait for the
+        // stage's own wake, rand(6) + 3 ticks on. World's aim start on that
+        // tick is the stage-1 aim's (above): it reaches the script at the
+        // next COB pass, as 52ae90's does in retail. A melee slot's hand
+        // over to Attack_Melee (403c17) still waits for the next tick.
+        if (chaseMission && !sel->melee && !(u.slotAuto>>slot&1) && slotAims(slot))
+            tickScriptWeapon(u,*target,slot);
     }
     if (airRun && !u.orders.empty() && u.orders.front().targetId==target->id) {
         tickAirToGround(u,target,sel);
@@ -8640,9 +8673,8 @@ bool World::tickAttackWalk(Unit& u) {
 World::SuppressRule World::suppressRule(const UnitType& t, int weaponSlot) {
     if (t.weapons.empty()) return SuppressRule::None;
     // 4c18d7..4c18ff: an armed type with bmcode 0 (+0x24a) and a canbuild menu
-    // (+0x12e > 0) loses canattack at load, and 4de62d then gives no order. No
-    // shipped type is one; a mod's armed factory would be.
-    if (t.buildMovementCode == 0 && !t.buildMenu.empty()) return SuppressRule::None;
+    // (+0x12e > 0) loses canattack at load, and 4de62d then gives no order.
+    if (attackStrippedAtLoad(t)) return SuppressRule::None;
     // 4de530 kind 3 with a point, by the selected slot's weapon (519ac0: a
     // switcher's selected slot, else the first).
     const int n=int(std::min<size_t>(3,t.weapons.size()));
@@ -13433,7 +13465,7 @@ void World::tickAirToGroundHover(Unit& u,const Unit* target,const Weapon* select
     }
     if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
         u.orders.front().aheadOfDefault=aheadOfDefault;
-    host.push();
+    if (host.push()) return;
     if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
     if (host.seekTo) { seekLostPoint(u,pointX,pointZ);return; }
     if (stepOutFront(u)) { flyMissionGoal(u,u.orders.front());return; }
@@ -13593,7 +13625,7 @@ void World::tickAirToGround(Unit& u,const Unit* target,const Weapon* selected) {
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
         u.orders.front().aheadOfDefault=aheadOfDefault;
-    host.push();
+    if (host.push()) return;
     if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
     if (host.seekTo) { seekLostPoint(u,pointX,pointZ);return; }
     if (stepOutFront(u) || (!u.orders.empty() && host.owns(u.orders.front()))) {
@@ -13723,7 +13755,7 @@ void World::tickAirStrike(Unit& u,const Unit* target) {
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
         u.orders.front().aheadOfDefault=aheadOfDefault;
-    host.push();
+    if (host.push()) return;
     if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
     if (host.seekTo) { seekLostPoint(u,pointX,pointZ);return; }
     if (stepOutFront(u) || (!u.orders.empty() && host.owns(u.orders.front()))) {
@@ -17955,6 +17987,7 @@ void World::finishProduction(int producerId,Unit& finished) {
                 // fight-move step carries the move's flags.
                 leg.patrolOpen=false;
                 if (!leg.patrol) { leg.flightMoveMission=true;leg.mission.flags=0x3000400u; }
+                else leg.mission.flags=kVtolPatrolFlags;   // VTOL_PATROL at the step's point
             }
         }
     // Nothing handed over -- no rally, or every entry was dropped (dead attack
