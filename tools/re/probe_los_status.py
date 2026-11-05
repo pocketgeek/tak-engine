@@ -18,7 +18,9 @@ class's callback and retires the shot.
 
 Part 2 runs each callback against a controlled unit and CRT rand() and
 compares the gates, the single draw and the roll (rand()*100/32768 against
-the truncated chance*scale) with the model.
+the truncated chance*scale) with the model, with the caster's player at its
+unit cap or not: the charm calls 514da0 either way (World's captureUnit
+leaves the refusal to changeOwner, after the capture event).
 
     python3 tools/re/probe_los_status.py
 """
@@ -179,8 +181,9 @@ def model(kind, same, has_mover, commander, immune, remaining, transport, lvl, r
 callbacks = 0
 for name, (_, callback) in UPDATES.items():
     immune_word, immune_bit = {'mind': (0x264, 0x100000), 'stone': (0x268, 2), 'frozen': (0x268, 4)}[name]
-    for same, has_mover, commander, immune, remaining, transport in itertools.product(
-            (False, True), (False, True), (False, True), (False, True), (0.0, 0.25), (False, True)):
+    for same, has_mover, commander, immune, remaining, transport, at_cap in itertools.product(
+            (False, True), (False, True), (False, True), (False, True), (0.0, 0.25), (False, True),
+            (False, True)):
         for level, rand_value, scale in itertools.product(
                 (0, 1, 3, 4, 10), (0, 327, 26213, 26214, 26215, 32439, 32767), (1.0, 0.75, 0.33)):
             p.uc.mem_write(unit, bytes(0x140))
@@ -198,16 +201,24 @@ for name, (_, callback) in UPDATES.items():
             put(unitdef + 0x268, immune_bit if immune and immune_word == 0x268 else 0)
             p.uc.mem_write(unit + 0x108, struct.pack('<f', remaining))
             put(unit + 0xa8, 0x77 if transport else 0)
+            # The caster's player (3) at its unit cap or not: the game's cap
+            # (+0x14e7c) against the owner record's count (+0xe8), what
+            # 512060 refuses on (check_change_owner.py). The callbacks read
+            # neither: the charm calls 514da0 either way.
+            put(game + 0x14e7c, 250)
+            put(game + 0x2404 + 3 * 0x110 + 0xe8, 250 if at_cap else 10)
             events.clear()
             result, error = p.call(callback, (shot, unit, struct.unpack('<I', struct.pack('<f', scale))[0]))
             assert not error, error
             want, want_events = model(name, same, has_mover, commander, immune, remaining, transport,
                                       level, rand_value, scale)
-            context = (name, same, has_mover, commander, immune, remaining, transport, level, rand_value, scale)
+            context = (name, same, has_mover, commander, immune, remaining, transport, at_cap, level, rand_value,
+                       scale)
             assert result == want, (context, result, want)
             assert events == want_events, (context, events, want_events)
             callbacks += 1
 
 print(f'PASS: {timelines} native status-shot timelines (owner check, no activation heading, flight '
       f'on the expiry tick, impact with the class callback) and {callbacks} callback cases '
-      f'(gates, one CRT draw, rand()*100/32768 < (int)(chance*scale), effect and explosion on success)')
+      f'(gates, one CRT draw, rand()*100/32768 < (int)(chance*scale), effect and explosion on success, '
+      f'the charm\'s 514da0 at the new owner\'s unit cap too)')

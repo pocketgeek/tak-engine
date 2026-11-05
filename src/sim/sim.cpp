@@ -6236,9 +6236,11 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
                 hits_.push_back(effect);
             }
             if (w.mindControl) {
-                // 514da0 leaves a dying unit as it is (captureUnit), and nothing
-                // changes when the new owner has no room for the new object.
-                if (!atUnitCap(fromPlayer)) captureUnit(e, fromPlayer);
+                // 52db08 calls 514da0 with no check of the new owner's room
+                // (probe_los_status.py, at the unit cap): it leaves a dying
+                // unit as it is, and at the cap sends only the capture event
+                // (changeOwner).
+                captureUnit(e, fromPlayer);
                 return;
             }
             // 51a140 -> 51a240 (type 14 stone / 15 freeze, amount 1): a dying unit
