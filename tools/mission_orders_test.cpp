@@ -66,7 +66,7 @@ static void check(bool ok, const std::string& what, const std::string& detail = 
 
 static void tickN(World& w, int n) { for (int i = 0; i < n; ++i) w.tick(1.0f / 30.0f); }
 
-static float cell(float c) { return c * 16.0f + 8.0f; }   // MissionScript::cellToWorld
+static float cell(float c) { return c * 16.0f + 8.0f; }   // a cell's centre in world px
 
 static const ScriptedOrder* scripted(const World& w, const Order& o) { return w.scriptedOrder(o); }
 static bool isKind(const World& w, const Order& o, ScriptedOrder::Kind k) {

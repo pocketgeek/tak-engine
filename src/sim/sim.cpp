@@ -8621,10 +8621,10 @@ void World::tickPointWeapons(Unit& u) {
 
 // 52ae90 for a flyer's unit attack behind its walk back: the push (4d7750)
 // touches no slot, so a manual slot the attack gave the target keeps it and
-// aims and fires per reload (one the push came before has none), as tickSlotWeapons fires an auto slot's (the in-range, minimum
-// range and clear-shot refusals, 52fe30's facing request). The weapon's own
-// legality (a toair or noair weapon, a charm it cannot take) is tickCombat's
-// slotAims.
+// aims and fires per reload (one the push came before has none), as
+// tickSlotWeapons fires an auto slot's (the in-range, minimum range and
+// clear-shot refusals, 52fe30's facing request). The weapon's own legality
+// (a toair or noair weapon, a charm it cannot take) is tickCombat's slotAims.
 void World::tickAttackWalkWeapons(Unit& u,Unit& target) {
     if (u.type->weapons.empty() || (u.type->onOffable && !u.active)) return;
     if (!target.alive() || target.hp<=Fixed() || !target.type || !canAttackTarget(u,target)) return;
@@ -12557,7 +12557,7 @@ void World::clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, F
 //  - a guarded unit lost (dead or dying; World posts no 0x208) while the
 //    guard is the last mission inserts VTOL_SeekGuard (4191d7, seekLostWard).
 // Not ported: the group check (51d1e0(unit, 1, 4)) with its VTOL_Move_Formation
-// push and its flag's rand(10), as in AirToGround.
+// push and its flag's rand(10) (AirToGround's is ported: retailAirGroupCheck).
 void World::tickFlyingGuard(Unit& u) {
     const size_t end=currentLeg(u.orders);
     if (!u.orders[end].guard) return;

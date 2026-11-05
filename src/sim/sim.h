@@ -4116,7 +4116,8 @@ private:
     std::vector<Unit> units_;
     // IDs remain monotonic; storage slots may move after final corpse retirement.
     std::vector<int32_t> unitSlotById_;
-    // Only delayed kill attribution survives final retirement, not full unit/VM state.
+    // A fully retired id and its last owner (folded into the hash once): a lookup
+    // of one answers nothing. No unit/VM state survives final retirement.
     std::unordered_map<int,int> retiredOwners_;
     uint64_t retiredHash_=0;
     void compactRetiredUnits();

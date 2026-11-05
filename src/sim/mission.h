@@ -133,7 +133,6 @@ private:
     int conditionOwner(int player) const;
 
     const UnitType* findType(const std::string& name) const;   // registry lookup (lowercased)
-    static float cellToWorld(float cell) { return cell * 16.0f + 8.0f; }   // .ota cell -> world px
     float orderPoint(float cell) const { return orderPoint(cell, pointScale_); }
 
     cob::File cob_;

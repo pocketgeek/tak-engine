@@ -182,10 +182,6 @@ their validation reports; both live in [`docs/`](docs/).
   had aimed at while they do; they now turn back at once, not a moment later.
   Patrolling flyers in a Ctrl group now count as moving with their group on the
   way out as well as on the way back, as in the original game.
-- **Campaign siege units and towers scripted to bombard a spot now fire at it**, as in
-  the original game, instead of only walking toward it (or, for a tower, doing
-  nothing). A flyer scripted the same way now makes its air attack on the spot
-  instead of flying to it, and a computer player sees it as attacking.
 - **An armed factory from a mod gets no Attack Ground order**, as in the original
   game, which takes the attack command away from any factory. It never attacks an
   enemy unit itself either, ordered or on its own (an Attack on a unit still sends
@@ -212,38 +208,32 @@ their validation reports; both live in [`docs/`](docs/).
   shooter was destroyed, or one fired before the shooter changed sides, no longer
   takes the kill from whoever hit the target before, and lands without the dead
   shooter's veteran bonus. The Kills count and score now go to the player whose unit
-  landed the killing blow for the same kills that earn experience: killing an ally's
-  unit counts, while a self-destruct or a mission's scripted kill does not.
+  landed the killing blow for the same kills that earn a unit experience, so killing
+  an ally's unit now counts there too.
 - **Units that explode when they die do it when their death ends.** A Bomb
   Sprinkler, Kamikaze Rat, Grenadier, Fire Wagon, Shock Trooper or Dirigible now
   bursts once its death animation is over, as in the original game (the Bomb
   Sprinkler about five seconds after it falls), not the moment it is killed. The burst
   belongs to nobody: its kills earn no player a kill or score and no unit experience,
   and it is not stronger for a veteran.
-- **A captured or given unit takes its type's mission bonuses**, as in the original
-  game, rather than keeping the armour and weapon bonuses its old owner's mission
-  placed it with.
 - **Deadly water hurts once a second**, as in the original game: the map's whole
   water damage each second to anything standing at or below the water line that
   cannot hover, ships included.
-- **The mission Kill command kills every unit on the map**, as in the original game,
-  whatever unit it names. No original mission uses it.
 - **Sound and music at full quality.** In-game music used to be turned into 11 kHz
   mono. The game now mixes at 44.1 kHz: the original's music plays in
   stereo at its own rate, a mod's 44.1 kHz or surround sounds and music keep their
   quality, and the original's 11 kHz unit sounds keep their pitch and length with a
   cleaner top end. On 6.1 speakers the surrounds of 5.1 music now play at full level.
   Video streams carry the same 44.1 kHz sound.
-- **A homing shot with a model points along its flight every tick.** It used to do so
-  only on a tick it turned, so a mod's spinning homing shot kept spinning once its
-  target died. As in the original game, the model now faces the way it flies.
-- **Homing shots follow a unit that boards a transport.** As in the original game, a
-  homing shot in the air keeps after its target when it is picked up, and flies at
-  the transport carrying it; it used to fly straight on.
-- **Homing shots heading straight at their target fly as in the original game.** A
-  fast homing shot (such as a Tracking Arrow) could double or triple its speed a
-  few moments early or late when its target was almost dead ahead; it now speeds up
-  exactly when the original game's does.
+- **Homing shots fly as in the original game.**
+  - A homing shot in the air keeps after its target when the target boards a
+    transport, and flies at the transport carrying it; it used to fly straight on.
+  - A fast homing shot (such as a Tracking Arrow) almost dead ahead of its target
+    could double or triple its speed a few moments early or late; it now speeds up
+    exactly when the original game's does.
+  - A homing shot with a model always faces the way it flies. It used to turn only
+    when the shot turned, so a mod's spinning homing shot kept spinning once its
+    target died.
 - **A unit short of mana after a shot falls back to a cheaper weapon.** As in the
   original game, a unit that switches weapons (every Monarch and dragon) and has too
   little mana left for another shot of its weapon now switches at once to the best
@@ -254,22 +244,27 @@ their validation reports; both live in [`docs/`](docs/).
   shot, as in the original game. A flyer attacking a unit now restarts its attack on
   the new weapon at once, and a unit on foot aims the new weapon at once instead of
   a moment later.
-- **Campaign units go to the exact spot the mission gives.** A mission's scripted
-  moves, fight-moves, patrols and unloads went to the middle of the named map square;
-  as in the original game they now go to its corner, half a square up and left, and
-  a point with a fraction keeps it.
-- **Campaign units start where the original put them.** The units a mission starts
-  with stand on the same squares as in the original, and face the same way: they
-  stood half a square off, and most of them faced the other way.
-- **Units a mission brings in mid-mission appear where the original put them.**
-  Large ones could be several squares off.
-- **Mission trigger areas cover the same squares as in the original, and fire once for
-  each unit.** A unit that walked out of a trigger area and back set it off again.
-- **Troops carried in a transport now set off mission trigger areas**, as in the
-  original game: a transport carrying units into a trigger area set it off only for
-  the transport itself.
-- **Missions now hear about every unit that enters play, and who owns it.** So mission
-  20's scripted event can happen.
+- **Campaign missions play out as in the original game.**
+  - The units a mission starts with stand on the same squares as in the original
+    and face the same way: they stood half a square off, and most of them faced the
+    other way. Units a mission brings in mid-mission appear where the original put
+    them; large ones could be several squares off.
+  - A mission's scripted moves, fight-moves, patrols and unloads go to the exact
+    spot it gives, the corner of the named map square, not its middle, and a point
+    with a fraction keeps it.
+  - Siege units and towers scripted to bombard a spot fire at it, instead of only
+    walking toward it (or, for a tower, doing nothing). A flyer scripted the same
+    way makes its air attack on the spot instead of flying to it, and a computer
+    player sees it as attacking.
+  - Trigger areas cover the same squares as in the original and fire once for each
+    unit: a unit that walked out of one and back set it off again. Troops carried
+    in a transport set them off too, not only the transport.
+  - Missions hear about every unit that enters play, and who owns it, so mission
+    20's scripted event can happen.
+  - A captured or given unit takes its type's mission bonuses, rather than keeping
+    the armour and weapon bonuses its old owner's mission placed it with.
+  - The mission Kill command kills every unit on the map, whatever unit it names.
+    No original mission uses it.
 - **Fedora 45 packages.** Fedora 45 now has its own x86-64 and ARM64 RPMs, beside
   Fedora 44's.
 - **Investigated, no change needed:**
