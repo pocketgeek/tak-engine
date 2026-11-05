@@ -20,6 +20,13 @@ constexpr Fixed footprintWaypoint(int cell, int size) {
     return Fixed::fromInt(cell * 16 + (size % 2 ? 8 : 0));
 }
 
+// Retail 0x5085c0 on a building (bmcode other than 1): the footprint-origin
+// cell's corner plus half the footprint, so an odd footprint sits on a cell
+// centre and an even one on a cell edge. Mobile units are not snapped.
+constexpr Fixed footprintSnap(Fixed position, int size) {
+    return Fixed::fromInt(footprintOrigin(position, size) * 16 + size * 8);
+}
+
 inline int footprintOrigin(float position, int size) {
     return footprintOrigin(Fixed::fromFloat(position), size);
 }

@@ -6431,6 +6431,108 @@ resolve only in an `InitialMission`. Ours registered a unit under the name an
   `u X Y` (`5141d3`), `c` (`514a48`: the cloak bit when cloakcost > 0) and
   `r` (`514910`, resurrect; no shipped uses).
 
+**Points (2026-11-04; E = emulated, S = static).** Every handler that reads
+`" %f %f"` -- `m`/`ma`, `p`, `u`, `a X Y` (`5143d6`) and the mobile `b`
+(`514573`) -- builds its point the same way: x = `ftol(X * 65536.0) * ebx`, the
+same for z from Y, y 0, a 16.16 pixel value (E). `ftol` (`5d3d54`) is `fistp`
+with the control word's rounding set to chop into 64 bits, the low dword kept,
+so `X * 65536` is cut toward zero before the multiply: 7.3 is raw 478412 x 16
+(116.7998 px), -0.3 is -19660 x 16 (E, both signs, integers and fractions). `ebx`
+is the scenario's +0xdc5, read once at `513fd6` from `[0x62d55c]+0x175dc`: 16
+when the `.ota`'s GlobalHeader has a `[Map Data]` child, set at `4c86eb` after
+`542940` (the child-by-name search, `542f80`, case-insensitive) finds the name
+`4c86b0` copies from `0x615548`; else 1, set at `4c8748` (E, `4c8710` on a fake
+TDF with and without the child). All 74 shipped missions have `[Map Data]`, so
+their points are X*16, Y*16: a cell's corner, not its centre. The `.ota`'s own
+unit `XPos`/`ZPos` take the same `<< 16` times +0xdc5 (`4c8cf7`, `4c8d2b`, S);
+`SetMission` reaches the same parser (`4d37f6`, S); the god script's `Create`
+puts a type's footprint corner at the cell, ((X*2 + footprintx) << 19, then
+`5085c0`, S). Ours used the cell centre (X*16+8) for `m`/`ma`/`p`/`u` through
+0.9.19; `MissionScript::orderPoint` is retail's for them and `b`, the scale
+from the header's `[Map Data]` (`mission_orders_test` points,
+`tools/re/check_mission_points.py`). `a X Y` still uses the cell centre. The
+shipped strings hold 1160 `m`, 248 `ma`, 3480 `p` and 81 `u` points in 69
+missions, all whole numbers, so there the change is the half-cell shift alone.
+
+**Placed units (2026-11-04; E = emulated, S = static).** `4c8ce1..4c8d64` reads
+a `[units]` record's `XPos`/`ZPos` with `atoi` (`543190` -> `5d47af`, S) and
+stores x = X*16, z = Z*16 (E): no half cell. y is `YPos << 16`, unscaled, and
+effectively unused: `51b2a0` recomputes a mobile's y (hover / floater `51b220`
+/ ground fit `51ad20`, S). Angle is stored as the word `(A << 16) / 360`
+chopped toward zero (180 -> 0x8000, 359 -> 0xff49, E). `514b40` finds the type
+(`5159f0`), runs `5085c0(type, &pos)`, then `512060(Player-1, typeid, pos,
+1,1,0,0,1)` and writes the Angle word over the birth heading `+0x7e`
+(`514d02`), all E. `5085c0` snaps a type whose bmcode is 0 (`4c1768` turns any
+bmcode but 0 or 1 into 0): origin cell o = `(p - (f << 19) + 0x80000) >> 20`,
+position `(2o + f) << 19`, y the terrain (`507990`) at the origin cell. So a
+building stands at X*16 + 8*(f & 1), XPos its centre cell; a mobile (bmcode 1)
+stays at X*16, and a 2x2 one at X=10 has origin cell 9 (E, footprints 1..5,
+2x3, 1x4). `511990` keeps the position as given and stores the origin cell in
+`+0x74/+0x76` (E); `512060` neither moves the unit nor searches for room nor
+checks occupancy (S), `5066f0` only stamps the footprint, and every unit starts
+in move mode 1, so a flyer starts on the ground (`511b18`, S). Ours used X*16+8
+for every unit through 0.9.19 (mobiles off by 8,8, even footprints by 8 on that
+axis) and turned Angle into a port heading directly, a half turn from retail's
+(our port heading 0 is retail 0x8000, Angle 180; 5418 of the 7341 placed units
+use 180). `MissionScript::placedPoint` / `placedHeading` and `footprintSnap`
+port it (`mission_orders_test`, `tools/re/check_mission_regions.py`). Skirmish
+start positions are unaffected: this path only reads a mission's `.ota`.
+
+**`Create` (2026-11-04, E).** `4d35c0` takes 3 args (player = a0's low byte,
+X = int16 a1, Z = int16 a2) or 2 (the player byte from `[game+0x306e]`); any
+other count makes nothing and returns 0. All 1851 shipped calls pass 3. The
+point is x = (X*2 + footprintx) << 19 = X*16 + footprintx*8, the same for z:
+the type's footprint corner at the cell, for mobiles and buildings alike.
+`5085c0` leaves it unchanged (for a building it only sets y to the terrain at
+X,Z); a mobile's y is recomputed by `51b2a0`. Then `512060(player, typeid, pos,
+1,1,0,0,1)`, the flags placement uses: no search, no free-spot check and no
+heading, so the unit keeps 511990's birth heading (0x8000 + orientation -
+buildangle/2 + rand(buildangle)). It returns the unit id (`+2`). Ours used
+X*16+8 and heading 0 through 0.9.19, right only for a 1x1; 154 of the shipped
+calls were off, an 8x18 building by 56 px in x and 136 in z.
+`MissionScript::createPoint` ports it.
+
+**Trigger regions and UnitCreated (2026-11-04; E = emulated, S = static,
+I = inferred).** `SetTrigger` (`4d3a53`) ignores the call and returns 0 when
+16 regions are armed (`+0xaa4`) or slot a0 already is; with 4 args it stores a
+circle, centre (int16 a1, int16 a2), radius a3 (`4d2b00`), with any other count
+a rectangle, int16 a1..a4 (`4d2ae0`), as given, and returns the id (E).
+`RemoveTrigger` (`4d3b22`) frees an armed slot, lowers the count and clears bit
+`1 << id` of `+0xd4` on every live unit; an empty slot does nothing (E). Every
+tick `51d3e0` -> `51de30` -> `[0x62da3c]` slot 7 (`4d43f0`) runs `4d33a0(unit)`
+for every live unit of players 0..9 in pool order (S). `4d33a0` (E) looks only
+at live (`0x1000000`), not dying (`0x1000`), finished (`+0x108 == 0.0`) units.
+It first fires `UnitCreated(unit id, owner byte +0xfd)` once (bit 31 of
+`+0xd4`), then for regions 0..15 `TriggerHit(id, unit id, owner byte)` once per
+region (bit `1 << id`, cleared only by `RemoveTrigger`; leaving and coming back
+does not fire again). A rectangle (`4d2b20`) holds the footprint-origin cell
+`+0x74/+0x76` when x1 <= x <= x2 and z1 <= z <= z2, inclusive with no swap, so
+an inverted one never fires (no shipped script has one); a circle when
+max(|dx|,|dz|) + (min >> 2) (`535e90`) <= r, in cells from the origin cell:
+(34,30), (26,27), (30,26) and (33,33) fire for centre (30,30) r 4, (35,30)
+does not. The carried bit (`+0x114` bit 4) is not tested; whether a carried
+unit's `+0x74` follows its transport is not established (I), so ours keeps
+skipping embarked units for regions. Ours through 0.9.19 compared the pixel
+position with [x1*16+8, x2*16+8] (min/max), used a Euclidean circle of r*16
+px, fired on every re-entry, looked at unfinished and dying units, re-armed an
+armed slot, and fired `UnitCreated` only when a build finished, with owner 0:
+mission 20's handler wants owner 1 and never ran, and takx05, takx22, takx23
+and mission 06 test for owner 0. `MissionScript::sweepTriggers` ports
+`4d33a0`, the owner byte being the `.ota` Player-1 the slot came from
+(`retailTriggerRect` / `retailTriggerCircle`; `mission_orders_test`,
+`tools/re/check_mission_regions.py`). Ours runs the sweep after the god
+script's VM tick, so a handler it starts runs on the next tick (S, ours).
+`51d3e0`'s outer loop is the player rows 0..9 (`bl`, rows of 0x110 at
+`+0x2404`), each walking its own pool `+0x2478..+0x247c` and calling `51de30`
+for every live unit, carried ones too (S); `51de30` makes the call right after
+the unit's own COB tick (`56c870`). So the handlers start owner by owner; ours sorts the sweep by
+owner byte, and within an owner keeps spawn order (retail's pool slot is a
+random free one, `retailAllocateSlot`). A circle with radius 0 is a rectangle
+to `4d2b20` (it tests `+8 != 0`), whose far corner `4d2b00` never writes
+(uninitialised heap); ours keeps it a one-cell circle, and no shipped call
+passes r 0 (S, scan of the 153 constant `SetTrigger` calls).
+`MoveUnitToRadius` and `Unit/AnyUnitPasses{X,Z}` already used retail's cells.
+
 When the parser has pushed a mission it clears the unit's selectable bit 0x20,
 and unless the last of them was a patrol, an attack on the ground, `s` or `d`
 it appends MAKESELECTABLE (`514a7d`): a player's unit under a script cannot be

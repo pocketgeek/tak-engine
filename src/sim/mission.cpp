@@ -44,7 +44,8 @@ std::pair<std::string, std::string> splitVerb(const std::string& cmd) {
 MissionScript::MissionScript(std::vector<uint8_t> cobBytes, const tak::tdf::Node& header,
                              const TypeRegistry& reg, int humanPlayer, std::string origin,
                              std::vector<int> playerMap)
-    : reg_(reg), human_(humanPlayer), origin_(std::move(origin)), playerMap_(std::move(playerMap)) {
+    : reg_(reg), human_(humanPlayer), origin_(std::move(origin)), playerMap_(std::move(playerMap)),
+      pointScale_(header.child("map data") ? 16 : 1) {   // 4c86eb / 4c8748
     if (cobBytes.empty()) {
         // Data-only mission (11 of the 74 shipped ones ship no .cob): no god script.
         // The .ota conditions + the placed units' InitialMission queues drive it.
@@ -117,10 +118,16 @@ void MissionScript::step(World& w, float dt) {
     if (outcome_ == 0) evalConditions(w, dt);
 }
 
-void MissionScript::unitBuilt(World& w, int id) {
-    if (!vm_ || cob_.scriptIndex("UnitCreated") < 0) return;
-    world_ = &w; getUnitContext_ = id;
-    vm_->start("UnitCreated", {id, 0});
+int32_t MissionScript::value(const std::string& name) const {
+    auto it = vars_.find(lower(name));
+    return it != vars_.end() ? it->second : 0;
+}
+
+int MissionScript::retailOwner(int player) const {
+    // The inverse of playerMap_: the .ota Player-1 the slot came from.
+    for (size_t ota = 1; ota < playerMap_.size(); ++ota)
+        if (playerMap_[ota] == player) return int(ota) - 1;
+    return player;
 }
 
 int MissionScript::conditionOwner(int player) const {
@@ -158,6 +165,7 @@ void MissionScript::unitDied(World& w, int id) {
             emitConditionSound(w,c);
         }
     }
+    triggerBits_.erase(id);
     if (!vm_ || cob_.scriptIndex("UnitDestroyed") < 0) return;
     world_ = &w; getUnitContext_ = id;
     vm_->start("UnitDestroyed", {id});
@@ -165,23 +173,35 @@ void MissionScript::unitDied(World& w, int id) {
 
 // ---- MAP_COMMAND dispatch (on the resolved verb string) --------------------
 
-int32_t MissionScript::mapCommand(World& w, int nameIdx, const std::vector<int32_t>& a) {
-    auto [verb, rest] = splitVerb(cob_.name(uint32_t(nameIdx)));
+int32_t MissionScript::command(World& w, const std::string& name, const std::vector<int32_t>& a) {
+    world_ = &w;
+    auto [verb, rest] = splitVerb(name);
     if (ieq(verb, "create"))        return doCreate(w, rest, a);
     if (ieq(verb, "setmission"))  { if (!a.empty()) applyOrders(w, a[0], rest, false); return 0; }
     if (ieq(verb, "settrigger")) {
-        if (!a.empty() && a[0] >= 0 && a[0] < 16) {
-            Region& r = regions_[size_t(a[0])];
-            r.armed = true;
-            if (a.size() >= 5) { r.rect = true;  r.x = cellToWorld(float(a[1])); r.z = cellToWorld(float(a[2]));
-                                                 r.x2 = cellToWorld(float(a[3])); r.z2 = cellToWorld(float(a[4])); }
-            else if (a.size() >= 4) { r.rect = false; r.x = cellToWorld(float(a[1])); r.z = cellToWorld(float(a[2]));
-                                                       r.r = float(a[3]) * 16.0f; }
-            inside_[size_t(a[0])].clear();
+        // 4d3a53: a slot already armed, or 16 armed, ignores the call. 4 args
+        // make a circle (4d2b00), any other count a rectangle (4d2ae0); the
+        // cells are kept as given.
+        const int armed = int(std::count_if(regions_.begin(), regions_.end(), [](const Region& r) { return r.armed; }));
+        if (a.empty() || a[0] < 0 || a[0] >= 16 || regions_[size_t(a[0])].armed || armed >= 16) return 0;
+        auto arg = [&](size_t i) { return i < a.size() ? a[i] : 0; };
+        Region& r = regions_[size_t(a[0])];
+        r = Region{};
+        r.armed = true;
+        r.rect = a.size() != 4;
+        r.x1 = int16_t(arg(1)); r.z1 = int16_t(arg(2));
+        if (r.rect) { r.x2 = int16_t(arg(3)); r.z2 = int16_t(arg(4)); }
+        else r.r = arg(3);
+        return a[0];
+    }
+    if (ieq(verb, "removetrigger")) {
+        // 4d3b22: frees an armed slot and clears its latch bit on every unit.
+        if (!a.empty() && a[0] >= 0 && a[0] < 16 && regions_[size_t(a[0])].armed) {
+            regions_[size_t(a[0])].armed = false;
+            for (auto& [id, bits] : triggerBits_) bits &= ~(1u << a[0]);
         }
         return 0;
     }
-    if (ieq(verb, "removetrigger")) { if (!a.empty() && a[0] >= 0 && a[0] < 16) regions_[size_t(a[0])].armed = false; return 0; }
     if (ieq(verb, "getutype"))      return typeHash(findType(rest));
     if (ieq(verb, "setattribute")) { if (a.size() >= 2) doSetAttribute(w, rest, a[0], a[1]); return 0; }
     if (ieq(verb, "writevalue"))   { if (!a.empty()) vars_[lower(rest)] = a[0]; return 0; }
@@ -220,9 +240,11 @@ int32_t MissionScript::mapCommand(World& w, int nameIdx, const std::vector<int32
 int32_t MissionScript::doCreate(World& w, const std::string& type, const std::vector<int32_t>& a) {
     const UnitType* t = findType(type);
     if (!t) { std::fprintf(stderr, "mission %s: create unknown type '%s'\n", origin_.c_str(), type.c_str()); return 0; }
+    // Retail 4d35c0: exactly 3 args (player byte, x, z) or 2 (x, z); any
+    // other count makes nothing.
     int player, cx, cy;
-    if (a.size() >= 3)      { player = a[0]; cx = a[1]; cy = a[2]; }   // (player, x, y), player 0-based
-    else if (a.size() >= 2) { player = 0;    cx = a[0]; cy = a[1]; }   // default -> the human
+    if (a.size() == 3)      { player = uint8_t(a[0]); cx = int16_t(a[1]); cy = int16_t(a[2]); }   // player 0-based
+    else if (a.size() == 2) { player = 0;             cx = int16_t(a[0]); cy = int16_t(a[1]); }   // default -> the human
     else return 0;
     // The script's 0-based player is a .ota id (0 == Player1); map it to the World slot
     // the placements used, so scripted units land on the right side.
@@ -230,7 +252,10 @@ int32_t MissionScript::doCreate(World& w, const std::string& type, const std::ve
     if (otaN >= 1 && otaN < int(playerMap_.size()) && playerMap_[size_t(otaN)] >= 0)
         player = playerMap_[size_t(otaN)];
     player = std::clamp(player, 0, w.numPlayers() - 1);
-    int id = w.spawn(t, cellToWorld(float(cx)), cellToWorld(float(cy)), 0.0f, player);
+    // createPoint: the footprint's corner at the cell, which 5085c0 leaves as
+    // it is. No heading is given, so the unit keeps its birth heading (511990).
+    const Point at = createPoint(*t, cx, cy);
+    int id = w.spawn(t, at.x.toFloat(), at.z.toFloat(), std::nullopt, player);
     if (id >= 0) getUnitContext_ = id;
     return id >= 0 ? id : 0;
 }
@@ -242,7 +267,8 @@ int32_t MissionScript::doCreate(World& w, const std::string& type, const std::ve
 // either case, picks the order, and the rest is read with sscanf: each form
 // needs exactly the conversions it lists, else the clause does nothing. So a
 // clause never reads into the next one, and "w 900 40 b ARAPRIES 1" is one
-// wait clause whose tail is ignored, as retail ignores it.
+// wait clause whose tail is ignored, as retail ignores it. The point of m, ma,
+// p, u and b is the pixel X*16,Y*16 (orderPoint): a cell's corner, not its centre.
 //   m X Y / ma X Y   move / fight-move to cell X,Y
 //   a X Y            fire at the ground there (SUPPRESS; see below)
 //   a TYPE           AttackUType: every unit of TYPE, nearest first, until none
@@ -318,6 +344,26 @@ int MissionScript::resolvePlacement(const std::string& name) const {
     return 0;
 }
 
+float MissionScript::orderPoint(float cell, int32_t scale) {
+    // 5d3d54 is fistp under round-toward-zero into 64 bits, its low dword kept
+    // (out of range, the integer indefinite, whose low dword is 0); imul wraps.
+    const double chopped = std::trunc(double(cell) * 65536.0);
+    const int64_t whole = std::fabs(chopped) < 9.2e18 ? int64_t(chopped) : INT64_MIN;
+    const int32_t raw = int32_t(uint32_t(uint64_t(whole)) * uint32_t(scale));
+    return float(double(raw) / 65536.0);
+}
+
+MissionScript::Point MissionScript::placedPoint(const UnitType& t, int xpos, int zpos) {
+    Point p{Fixed::fromInt(xpos * 16), Fixed::fromInt(zpos * 16)};
+    // 4c1768 reads any bmcode other than 0 or 1 as 0, and 5085c0 snaps those.
+    if (t.buildMovementCode != 1) { p.x = footprintSnap(p.x, t.footX); p.z = footprintSnap(p.z, t.footZ); }
+    return p;
+}
+
+MissionScript::Point MissionScript::createPoint(const UnitType& t, int x, int z) {
+    return {Fixed::fromInt(x * 16 + t.footX * 8), Fixed::fromInt(z * 16 + t.footZ * 8)};
+}
+
 void MissionScript::applyOrders(World& w, int unitId, const std::string& orders, bool initial) {
     if (!w.unit(unitId)) return;
     const bool queue = true;   // retail appends; it never clears the unit's orders
@@ -343,8 +389,8 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
             const bool fight = c2 == 'a';
             scan.i = fight ? 2 : 1;
             if (!scan.number(fx) || !scan.number(fz)) break;
-            if (fight) w.attackMove(unitId, cellToWorld(fx), cellToWorld(fz), queue);
-            else       w.order(unitId, cellToWorld(fx), cellToWorld(fz), queue);
+            if (fight) w.attackMove(unitId, orderPoint(fx), orderPoint(fz), queue);
+            else       w.order(unitId, orderPoint(fx), orderPoint(fz), queue);
             break;
         }
         case 'a': {                                       // 5143b5
@@ -387,20 +433,20 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
                 break;
             }
             // 514543: all four, the count read and unused (MobileBuild gets 1).
-            // The builder must have TYPE on its menu (519850). The point is the
-            // retail X*16 (no half cell): MobileBuild snaps it to the footprint
-            // as a player's click is snapped.
+            // The builder must have TYPE on its menu (519850). The point is
+            // orderPoint's: MobileBuild snaps it to the footprint as a player's
+            // click is snapped.
             if (!scan.name(nm, true) || !scan.integer(n) || !scan.number(fx) || !scan.number(fz)) break;
             const UnitType* t = findType(nm);
             if (!t) break;
             const auto& menu = u->type->buildMenu;
             if (std::find(menu.begin(), menu.end(), t->id) == menu.end()) break;
-            w.queueBuild(unitId, t, fx * 16.0f, fz * 16.0f, queue);
+            w.queueBuild(unitId, t, orderPoint(fx), orderPoint(fz), queue);
             break;
         }
         case 'p': {                                       // 514307: p X Y [T]
             if (!scan.number(fx) || !scan.number(fz)) break;
-            w.patrolTo(unitId, cellToWorld(fx), cellToWorld(fz), queue);
+            w.patrolTo(unitId, orderPoint(fx), orderPoint(fz), queue);
             break;
         }
         case 'w': {                                       // 514787
@@ -450,7 +496,7 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
             break;
         }
         case 'u':                                         // 5141d3: u X Y
-            if (scan.number(fx) && scan.number(fz)) w.unloadAt(unitId, cellToWorld(fx), cellToWorld(fz), {}, queue);
+            if (scan.number(fx) && scan.number(fz)) w.unloadAt(unitId, orderPoint(fx), orderPoint(fz), {}, queue);
             break;
         case 's':                                         // 514876: MakeSelectable
             break;
@@ -529,27 +575,39 @@ void MissionScript::setUnitValue(int32_t valId, int32_t value) {
 // ---- triggers --------------------------------------------------------------
 
 void MissionScript::sweepTriggers(World& w) {
-    if (cob_.scriptIndex("TriggerHit") < 0) return;
-    for (size_t rid = 0; rid < regions_.size(); ++rid) {
-        const Region& r = regions_[rid];
-        if (!r.armed) continue;
-        auto& occ = inside_[rid];
-        std::unordered_set<int> now;
-        for (const auto& u : w.units()) {
-            if (!u.alive() || u.embarked()) continue;
-            const float ux = u.x.toFloat(), uz = u.z.toFloat();
-            bool in = r.rect ? (ux >= std::min(r.x, r.x2) && ux <= std::max(r.x, r.x2) &&
-                                uz >= std::min(r.z, r.z2) && uz <= std::max(r.z, r.z2))
-                             : ((ux - r.x) * (ux - r.x) + (uz - r.z) * (uz - r.z) <= r.r * r.r);
-            if (!in) continue;
-            now.insert(u.id);
-            if (!occ.count(u.id)) {   // edge: newly entered -> fire the script once
-                getUnitContext_ = u.id;
-                vm_->start("TriggerHit", {int32_t(rid), u.id, u.player});
-                if (outcome_ != 0) return;
-            }
+    // 4d33a0, unit by unit: a live, finished unit that is not dying first
+    // fires UnitCreated(unit, owner) once, then TriggerHit(region, unit, owner)
+    // once for each armed region 0..15 that holds its footprint-origin cell.
+    // Each fires once per unit (latch +0xd4); leaving and coming back does
+    // not fire again. Units aboard a transport skip the regions. 51d3e0 walks
+    // the players' pools in owner-byte order, so the handlers start (and run)
+    // owner by owner; within a pool, in spawn order.
+    if (!vm_) return;
+    const bool created = cob_.scriptIndex("UnitCreated") >= 0, hit = cob_.scriptIndex("TriggerHit") >= 0;
+    std::vector<std::pair<int, const Unit*>> order;
+    order.reserve(w.units().size());
+    for (const auto& u : w.units())
+        if (u.alive() && u.hp > Fixed() && u.type && !u.underConstruction) order.push_back({retailOwner(u.player), &u});
+    std::stable_sort(order.begin(), order.end(), [](const auto& l, const auto& r) { return l.first < r.first; });
+    for (const auto& [owner, unit] : order) {
+        const Unit& u = *unit;
+        uint32_t& bits = triggerBits_[u.id];
+        if (!(bits & 0x80000000u)) {
+            bits |= 0x80000000u;
+            getUnitContext_ = u.id;
+            if (created) vm_->start("UnitCreated", {u.id, owner});
         }
-        occ = std::move(now);
+        if (u.embarked()) continue;
+        const int ox = footprintOrigin(u.x, u.type->footX), oz = footprintOrigin(u.z, u.type->footZ);
+        for (size_t rid = 0; rid < regions_.size(); ++rid) {
+            const Region& r = regions_[rid];
+            if (!r.armed || (bits >> rid & 1)) continue;
+            if (!(r.rect ? retailTriggerRect(ox, oz, r.x1, r.z1, r.x2, r.z2)
+                         : retailTriggerCircle(ox, oz, r.x1, r.z1, r.r))) continue;
+            bits |= 1u << rid;
+            getUnitContext_ = u.id;
+            if (hit) vm_->start("TriggerHit", {int32_t(rid), u.id, owner});
+        }
     }
 }
 
@@ -674,7 +732,13 @@ void MissionScript::evalConditions(World& w, float) {
 void MissionScript::foldHash(uint64_t& h) const {
     auto mix = [&](uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
     mix(uint64_t(int64_t(outcome_)));
-    for (const Region& r : regions_) mix(r.armed ? 1u : 0u);
+    for (const Region& r : regions_) {
+        mix(r.armed ? 1u : 0u); mix(r.rect ? 1u : 0u);
+        mix(uint16_t(r.x1)); mix(uint16_t(r.z1)); mix(uint16_t(r.x2)); mix(uint16_t(r.z2)); mix(uint32_t(r.r));
+    }
+    std::vector<std::pair<int, uint32_t>> latches(triggerBits_.begin(), triggerBits_.end());
+    std::sort(latches.begin(), latches.end());
+    for (const auto& [id, bits] : latches) { mix(uint32_t(id)); mix(bits); }
     mix(uint32_t(clock_));
     for(const UnitType* type:playerCommanders_) {
         if(type)for(unsigned char ch:type->id)mix(ch);

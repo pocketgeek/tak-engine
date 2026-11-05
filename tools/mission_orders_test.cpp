@@ -13,6 +13,15 @@
 //   v F       a fixed veterancy multiplier (unit +0xf4): rank 10, kills can't move it
 //   a TYPE    AttackUType: every unit of TYPE, one after another, until none
 //   s / d     no owner change / a self-destruct queued in its place
+//   m/ma/p/u  the point X*16,Y*16 (16.16, X*65536 chopped first), no half cell
+//
+// And where units come into a mission, and the triggers that see them:
+//   [units]   XPos*16 with no half cell; a building snapped by 5085c0 so XPos is
+//             its centre cell; Angle the raw retail heading word (514b40)
+//   Create    the type's footprint corner at the cell, birth heading (4d35c0)
+//   SetTrigger  cells of the footprint origin, inclusive; circle max+min/4;
+//             once per unit per region; an armed slot is not re-armed (4d33a0)
+//   UnitCreated once per unit that enters play, with its owner byte (4d33a0)
 //
 // Synthetic types from a scratch FBI tree, on a flat map. With a retail install
 // (`mission_orders_test --data <dir>`) it checks shipped missions instead: takx04's
@@ -24,6 +33,7 @@
 #include "sim/sim.h"
 #include "sim/matchsetup.h"
 #include "sim/footprint.h"
+#include "sim/retailcampaignconditions.h"
 #include "hpi/hpi.h"
 
 #include <algorithm>
@@ -118,9 +128,19 @@ static std::unique_ptr<World> makeWorld() {
 // One placed unit of a mission: its type, cell, owner, Ident= and InitialMission=.
 struct Placed { const char* type; int cx, cz, player; const char* ident; const char* orders; int id = 0; };
 
+// A GlobalHeader with a [Map Data] section, as every shipped mission has: its
+// order points are X*16 (retail's scenario +0xdc5 is 16; 1 without the section).
+static tdf::Node mapDataHeader() {
+    tdf::Node header;
+    header.children["map data"];
+    header.childOrder.push_back("map data");
+    return header;
+}
+
 // Spawn `placed` in file order and start a mission whose only script is their
 // InitialMission strings.
-static std::unique_ptr<sim::MissionScript> startMission(Fixture& f, World& w, std::vector<Placed>& placed) {
+static std::unique_ptr<sim::MissionScript> startMission(Fixture& f, World& w, std::vector<Placed>& placed,
+                                                        const tdf::Node& header = mapDataHeader()) {
     std::vector<sim::MissionScript::Placement> table;
     std::vector<std::pair<int, std::string>> orders;
     for (auto& p : placed) {
@@ -128,7 +148,7 @@ static std::unique_ptr<sim::MissionScript> startMission(Fixture& f, World& w, st
         table.push_back({p.ident, p.type, p.id});
         if (p.orders && *p.orders) orders.push_back({p.id, p.orders});
     }
-    auto m = std::make_unique<sim::MissionScript>(std::vector<uint8_t>{}, tdf::Node{}, f.reg, 0, "orders fixture");
+    auto m = std::make_unique<sim::MissionScript>(std::vector<uint8_t>{}, header, f.reg, 0, "orders fixture");
     m->setInitialOrders(std::move(orders));
     m->setPlacements(std::move(table));
     m->start(w);
@@ -253,6 +273,57 @@ static void builds(Fixture& f) {
     bool hut = false;
     for (const auto& u : w->units()) hut = hut || (u.type == f.t("hut") && u.alive());
     check(hut, "the builder walks there and builds the hut");
+}
+
+// ---- 3b. the point of m / ma / p / u ------------------------------------------------
+
+static void points(Fixture& f) {
+    std::printf("m / ma / p / u X Y: the point X*16 (16.16, chopped), no half cell:\n");
+    // 0x513fb0: ftol(X * 65536.0) * scenario +0xdc5, emulated (tools/re/check_mission_points.py).
+    auto raw = [](const Fixed& v) { return std::to_string(v.v); };
+    // A ground move keeps the point it was given as its click point; its leg may
+    // already carry a route's waypoint. An unload keeps it as the order's point.
+    auto px = [](const Order* o) { return o->unload ? o->x : o->clickX; };
+    auto pz = [](const Order* o) { return o->unload ? o->z : o->clickZ; };
+    auto at = [&](const Order* o, int32_t x, int32_t z) { return o && px(o).v == x && pz(o).v == z; };
+    auto shown = [&](const Order* o) { return o ? raw(px(o)) + "," + raw(pz(o)) : std::string("none"); };
+    {
+        auto w = makeWorld();
+        std::vector<Placed> p = {
+            {"soldier", 20, 20, 0, "", "m 30 40"},
+            {"soldier", 24, 20, 0, "", "ma 10.5 3.25"},
+            {"soldier", 28, 20, 0, "", "p 7.3 9.99 4"},
+            {"wagon", 40, 20, 0, "", "u 45 30"},
+        };
+        auto m = startMission(f, *w, p);
+        auto last = [&](int i) -> const Order* {
+            const Unit* u = w->unit(p[size_t(i)].id);
+            return u && !u->orders.empty() ? &u->orders.back() : nullptr;
+        };
+        const Order* mv = last(0);
+        check(at(mv, 480 << 16, 640 << 16), "m 30 40 goes to pixel 480,640 (it was the cell centre 488,648)", shown(mv));
+        const Order* fight = last(1);
+        check(at(fight, 168 << 16, 52 << 16), "ma 10.5 3.25 keeps the fraction: pixel 168,52", shown(fight));
+        // float 7.3 * 65536 = 478412.79 -> 478412, x16; 9.99 -> 654704, x16.
+        const Order* patrol = last(2);
+        check(at(patrol, 478412 * 16, 654704 * 16) && patrol->patrol,
+              "p 7.3 9.99 chops X*65536 before the x16 (7654592,10475264 raw)", shown(patrol));
+        const Unit* wagon = w->unit(p[3].id);
+        const Order* drop = nullptr;
+        for (const Order& o : wagon->orders) if (o.unload) drop = &o;
+        check(at(drop, 720 << 16, 480 << 16), "u 45 30 unloads at pixel 720,480", shown(drop));
+    }
+    {
+        // A scenario without [Map Data] keeps +0xdc5 at 1 (4c8748): the point is X pixels.
+        auto w = makeWorld();
+        std::vector<Placed> p = {{"soldier", 20, 20, 0, "", "m 30 40"}};
+        auto m = startMission(f, *w, p, tdf::Node{});
+        const Unit* u = w->unit(p[0].id);
+        const Order* mv = u->orders.empty() ? nullptr : &u->orders.back();
+        check(at(mv, 30 << 16, 40 << 16), "without [Map Data] m 30 40 is pixel 30,40", shown(mv));
+    }
+    check(sim::MissionScript::orderPoint(-0.3f, 16) == float(-19660 * 16) / 65536.0f,
+          "a negative fraction chops toward zero (-0.3 -> -19660 raw, x16)");
 }
 
 // ---- 4. i / u: troops start aboard ------------------------------------------------
@@ -498,6 +569,196 @@ static void tableCompacts(Fixture& f) {
           "and the 70000th order still arrives", std::to_string(b->orders.size()) + " order(s)");
 }
 
+// ---- 13. where placed and created units stand ------------------------------------------------------
+// Emulated values (tools/re/check_mission_regions.py): retail 514b40 / 5085c0 for
+// an .ota record, 4d35c0 for Create.
+
+static sim::UnitType sized(int fx, int fz, int bmcode) {
+    sim::UnitType t;
+    t.footX = fx; t.footZ = fz; t.buildMovementCode = uint8_t(bmcode);
+    return t;
+}
+
+static void placement() {
+    std::printf("placed and created units:\n");
+    auto px = [](int fx, int fz, int bm, int x, int z) {
+        const auto p = sim::MissionScript::placedPoint(sized(fx, fz, bm), x, z);
+        return std::to_string(p.x.v / 65536.0) + "," + std::to_string(p.z.v / 65536.0);
+    };
+    auto placedAt = [](int fx, int fz, int bm, int x, int z, int ex, int ez) {
+        const auto p = sim::MissionScript::placedPoint(sized(fx, fz, bm), x, z);
+        return p.x == Fixed::fromInt(ex) && p.z == Fixed::fromInt(ez);
+    };
+    check(placedAt(2, 2, 0, 10, 10, 160, 160), "a 2x2 building at XPos 10 stands at 160 (it was 168)", px(2, 2, 0, 10, 10));
+    check(placedAt(3, 3, 0, 10, 10, 168, 168), "a 3x3 building at XPos 10 at 168", px(3, 3, 0, 10, 10));
+    check(placedAt(4, 4, 0, 1, 1, 16, 16), "a 4x4 building at XPos 1 at 16", px(4, 4, 0, 1, 1));
+    check(placedAt(5, 5, 0, 0, 0, 8, 8), "a 5x5 building at XPos 0 at 8", px(5, 5, 0, 0, 0));
+    check(placedAt(1, 4, 0, 3, 20, 56, 320), "a 1x4 building at ZPos 20 at 320", px(1, 4, 0, 3, 20));
+    check(placedAt(2, 3, 2, 10, 10, 160, 168), "a bmcode 2 is a building too", px(2, 3, 2, 10, 10));
+    bool mobiles = true;
+    for (int n = 1; n <= 5; ++n) for (int x : {0, 1, 7, 10, 20}) mobiles = mobiles && placedAt(n, n, 1, x, x, x * 16, x * 16);
+    check(mobiles, "a mobile (bmcode 1) of any size stands at XPos*16 (it was +8)");
+    check(sim::MissionScript::placedHeading(180) == 0x8000 && sim::MissionScript::placedHeading(0) == 0 &&
+          sim::MissionScript::placedHeading(359) == 0xff49 && sim::MissionScript::placedHeading(90) == 0x4000 &&
+          sim::MissionScript::placedHeading(-90) == 0xc000,
+          "Angle is the raw heading word (A<<16)/360: 180 -> 0x8000, 359 -> 0xff49");
+    check(sim::retailHeadingToPort(sim::MissionScript::placedHeading(180)).v == 0,
+          "so Angle 180 faces the way an unturned unit does (it faced the other way)");
+    auto createdAt = [](int fx, int fz, int bm, int x, int z, int ex, int ez) {
+        const auto p = sim::MissionScript::createPoint(sized(fx, fz, bm), x, z);
+        return p.x == Fixed::fromInt(ex) && p.z == Fixed::fromInt(ez);
+    };
+    check(createdAt(2, 2, 1, 10, 20, 176, 336), "Create puts a 2x2 mobile's corner at 10,20: 176,336 (it was 168,328)");
+    check(createdAt(5, 1, 0, 0, 0, 40, 8), "and a 5x1 building's at 0,0: 40,8");
+    check(createdAt(2, 2, 0, 3, -1, 64, 0), "a building's too, a negative cell included");
+}
+
+// ---- 14. trigger regions and UnitCreated -----------------------------------------------------------
+
+// A cob from scripts and a name table (MAP_COMMAND indexes the names).
+static std::vector<uint8_t> buildCob(const std::vector<std::pair<std::string, std::vector<uint32_t>>>& scripts,
+                                     const std::vector<std::string>& names) {
+    std::vector<uint8_t> cob(52);
+    auto put = [&](size_t offset, uint32_t value) {
+        if (cob.size() < offset + 4) cob.resize(offset + 4);
+        std::memcpy(cob.data() + offset, &value, 4);
+    };
+    auto text = [&](const std::string& str) {
+        const size_t at = cob.size();
+        cob.resize(at + ((str.size() + 4) & ~size_t(3)));
+        std::memcpy(cob.data() + at, str.c_str(), str.size() + 1);
+        return uint32_t(at);
+    };
+    const size_t n = scripts.size(), m = names.size();
+    const size_t entries = 52, scriptNames = entries + n * 4, nameTable = scriptNames + n * 4;
+    cob.resize(nameTable + m * 4);
+    std::vector<uint32_t> code;
+    for (size_t i = 0; i < n; ++i) {
+        put(entries + i * 4, uint32_t(code.size()));
+        code.insert(code.end(), scripts[i].second.begin(), scripts[i].second.end());
+        put(scriptNames + i * 4, text(scripts[i].first));
+    }
+    for (size_t i = 0; i < m; ++i) put(nameTable + i * 4, text(names[i]));
+    const size_t codeAt = cob.size();
+    for (size_t i = 0; i < code.size(); ++i) put(codeAt + i * 4, code[i]);
+    put(0, 6); put(4, uint32_t(n)); put(12, uint32_t(code.size())); put(24, uint32_t(entries));
+    put(28, uint32_t(scriptNames)); put(36, uint32_t(codeAt)); put(44, uint32_t(nameTable)); put(48, uint32_t(m));
+    return cob;
+}
+
+// TriggerHit(region, unit, owner) counts into "hits" and keeps the last call;
+// UnitCreated(unit, owner) counts into "created" and sums the owners.
+static std::vector<uint8_t> recorderCob() {
+    enum : uint32_t { Const = 0x10021001, Local = 0x10021002, Pop = 0x10024000, Add = 0x10031000,
+                      Map = 0x10073000, Return = 0x10065000 };
+    const std::vector<std::string> names = {"ReadValue hits", "WriteValue hits", "WriteValue region",
+        "WriteValue unit", "WriteValue owner", "ReadValue created", "WriteValue created",
+        "ReadValue owners", "WriteValue owners"};
+    const std::vector<uint32_t> hit = {Map, 0, 0, Const, 1, Add, Map, 1, 1, Pop,
+        Local, 0, Map, 2, 1, Pop, Local, 1, Map, 3, 1, Pop, Local, 2, Map, 4, 1, Pop, Const, 0, Return};
+    const std::vector<uint32_t> created = {Map, 5, 0, Const, 1, Add, Map, 6, 1, Pop,
+        Map, 7, 0, Local, 1, Add, Map, 8, 1, Pop, Const, 0, Return};
+    return buildCob({{"TriggerHit", hit}, {"UnitCreated", created}}, names);
+}
+
+static void creates(Fixture& f) {
+    std::printf("Create:\n");
+    auto w = makeWorld();
+    sim::MissionScript m(std::vector<uint8_t>{}, tdf::Node{}, f.reg, 0, "create fixture");
+    m.start(*w);
+    const int id = m.command(*w, "Create soldier", {1, 10, 20});
+    const Unit* u = w->unit(id);
+    check(u && u->x == Fixed::fromInt(176) && u->z == Fixed::fromInt(336) && u->player == 1,
+          "Create soldier 1 10 20 puts the 2x2's corner at cell 10,20 (it was its centre)",
+          u ? std::to_string(u->x.toFloat()) + "," + std::to_string(u->z.toFloat()) : "none");
+    const int keep = m.command(*w, "Create keep", {0, 3, 4});
+    check(w->unit(keep) && w->unit(keep)->x == Fixed::fromInt(80) && w->unit(keep)->z == Fixed::fromInt(96),
+          "and a 4x4 keep's at 3,4: 80,96");
+    const size_t before = w->units().size();
+    check(m.command(*w, "Create soldier", {0, 1, 2, 3}) == 0 && m.command(*w, "Create soldier", {5}) == 0 &&
+          w->units().size() == before, "4 args or 1 make nothing");
+}
+
+
+static void regions(Fixture& f) {
+    std::printf("trigger regions and UnitCreated:\n");
+    using sim::retailTriggerRect;
+    using sim::retailTriggerCircle;
+    check(retailTriggerRect(10, 20, 10, 20, 12, 22) && retailTriggerRect(12, 22, 10, 20, 12, 22),
+          "a rectangle holds both corner cells");
+    check(!retailTriggerRect(9, 20, 10, 20, 12, 22) && !retailTriggerRect(13, 22, 10, 20, 12, 22) &&
+          !retailTriggerRect(11, 23, 10, 20, 12, 22) && !retailTriggerRect(11, 19, 10, 20, 12, 22),
+          "and nothing outside them");
+    check(!retailTriggerRect(11, 21, 12, 22, 10, 20), "an inverted rectangle never hits");
+    check(retailTriggerCircle(34, 30, 30, 30, 4) && retailTriggerCircle(26, 27, 30, 30, 4) &&
+          retailTriggerCircle(30, 26, 30, 30, 4) && !retailTriggerCircle(35, 30, 30, 30, 4) &&
+          retailTriggerCircle(33, 33, 30, 30, 4) && retailTriggerCircle(34, 31, 30, 30, 4),
+          "a circle measures max + min/4 cells: 3,3 and 4,1 are in at r 4 (not by Euclid)");
+
+    auto w = makeWorld();
+    // A 2x2 unit's footprint-origin cell o is at pixel o*16+16.
+    auto at = [](int cell) { return float(cell * 16 + 16); };
+    const int a = w->spawn(f.t("soldier"), at(11), at(21), 0.0f, 0);
+    const int b = w->spawn(f.t("soldier"), at(50), at(50), 0.0f, 1);
+    const int c = w->spawn(f.t("soldier"), at(26), at(27), 0.0f, 1);
+    // .ota Player1 is slot 1 and Player2 slot 0, so slot 0's owner byte is 1.
+    sim::MissionScript m(recorderCob(), tdf::Node{}, f.reg, 0, "regions fixture", {-1, 1, 0});
+    m.start(*w);
+    check(m.command(*w, "SetTrigger", {3, 10, 20, 12, 22}) == 3, "SetTrigger returns the region");
+    check(m.command(*w, "SetTrigger", {5, 30, 30, 4}) == 5, "4 args make a circle");
+    auto step = [&](int n = 2) { for (int i = 0; i < n; ++i) m.step(*w, 1.0f / 30.0f); };
+    step();
+    check(m.value("created") == 3 && m.value("owners") == 1 + 0 + 0,
+          "UnitCreated once for each unit there, with its owner byte (it never came for them)",
+          std::to_string(m.value("created")) + " created, owners " + std::to_string(m.value("owners")));
+    check(m.value("hits") == 2, "a unit on the rectangle's corner cell and one in the circle fire",
+          std::to_string(m.value("hits")) + " hits");
+    step(4);
+    check(m.value("hits") == 2 && m.value("created") == 3, "a unit still inside does not fire again");
+    w->unit(a)->x = Fixed::fromFloat(at(40)); step();
+    w->unit(a)->x = Fixed::fromFloat(at(11)); step();
+    check(m.value("hits") == 2, "nor one that left and came back (it did)");
+    check(m.command(*w, "SetTrigger", {3, 0, 0, 100, 100}) == 0, "an armed region is not set again");
+    step();
+    check(m.value("hits") == 2, "so the unit at 50,50 is not in it", std::to_string(m.value("hits")) + " hits");
+    m.command(*w, "RemoveTrigger", {3});
+    m.command(*w, "SetTrigger", {3, 10, 20, 12, 22});
+    step();
+    check(m.value("hits") == 3 && m.value("unit") == a && m.value("region") == 3 && m.value("owner") == 1,
+          "RemoveTrigger and arming again fires it once more, with the owner byte",
+          std::to_string(m.value("hits")) + " hits, owner " + std::to_string(m.value("owner")));
+    const int d = w->spawn(f.t("soldier"), at(11), at(20), 0.0f, 0);
+    w->unit(d)->underConstruction = true;
+    step();
+    check(m.value("created") == 3 && m.value("hits") == 3, "a unit under construction is not seen");
+    w->unit(d)->underConstruction = false;
+    step();
+    check(m.value("created") == 4 && m.value("hits") == 4, "and is once it is finished");
+    w->unit(b)->hp = Fixed();
+    m.command(*w, "SetTrigger", {6, 45, 45, 55, 55});
+    step();
+    check(m.value("hits") == 4, "a dying unit is not seen");
+    int armed = 0;
+    for (int id = 0; id < 16; ++id) armed += m.command(*w, "SetTrigger", {id, 0, 0, 1, 1}) == id ? 1 : 0;
+    check(armed == 13 && m.command(*w, "SetTrigger", {16, 0, 0, 1, 1}) == 0,
+          "16 regions at most (3, 5 and 6 were armed)", std::to_string(armed) + " more armed");
+    (void)c;
+
+    // 51d3e0 checks owner 0's units before owner 1's, whatever the spawn
+    // order: slot 0 (owner byte 1) spawns first here, so its hit runs last.
+    auto v = makeWorld();
+    const int first = v->spawn(f.t("soldier"), at(11), at(21), 0.0f, 0);
+    const int second = v->spawn(f.t("soldier"), at(12), at(21), 0.0f, 1);
+    sim::MissionScript order(recorderCob(), tdf::Node{}, f.reg, 0, "order fixture", {-1, 1, 0});
+    order.start(*v);
+    order.command(*v, "SetTrigger", {3, 10, 20, 12, 22});
+    for (int i = 0; i < 2; ++i) order.step(*v, 1.0f / 30.0f);
+    check(order.value("hits") == 2 && order.value("unit") == first && order.value("owner") == 1,
+          "the sweep goes owner by owner: owner 0's hit runs before owner 1's (it went in spawn order)",
+          std::to_string(order.value("hits")) + " hits, last unit " + std::to_string(order.value("unit")) +
+          " (owner-1 unit " + std::to_string(first) + ", owner-0 unit " + std::to_string(second) + ")");
+}
+
 // ---- shipped missions -----------------------------------------------------------------------------
 
 static void shipped(const char* data) {
@@ -516,12 +777,22 @@ static void shipped(const char* data) {
         std::vector<int> towers;
         for (const auto& u : w.units()) {
             if (u.type == arafly) flyer = u.id;
-            if (u.type == aralode && u.x.toFloat() == cell(231) && u.z.toFloat() == cell(222)) jim = u.id;
+            if (u.type == aralode && u.x.toFloat() == 231 * 16 && u.z.toFloat() == 222 * 16) jim = u.id;
             if (u.type == arakeep) keep = u.id;
             if (u.type == araat) towers.push_back(u.id);
         }
         check(flyer && jim && keep && towers.size() >= 2, "finds the flyer, the lodestone JIM, the keep and the towers");
         if (!flyer || !jim || !keep) return;
+        // [units] records: unit71 arafly 14,60 (2x2 mobile), unit109 aralode JIM
+        // 231,222 (2x2 building), unit110 arassh JOE 176,243 (4x4), all Angle 180.
+        auto standsAt = [&](const sim::UnitType* t, int x, int z) {
+            for (const auto& u : w.units())
+                if (u.type == t && u.x == Fixed::fromInt(x) && u.z == Fixed::fromInt(z)) return u.heading.v == 0;
+            return false;
+        };
+        check(standsAt(arafly, 14 * 16, 60 * 16), "a placed Flying Builder (mobile) stands at XPos*16, facing Angle 180");
+        check(standsAt(aralode, 231 * 16, 222 * 16), "the 2x2 lodestone JIM at 231*16 (it was +8)");
+        check(standsAt(arassh, 176 * 16, 243 * 16), "the 4x4 shipyard JOE at 176*16");
         const Unit* fl = w.unit(flyer);
         const ScriptedOrder* wa = fl->orders.empty() ? nullptr : w.scriptedOrder(fl->orders.front());
         check(wa && wa->kind == ScriptedOrder::Kind::WaitAttack && wa->watched == jim,
@@ -573,6 +844,44 @@ static void shipped(const char* data) {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "--points") {
+        // tools/re/check_mission_points.py: "X scale" per line -> orderPoint's 16.16 raw.
+        char text[64];
+        int scale = 0;
+        while (std::scanf("%63s %d", text, &scale) == 2)
+            std::printf("%d\n", Fixed::fromFloat(sim::MissionScript::orderPoint(std::strtof(text, nullptr), scale)).v);
+        return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--regions") {
+        // tools/re/check_mission_regions.py: one query per line, one answer each.
+        //   place FX FZ BMCODE X Z -> placedPoint raw x z     angle A -> placedHeading
+        //   create FX FZ X Z -> createPoint raw x z           origin P FX -> footprintOrigin(raw P)
+        //   rect X1 Z1 X2 Z2 OX OZ / circle CX CZ R OX OZ -> 1 hit, 0 miss
+        char verb[16];
+        while (std::scanf("%15s", verb) == 1) {
+            const std::string v = verb;
+            int n[6] = {};
+            if (v == "place" && std::scanf("%d %d %d %d %d", &n[0], &n[1], &n[2], &n[3], &n[4]) == 5) {
+                const auto at = sim::MissionScript::placedPoint(sized(n[0], n[1], n[2]), n[3], n[4]);
+                std::printf("%d %d\n", at.x.v, at.z.v);
+            } else if (v == "create" && std::scanf("%d %d %d %d", &n[0], &n[1], &n[2], &n[3]) == 4) {
+                const auto at = sim::MissionScript::createPoint(sized(n[0], n[1], 0), n[2], n[3]);
+                std::printf("%d %d\n", at.x.v, at.z.v);
+            } else if (v == "angle" && std::scanf("%d", &n[0]) == 1) {
+                std::printf("%d\n", sim::MissionScript::placedHeading(n[0]));
+            } else if (v == "origin" && std::scanf("%d %d", &n[0], &n[1]) == 2) {
+                std::printf("%d\n", sim::footprintOrigin(Fixed::raw(n[0]), n[1]));
+            } else if (v == "rect" && std::scanf("%d %d %d %d %d %d", &n[0], &n[1], &n[2], &n[3], &n[4], &n[5]) == 6) {
+                std::printf("%d\n", sim::retailTriggerRect(n[4], n[5], n[0], n[1], n[2], n[3]) ? 1 : 0);
+            } else if (v == "circle" && std::scanf("%d %d %d %d %d", &n[0], &n[1], &n[2], &n[3], &n[4]) == 5) {
+                std::printf("%d\n", sim::retailTriggerCircle(n[3], n[4], n[0], n[1], n[2]) ? 1 : 0);
+            } else {
+                std::printf("bad query %s\n", verb);
+                return 2;
+            }
+        }
+        return 0;
+    }
     if (argc == 3 && std::string(argv[1]) == "--data") {
         std::printf("mission_orders_test (shipped missions)\n");
         shipped(argv[2]);
@@ -586,6 +895,7 @@ int main(int argc, char** argv) {
         clauses(f);
         standing(f);
         builds(f);
+        points(f);
         aboard(f);
         names(f);
         waitNear(f);
@@ -595,6 +905,9 @@ int main(int argc, char** argv) {
         holds(f);
         setMission(f);
         tableCompacts(f);
+        placement();
+        creates(f);
+        regions(f);
     }
     std::printf(g_fail ? "mission_orders_test: %d FAILED\n" : "mission_orders_test: all passed\n", g_fail);
     return g_fail ? 1 : 0;

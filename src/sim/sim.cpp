@@ -20060,14 +20060,12 @@ void World::tick(float dt) {
         if (probe::kPmu) { probe::pmuAdd(probe::kSep, _pmuSep); probe::pmuAdd(probe::kTotal, _pmuTick); }
 #endif
     }
-    // Campaign mission runner: feed this tick's build/death events into the "god"
-    // script, then advance it (VM + triggers + win/lose). Runs on every peer (build
-    // & death events queue VM threads; the spawns/orders happen in step()), so the
+    // Campaign mission runner: feed this tick's deaths into the "god" script,
+    // then advance it (VM + UnitCreated/trigger sweep + win/lose). Runs on every
+    // peer (events queue VM threads; the spawns/orders happen in step()), so the
     // mission stays in lockstep with no relayed actions.
     if (mission_) {
         TAK_PASS();
-        for (auto& u : units_)
-            if (u.justBuilt) mission_->unitBuilt(*this, u.justBuilt);
         for (int id : justDied_) mission_->unitDied(*this, id);
         mission_->step(*this, dt);
     }

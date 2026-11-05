@@ -215,6 +215,19 @@ their validation reports; both live in [`docs/`](docs/).
   without taking mana, so mana no longer drops below zero, and veterans pay less per
   shot, as in the original game. A flyer attacking a unit now restarts its attack on
   the new weapon at once.
+- **Campaign units go to the exact spot the mission gives.** A mission's scripted
+  moves, fight-moves, patrols and unloads went to the middle of the named map square;
+  as in the original game they now go to its corner, half a square up and left, and
+  a point with a fraction keeps it.
+- **Campaign units start where the original put them.** The units a mission starts
+  with stand on the same squares as in the original, and face the same way: they
+  stood half a square off, and most of them faced the other way.
+- **Units a mission brings in mid-mission appear where the original put them.**
+  Large ones could be several squares off.
+- **Mission trigger areas cover the same squares as in the original, and fire once for
+  each unit.** A unit that walked out of a trigger area and back set it off again.
+- **Missions now hear about every unit that enters play, and who owns it.** So mission
+  20's scripted event can happen.
 - **Fedora 45 packages.** Fedora 45 now has its own x86-64 and ARM64 RPMs, beside
   Fedora 44's.
 - **Investigated, no change needed:**

@@ -10,6 +10,7 @@
 // docs/campaign-design.md for the reverse-engineered scripting/win-lose model.
 
 #include "cob/cob.h"
+#include "sim/fixed.h"
 #include "sim/retailcampaignconditions.h"
 #include "cob/vm.h"
 #include "tdf/tdf.h"
@@ -57,19 +58,42 @@ public:
     struct Placement { std::string ident, unitname; int unitId = 0; };
     void setPlacements(std::vector<Placement> p) { placements_ = std::move(p); }
 
+    // An order clause's point coordinate in world px, as 0x513fb0 builds it for
+    // m/ma/p/u/b: ftol(X * 65536.0), chopped toward zero, times `scale` -- the
+    // scenario's +0xdc5, 16 when the .ota has [Map Data] (every shipped mission),
+    // else 1 -- a 16.16 pixel value with no half cell, exact in a float on any map.
+    static float orderPoint(float cell, int32_t scale);
+
+    // Where retail puts a unit, as a 16.16 pixel point.
+    struct Point { Fixed x, z; };
+    // An .ota [units] record (4c8ce1, 514b40): the pixel XPos*16,ZPos*16 with no
+    // half cell; a building (bmcode other than 1) is then snapped by 5085c0
+    // (footprintSnap), so XPos is its centre cell. A mobile stays at X*16.
+    static Point placedPoint(const UnitType& type, int xpos, int zpos);
+    // The record's Angle as the raw retail heading word, (A<<16)/360 chopped
+    // toward zero (4c8d2b); 514d02 stores it over the birth heading.
+    static uint16_t placedHeading(int angle) { return uint16_t(int32_t(uint32_t(angle) << 16) / 360); }
+    // Create X Z (4d35c0): the type's footprint corner at the cell,
+    // (X*2 + footprint) << 19, for mobiles and buildings alike.
+    static Point createPoint(const UnitType& type, int x, int z);
+
     void start(World& w);              // run the "Start" script once (initial spawns/triggers)
     void step(World& w, float dt);     // tick the VM, sweep triggers, evaluate conditions
-    void unitBuilt(World& w, int id);  // a unit finished building -> UnitCreated(id, 0)
     void unitCaptured(World& w, int id); // called before changing ownership
     void unitDied(World& w, int id);   // a unit died -> UnitDestroyed(id)
 
     int outcome() const { return outcome_; }   // 0 running / +1 victory / -1 defeat
+    // Run one MAP_COMMAND by its name, as the script would (tests).
+    int32_t command(World& w, const std::string& name, const std::vector<int32_t>& args);
+    // A WriteValue store, 0 if unset (tests).
+    int32_t value(const std::string& name) const;
     // Fold mission state into the sim's state hash (so mission progress is checksummed).
     void foldHash(uint64_t& h) const;
 
 private:
-    // A trigger region armed by SetTrigger (circle: r>=0; rect: x1/z1 the far corner).
-    struct Region { bool armed = false, rect = false; float x = 0, z = 0, x2 = 0, z2 = 0, r = 0; };
+    // A trigger region armed by SetTrigger, in cells as given (4d2ae0 / 4d2b00):
+    // a rectangle x1,z1..x2,z2 or a circle centred on x1,z1 with radius r.
+    struct Region { bool armed = false, rect = false; int16_t x1 = 0, z1 = 0, x2 = 0, z2 = 0; int32_t r = 0; };
 
     // A parsed `.ota` victory/defeat rule. `kind` names the retail *Condition_* class;
     // `type` (optional unit type) + up to 4 numeric args carry its parameters.
@@ -85,7 +109,10 @@ private:
     // ---- VM callback plumbing ----
     MissionScript(const MissionScript&)=default;
     void wireVm();   // the hooks bind this object, so a copy wires its own
-    int32_t mapCommand(World& w, int nameIdx, const std::vector<int32_t>& args);
+    int32_t mapCommand(World& w, int nameIdx, const std::vector<int32_t>& args) {
+        return command(w, cob_.name(uint32_t(nameIdx)), args);
+    }
+    int retailOwner(int player) const;   // World slot -> retail player byte (+0xfd)
     int32_t getValue(World& w, int32_t valId, const std::vector<int32_t>& args);
     void setUnitValue(int32_t valId, int32_t value);
 
@@ -107,6 +134,7 @@ private:
 
     const UnitType* findType(const std::string& name) const;   // registry lookup (lowercased)
     static float cellToWorld(float cell) { return cell * 16.0f + 8.0f; }   // .ota cell -> world px
+    float orderPoint(float cell) const { return orderPoint(cell, pointScale_); }
 
     cob::File cob_;
     cob::CopiedPtr<cob::Vm> vm_;
@@ -115,9 +143,12 @@ private:
     int human_;
     std::string origin_;
     std::vector<int> playerMap_;   // .ota player (1-based) -> World slot (empty = identity)
+    int32_t pointScale_ = 16;      // scenario +0xdc5 (orderPoint): 16 with [Map Data], else 1
 
     std::array<Region, 16> regions_{};
-    std::array<std::unordered_set<int>, 16> inside_{};   // edge-triggered: units currently in region
+    // Per unit id, 4d33a0's latch (+0xd4): bit N once region N fired for the
+    // unit, bit 31 once UnitCreated did. Only RemoveTrigger clears a region bit.
+    std::unordered_map<int, uint32_t> triggerBits_;
     std::unordered_map<std::string, int32_t> vars_;      // WriteValue / ReadValue store
     int getUnitContext_ = 0;                             // unit id for GET_UNIT_VALUE(7)
 

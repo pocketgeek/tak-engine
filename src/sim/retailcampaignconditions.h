@@ -21,6 +21,17 @@ inline bool retailCampaignRadius(int32_t x,int32_t z,int32_t centerX,int32_t cen
     const int32_t squared=int32_t(uint32_t((dx*dx)>>32)+uint32_t((dz*dz)>>32));
     return squared<=int32_t((int64_t(radius)*radius)>>32);
 }
+// 4d2b20: a SetTrigger rectangle holds the unit's footprint-origin cell
+// (+0x74/+0x76) inclusively, the corners as given (an inverted one never hits).
+constexpr bool retailTriggerRect(int x,int z,int x1,int z1,int x2,int z2) {
+    return x1<=x && x<=x2 && z1<=z && z<=z2;
+}
+// 4d33a0: a SetTrigger circle, in cells from the origin cell, measured with
+// 535e90's max + min/4 (arithmetic shift).
+constexpr bool retailTriggerCircle(int x,int z,int centerX,int centerZ,int32_t radius) {
+    const int32_t dx=x-centerX<0?centerX-x:x-centerX, dz=z-centerZ<0?centerZ-z:z-centerZ;
+    return (dx>dz ? dx+(dz>>2) : dz+(dx>>2))<=radius;
+}
 inline void retailCampaignDeath(RetailCampaignConditionState::Kind kind,
         RetailCampaignConditionState& state,int owner,bool matching,bool commander,
         bool mobile,bool survivor) {
