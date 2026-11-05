@@ -30,6 +30,16 @@ its patrol, as ClassicBrain's firstMission reads them:
   (an automatic attack, 4d7de0 passes none: 4d8027..4d8035);
 - VTOL_PATROL at a point: class 7, 0x1000412 (not Patrol's 0x3000410).
 
+A flyer's move, guard and the group missions (fx-groups, 2026-11-05):
+
+- VTOL_MOVE at a point: class 14, 0x1000402 (not Move_Ground's 0x3000400:
+  no navigator formation bit 0x2000000);
+- VTOL_FOLLOW on a live ward: class 5, 0x1000200 (not Follow_Ground's
+  0x3000200); VTOL_EVADE on a live target 0x1000200;
+- VTOL_MOVE_FORMATION and VTOL_MOVE_FORMATIONSTANDBY as the group checks
+  build them (4d7750 with no target and no point): 0x1000002 and 0x5000002;
+- VTOL_STANDBY (the FBI default, no point): 0x5010000.
+
 Then the patrol's stage 0 (41a64f, 4d6b80): with no mission in the list
 flagged 0x4000 it appends a VTOL_PATROL at the unit's position (+0x68, no
 target), 0x1000412, and flags the outbound mission 0x4000: 0x1004412; with
@@ -56,6 +66,9 @@ ROWS = {
     'AirStrike': 0x5ebd69, 'AirToGround': 0x5ebd9b, 'AirToGroundHover': 0x5ebdb4,
     'Suppress': 0x5eb8b8, 'VTOL_SeekAttack': 0x5ebe7c, 'AirToAir': 0x5ebd82,
     'VTOL_Patrol': 0x5ebd50, 'Patrol': 0x5eb94e,
+    'VTOL_Move': 0x5ebcd3, 'Move_Ground': 0x5eb86d, 'VTOL_Follow': 0x5ebd37, 'Follow_Ground': 0x5eb89f,
+    'VTOL_Move_Formation': 0x5ebca1, 'VTOL_Move_FormationStandby': 0x5ebcba, 'VTOL_Standby': 0x5ebc88,
+    'VTOL_Evade': 0x5ebe63,
 }
 TABLE, SLOT, MISSION, POINT, TARGET = HEAP, HEAP + 0x1000, HEAP + 0x2000, HEAP + 0x3000, HEAP + 0x4000
 
@@ -154,16 +167,26 @@ def main():
     # A flyer's patrol, and the ground one it is not.
     expect('VTOL_PATROL', 7, 0x1000412)
     expect('PATROL', 7, 0x3000410)
+    # A flyer's move, guard and the group missions.
+    expect('VTOL_MOVE', 14, 0x1000402)
+    expect('MOVE_GROUND', 14, 0x3000400)
+    expect('VTOL_FOLLOW', 5, 0x1000200, target=True)
+    expect('FOLLOW_GROUND', 5, 0x3000200, target=True)
+    expect('VTOL_EVADE', 19, 0x1000200, target=True)
+    expect('VTOL_MOVE_FORMATION', 14, 0x1000002, point=False)
+    expect('VTOL_MOVE_FORMATIONSTANDBY', 14, 0x5000002, point=False)
+    expect('VTOL_STANDBY', 15, 0x5010000, point=False)
     out, appended = patrol_anchor(False)
     if out != 0x1004412 or appended != [('0x1000412', (160, 200))]:
         raise AssertionError({'stage 0, no anchor': (hex(out), appended)})
     out, appended = patrol_anchor(True)
     if out != 0x1004412 or appended:
         raise AssertionError({'stage 0, anchored': (hex(out), appended)})
-    print('PASS: 13 retail mission ctor cases: a flyer at a point reads AIRSTRIKE (2, 0x1000400), '
+    print('PASS: 21 retail mission ctor cases: a flyer at a point reads AIRSTRIKE (2, 0x1000400), '
           'AIRTOGROUNDHOVER / AIRTOGROUND (1, 0x1000000); the target bit kept only with a target; '
           'a flyer on a unit reads class 1 0x1000200 (AIRSTRIKE 2, 0x1000600 with a point); '
-          'VTOL_PATROL 0x1000412; and 2 patrol stage-0 cases (4d6b80): the outbound leg 0x1004412, '
+          'VTOL_PATROL 0x1000412; VTOL_MOVE 0x1000402, VTOL_FOLLOW 0x1000200, the group formations '
+          '0x1000002 / 0x5000002, VTOL_STANDBY 0x5010000; and 2 patrol stage-0 cases (4d6b80): the outbound leg 0x1004412, '
           'the anchor 0x1000412 at the unit only when none is flagged')
 
 

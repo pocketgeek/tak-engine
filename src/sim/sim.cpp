@@ -2168,7 +2168,7 @@ void World::order(int unitId, float x, float z, bool queue, ConvoyClass cls, std
     if (u->type->canFly) {
         u->orders.push_back({Fixed::fromFloat(x), Fixed::fromFloat(z), 0});
         u->orders.back().flightMoveMission = true;
-        u->orders.back().mission.flags = 0x3000400u;
+        u->orders.back().mission.flags = kVtolMoveFlags;
         markGoal();
         return;
     }
@@ -2318,6 +2318,32 @@ static bool plainFlightPatrol(const Unit& u) {
     return order.flightMoveMission || order.patrol;
 }
 
+// The VTOL_Move_Formation a group check pushes ahead of a flyer's mission
+// (4d7750), at `level` (+0x56): built with no target and no point, so the
+// ctor (4d6d66 / 4d6d6f) leaves the row's 0x1000402 as 0x1000002, and
+// VTOL_Move_FormationStandby's 0x5000402 (standby: VTOL_Standby and
+// VTOL_LandIfCan push it) as 0x5000002. Its point is the flyer's own until
+// stage 0 takes the group centre.
+static Order flightFormation(const Unit& u,int level,bool standby,uint32_t tick) {
+    Order formation;
+    formation.x=u.x;formation.z=u.z;formation.goal=formation.flightMoveMission=true;
+    formation.formationLevel=int8_t(level);formation.mission.flags=standby ? 0x5000002u : 0x1000002u;
+    formation.issuedTick=tick;
+    return formation;
+}
+
+// A FormationStandby (Move_Ground's or a flyer's) at the head: the standby or
+// landing it went ahead of stays under it, as under a step-out, and goes on
+// from stage 0 once it retires.
+static bool standbyFormationFront(const Unit& u) {
+    return !u.orders.empty() && u.orders.front().formationLevel && (u.orders.front().mission.flags&0x4000000u);
+}
+static bool underStandbyFormation(const Unit& u) {
+    return std::any_of(u.orders.begin(),u.orders.end(),[](const Order& o) {
+        return o.formationLevel && (o.mission.flags&0x4000000u);
+    });
+}
+
 void World::tickFlightPatrol(Unit& u) {
     // A newly activated patrol may append its return anchor. Keep the
     // dispatcher's reference to the current mission stable during that append.
@@ -2326,8 +2352,9 @@ void World::tickFlightPatrol(Unit& u) {
         World& w; Unit& u;
         RetailStepOut stepOutKind=RetailStepOut::None;   // a step-out pushed ahead once the dispatch is done
         int32_t stepOutTo=0;
+        int attackTo=0;       // a FormationStandby's 4d7de0 attack, put ahead once the dispatch is done
         bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
-        RetailMissionState* head() { return !stepOutTo && plainFlightPatrol(u) ? &u.orders.front().mission : nullptr; }
+        RetailMissionState* head() { return !stepOutTo && !attackTo && plainFlightPatrol(u) ? &u.orders.front().mission : nullptr; }
         bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
         void idle() {}
         uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
@@ -2368,12 +2395,13 @@ void World::tickFlightPatrol(Unit& u) {
             const RetailGroupRecord* group=w.retailGroupOf(u);
             if (u.orders.front().flightMoveMission && u.orders.front().formationLevel) {
                 // 417750 VTOL_Move_Formation: fly to the group centre until
-                // back inside the level's radius.
+                // back inside the level's radius; a FormationStandby stays
+                // while its group moves (retailFlightFormation).
                 auto& order=u.orders.front();
                 const int level=order.formationLevel;
                 const bool all=(m.flags&0x4000000u)!=0;
                 const auto member=w.retailGroupMember(u);
-                return retailFlightFormation(m,w.tickCounter_,level,u.type->canFly,
+                return retailFlightFormation(m,w.tickCounter_,level,u.type->canFly,portHeadingToRetail(u.heading),
                     [&] { return group && (level>0 ? retailGroupOutOfSlot(*group,member,false,level,all)
                                                    : retailGroupOutOfSlot(*group,member,true,-level,all)); },
                     [&] {
@@ -2392,12 +2420,30 @@ void World::tickFlightPatrol(Unit& u) {
                         order.z=footprintWaypoint(footprintCell(order.z,u.type->footZ),u.type->footZ);
                         order.flightGoal=RetailFlightGoal{{order.x.v,u.flightY.v,order.z.v},0x30,0,16};
                     },
-                    [&](int n) { return random(n); });
+                    [&](int n) { return random(n); },
+                    [&] { return group && retailGroupMoving(*group); },
+                    [&] {
+                        // 4179ef: 4d8370, then 4d7de0(unit, found, 0, 0, 1, 0);
+                        // the attack goes ahead once the dispatch is done.
+                        const int found=w.retailHostScan(u);
+                        if (!found || !w.retailIssueAutoAttackAllowed(u,found,false)) return false;
+                        attackTo=found;
+                        return true;
+                    },
+                    [&](uint16_t angle,uint32_t distance) {
+                        // 417a25..417ac3: 4e40e0 at the point, 4e4540(0x40), 4d4d40.
+                        const auto p=retailAirRunPoint({u.x.v,u.flightY.v,u.z.v},u.flightY.v,angle,distance);
+                        order.x=Fixed::raw(p.x);order.z=Fixed::raw(p.z);
+                        order.flightGoal=RetailFlightGoal{p,0x30,0,64};
+                        m.pending&=~0x3700u;
+                    });
             }
-            if (u.orders.front().flightMoveMission && group) {
-                // 417e02..418052: VTOL_Move runs Move_Ground's two group
-                // checks (402b00) before its stages. As on the ground, the
-                // y terms are left at zero (docs/pathfinding-port.md).
+            if ((u.orders.front().flightMoveMission || u.orders.front().patrol) && group) {
+                // 417e02..418052 (VTOL_Move) and 419f9b..41a21b (VTOL_Patrol):
+                // Move_Ground's two group checks (402b00) before their
+                // stages, against the move's goal or the patrol's leg
+                // (mission +0x22). As on the ground, the y terms are left at
+                // zero (docs/pathfinding-port.md).
                 auto& order=u.orders.front();
                 const int check=retailGroundGroupCheck(*group,w.retailGroupMember(u),m.flags,{u.x.v,0,u.z.v},
                     {order.x.v,0,order.z.v},[&](int n){return int(random(n));});
@@ -2408,14 +2454,11 @@ void World::tickFlightPatrol(Unit& u) {
                     return 2;
                 }
                 if (check) {
-                    Order formation;
-                    formation.x=u.x;formation.z=u.z;formation.goal=formation.flightMoveMission=true;
-                    formation.formationLevel=int8_t(check);formation.mission.flags=0x1000000u;
-                    formation.issuedTick=w.tickCounter_;
-                    // The parent restarts at stage 0 when the formation retires;
-                    // inserting invalidates m, so set it first.
+                    // The parent restarts at stage 0 when the formation retires
+                    // (the patrol at the same leg: its stage 0 appends no second
+                    // anchor, 4d6b80); inserting invalidates m, so set it first.
                     m.stage=0;
-                    u.orders.insert(u.orders.begin(),formation);
+                    u.orders.insert(u.orders.begin(),flightFormation(u,check,false,w.tickCounter_));
                     return 4;
                 }
             }
@@ -2480,7 +2523,7 @@ void World::tickFlightPatrol(Unit& u) {
                     m.stage=0;
                     if (retailGroundReturnNeeded(position,response,leash)) {
                         Order back{Fixed::fromInt(response.origin.x),Fixed::fromInt(response.origin.z),0};
-                        back.goal=back.flightMoveMission=true;back.mission.flags=0x1000000u;
+                        back.goal=back.flightMoveMission=true;back.mission.flags=kVtolMoveFlags;
                         back.groundResponse.mode=1;back.groundResponse.goal=response.origin;
                         back.issuedTick=w.tickCounter_;
                         u.orders.insert(u.orders.begin(),back);
@@ -2547,6 +2590,7 @@ void World::tickFlightPatrol(Unit& u) {
         }
     } host{*this,u};
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
+    if (host.attackTo) retailMissionAttack(u,host.attackTo,MissionAttack::Vtol);
     if (host.stepOutTo) pushStepOut(u,host.stepOutKind,host.stepOutTo);
     noteOrders(u.id);
 }
@@ -2955,11 +2999,12 @@ std::pair<int,int> World::cellHeightRange(size_t cell) const {
     return {std::min(std::min(a,b),std::min(c,d)),std::max(std::max(a,b),std::max(c,d))};
 }
 
-// Retail group pacing (Retail mode only). A Ctrl-group (+N) is native group
-// N; our separate formation squads (-N) become groups 10+N, since retail has
-// a single kind of group (522170 assigns Ctrl+N from the selection).
+// Retail group pacing (Retail mode only). A Ctrl group (+N) is native group
+// N without the formation flag, so it is never paced; a formation (-N) is
+// group N with it; a computer player's strike and VTOL squads are their own
+// records, flagged by its AI (retailGroupSlot).
 int World::retailGroupIndex(const Unit& u) {
-    return u.squad>0 ? u.squad : u.squad<0 ? 10-u.squad : 0;
+    return retailGroupSlot(u.squad,u.aiGroup).group;
 }
 
 RetailGroupMember World::retailGroupMember(const Unit& u) const {
@@ -2992,9 +3037,14 @@ uint32_t World::retailOrderFlags(const Unit& u,const Order& o) const {
     if (o.seekAttack || o.seekGuard) return o.mission.flags|0x1000600u;
     // A flyer's attack on a unit that cannot fly (tickCombat's choice):
     // AirStrike on a selected `dropped` weapon, else AirToGround or the hover.
-    if (u.type && u.type->canFly && !u.type->isStructure() && o.targetId && !o.guard && !o.load) {
+    // On a flyer: AirToAir (row 0x5ebd82), and VTOL_Evade ahead of it (row
+    // 0x5ebe63); both 0x1000200 with their live target. A flyer's guard is
+    // VTOL_Follow (row 0x5ebd37), 0x1000200 with its ward. (E:
+    // tools/re/check_air_point_mission.py.)
+    if (u.type && u.type->canFly && !u.type->isStructure() && o.targetId && !o.load) {
         const Unit* t=unit(o.targetId);
-        if (t && t->type && !t->type->canFly) {
+        if (t && t->type && (o.guard || t->type->canFly)) return o.mission.flags|0x1000200u;
+        if (t && t->type) {
             const int n=int(u.type->weapons.size());
             const bool strike=n && u.type->weapons[size_t(std::clamp(u.weaponSlot,0,n-1))].cursorAirstrike;
             return o.mission.flags|(strike ? 0x1000600u : 0x1000200u);
@@ -3020,10 +3070,12 @@ const Order* World::formationAttack(const std::vector<Order>& orders) {
     // queued behind it is next.
     if (!orders[leg].formationLevel || !orders[leg].attackFormation || leg+1>=orders.size()) return nullptr;
     const Order& next=orders[leg+1];
-    return next.suppress || next.airPoint || (next.targetId && !next.guard && !next.load) ? &next : nullptr;
+    return next.suppress || next.airPoint || next.seekAttack || (next.targetId && !next.guard && !next.load)
+        ? &next : nullptr;
 }
 
-// 41db51 / 41c1f1 / 41b7f6: VTOL_Move_Formation (row 5ebca1), level -4
+// 41db51 / 41c1f1 / 41b7f6, and AirToAir's 41cd35, VTOL_Evade's 41e5b1 and
+// VTOL_SeekAttack's 41954b: VTOL_Move_Formation (row 5ebca1), level -4
 // (+0x56): the moving members' centre until back within level 4; the attack
 // starts again at stage 0 when it retires.
 //
@@ -3034,10 +3086,8 @@ const Order* World::formationAttack(const std::vector<Order>& orders) {
 // runs first), so only the formation's dispatch and the mover run here.
 bool World::AirAttackGroup::push() {
     if (!formationTo) return false;
-    Order formation;
-    formation.x=u.x;formation.z=u.z;formation.goal=formation.flightMoveMission=true;
-    formation.formationLevel=-4;formation.mission.flags=0x1000000u;
-    formation.attackFormation=true;formation.issuedTick=w.tickCounter_;
+    Order formation=flightFormation(u,-4,false,w.tickCounter_);
+    formation.attackFormation=true;
     u.orders.insert(u.orders.begin(),formation);
     w.noteOrders(u.id);
     w.tickFlightPatrol(u);
@@ -3048,10 +3098,11 @@ bool World::AirAttackGroup::push() {
 }
 
 // Flags of the unit's current mission (+0x5a), for the missions this host
-// models: landing, ground missions, SUPPRESS, the flyer attacks on the
-// ground, the flyer seeks and standby. Other orders report none.
+// models: landing, ground missions, SUPPRESS, the flyer attacks, the flyer
+// seeks, a flyer's guard and standby. Other orders report none.
 uint32_t World::retailMissionFlags(Unit& u) {
     if (stepOutFront(u)) return u.orders.front().mission.flags;   // the step-out leads
+    if (standbyFormationFront(u)) return u.orders.front().mission.flags;   // ahead of a standby or landing
     if (u.landing) return u.landing->mission.flags;
     // VTOL_Move, VTOL_Move_Formation and VTOL_Patrol all carry 0x1000000.
     if (plainFlightPatrol(u)) return u.orders.front().mission.flags;
@@ -3063,17 +3114,19 @@ uint32_t World::retailMissionFlags(Unit& u) {
         if (u.orders[leg].suppressApproach && leg+1<u.orders.size() && u.orders[leg+1].suppress)
             return retailOrderFlags(u,u.orders[leg+1]);
         if (u.type->canFly && !u.type->isStructure()) {
-            // AirToGround, AirStrike, AirToGroundHover and the seeks;
-            // AirToAir's flags are not modelled.
+            // AirToGround, AirStrike, AirToGroundHover, AirToAir (and
+            // VTOL_Evade ahead of it), the seeks and VTOL_Follow.
             const Order& front=u.orders.front();
-            const Unit* t=front.targetId && !front.guard && !front.load ? unit(front.targetId) : nullptr;
-            if (front.airPoint || front.seekAttack || front.seekGuard || (t && t->type && !t->type->canFly))
+            const Unit* t=front.targetId && !front.load ? unit(front.targetId) : nullptr;
+            if (front.airPoint || front.seekAttack || front.seekGuard || (t && t->type))
                 return retailOrderFlags(u,front);
         }
     }
     if (auto* o=groundMissionOrder(u,true))
         return o->transportUnloadApproach ? o->transportMission.flags : o->mission.flags;
-    if (u.orders.empty() && u.standbyActive) return u.standbyState.flags;
+    // VTOL_Standby's row (0x5ebc88): 0x5010000. World keeps a flyer's
+    // standby flags at 0 (they are hashed); only the group code reads them.
+    if (u.orders.empty() && u.standbyActive) return u.type->canFly ? 0x5010000u : u.standbyState.flags;
     return 0;
 }
 
@@ -3082,16 +3135,17 @@ uint32_t World::retailMissionFlags(Unit& u) {
 // 51c612 (navigator vt+0x38) has no movement consumer and is not modelled.
 void World::tickRetailGroups() {
     retailGroupPaced_.assign(units_.size(),0);
-    std::array<std::array<bool,100>,kMaxPlayers> members{};
+    std::array<std::array<bool,100>,kMaxPlayers> formation{};
     std::array<std::vector<RetailGroupUnit>,kMaxPlayers> roster;
     std::array<std::vector<size_t>,kMaxPlayers> index;
     TAK_PASS();
     for (size_t i=0;i<units_.size();++i) {
         Unit& u=units_[i];
         if (!u.alive() || !u.type || u.player<0 || u.player>=kMaxPlayers) continue;
-        const int g=retailGroupIndex(u);
+        const auto slot=retailGroupSlot(u.squad,u.aiGroup,aiFormation(u.player,u.aiGroup));
+        const int g=slot.group;
         if (g<1 || g>=100) continue;
-        members[size_t(u.player)][size_t(g)]=true;
+        formation[size_t(u.player)][size_t(g)]|=slot.formation;
         RetailGroupUnit entry;
         entry.group=g;
         entry.eligible=!u.underConstruction && !u.embarked() && !u.type->isStructure();
@@ -3104,7 +3158,7 @@ void World::tickRetailGroups() {
     }
     std::vector<uint8_t> paced;
     for (int player=0;player<kMaxPlayers;++player) {
-        retailGroupTick(roster[size_t(player)],members[size_t(player)],retailGroups_[size_t(player)],paced);
+        retailGroupTick(roster[size_t(player)],formation[size_t(player)],retailGroups_[size_t(player)],paced);
         for (size_t k=0;k<paced.size();++k) retailGroupPaced_[index[size_t(player)][k]]=paced[k];
     }
 }
@@ -3617,8 +3671,9 @@ void World::beginStandby(Unit& u) {
 
 void World::tickGroundMission(Unit& u,bool attackWalk) {
     // Other mission kinds continue through their existing handlers. A
-    // step-out pushed ahead of the standby or the landing leaves them under it.
-    if (!u.orders.empty() && !u.orders.front().landing && !u.orders.front().stepOut) {
+    // step-out or a FormationStandby (and what goes ahead of that) pushed
+    // ahead of the standby or the landing leaves them under it.
+    if (!u.orders.empty() && !u.orders.front().landing && !u.orders.front().stepOut && !underStandbyFormation(u)) {
         u.standbyActive=false; u.landing.reset();
     }
     struct Host {
@@ -3634,6 +3689,9 @@ void World::tickGroundMission(Unit& u,bool attackWalk) {
         bool attackWalk=false;
         RetailMissionState* head() {
             if (stepOutTo || stepOutFront(u)) return nullptr;
+            // A flyer's FormationStandby runs as a flight mission
+            // (tickFlightPatrol), the standby or landing waiting under it.
+            if (u.type->canFly && underStandbyFormation(u)) return nullptr;
             if (u.landing) return &u.landing->mission;
             // SUPPRESS's walk back to its group runs after the weapons
             // (tickCombat), as retail's dispatch follows 52ae90.
@@ -3680,14 +3738,48 @@ void World::tickGroundMission(Unit& u,bool attackWalk) {
         void clear() { w.cancelPath(u); u.orders.clear(); u.routeStamp=-1; u.standbyActive=false; u.landing.reset(); }
         bool stepOut(RetailStepOut kind,int32_t distance) { stepOutKind=kind;stepOutTo=distance;return true; }
         void stopBuilding() {}
+        // A standby's or the landing's group check
+        // (retailStandbyGroupCheck): 51d1e0(unit, 1, level) on its own
+        // mission (the rows' 0x4000000 counts the member in its centre);
+        // out of the slot the FormationStandby goes ahead (4d7750). A
+        // standby waits under it (0: stage 0 when it retires); the landing
+        // retires (5).
+        int standbyGroupCheck(RetailStandbyCheck kind) {
+            const RetailGroupRecord* group=w.retailGroupOf(u);
+            if (!group) return -1;
+            return retailStandbyGroupCheck(kind,[&](int level) {
+                return retailGroupOutOfSlot(*group,w.retailGroupMember(u),true,level,true);
+            },[&](int level,int mode) {
+                if (u.type->canFly) {
+                    u.orders.insert(u.orders.begin(),flightFormation(u,level,true,w.tickCounter_));
+                } else {
+                    // Move_Ground_FormationStandby (row 0x5eb854, 0x15000400)
+                    // with no point: 0x15000000; +0x52 = -1 (4077b7).
+                    Order o;
+                    o.x=u.x;o.z=u.z;o.goal=o.groundMission=true;
+                    o.formationLevel=int8_t(level);o.mission.flags=0x15000000u;
+                    o.groundResponse.mode=mode;
+                    o.issuedTick=w.tickCounter_;
+                    u.orders.insert(u.orders.begin(),o);
+                }
+                w.noteOrders(u.id);
+                return true;
+            });
+        }
         int handle(RetailMissionState& m, uint32_t events) {
             if (u.landing && &m==&u.landing->mission) {
                 // VTOL_LandIfCan's air-traffic check (416e23), after its exits
                 // (+0x66, event 0x200): VTOL_StepOut ahead, then stage 0 a
-                // tick after it ends.
-                if (!u.landing->canceled && !(events&0x200))
+                // tick after it ends. Then its group check (416eda:
+                // 51d1e0(unit, 1, 3)): out of the slot a
+                // VTOL_Move_FormationStandby at level -2 goes ahead and the
+                // landing retires (5); the default standby follows the
+                // formation.
+                if (!u.landing->canceled && !(events&0x200)) {
                     if (const int result=retailAirTrafficCheck(RetailTrafficMission::LandIfCan,m,w.tickCounter_,
                             u.airTraffic,int16_t(u.type->footX),m.flags,*this);result>=0) return result;
+                    if (const int result=standbyGroupCheck(RetailStandbyCheck::LandIfCan);result>=0) return result;
+                }
                 return retailLanding(*u.landing,events,{u.x.v,u.flightY.v,u.z.v},portHeadingToRetail(u.heading),
                     int16_t(u.type->footX),int16_t(u.type->footZ),true,u.type->canFly,*this);
             }
@@ -3696,6 +3788,15 @@ void World::tickGroundMission(Unit& u,bool attackWalk) {
             if (&m==&u.standbyState && u.type->canFly)
                 if (const int result=retailAirTrafficCheck(RetailTrafficMission::Standby,m,w.tickCounter_,
                         u.airTraffic,int16_t(u.type->footX),m.flags,*this);result>=0) return result;
+            // The standbys' group check (VTOL_Standby 417527, Standby
+            // 407779: 51d1e0(unit, 1, 2)), at every wake: out of the slot
+            // VTOL_Move_FormationStandby, or Move_Ground_FormationStandby
+            // with response mode -1, goes ahead at level -1, and the standby
+            // starts again at stage 0 when it retires. (Standby_Wander has
+            // none.)
+            if (&m==&u.standbyState && (u.type->canFly || !u.type->wanders))
+                if (const int result=standbyGroupCheck(u.type->canFly ? RetailStandbyCheck::VtolStandby
+                        : RetailStandbyCheck::Standby);result>=0) return result;
             if (&m==&u.standbyState && u.type->canFly)
                 return retailVtolStandby(m,w.tickCounter_,true,true,u.flightGroundMode==2,
                     [&](int n){return random(n);},[&]{ initialize(); },
@@ -5939,6 +6040,18 @@ void World::setActive(int unitId, bool on) {
     notifyUnitScript(*u,on ? "Activate" : "Deactivate");
 }
 
+void World::setAiGroup(int player, int unitId, int slot, bool formation) {
+    if (player<0 || player>=kMaxPlayers || size_t(player)>=players_.size() || !players_[size_t(player)].automaticGates ||
+        slot<0 || slot>=100) return;
+    if (!unitId) {
+        if (slot>0) aiFormation_[size_t(player)].set(size_t(slot),formation);
+        return;
+    }
+    Unit* u=unit(unitId);
+    if (!u || !u->alive() || u->player!=player) return;
+    u->aiGroup=int8_t(slot);
+}
+
 void World::setSquad(int unitId, int squad) {
     Unit* u = unit(unitId);
     if (!u || !u->alive()) return;
@@ -7936,7 +8049,7 @@ bool World::retailIssueAutoAttack(Unit& u,int targetId,bool forceReturn,bool for
         // mode 1), the previous head].
         Order back{Fixed::fromInt(pos.x),Fixed::fromInt(pos.z),0};
         back.goal=true;back.issuedTick=tickCounter_;
-        back.mission.flags=0x3000400u;
+        back.mission.flags=u.type->canFly ? kVtolMoveFlags : 0x3000400u;
         if (u.type->canFly) back.flightMoveMission=true;
         else {
             back.groundMission=true;
@@ -9008,6 +9121,7 @@ bool World::giveUnit(int unitId, int fromPlayer, int toPlayer) {
     u.rally.clear();
     u.selfDestructT = -1;
     u.squad = 0;
+    u.aiGroup = 0;
     u.lastHitBy = 0;
     u.lastHitPlayer = -1;
     gPlayersValid_ = false;
@@ -9153,6 +9267,7 @@ bool World::scenarioTransfer(int unitId, int newPlayer, MissionScript* notify) {
     u->rally.clear();
     u->selfDestructT = -1;
     u->squad = 0;
+    u->aiGroup = 0;
     u->lastHitBy = 0;
     u->lastHitPlayer = -1;
     gPlayersValid_ = false;
@@ -9196,6 +9311,7 @@ void World::captureUnit(Unit& t, int newPlayer) {
     startObjectStats(t);
     t.lastHitBy = 0; t.lastHitPlayer = -1;
     t.squad = 0;             // no longer in its old owner's control group
+    t.aiGroup = 0;
     t.buildQueue.clear();    // and not still producing for them
     t.buildProgress = 0; t.buildFraction = 0;
     t.productionSiteId = 0;
@@ -10940,7 +11056,6 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
         --players_[size_t(old->player)].unitCount;
         gPlayersValid_=false;bodyIndexValid_=false;
     }
-    int8_t bsquad = b->squad;   // capture before spawn may realloc units_
     // Preserve retail birth orientation. Factory scripts query this heading to
     // counter-rotate their build pads into the fixed yard where appropriate.
     int id = spawn(type, x, z, std::nullopt, b->player);
@@ -10950,8 +11065,6 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
     site->buildBegun=bool(replacement);
     site->beingBuilt = true;   // its builder owns it this tick (no instant decay)
     site->hp = Fixed::fromFloat(type->maxHp * 0.05f);
-    // Auto-join: a conjured MOBILE unit inherits the builder's squad (a building never does).
-    if (bsquad && !type->isStructure()) site->squad = bsquad;
     // Key off maxVel, NOT the FBI canmove flag: verwall and tarwall both declare
     // canmove=1 with no velocity, so a canMove gate left Veruna and Taros walls
     // blocking neither pathing nor line of sight while Aramon's and Creon's did.
@@ -12614,6 +12727,26 @@ void World::tickFlyingGuard(Unit& u) {
             return;
         }
     }
+    // The group check (418a7b..418b72, retailGuardGroupCheck: 51d1e0(unit,
+    // 1, 4)): out of the slot VTOL_Move_Formation at level -3 goes ahead
+    // and the guard starts again at stage 0 when it retires (the formation
+    // runs in this dispatch: tickFlightPatrol, after this); flagged and out
+    // again, rand(4) == 0 drops it from the group's moving centre and every
+    // order.
+    {
+        bool formation=false;
+        const int result=retailGuardGroupCheck(o.mission.flags,retailAttackOutOfSlot(u,4),
+            [&](int n) { return int(pathRand(uint32_t(n))); },
+            [&] { leaveRetailGroupCentre(u);cancelPath(u);u.orders.clear();u.routeStamp=-1; },
+            [&] { formation=true;return true; });
+        if (result==2) return;                    // `o` has gone with the orders
+        if (result>=0) {
+            o.mission.stage=0;                    // the dispatcher's result 0
+            u.orders.insert(u.orders.begin(),flightFormation(u,-3,false,tickCounter_));
+            noteOrders(u.id);
+            return;
+        }
+    }
     // 418b72: each look past its head reads the guarded unit's position into
     // mission +0x22, the point a lost ward's VTOL_SeekGuard circles.
     o.attackPointX=g->x;o.attackPointZ=g->z;
@@ -13131,6 +13264,28 @@ void World::emitConstruction(Unit& u,bool rising) {
     u.constructionEmitter->emit(1,y,rising,[&]{return crtRand(draw++ ? 0x4f14a2u : 0x4f1467u);});
 }
 
+// GetBuilt's group join (40238a, read 2026-11-04): a factory's output, as it
+// is released, takes the factory's group (50b4f0(unit, factory+0xc8)), even
+// none, when the factory is alive and the output's owner is human (+0xea 1).
+// Computer players' outputs are left to their AI's assignment.
+void World::joinFactoryGroup(const Unit& factory,Unit& output) {
+    if (!factory.alive() || !output.type || output.type->isStructure() || output.player!=factory.player ||
+        output.player<0 || size_t(output.player)>=players_.size() || players_[size_t(output.player)].automaticGates)
+        return;
+    output.squad=factory.squad;
+}
+
+// Ours: a unit a mobile builder (or a repeating mobile producer) made joins
+// the builder's group or formation when it is finished, for human owners as
+// GetBuilt's join. Retail's MobileBuild (405560) has no such join: GetBuilt's
+// is a structure builder's only (402291), so its output stays in no group.
+void World::joinBuilderGroup(const Unit& builder,Unit& output) {
+    if (!builder.squad || !output.type || output.type->isStructure() || output.player!=builder.player ||
+        output.player<0 || size_t(output.player)>=players_.size() || players_[size_t(output.player)].automaticGates)
+        return;
+    output.squad=builder.squad;
+}
+
 void World::completeRetailConstruction(Unit& builder,Unit& site) {
     const auto& owner=players_[size_t(builder.player)];
     if (!owner.buildCache) throw std::runtime_error("construction completion catalogue absent");
@@ -13153,6 +13308,7 @@ void World::completeRetailConstruction(Unit& builder,Unit& site) {
         throw std::runtime_error("construction completion rejected by original eligibility rules");
     site.underConstruction=false;site.beingBuilt=false;
     site.standbyAllowed=true;site.guardNoMoveAllowed=true;
+    if (!builder.type->isStructure()) joinBuilderGroup(builder,site);
     // Completion publishes a solid mobile body before later movers/searches.
     // Cached grades must see it even if its stationary mover never refreshes.
     if (!site.type->canFly && !site.type->isStructure()) {
@@ -13183,6 +13339,7 @@ void World::tickRetailGetBuilt(Unit& site) {
                 if (!u.type->isStructure() && builder && builder->alive() && builder->type->isStructure()) {
                     if (!builder->rally.empty())
                         throw std::runtime_error("factory rally completion host is not ported");
+                    w.joinFactoryGroup(*builder,u);
                     const uint32_t first=random(6),second=random(3);
                     if (u.type->canFly) { w.queueFlyerPark(u.id,builder->id,(first+second+6)*16); return 5; }
                     Order order;order.goal=order.groundMission=true;order.park.emplace();
@@ -13807,8 +13964,8 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
     const Weapon* weapon=u.type->weaponSwitching ? selected
                        : u.type->weapons.empty() ? nullptr : &u.type->weapons.front();
     if (!u.orders.front().airToAir) u.orders.front().airToAir.emplace();
-    struct Host {
-        World& w; Unit& u; const Unit& target; const Weapon* weapon;
+    struct Host : AirAttackGroup {
+        const Unit& target; const Weapon* weapon;
         bool evading=false;   // the handler running is VTOL_Evade's
         int retargetTo=0;     // 4d7de0's new attack, put ahead once the dispatch is done
         int32_t stepOutTo=0;  // a step-out's D, pushed ahead once the dispatch is done
@@ -13820,8 +13977,12 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
         bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
         RetailMissionState* head() {
             Order* o=order();
-            if (!o || stepOutTo) return nullptr;
+            if (!o || stepOutTo || formationTo) return nullptr;
             return o->airToAir->evade ? &o->airToAir->evade->mission : &o->mission;
+        }
+        // VTOL_Evade's next mission is the AirToAir behind it (0x1000200).
+        uint32_t nextFlags() const {
+            return evading ? w.retailOrderFlags(u,u.orders.front()) : w.retailNextMissionFlags(u,0);
         }
         bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
         void idle() {}
@@ -13939,13 +14100,14 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
             duel.traffic=u.airTraffic;duel.footX=int16_t(u.type->footX);duel.targetFootX=int16_t(target.type->footX);
             return retailAirToAir(m,a.count,w.tickCounter_,events,duel,*this);
         }
-    } host{*this,u,target,weapon};
+    } host{{*this,u},target,weapon};
     // The new attack goes in ahead of AirToAir and takes its next mission:
     // the default one behind an attack acquired idle (aheadOfDefault).
     const bool aheadOfDefault=u.orders.front().aheadOfDefault;
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
         u.orders.front().aheadOfDefault=aheadOfDefault;
+    if (host.push()) return;
     if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
     if (stepOutFront(u)) { flyMissionGoal(u,u.orders.front());return; }
     if (u.orders.empty() || u.orders.front().targetId!=target.id || !u.orders.front().airToAir) {
@@ -14112,13 +14274,14 @@ void World::tickStepOutMission(Unit& u) {
 // starts off the map runs its stage 0 later, without the target: it takes
 // off and draws its angle as for a dead one.
 void World::tickSeekAttack(Unit& u,bool carriesTarget) {
-    struct Host {
-        World& w; Unit& u; bool carries;
+    struct Host : AirAttackGroup {
+        bool carries;
         int retargetTo=0;     // 4d7de0's new attack, put ahead once the dispatch is done
         int32_t stepOutTo=0;  // a step-out's D, pushed ahead once the dispatch is done
         bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
         RetailMissionState* head() {
-            return !stepOutTo && !u.orders.empty() && u.orders.front().seekAttack ? &u.orders.front().mission : nullptr;
+            return !stepOutTo && !formationTo && !u.orders.empty() && u.orders.front().seekAttack
+                ? &u.orders.front().mission : nullptr;
         }
         bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
         void idle() {}
@@ -14181,9 +14344,10 @@ void World::tickSeekAttack(Unit& u,bool carriesTarget) {
             order.x=Fixed::raw(point.x);order.z=Fixed::raw(point.z);
             return result;
         }
-    } host{*this,u,carriesTarget};
+    } host{{*this,u},carriesTarget};
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (host.retargetTo) retailIssueAutoAttack(u,host.retargetTo,false,false);
+    if (host.push()) return;
     if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
     if (stepOutFront(u) || (!u.orders.empty() && u.orders.front().seekAttack)) { flyMissionGoal(u,u.orders.front()); return; }
     tickFlightBody(u);notifyFlightOccupancy(u);
@@ -14241,17 +14405,17 @@ int World::seekGuardFind(const Unit& u) const {
 // sightdistance; it guards the first it finds (a canguard type; VTOL_Follow
 // put ahead, the seek waiting behind it) and ends when it cannot guard one.
 void World::tickSeekGuard(Unit& u) {
-    struct Host {
-        World& w; Unit& u;
+    struct Host : AirAttackGroup {
         int guardTo=0;        // the unit to guard, put ahead once the dispatch is done
         int candidate=0;      // the search's first find
         RetailStepOut stepOutKind=RetailStepOut::None;
         int32_t stepOutTo=0;  // a step-out's D, pushed ahead once the dispatch is done
         bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
         RetailMissionState* head() {
-            return !stepOutTo && !guardTo && !u.orders.empty() && u.orders.front().seekGuard
+            return !stepOutTo && !guardTo && !formationTo && !u.orders.empty() && u.orders.front().seekGuard
                 ? &u.orders.front().mission : nullptr;
         }
+        bool outOfSlot() const { return w.retailAttackOutOfSlot(u,4); }   // 4199b2: 51d1e0(unit, 1, 4)
         bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
         void idle() {}
         uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
@@ -14300,8 +14464,20 @@ void World::tickSeekGuard(Unit& u) {
             order.x=Fixed::raw(point.x);order.z=Fixed::raw(point.z);
             return result;
         }
-    } host{*this,u};
+    } host{{*this,u}};
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
+    if (host.formationTo) {
+        // VTOL_Move_Formation at level -3 ahead of the seek (4d7750), which
+        // starts again at stage 0 when it retires; the dispatcher goes on
+        // to it at once.
+        u.orders.insert(u.orders.begin(),flightFormation(u,-3,false,tickCounter_));
+        noteOrders(u.id);
+        tickFlightPatrol(u);
+        if (stepOutFront(u)) flyMissionGoal(u,u.orders.front());
+        else if (plainFlightPatrol(u)) { tickFlightMovement(u);notifyFlightOccupancy(u); }
+        else { tickFlightBody(u);notifyFlightOccupancy(u); }
+        return;
+    }
     if (host.guardTo) {
         // The guard goes ahead of the seek (4d7750), which sleeps behind it;
         // its first look runs at once (tickFlyingGuard), as the dispatcher
@@ -14718,6 +14894,7 @@ bool World::constructionWork(Unit& b, Unit& site, float dt) {
         site.hp >= Fixed::fromFloat(site.type->maxHp)) {
         site.hp = Fixed::fromFloat(site.type->maxHp);
         site.underConstruction = false;
+        if (!b.type->isStructure()) joinBuilderGroup(b,site);
         return true;
     }
     return false;
@@ -17984,9 +18161,9 @@ void World::finishProduction(int producerId,Unit& finished) {
                 // (4de530 actions 2 and 9, 0x4022ec / 0x402319): a flyer's
                 // VTOL_Move and VTOL_Patrol (plainFlightPatrol). The patrol
                 // closes its own loop, as queuePatrol leaves it; a move or
-                // fight-move step carries the move's flags.
+                // fight-move step carries VTOL_Move's flags.
                 leg.patrolOpen=false;
-                if (!leg.patrol) { leg.flightMoveMission=true;leg.mission.flags=0x3000400u; }
+                if (!leg.patrol) { leg.flightMoveMission=true;leg.mission.flags=kVtolMoveFlags; }
                 else leg.mission.flags=kVtolPatrolFlags;   // VTOL_PATROL at the step's point
             }
         }
@@ -18011,9 +18188,10 @@ void World::finishProduction(int producerId,Unit& finished) {
     }
     if (Unit* pu = unit(producerId)) {
         pu->justBuilt = id;
-        // Auto-join: a squad-member producer's new MOBILE unit joins its squad.
-        if (pu->squad && t && !t->isStructure())
-            if (Unit* nu = unit(id)) nu->squad = pu->squad;
+        if (Unit* nu = unit(id)) {
+            if (getBuilt) joinFactoryGroup(*pu,*nu);
+            else joinBuilderGroup(*pu,*nu);
+        }
         // Infinite build: re-queue so the next one starts once this one clears.
         if (pu->buildQueue.empty() && pu->repeatType)
             pu->buildQueue.push_back(pu->repeatType);
@@ -19502,7 +19680,15 @@ void World::tick(float dt) {
             // behind it takes over in this dispatch once it ends.
             if (stepOutFront(u)) tickStepOutMission(u);
             // A flyer attack's walk back runs after the weapons (tickAttackWalk).
-            if (plainFlightPatrol(u) && !formationAttack(u.orders)) tickFlightPatrol(u);
+            if (plainFlightPatrol(u) && !formationAttack(u.orders)) {
+                const bool standby=standbyFormationFront(u);
+                tickFlightPatrol(u);
+                // A FormationStandby that retired hands the dispatch back to
+                // the standby under it, or to the default mission after a
+                // landing it ended, as 4d8450 goes on to the next head in
+                // the same call.
+                if (standby && !underStandbyFormation(u) && u.orders.empty()) tickGroundMission(u);
+            }
             tickGuardNoMove(u);
         }
         // A captured MobileBuild waits for navigator arrival before creating
@@ -20357,6 +20543,7 @@ void World::hashTrace() const {
         hUnitMisc = fnv(hUnitMisc, uint64_t(uint32_t(u.repairId)));
         hUnitMisc = fnv(hUnitMisc, u.workScriptWorking);
         hUnitMisc = fnv(hUnitMisc, uint64_t(uint32_t(int32_t(u.squad))));
+        if (u.aiGroup) hUnitMisc = fnv(fnv(hUnitMisc, 0x41494750u), uint64_t(uint8_t(u.aiGroup)));
     }
     uint64_t hProj = fnv(seed, projectiles_.size());
     for (const auto& p : projectiles_) {
@@ -20982,6 +21169,7 @@ uint64_t World::stateHash() const {
         mix(uint64_t(uint32_t(u.repairId)));   // build-power target -> HP/mana divergence
         mix(u.workScriptWorking);
         mix(uint64_t(uint32_t(int32_t(u.squad))));   // control squad: formation<0 drives movement
+        if (u.aiGroup) { mix(0x41494750u); mix(uint64_t(uint8_t(u.aiGroup))); }   // retail AI squad
     }
     checkpoint("units");
     // Projectiles: count alone hides same-count divergence, so fold owner and
@@ -21125,6 +21313,11 @@ uint64_t World::stateHash() const {
         // from setup -- fold it in so a lobby/config mismatch faults immediately
         // as a desync instead of diverging mysteriously.
         mix(uint64_t(uint32_t(t.team)));
+    }
+    // The retail AI squads' formation flags (setAiGroup), when any is set.
+    for (size_t p=0;p<aiFormation_.size();++p) if (aiFormation_[p].any()) {
+        mix(0x41494646u);mix(p);
+        for (size_t g=1;g<100;++g) if (aiFormation_[p].test(g)) mix(g);
     }
     checkpoint("players");
     // Reclaimable features: fold a cheap signature so a reclaim divergence faults as

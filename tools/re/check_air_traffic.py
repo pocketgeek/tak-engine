@@ -674,7 +674,10 @@ def check_mission_checks(binary):
 def check_seek_guard(binary):
     """VTOL_SeekGuard (4197d0) against retailVtolSeekGuard on random states of
     both stages and the head: event 0x200, the off-map return, the air-traffic
-    check at every wake, the flag's rand(10), stage 0's point and angle, stage
+    check at every wake, the group check (4199b2: 51d1e0(unit, 1, 4) answered
+    in or out of the slot; flagged and out, rand(4) == 0 lets the member go,
+    50c480 and 4d6a50(unit, 0); else VTOL_Move_Formation at level -3) and the
+    flag's rand(10), stage 0's point and angle, stage
     1's search (509ac0, answered), the controller's release, the guard (4de530
     action 7, answered; the mission built or not), the orbit step, the orbit
     point (armed: the selected slot's range + 160; else 160), its radius and
@@ -765,8 +768,21 @@ def check_seek_guard(binary):
     p.hooks[0x42a660] = lambda uc, a: (2, 0)
     p.hooks[0x509ac0] = search
     p.hooks[0x4de530] = resolve
-    p.hooks[0x51d1e0] = lambda uc, a: (record('group'), (3, 0))[1]
-    p.hooks[0x50c480] = lambda uc, a: (_ for _ in ()).throw(AssertionError('unexpected 50c480'))
+    def group(uc, args):               # 51d1e0(unit, 1, 4)
+        if (get(args), get(args + 4), get(args + 8)) != (unit, 1, 4):
+            raise AssertionError('unexpected 51d1e0 arguments')
+        record('group')
+        return 3, 1 if answer.get('out') else 0
+
+    def cancel(uc, args):              # 4d6a50(unit, 0)
+        if (get(args), get(args + 4)) != (unit, 0):
+            raise AssertionError('unexpected 4d6a50 arguments')
+        record('cancel')
+        return 2, 0
+
+    p.hooks[0x51d1e0] = group
+    p.hooks[0x50c480] = lambda uc, a: (record('leave', get(a)), (1, 0))[1]
+    p.hooks[0x4d6a50] = cancel
     p.hooks[0x51e4d0] = lambda uc, a: (_ for _ in ()).throw(AssertionError('unexpected 51e4d0'))
     p.freeze_hooks()
     draws = [0]
@@ -775,6 +791,7 @@ def check_seek_guard(binary):
     put(unit + 0xb4, 'I', kind)
     put(unit + 0xc, 'I', weapon)
     rng = random.Random(0x4197d0)
+    outcomes = {}
     fixtures, expected = [], []
     stages = {}
     for i in range(8000):
@@ -801,7 +818,7 @@ def check_seek_guard(binary):
         foot = rng.choice((1, 2, 3, 4))
         seed = rng.randrange(2**32)
         answer.update(found=rng.choice((0, 0, 0, 1, 3)), guardable=rng.random() < 0.8, built=rng.random() < 0.9,
-                      sight=rng.choice((200, 256, 320, 400)))
+                      sight=rng.choice((200, 256, 320, 400)), out=rng.random() < 0.2)
         mover = 1 if flies or rng.random() < 0.5 else 0
         put(unit + 8, 'I', mover)
         put(kind + 0x260, 'I', 0x800 if (flies or not mover) else 0)
@@ -833,15 +850,26 @@ def check_seek_guard(binary):
         if error:
             raise AssertionError((i, error))
         missions = log.get('mission', [])
-        steps = [m for m in missions if m[0] == 0x2a and m[1] == 0]
+        names = log.get('lookup', [])
+        # A step-out's D (+0x4e) is (rand(15) + footX) x 16, never 0; the
+        # formation's is 0.
+        steps = [m for m in missions if m[0] == 0x2a and m[1] == 0 and m[2]]
+        formations = [m for m in missions if m[0] == 0x2a and m[1] == 0 and not m[2]]
         guards = [m for m in missions if m[0] == 0x33]
-        if len(steps) + len(guards) != len(missions):
+        if len(steps) + len(guards) + len(formations) != len(missions):
             raise AssertionError((i, 'unexpected missions', missions))
         if guards and guards[0][1] != HEAP + 0x30000:
             raise AssertionError((i, 'guard for another unit'))
-        names = log.get('lookup', [])
-        if any(n != 'VTOL_StepOut' for n in names):
+        if sorted(names) != sorted(['VTOL_StepOut'] * len(steps) + ['VTOL_Move_Formation'] * len(formations)):
             raise AssertionError((i, 'unexpected lookups', names))
+        if log.get('leave') and log['leave'] != [unit]:
+            raise AssertionError((i, 'leave', log['leave']))
+        if log.get('group'):
+            key = ('formation' if formations else 'leave' if log.get('cancel') else '?') if answer['out'] \
+                else 'in slot'
+            if key == '?':
+                raise AssertionError((i, 'out of the slot without a formation or a leave'))
+            outcomes[key] = outcomes.get(key, 0) + 1
         installs = len(log.get('install', []))
         goal = struct.unpack('<3i', p.uc.mem_read(controller + 0x26, 12)) if installs else (0, 0, 0)
         guarded = len(guards) if answer['built'] else 0
@@ -850,12 +878,15 @@ def check_seek_guard(binary):
                          *struct.unpack('<3i', p.uc.mem_read(mission + 0x22, 12)), installs, *goal,
                          get(controller + 0xa, 'h') if installs else 0, len(log.get('search', [])),
                          len(log.get('release', [])), len(log.get('resolve', [])), len(steps),
-                         1 if steps else 0, 0, steps[-1][2] if steps else 0, get(RNG), draws[0]))
+                         1 if steps else 0, 0, steps[-1][2] if steps else 0, get(RNG), draws[0],
+                         len(log.get('group', [])), len(log.get('cancel', [])), len(formations)))
+        if len(log.get('cancel', [])) != len(log.get('leave', [])):
+            raise AssertionError((i, '4d6a50 without 50c480'))
         guard_ok = int(answer['guardable'] and answer['built'])
         fixtures.append(' '.join(map(str, (stage, events, tick, deadline, pending, flags, angle & 0xffff, *point,
                                            s32(x), s32(y), s32(z), weapon_range, int(armed), int(flies_port),
                                            int(on_map), width, height, seed, int(answer['found'] > 0), guard_ok,
-                                           traffic, foot))))
+                                           traffic, foot, int(answer['out'])))))
         key = 'off' if not on_map else stage
         stages[key] = stages.get(key, 0) + 1
     rows = run(binary, '--air-seek-guard', fixtures)
@@ -866,9 +897,9 @@ def check_seek_guard(binary):
     def tally(column, value=None):
         return sum(1 for row in expected if (row[column] == value if value is not None else row[column]))
     print('PASS: VTOL_SeekGuard, %d calls (%s), every state, point, controller, search, guard, push and draw '
-          '(%d orbit points, %d searches, %d guards offered, %d put ahead, %d step-outs, %d ended (8))'
+          '(%d orbit points, %d searches, %d guards offered, %d put ahead, %d step-outs, %d ended (8)); group check %s'
           % (len(fixtures), ' '.join('%s:%d' % kv for kv in sorted(stages.items(), key=str)), tally(10), tally(15),
-             tally(17), tally(0, 3), tally(18), tally(0, 8)))
+             tally(17), tally(0, 3), tally(18), tally(0, 8), ', '.join('%s %d' % kv for kv in sorted(outcomes.items()))))
 
 
 def check_air_strike(binary):

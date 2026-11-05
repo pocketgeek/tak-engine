@@ -160,20 +160,21 @@ int main(int argc, char** argv) {
     // tools/re/check_air_seek_attack.py: one VTOL_SeekAttack (4192f0) handler
     // call per line.
     if (argc==2 && std::strcmp(argv[1],"--air-seek")==0) {
-        unsigned stage,events,tick,deadline,pending,flags,angle,armed,flies,target,onMap,seed,attacks,retargets;
+        unsigned stage,events,tick,deadline,pending,flags,angle,armed,flies,target,onMap,seed,attacks,retargets,out,next;
         int range,width,height,traffic,footX;
         RetailAirSeek in;RetailFlightVector point;
-        while (std::scanf("%u %u %u %u %u %u %u %d %d %d %d %d %d %d %u %u %u %u %d %d %u %u %u %d %d",&stage,&events,&tick,
-                          &deadline,&pending,&flags,&angle,&point.x,&point.y,&point.z,&in.position.x,&in.position.y,
+        while (std::scanf("%u %u %u %u %u %u %u %d %d %d %d %d %d %d %u %u %u %u %d %d %u %u %u %d %d %u %u",&stage,&events,
+                          &tick,&deadline,&pending,&flags,&angle,&point.x,&point.y,&point.z,&in.position.x,&in.position.y,
                           &in.position.z,&range,&armed,&flies,&target,&onMap,&width,&height,&seed,&attacks,
-                          &retargets,&traffic,&footX)==25) {
+                          &retargets,&traffic,&footX,&out,&next)==27) {
             in.range=range;in.armed=armed!=0;in.flies=flies!=0;in.target=target!=0;in.onMap=onMap!=0;
             in.width=width;in.height=height;in.traffic=int8_t(traffic);in.footX=int16_t(footX);
             RetailMissionState m;m.stage=uint8_t(stage);m.waitMask=0;m.deadline=deadline;m.pending=pending;m.flags=flags;
             uint16_t heading=uint16_t(angle);
             struct Host {
-                uint32_t& seed;RetailMissionState& m;bool attacks,retargets;
+                uint32_t& seed;RetailMissionState& m;bool attacks,retargets,out;uint32_t next;
                 unsigned calls=0,attackCalls=0,begin=0,autoSlots=0,retargetCalls=0,installs=0,stepOuts=0;
+                unsigned outCalls=0,leaves=0,formations=0;
                 int32_t stepOutD=0;RetailFlightGoal goal;
                 uint32_t random(int n) { ++calls;return retailRandom(seed,n); }
                 bool attack() { ++attackCalls;return attacks; }
@@ -182,12 +183,17 @@ int main(int argc, char** argv) {
                 bool retarget() { ++retargetCalls;return retargets; }
                 bool stepOut(int32_t d) { ++stepOuts;stepOutD=d;return true; }
                 void install(const RetailFlightGoal& g) { ++installs;goal=g;m.pending&=~0x3700u; }
-            } host{seed,m,attacks!=0,retargets!=0};
+                bool outOfSlot() { ++outCalls;return out; }
+                uint32_t nextFlags() const { return next; }
+                void leave() { ++leaves; }
+                bool formation() { ++formations;return true; }
+            } host{seed,m,attacks!=0,retargets!=0,out!=0,next};
             const int result=retailVtolSeekAttack(m,point,heading,tick,events,in,host);
-            std::printf("%d %u %u %u %u %u %u %d %d %d %u %d %d %d %d %u %u %u %u %u %u %u %d\n",result,unsigned(m.stage),
-                        m.waitMask,m.deadline,m.pending,m.flags,unsigned(heading),point.x,point.y,point.z,host.installs,
-                        host.goal.point.x,host.goal.point.y,host.goal.point.z,int(host.goal.radius),host.attackCalls,
-                        host.begin,host.autoSlots,host.retargetCalls,seed,host.calls,host.stepOuts,host.stepOutD);
+            std::printf("%d %u %u %u %u %u %u %d %d %d %u %d %d %d %d %u %u %u %u %u %u %u %d %u %u %u\n",result,
+                        unsigned(m.stage),m.waitMask,m.deadline,m.pending,m.flags,unsigned(heading),point.x,point.y,
+                        point.z,host.installs,host.goal.point.x,host.goal.point.y,host.goal.point.z,
+                        int(host.goal.radius),host.attackCalls,host.begin,host.autoSlots,host.retargetCalls,seed,
+                        host.calls,host.stepOuts,host.stepOutD,host.outCalls,host.leaves,host.formations);
         }
         return 0;
     }
@@ -246,20 +252,21 @@ int main(int argc, char** argv) {
     // tools/re/check_air_traffic.py: one VTOL_SeekGuard (4197d0) handler call
     // per line.
     if (argc==2 && std::strcmp(argv[1],"--air-seek-guard")==0) {
-        unsigned stage,events,tick,deadline,pending,flags,angle,armed,flies,onMap,seed,found,guards;
+        unsigned stage,events,tick,deadline,pending,flags,angle,armed,flies,onMap,seed,found,guards,out;
         int range,width,height,traffic,footX;
         RetailAirSeekGuard in;RetailFlightVector point;
-        while (std::scanf("%u %u %u %u %u %u %u %d %d %d %d %d %d %d %u %u %u %d %d %u %u %u %d %d",&stage,&events,&tick,
+        while (std::scanf("%u %u %u %u %u %u %u %d %d %d %d %d %d %d %u %u %u %d %d %u %u %u %d %d %u",&stage,&events,&tick,
                           &deadline,&pending,&flags,&angle,&point.x,&point.y,&point.z,&in.position.x,&in.position.y,
                           &in.position.z,&range,&armed,&flies,&onMap,&width,&height,&seed,&found,&guards,&traffic,
-                          &footX)==24) {
+                          &footX,&out)==25) {
             in.range=range;in.armed=armed!=0;in.flies=flies!=0;in.onMap=onMap!=0;in.width=width;in.height=height;
             in.traffic=int8_t(traffic);in.footX=int16_t(footX);
             RetailMissionState m;m.stage=uint8_t(stage);m.waitMask=0;m.deadline=deadline;m.pending=pending;m.flags=flags;
             uint16_t heading=uint16_t(angle);
             struct Host {
-                uint32_t& seed;RetailMissionState& m;bool finds,guards;
+                uint32_t& seed;RetailMissionState& m;bool finds,guards,out;
                 unsigned calls=0,foundCalls=0,releases=0,guardCalls=0,installs=0,stepOuts=0,stops=0;
+                unsigned outCalls=0,cancels=0,formations=0;
                 RetailStepOut kind=RetailStepOut::None;int32_t stepOutD=0;RetailFlightGoal goal;
                 uint32_t random(int n) { ++calls;return retailRandom(seed,n); }
                 bool stepOut(RetailStepOut k,int32_t d) { ++stepOuts;kind=k;stepOutD=d;return true; }
@@ -268,13 +275,17 @@ int main(int argc, char** argv) {
                 void release() { ++releases;m.pending&=~0x3700u; }
                 bool guard() { ++guardCalls;return guards; }
                 void install(const RetailFlightGoal& g) { ++installs;goal=g;m.pending&=~0x3700u; }
-            } host{seed,m,found!=0,guards!=0};
+                bool outOfSlot() { ++outCalls;return out; }
+                void cancel() { ++cancels; }
+                bool formation() { ++formations;return true; }
+            } host{seed,m,found!=0,guards!=0,out!=0};
             const int result=retailVtolSeekGuard(m,point,heading,tick,events,in,host);
-            std::printf("%d %u %u %u %u %u %u %d %d %d %u %d %d %d %d %u %u %u %u %u %u %d %u %u\n",result,
+            std::printf("%d %u %u %u %u %u %u %d %d %d %u %d %d %d %d %u %u %u %u %u %u %d %u %u %u %u %u\n",result,
                         unsigned(m.stage),m.waitMask,m.deadline,m.pending,m.flags,unsigned(heading),point.x,point.y,
                         point.z,host.installs,host.goal.point.x,host.goal.point.y,host.goal.point.z,
                         int(host.goal.radius),host.foundCalls,host.releases,host.guardCalls,host.stepOuts,
-                        unsigned(host.kind),host.stops,host.stepOutD,seed,host.calls);
+                        unsigned(host.kind),host.stops,host.stepOutD,seed,host.calls,host.outCalls,host.cancels,
+                        host.formations);
         }
         return 0;
     }
@@ -294,23 +305,24 @@ int main(int argc, char** argv) {
     // navigator calls (4e48d0, 4e4b70, 4e4be0), one per line.
     if (argc==2 && std::strcmp(argv[1],"--air-to-air")==0) {
         unsigned stage,events,tick,deadline,pending,flags,heading,targetHeading,distance,automatic,flies,onMap,seed,
-                 retarget,evade;
+                 retarget,evade,out,next;
         int count,speed,maxSpeed,width,height,traffic,footX,targetFootX;
         RetailAirDuel duel;RetailFlightVector lead;
-        while (std::scanf("%u %u %u %u %u %u %d %d %d %d %u %d %d %d %u %d %d %d %d %d %d %d %d %u %u %u %u %d %d %u %u %u %d %d %d",
+        while (std::scanf("%u %u %u %u %u %u %d %d %d %d %u %d %d %d %u %d %d %d %d %d %d %d %d %u %u %u %u %d %d %u %u %u %d %d %d %u %u",
                           &stage,&events,&tick,&deadline,&pending,&flags,&count,&duel.position.x,&duel.position.y,
                           &duel.position.z,&heading,&duel.target.x,&duel.target.y,&duel.target.z,&targetHeading,
                           &duel.targetVelocity.x,&duel.targetVelocity.y,&duel.targetVelocity.z,&lead.x,&lead.y,
                           &lead.z,&speed,&maxSpeed,&distance,&automatic,&flies,&onMap,&width,&height,&seed,
-                          &retarget,&evade,&traffic,&footX,&targetFootX)==35) {
+                          &retarget,&evade,&traffic,&footX,&targetFootX,&out,&next)==37) {
             duel.heading=uint16_t(heading);duel.targetHeading=uint16_t(targetHeading);duel.speed=speed;
             duel.maxSpeed=maxSpeed;duel.distance=uint16_t(distance);duel.automatic=automatic!=0;duel.flies=flies!=0;
             duel.onMap=onMap!=0;duel.width=width;duel.height=height;duel.traffic=int8_t(traffic);
             duel.footX=int16_t(footX);duel.targetFootX=int16_t(targetFootX);
             RetailMissionState m;m.stage=uint8_t(stage);m.waitMask=0;m.deadline=deadline;m.pending=pending;m.flags=flags;
             struct Host {
-                uint32_t& seed;RetailMissionState& m;RetailFlightVector led;bool retargets,evades;
+                uint32_t& seed;RetailMissionState& m;RetailFlightVector led;bool retargets,evades,out;uint32_t next;
                 unsigned calls=0,begin=0,aims=0,retargetCalls=0,releases=0,evadeCalls=0,points=0,intercepts=0,stepOuts=0;
+                unsigned outCalls=0,leaves=0,formations=0;
                 int32_t stepOutD=0;RetailFlightGoal goal;RetailInterceptGoal intercept;
                 uint32_t random(int n) { ++calls;return retailRandom(seed,n); }
                 void beginFlight() { ++begin; }
@@ -323,43 +335,55 @@ int main(int argc, char** argv) {
                 bool stepOut(int32_t d) { ++stepOuts;stepOutD=d;return evades; }
                 void install(const RetailFlightGoal& g) { ++points;goal=g;m.pending&=~0x3700u; }
                 void install(const RetailInterceptGoal& g) { ++intercepts;intercept=g;m.pending&=~0x3700u; }
-            } host{seed,m,lead,retarget!=0,evade!=0};
+                bool outOfSlot() { ++outCalls;return out; }
+                uint32_t nextFlags() const { return next; }
+                void leave() { ++leaves; }
+                // As the step-out: the fixture's answer whether 4d6c40 built it.
+                bool formation() { ++formations;return evades; }
+            } host{seed,m,lead,retarget!=0,evade!=0,out!=0,next};
             const int result=retailAirToAir(m,count,tick,events,duel,host);
-            std::printf("%d %u %u %u %u %u %d %u %u %d %d %d %d %d %d %d %d %d %d %u %u %u %u %u %u %u %u %u %d\n",result,
+            std::printf("%d %u %u %u %u %u %d %u %u %d %d %d %d %d %d %d %d %d %d %u %u %u %u %u %u %u %u %u %d %u %u %u\n",
+                        result,
                         unsigned(m.stage),m.waitMask,m.deadline,m.pending,m.flags,count,host.points,host.intercepts,
                         host.goal.point.x,host.goal.point.y,host.goal.point.z,int(host.goal.radius),
                         host.intercept.point.x,host.intercept.point.y,host.intercept.point.z,host.intercept.velocity.x,
                         host.intercept.velocity.y,host.intercept.velocity.z,unsigned(host.intercept.heading),
                         host.begin,host.aims,host.retargetCalls,host.releases,host.evadeCalls,seed,host.calls,
-                        host.stepOuts,host.stepOutD);
+                        host.stepOuts,host.stepOutD,host.outCalls,host.leaves,host.formations);
         }
         return 0;
     }
     if (argc==2 && std::strcmp(argv[1],"--air-evade")==0) {
-        unsigned stage,events,tick,deadline,pending,flags,heading,turnRate,targetTurnRate,distance,flies,onMap,seed;
+        unsigned stage,events,tick,deadline,pending,flags,heading,turnRate,targetTurnRate,distance,flies,onMap,seed,out,
+                 next,built;
         int width,height;
         RetailAirEvade e;RetailAirEscape in;
-        while (std::scanf("%u %u %u %u %u %u %d %d %d %d %d %u %d %d %d %d %d %d %u %u %u %u %u %d %d %u",
+        while (std::scanf("%u %u %u %u %u %u %d %d %d %d %d %u %d %d %d %d %d %d %u %u %u %u %u %d %d %u %u %u %u",
                           &stage,&events,&tick,&deadline,&pending,&flags,&e.maneuver,&e.budget,&in.position.x,
                           &in.position.y,&in.position.z,&heading,&in.target.x,&in.target.y,&in.target.z,&in.maxSpeed,
                           &in.typeSpeed,&in.targetTypeSpeed,&turnRate,&targetTurnRate,&distance,&flies,&onMap,&width,
-                          &height,&seed)==26) {
+                          &height,&seed,&out,&next,&built)==29) {
             in.heading=uint16_t(heading);in.turnRate=uint16_t(turnRate);in.targetTurnRate=uint16_t(targetTurnRate);
             in.distance=uint16_t(distance);in.flies=flies!=0;in.onMap=onMap!=0;in.width=width;in.height=height;
             auto& m=e.mission;m.stage=uint8_t(stage);m.waitMask=0;m.deadline=deadline;m.pending=pending;m.flags=flags;
             struct Host {
-                uint32_t& seed;RetailMissionState& m;unsigned calls=0,points=0,intercepts=0;
+                uint32_t& seed;RetailMissionState& m;bool out;uint32_t next;bool built;
+                unsigned calls=0,points=0,intercepts=0,outCalls=0,leaves=0,formations=0;
                 RetailFlightGoal goal;RetailInterceptGoal intercept;
                 uint32_t random(int n) { ++calls;return retailRandom(seed,n); }
                 void install(const RetailFlightGoal& g) { ++points;goal=g;m.pending&=~0x3700u; }
                 void install(const RetailInterceptGoal& g) { ++intercepts;intercept=g;m.pending&=~0x3700u; }
-            } host{seed,m};
+                bool outOfSlot() { ++outCalls;return out; }
+                uint32_t nextFlags() const { return next; }
+                void leave() { ++leaves; }
+                bool formation() { ++formations;return built; }
+            } host{seed,m,out!=0,next,built!=0};
             const int result=retailAirEvade(e,tick,events,in,host);
-            std::printf("%d %u %u %u %u %u %d %d %u %u %d %d %d %d %d %d %d %u %u %u\n",result,unsigned(m.stage),
+            std::printf("%d %u %u %u %u %u %d %d %u %u %d %d %d %d %d %d %d %u %u %u %u %u %u\n",result,unsigned(m.stage),
                         m.waitMask,m.deadline,m.pending,m.flags,e.maneuver,e.budget,host.points,host.intercepts,
                         host.goal.point.x,host.goal.point.y,host.goal.point.z,int(host.goal.radius),
                         host.intercept.point.x,host.intercept.point.y,host.intercept.point.z,
-                        unsigned(host.intercept.heading),seed,host.calls);
+                        unsigned(host.intercept.heading),seed,host.calls,host.outCalls,host.leaves,host.formations);
         }
         return 0;
     }

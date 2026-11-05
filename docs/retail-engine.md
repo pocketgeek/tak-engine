@@ -2210,8 +2210,13 @@ when the unit and its builder both carry `+0x130` bit 0x1000000 without 0x1000,
 the unit has a mover (+8) and the builder is a structure builder (bit
 0x2000000). It walks the factory's mission list (+0x60) and copies every
 `QMove` and `QPatrol` entry onto the new unit (`0x4de530`, then `0x4d78a0`);
-nothing else is copied. An AI owner (`[+0xb8]` set, +0xea 1) then gets
-`0x50b4f0`, the AI unit assignment. Only when nothing was copied does it add
+nothing else is copied. Then, with the factory alive and a human owner
+(the owner `[+0xb8]`'s first word nonzero, +0xea 1; a computer player is kind 3), `0x40238a`
+calls `0x50b4f0(unit, factory+0xc8)`: the output takes the factory's group,
+or none (read 2026-11-04; this was first misread as the AI's unit
+assignment). Ported at release, human owners only (`World::joinFactoryGroup`,
+fx-groups). A mobile builder's output gets no group in retail (below); ours
+joins the builder's group when finished (`World::joinBuilderGroup`). Only when nothing was copied does it add
 `PARK` (`0x604ae8`, definition 13: handler `0x407ca0`, class 14) with the
 factory as target, permanent 1 and padding `(rand(6)+rand(3)+3)*16`, the 3
 being 6 for a type with flag 0x800 at +0x260 (canfly). Emulated with the

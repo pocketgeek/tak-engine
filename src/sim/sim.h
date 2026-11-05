@@ -42,6 +42,7 @@
 #include "sim/powercodes.h"
 
 #include <array>
+#include <bitset>
 #include <cstddef>
 #include <span>
 #include <algorithm>
@@ -703,6 +704,11 @@ struct ManaBuildArea {
 // adds 0x4000 to the leg that has appended (or found) the loop's anchor.
 // tools/re/check_air_point_mission.py.
 inline constexpr uint32_t kVtolPatrolFlags = 0x1000412u;
+// VTOL_Move's (row 0x5ebcd3) with a point and no target: a flyer's move,
+// fight-move or rally step, and its return move after an attack (4de530
+// action 2 gives a flyer VTOL_Move: not Move_Ground's 0x3000400, so no
+// 0x2000000 navigator formation bit). tools/re/check_air_point_mission.py.
+inline constexpr uint32_t kVtolMoveFlags = 0x1000402u;
 
 struct ScriptedOrder {
     enum class Kind : uint8_t { AttackType, Train, WaitAttack, WaitNear, SelfDestruct };
@@ -1573,6 +1579,12 @@ struct alignas(64) Unit {
     // Set at each refusal from hashed state (the script's point) and read only
     // while that refusal lasts, so not hashed (as builtBy).
     int32_t refusedSiteX = 0, refusedSiteZ = 0;
+    // On a computer player's unit: its retail AI squad (unit+0xc8, written by
+    // the AI's set-squad 0x50b4f0) when that squad is a strike or a VTOL squad,
+    // the only kinds whose record the AI makes a formation (World::aiFormation,
+    // 50b700); else 0, as the other squads' plain records pace nothing. Set by
+    // Cmd::AiGroup (World::setAiGroup); hashed with a tag when set.
+    int8_t aiGroup = 0;
     // A campaign mission's fixed veterancy multiplier (SetMission/InitialMission
     // `v F`, unit +0xf4, set by icd 0x5148e1). Not 0: getMult (0x5193c0) answers
     // it instead of 1 + level/10 and getLevel (0x519310) answers 10, so the unit
@@ -3110,6 +3122,14 @@ public:
     void setCloak(int unitId, bool on);     // canCloak unit: enable/disable cloaking
     void setActive(int unitId, bool on);    // onOffable unit: power on/off
     void setSquad(int unitId, int squad);   // control squad: 0 none, +N group N, -N formation N
+    // A computer player's retail AI squads (Cmd::AiGroup, from the server's
+    // classic AI): unitId != 0 puts that unit in squad `slot` (0 none,
+    // Unit::aiGroup); unitId == 0 sets squad `slot`'s formation flag (record
+    // +8, 50b700). Only for a computer-owned player (automaticGates).
+    void setAiGroup(int player, int unitId, int slot, bool formation);
+    bool aiFormation(int player, int slot) const {
+        return player>=0 && player<kMaxPlayers && slot>0 && slot<100 && aiFormation_[size_t(player)].test(size_t(slot));
+    }
     // Attack order on an enemy unit.
     void attack(int unitId, int targetId, bool queue);
     // Board/unload through a friendly transport; queue=true appends the paired
@@ -4372,6 +4392,7 @@ private:
     // formation bit (vt+0x30): the current mission has 0x2000000.
     std::array<std::array<RetailGroupRecord,100>,kMaxPlayers> retailGroups_{};
     std::vector<uint8_t> retailGroupPaced_;
+    std::array<std::bitset<100>,kMaxPlayers> aiFormation_{};   // retail AI records' +8 (setAiGroup)
     Fixed retailGroupMaximum_;   // 4d95f0 cap for the unit being moved; 0 = none
     // Legion: where a flyer in a mixed formation (squad < 0 with ground
     // members) keeps station this tick, by unit index. Rebuilt each tick from
@@ -4408,12 +4429,14 @@ private:
         World& w; Unit& u;
         bool formationTo=false;
         bool outOfSlot() const { return w.retailAttackOutOfSlot(u,5); }
+        // 50c480 then 4d6a50(unit, 0): a guard's group check lets it go.
+        void cancel() const { w.leaveRetailGroupCentre(u);w.cancelPath(u);u.orders.clear();u.routeStamp=-1; }
         uint32_t nextFlags() const { return w.retailNextMissionFlags(u,0); }
         void leave() const { w.leaveRetailGroupCentre(u); }
         bool formation() { formationTo=true;return true; }
-        // Puts the formation ahead and runs it at once, as the dispatcher
-        // goes on to the head it was handed: true when it did (the caller's
-        // mover is done for the tick).
+        // Puts the formation ahead (level -4) and runs it at once, as the
+        // dispatcher goes on to the head it was handed: true when it did
+        // (the caller's mover is done for the tick).
         bool push();
     };
     void tickRetailGroups();
@@ -4435,6 +4458,10 @@ private:
     bool tickLegionLift(Unit& u);
     void leaveRetailGroupCentre(const Unit& u);
     Fixed retailGroupLimit(const Unit& u) const;
+    // A finished output joins its maker's group (human owners): a factory's
+    // as GetBuilt releases it (40238a), a mobile builder's when it is done.
+    void joinFactoryGroup(const Unit& factory,Unit& output);
+    void joinBuilderGroup(const Unit& builder,Unit& output);
     bool pathPending(int id) const {return paths_.pending(id);}
 
     // A unit's authoritative COB VM plus the host flags its scripts read.

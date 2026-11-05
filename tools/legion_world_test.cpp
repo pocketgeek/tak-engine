@@ -3089,7 +3089,23 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
     };
     for(int t=0;t<ticks;++t) {
         f.world.tick(1.f/30);motion.observe(f.world,ground);
-        for(int id:ground)check(f.legal(id),"illegal footprint in a mixed formation");
+        // Retail lets a ground unit walk under a descending flyer (507d10
+        // takes airborne word +2 as free) and the flyer then lands on it
+        // (tools/re/check_landing_moving_ground.py); a formation member's
+        // FormationStandby (407779) walks it out again from under the
+        // landed flyer. Legion refuses that touchdown (flyerLandingOccupied).
+        for(int id:ground) {
+            if(f.legal(id))continue;
+            const auto& u=*f.world.unit(id);
+            const int ux=footprintOrigin(u.x,u.type->footX),uz=footprintOrigin(u.z,u.type->footZ);
+            const bool underFlyer=!legion&&std::any_of(flyers.begin(),flyers.end(),[&](int o) {
+                const auto& v=*f.world.unit(o);
+                const int vx=footprintOrigin(v.x,v.type->footX),vz=footprintOrigin(v.z,v.type->footZ);
+                return v.flightGroundMode!=2&&vx<ux+u.type->footX&&ux<vx+v.type->footX&&
+                       vz<uz+u.type->footZ&&uz<vz+v.type->footZ;
+            });
+            check(underFlyer,"illegal footprint in a mixed formation");
+        }
         bool groundBusy=false,flyersBusy=false;
         for(int id:ground)groundBusy|=!f.world.unit(id)->orders.empty();
         for(int id:flyers)flyersBusy|=!f.world.unit(id)->orders.empty();

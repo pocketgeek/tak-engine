@@ -225,13 +225,28 @@ int retailGroundFormation(RetailMissionState& m,uint32_t tick,int level,bool att
 // as the mission point and begins flight (416c50); stage 1 snaps it to the
 // footprint grid, installs a 16 px point controller and sleeps 5..14 ticks,
 // returning 0 so the next wake re-takes the centre. The mission retires once
-// back inside the level's radius. Level 0 never retires; the 0x4000000
-// standby branch (41797e..417ad1, VTOL_Move_FormationStandby) is not ported:
-// only the landing search pushes that mission.
-template<class OutOfSlot,class Centre,class Begin,class Move,class Random>
-int retailFlightFormation(RetailMissionState& m,uint32_t tick,int level,bool canFly,
-                          OutOfSlot outOfSlot,Centre centre,Begin begin,Move move,Random random) {
-    if (level!=0 && !outOfSlot()) return 5;
+// back inside the level's radius. Level 0 never retires. Back inside, a
+// VTOL_Move_FormationStandby (0x4000000; VTOL_Standby and VTOL_LandIfCan
+// push it) whose group still moves (moving(), retailGroupMoving) stays
+// (41797e..417ad1): attack() (4d8370, then 4d7de0(unit, found, 0, 0, 1, 0):
+// true when it put an attack ahead) clears the wait mask and the stage and
+// returns 3; else loiter(angle, D) installs a point controller D px off
+// along `angle` (radius 64, 4d4d40), the mission waits on 0x700 and returns
+// 0. `heading` is the body's (unit +0x7e).
+template<class OutOfSlot,class Centre,class Begin,class Move,class Random,class Moving,class Attack,class Loiter>
+int retailFlightFormation(RetailMissionState& m,uint32_t tick,int level,bool canFly,uint16_t heading,
+                          OutOfSlot outOfSlot,Centre centre,Begin begin,Move move,Random random,
+                          Moving moving,Attack attack,Loiter loiter) {
+    if (level!=0 && !outOfSlot()) {
+        if (!(m.flags&0x4000000u) || !moving()) return 5;
+        if (attack()) { m.waitMask=0; m.stage=0; return 3; }
+        const uint32_t far=uint32_t(random(20));
+        const uint32_t distance=(far+uint32_t(random(10))+10)*16;
+        const uint16_t angle=uint16_t(heading-0x800u+uint32_t(random(0x1000)));
+        loiter(angle,distance);
+        m.waitMask|=0x700;
+        return 0;
+    }
     switch (m.stage) {
     case 0:
         if (!canFly) return 7;

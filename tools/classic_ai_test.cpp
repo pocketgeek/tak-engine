@@ -1215,7 +1215,8 @@ static void classicWaves(const char* root) {
     const float dx=sx<w.mapW()*8.0f ? 1.f : -1.f,dz=sz<w.mapH()*8.0f ? 1.f : -1.f;
     std::vector<int> army;
     std::map<net::Cmd,int> kinds;
-    int armyMoves=0,armyOther=0,homeMoves=0,dissolveStops=0;
+    int armyMoves=0,armyOther=0,homeMoves=0,dissolveStops=0,groupCommands=0;
+    bool formationSeen=false,pacedSeen=false,plainBase=true;
     uint32_t launchTick=0,marchTick=0,woundTick=0,killTick=0,dissolveTick=0;
     float closest=1e9f,startGap=0;
     int wounded=0;
@@ -1243,6 +1244,7 @@ static void classicWaves(const char* root) {
         }
         controller.tick(w,tick,[&](const net::Command& c) {
             ++kinds[c.kind];
+            if (c.kind==net::Cmd::AiGroup) { ++groupCommands;sim::applyCommand(w,reg,c);return; }
             const int slot=brain.squadOf(c.unitId);
             const auto* u=w.unit(c.unitId);
             if (u && inArmy(slot)) {
@@ -1262,6 +1264,16 @@ static void classicWaves(const char* root) {
                 if (!startGap) startGap=gap(*u);
                 closest=std::min(closest,gap(*u));
             }
+        // The World's view of the squads (Cmd::AiGroup): a strike or VTOL
+        // member is in its squad's record, a marching strike's record is a
+        // formation the Retail movement paces, and a base member is in none.
+        for (int id:army) if (const auto* u=w.unit(id);u && u->alive()) {
+            const int slot=brain.squadOf(id);
+            if (slot>=1 && slot<=20) plainBase&=u->aiGroup==0;
+            if (slot<21 || slot>49 || !(slot%2) || u->aiGroup!=slot || !w.aiFormation(1,slot)) continue;
+            formationSeen=true;
+            if (const auto* g=w.retailGroupRecord(id);g && g->active && g->all[0].count>1) pacedSeen=true;
+        }
     }
     const auto& st=brain.waveStats();
     int home=0;for (int id:army) if (const auto* u=w.unit(id);u && u->alive() && brain.squadOf(id)>=1 && brain.squadOf(id)<=20) ++home;
@@ -1283,6 +1295,11 @@ static void classicWaves(const char* root) {
     check(homeMoves>=1,"waves: a wounded strike member is sent home with a Move");
     check(st.dissolves>=1 && dissolveStops>=1,"waves: a wave cut down to its gate dissolves (its survivors are stopped)");
     check(home>=1,"waves: the dissolved wave's survivors rejoin a base");
+    std::printf("    %d group commands; a marching strike flagged a formation: %d, paced: %d\n",groupCommands,
+                int(formationSeen),int(pacedSeen));
+    check(formationSeen,"waves: a marching strike's members are in its squad's record, flagged a formation (50b700)");
+    check(pacedSeen,"waves: the Retail movement aggregates that formation (51b890)");
+    check(plainBase,"waves: a base member is in no paced record");
 }
 
 // Classic against Classic (P6): two Classic seats on Edmont's Field, the

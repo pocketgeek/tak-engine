@@ -166,23 +166,43 @@ struct RetailGroupUnit {
     int32_t typeMaximum=0;
 };
 
-// 51b890 for one player: groups with members (record+8) are rebuilt from
-// their eligible units in unit order, then paced members out of slot at
-// level 4 apply the straggler slowdown. paced receives each unit's
+// The record a unit belongs to (unit+0xc8) and whether that record is a
+// formation (record +8). Retail has one record per number, written by the
+// console's CreateSquad (48e170 -> 522170 -> 50b4f0 for the members, 50b700
+// for +8): "CreateSquad N" rebuilds group N from the selection as a plain
+// group (+8 clear), "CreateSquad N f" as a formation (+8 set), each replacing
+// the other. Only a formation is ever aggregated, made active or paced; a
+// plain group behaves as no group. squad is Unit::squad: +N a Ctrl group
+// (plain group N), -N a formation (group N with +8). A computer player's
+// units are in its AI's squads instead (aiGroup, Unit::aiGroup; the AI's
+// set-squad 50b4f0 overwrites unit+0xc8), whose +8 the AI sets through
+// set-active 50b700: a strike squad while it attacks (state 2), a VTOL squad
+// while it has units (aiFormation, World::aiFormation).
+struct RetailGroupSlot { int group=0; bool formation=false; };
+constexpr RetailGroupSlot retailGroupSlot(int squad,int aiGroup=0,bool aiFormation=false) {
+    if (aiGroup>0) return {aiGroup,aiFormation};
+    if (squad>0) return {squad,false};
+    if (squad<0) return {-squad,true};
+    return {};
+}
+
+// 51b890 for one player: formation groups (record +8) are rebuilt from
+// their eligible units in unit order (a record without +8 goes inactive),
+// then paced members out of slot at level 4 apply the straggler slowdown. paced receives each unit's
 // navigator formation bit (vt+0x30). Returns whether any record's active
 // flag or speed changed (the record+0xb0 "changed" flag, 50b7a0/50bbc0/50bfe0).
-template<class Units,class Members>
-bool retailGroupTick(const Units& units,const Members& hasMembers,
+template<class Units,class Formations>
+bool retailGroupTick(const Units& units,const Formations& formation,
                      std::array<RetailGroupRecord,100>& records,std::vector<uint8_t>& paced) {
     struct Sum { int64_t x=0,y=0,z=0; int32_t count=0,area=0; };
     std::array<std::array<Sum,3>,100> all{},moving{};
     std::array<int32_t,100> ground{},boat{};
     paced.assign(units.size(),0);
     bool any=false;
-    for (size_t g=1;g<100;++g) any|=bool(hasMembers[g]);
+    for (size_t g=1;g<100;++g) any|=bool(formation[g]);
     if (any) for (size_t i=0;i<units.size();++i) {
         const auto& u=units[i];
-        if (!u.eligible || u.group<1 || u.group>=100 || !hasMembers[size_t(u.group)]) continue;
+        if (!u.eligible || u.group<1 || u.group>=100 || !formation[size_t(u.group)]) continue;
         const size_t g=size_t(u.group);const auto& m=u.member;
         paced[i]=(u.missionFlags&0x2000000u)!=0;
         const auto add=[&](Sum& s) { ++s.count;s.area+=m.area;s.x+=m.position.x;s.y+=m.position.y;s.z+=m.position.z; };
@@ -197,7 +217,7 @@ bool retailGroupTick(const Units& units,const Members& hasMembers,
     for (size_t g=1;g<100;++g) {
         auto& record=records[g];
         bool active=false;
-        if (hasMembers[g]) {
+        if (formation[g]) {
             for (size_t c=0;c<3;++c) {
                 const auto write=[](RetailGroupAggregate& a,const Sum& s) {
                     a.count=s.count;a.area=s.area;
@@ -219,7 +239,7 @@ bool retailGroupTick(const Units& units,const Members& hasMembers,
     if (any) for (size_t i=0;i<units.size();++i) {
         const auto& u=units[i];
         if (!u.eligible || !paced[i] || u.member.kind==RetailGroupClass::Flyer ||
-            u.group<1 || u.group>=100 || !hasMembers[size_t(u.group)]) continue;
+            u.group<1 || u.group>=100 || !formation[size_t(u.group)]) continue;
         auto& record=records[size_t(u.group)];
         if (!record.active) continue;
         if (!retailGroupOutOfSlot(record,u.member,true,4,(u.missionFlags&0x4000000u)!=0)) continue;
@@ -314,6 +334,55 @@ int retailAttackGroupCheck(uint32_t& flags,bool outOfSlot,uint32_t next,int leav
     }
     if ((flags&0x8000000u) && random(clear)==0) flags&=~0x8000000u;
     return -1;
+}
+
+// The guards' group check (VTOL_Follow 418a7b..418b72, VTOL_SeekGuard
+// 4199b2..419aac), after their head's exits and the air-traffic check:
+// 51d1e0(unit, 1, 4), outOfSlot here. Out of the slot on a mission already
+// flagged 0x8000000, rand(4) == 0 lets the member go: 50c480, then
+// 4d6a50(unit, 0) drops every mission (cancel), and 2. Otherwise out of the
+// slot it flags the mission and pushes VTOL_Move_Formation at level -3
+// ahead (4d7750): 0, so the guard starts again at stage 0 when the formation
+// retires, or 7 when it could not be built. In the slot, rand(10) == 0
+// clears the flag. -1: run the stages.
+template<class Random,class Cancel,class Formation>
+int retailGuardGroupCheck(uint32_t& flags,bool outOfSlot,Random random,Cancel cancel,Formation formation) {
+    if (outOfSlot) {
+        if ((flags&0x8000000u) && random(4)==0) { cancel(); return 2; }
+        flags|=0x8000000u;
+        return formation() ? 0 : 7;
+    }
+    if ((flags&0x8000000u) && random(10)==0) flags&=~0x8000000u;
+    return -1;
+}
+
+// The standbys' group check, at every wake past their exits (and a flyer's
+// air-traffic check): VTOL_Standby 417527 and Standby 407779 ask
+// 51d1e0(unit, 1, 2), VTOL_LandIfCan 416eda 51d1e0(unit, 1, 3). Out of the
+// slot the FormationStandby goes ahead (4d7750): VTOL_Move_FormationStandby
+// at level -1 (the landing's at -2), or Move_Ground_FormationStandby at -1
+// with response mode -1 (+0x52). formation(level, mode) builds and pushes
+// it: false when it could not be built (7). A standby then returns 0 (it
+// waits under the formation and starts again at stage 0); the landing
+// returns 5, so it retires and the default mission follows the formation.
+// -1: in the slot, the stages run. No draw. (E: check_retail_group.py
+// standby.)
+enum class RetailStandbyCheck : uint8_t { VtolStandby, Standby, LandIfCan };
+template<class OutOfSlot,class Formation>
+int retailStandbyGroupCheck(RetailStandbyCheck kind,OutOfSlot outOfSlot,Formation formation) {
+    const bool landing=kind==RetailStandbyCheck::LandIfCan;
+    if (!outOfSlot(landing ? 3 : 2)) return -1;
+    if (!formation(landing ? -2 : -1,kind==RetailStandbyCheck::Standby ? -1 : 0)) return 7;
+    return landing ? 5 : 0;
+}
+
+// 41798b..4179e9: the group is active (50b800) with a moving member of any
+// class (50b900 ground, 50bd20 boat, 50c140 flyer): a
+// VTOL_Move_FormationStandby back in its slot stays (retailFlightFormation).
+inline bool retailGroupMoving(const RetailGroupRecord& g) {
+    return g.active && (g.moving[size_t(RetailGroupClass::Ground)].count!=0 ||
+                        g.moving[size_t(RetailGroupClass::Boat)].count!=0 ||
+                        g.moving[size_t(RetailGroupClass::Flyer)].count!=0);
 }
 
 // 4d95f0 (4d976a..4d9a2a): the maximum for a paced member. own is the

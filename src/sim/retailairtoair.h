@@ -38,9 +38,10 @@ namespace tak::sim {
 //
 // Every draw is 535cc0, the shared game random number generator. The host has
 // made the head's checks (the unit may attack, a live target, the leash at
-// mission +0x56). Not ported (AirToGround's is: retailAirGroupCheck): the
-// group check 51d1e0 and the VTOL_Move_Formation it pushes (so flag
-// 0x8000000 is never set here).
+// mission +0x56). Past the restart (0x40) comes the group check (41ccde,
+// retailAirGroupCheck: 51d1e0(unit, 1, 5), VTOL_Move_Formation at level -4
+// ahead), as AirToGround's; VTOL_Evade has the same one past its off-map
+// return (41e55a), its next mission being the AirToAir behind it.
 // Stage 2's air-traffic check (41ce48): with unit +0x12a at 5 or more, an auto
 // attack first rescans on rand(2) == 0 (4d8370, 4d7de0) and ends if it put a
 // new attack ahead; then VTOL_StepOut goes ahead with D = (rand(15) + the
@@ -156,14 +157,16 @@ int retailAirReturnToMap(RetailMissionState& m,RetailFlightVector position,int32
 // which also clears the mission's pending controller events 0x3700);
 // release() (4d4d40 with no controller); evade() (pushes VTOL_Evade on the
 // target, true when inserted); stepOut(D) (VTOL_StepOut pushed ahead, 4d7750:
-// false when it could not be built). `count` is mission +0x4e.
+// false when it could not be built); the group check's outOfSlot(),
+// nextFlags(), leave() and formation(), as AirToGround's. `count` is mission
+// +0x4e.
 template<class Host>
 int retailAirToAir(RetailMissionState& m,int32_t& count,uint32_t tick,uint32_t events,
                    const RetailAirDuel& duel,Host& host) {
     if (events&0x28) return 5;                                       // 41ca7e -> 41d654
     if (!duel.onMap) return detail::retailAirReturnToMap(m,duel.position,duel.width,duel.height,host);
     if (events&0x40) { m.sleep(tick,1); return 0; }                  // 41ccc4
-    if ((m.flags&0x8000000u) && host.random(25)==0) m.flags&=~0x8000000u;   // 41cde3
+    if (const int result=retailAirGroupCheck(m,host);result>=0) return result;   // 41ccde..41cdfe
     const uint32_t wake=host.random(15)+7;                           // 41cdfe
     switch (m.stage) {
     case 0:                                                          // 41d60b
@@ -313,15 +316,16 @@ struct RetailAirToAirState {
     bool evadeController=false;                   // the controller is the evade's
 };
 
-// Host: random(bound); install(point goal) and install(intercept goal).
-// A flyer's mover never carries the road or water bits (mover +0x36 0x800 /
+// Host: random(bound); install(point goal) and install(intercept goal); the
+// group check's outOfSlot(), nextFlags() (the AirToAir behind it), leave()
+// and formation(). A flyer's mover never carries the road or water bits (mover +0x36 0x800 /
 // 0x1000) that would scale the speeds and turn rates read here.
 template<class Host>
 int retailAirEvade(RetailAirEvade& e,uint32_t tick,uint32_t events,const RetailAirEscape& in,Host& host) {
     auto& m=e.mission;
     if (events&0x28) return 5;                                       // 41e404
     if (!in.onMap) return detail::retailAirReturnToMap(m,in.position,in.width,in.height,host);
-    if ((m.flags&0x8000000u) && host.random(25)==0) m.flags&=~0x8000000u;   // 41e65f
+    if (const int result=retailAirGroupCheck(m,host);result>=0) return result;   // 41e55a..41e67a
     auto any=[&] { return int32_t(host.random(6))+1; };
     auto straight=[&] { return int32_t(host.random(3))+1; };
     switch (m.stage) {

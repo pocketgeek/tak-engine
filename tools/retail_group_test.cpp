@@ -1,6 +1,8 @@
 // Retail mode group pacing (51b890 / 4d95f0 / 402880): slowest type speed,
 // straggler slowdown, and re-forming through Move_Ground_Formation.
 #include "navigation_test_common.h"
+#include "sim/retailairseek.h"
+#include "sim/retailairtoair.h"
 #include <cstdlib>
 
 using namespace navigation_test;
@@ -9,11 +11,12 @@ bool formationMission(const Unit& u) {
     return std::any_of(u.orders.begin(),u.orders.end(),[](const Order& o){return o.formationLevel!=0;});
 }
 
-// A Ctrl-group (+N) paces at the slowest member's type speed.
+// A formation (-N, retail "CreateSquad N f") paces at the slowest member's
+// type speed.
 void slowest() {
     World world;setup(world,PathfindingMode::Retail);auto slow=mover(1),fast=mover(0);
     const int a=world.spawn(&slow,640,2048,std::nullopt,0),b=world.spawn(&fast,640,2096,std::nullopt,0);
-    for(int id:{a,b}){world.setSquad(id,1);world.order(id,3200,2072,false);}
+    for(int id:{a,b}){world.setSquad(id,-1);world.order(id,3200,2072,false);}
     known(world);Fixed maximum;
     int reform=0;
     for(int tick=0;tick<600;++tick){const auto x=world.unit(b)->x,z=world.unit(b)->z;
@@ -50,7 +53,7 @@ void straggler(PathfindingMode selected) {
     World world;setup(world,selected);auto type=mover(1);std::vector<int> ids;
     for(int i=0;i<3;++i)ids.push_back(world.spawn(&type,float(1200),float(2000+i*48),std::nullopt,0));
     ids.push_back(world.spawn(&type,600,2048,std::nullopt,0));
-    for(int id:ids){world.setSquad(id,2);world.order(id,3600,2048,false);}
+    for(int id:ids){world.setSquad(id,-2);world.order(id,3600,2048,false);}
     known(world);world.tick(1.f/30);
     const auto* record=world.retailGroupRecord(ids[0]);
     if(selected!=PathfindingMode::Retail) {
@@ -80,6 +83,66 @@ void straggler(PathfindingMode selected) {
         require(retired,"Move_Ground_Formation never retired");
     }
     std::printf("scenario=straggler mode=%d reformed=%d retired=%d tick=%u\n",int(selected),reformed,retired,world.tickCount());
+}
+
+// A Ctrl group (+N) is retail's plain group ("CreateSquad N", record +8
+// clear): 51b890 never aggregates it, so it is never active, never capped,
+// and never re-forms. The slow and fast members and the straggler from the
+// scenes above all walk at their own speeds.
+void plain() {
+    World world;setup(world,PathfindingMode::Retail);auto slow=mover(1),fast=mover(0);
+    std::vector<int> ids{world.spawn(&slow,640,2048,std::nullopt,0),world.spawn(&fast,640,2096,std::nullopt,0),
+                         world.spawn(&fast,200,2096,std::nullopt,0)};
+    for(int id:ids){world.setSquad(id,1);world.order(id,3200,2072,false);}
+    known(world);
+    Fixed fastest;bool reformed=false;
+    for(int tick=0;tick<300;++tick){
+        world.tick(1.f/30);
+        fastest=fxMax(fastest,world.unit(ids[1])->speed);
+        for(int id:ids)reformed|=formationMission(*world.unit(id));
+        const auto* record=world.retailGroupRecord(ids[0]);
+        require(record&&!record->active&&record->all[0].count==0,"a Ctrl group's record was aggregated");
+    }
+    require(!reformed,"a Ctrl group member re-formed");
+    require(fastest>slow.maxVel+Fixed::fromFloat(0.5f),"a Ctrl group was paced at its slowest member");
+    std::printf("scenario=plain fast_max=%.4f slow_type=%.4f\n",fastest.toFloat(),slow.maxVel.toFloat());
+}
+
+// A computer player's AI squads (Cmd::AiGroup): a strike or VTOL squad is
+// its own record, a formation only while the AI flags it (50b700). Its
+// members are aggregated and get the group checks, but owner kind 3 takes no
+// speed cap (4d95f0 -> navigator vt+0x3c, 0 on the ground). A human player
+// cannot use it.
+void aiSquads() {
+    World world;setup(world,PathfindingMode::Retail);world.setPlayerCount(2);
+    world.player(0).automaticGates=true;
+    auto slow=mover(1),fast=mover(0);
+    const int a=world.spawn(&slow,640,2048,std::nullopt,0),b=world.spawn(&fast,640,2096,std::nullopt,0);
+    const int h=world.spawn(&fast,640,1500,std::nullopt,1);
+    for(int id:{a,b}){world.setAiGroup(0,id,23,false);world.order(id,3200,2072,false);}
+    world.setAiGroup(1,h,23,false);world.setAiGroup(1,0,23,true);
+    require(world.unit(a)->aiGroup==23 && world.unit(b)->aiGroup==23,"AI squad membership");
+    require(world.unit(h)->aiGroup==0 && !world.aiFormation(1,23),"a human player took an AI squad");
+    known(world);
+    world.tick(1.f/30);
+    const auto* record=world.retailGroupRecord(a);
+    require(record && !record->active,"an unflagged AI squad was aggregated");
+    world.setAiGroup(0,0,23,true);
+    require(world.aiFormation(0,23),"AI squad formation flag");
+    Fixed fastest;
+    for(int tick=0;tick<120;++tick){world.tick(1.f/30);fastest=fxMax(fastest,world.unit(b)->speed);}
+    record=world.retailGroupRecord(a);
+    require(record && record->active && record->all[0].count==2 && record->groundSpeed==slow.maxVel.v,
+            "a flagged AI squad is not a paced formation");
+    require(fastest>slow.maxVel+Fixed::fromFloat(0.5f),"a computer player's formation took the speed cap");
+    const auto before=world.stateHash();
+    world.setAiGroup(0,0,23,false);
+    require(world.stateHash()!=before,"the AI formation flag is not hashed");
+    world.setAiGroup(0,0,23,true);
+    require(world.stateHash()==before,"the AI formation flag hash");
+    world.setAiGroup(0,a,0,false);
+    require(world.unit(a)->aiGroup==0 && world.stateHash()!=before,"leaving an AI squad");
+    std::printf("scenario=aiSquads fast_max=%.4f\n",fastest.toFloat());
 }
 
 // Native slot geometry spot checks (51c700/51ce40/51d1e0).
@@ -140,11 +203,163 @@ void attackHead() {
      require(retailAttackGroupCheck(f,true,0,2,25,[](int){return 0;},[]{},[]{return false;})==7 &&
              (f&0x8000000u),"an unbuilt formation: 7");}
 }
+// The flyer missions' single group check, at their head (tools/re:
+// check_air_to_air.py, check_air_seek_attack.py, check_air_traffic.py):
+// AirToAir (41ccde), VTOL_Evade (41e55a) and VTOL_SeekAttack (4194f9) as
+// AirToGround's (51d1e0(unit, 1, 5), VTOL_Move_Formation at level -4), and
+// VTOL_SeekGuard (4199b2) as VTOL_Follow's (51d1e0(unit, 1, 4), level -3).
+// Out of the slot, not yet flagged: the flag set, the formation pushed, 0.
+void airHeads() {
+    struct Group {
+        uint32_t seed=1;bool out=true;unsigned outCalls=0,leaves=0,formations=0,cancels=0;
+        uint32_t random(int n) { return retailRandom(seed,n); }
+        bool outOfSlot() { ++outCalls;return out; }
+        uint32_t nextFlags() const { return 0; }
+        void leave() { ++leaves; }
+        void cancel() { ++cancels; }
+        bool formation() { ++formations;return true; }
+        void install(const RetailFlightGoal&) {}
+        void install(const RetailInterceptGoal&) {}
+        void beginFlight() {}
+        void slotsAuto() {}
+        void aim() {}
+        RetailFlightVector lead() const { return {}; }
+        bool retarget() { return false; }
+        void release() {}
+        bool evade() { return false; }
+        bool attack() { return false; }
+        bool stepOut(int32_t) { return true; }
+        bool stepOut(RetailStepOut,int32_t) { return true; }
+        void stopBuilding() {}
+        bool found() { return false; }
+        bool guard() { return false; }
+    };
+    const auto expect=[](const char* name,int result,uint32_t flags,const Group& g,uint32_t before) {
+        if (result!=0 || flags!=(before|0x8000000u) || g.formations!=1 || g.outCalls!=1) {
+            std::printf("%s: result %d flags %#x formations %u checks %u\n",name,result,flags,g.formations,g.outCalls);
+            require(false,"a flyer mission's group check out of the slot: formation, flag, 0");
+        }
+    };
+    {Group g;RetailMissionState m;m.flags=0x1000200u;int32_t count=0;RetailAirDuel duel;duel.maxSpeed=65536;
+     const int result=retailAirToAir(m,count,0,0,duel,g);expect("AirToAir",result,m.flags,g,0x1000200u);}
+    {Group g;RetailAirEvade e;e.mission.flags=0x1000200u;RetailAirEscape in;in.typeSpeed=in.targetTypeSpeed=65536;
+     const int result=retailAirEvade(e,0,0,in,g);expect("VTOL_Evade",result,e.mission.flags,g,0x1000200u);}
+    {Group g;RetailMissionState m;m.flags=0x1000600u;RetailFlightVector point{};uint16_t angle=0;RetailAirSeek in;
+     const int result=retailVtolSeekAttack(m,point,angle,0,0,in,g);
+     expect("VTOL_SeekAttack",result,m.flags,g,0x1000600u);}
+    {Group g;RetailMissionState m;m.flags=0x1000600u;RetailFlightVector point{};uint16_t angle=0;RetailAirSeekGuard in;
+     const int result=retailVtolSeekGuard(m,point,angle,0,0,in,g);
+     expect("VTOL_SeekGuard",result,m.flags,g,0x1000600u);}
+    // In the slot every one runs its stages; a guard flagged and out of the
+    // slot again lets the member go on rand(4) == 0 (2).
+    {Group g;g.out=false;RetailMissionState m;m.flags=0x1000200u;int32_t count=0;RetailAirDuel duel;
+     retailAirToAir(m,count,0,0,duel,g);
+     require(g.outCalls==1 && !g.formations && m.flags==0x1000200u,"AirToAir in the slot runs its stages");}
+    {bool let=false;
+     for (uint32_t seed=1;seed<64 && !let;++seed) {
+         Group g;g.seed=seed;RetailMissionState m;m.flags=0x9000600u;RetailFlightVector point{};uint16_t angle=0;
+         RetailAirSeekGuard in;
+         const int result=retailVtolSeekGuard(m,point,angle,0,0,in,g);
+         if (result==2) { require(g.cancels==1 && !g.formations,"a guard let go: 50c480 and 4d6a50, no formation");let=true; }
+         else require(result==0 && g.formations==1,"a flagged guard out of the slot: formation again");
+     }
+     require(let,"a flagged guard out of the slot is let go on rand(4) == 0");}
+}
+
+// A flyer for the World scenes: the plain mover made a VTOL that stands by
+// in the air.
+UnitType flyer(int kind=0) {
+    UnitType t=mover(kind);t.id=t.name="navigation-flyer-"+std::to_string(kind);
+    t.canFly=true;t.vtolStandby=true;t.cruiseAlt=64;t.footX=t.footZ=1;
+    return t;
+}
+
+// A flyer's move is VTOL_Move (row 0x5ebcd3: 0x1000402), not Move_Ground's
+// 0x3000400 (tools/re/check_air_point_mission.py): no navigator formation
+// bit (0x2000000), so a flyer in a formation is never paced.
+void flyerMove() {
+    World world;setup(world,PathfindingMode::Retail);auto t=flyer();
+    const int a=world.spawn(&t,640,2048,std::nullopt,0);
+    world.setSquad(a,-1);world.order(a,1600,2048,false);
+    const auto& o=world.unit(a)->orders;
+    require(o.size()==1 && o[0].mission.flags==0x1000402u,"a flyer's move does not carry VTOL_Move's flags");
+    known(world);world.tick(1.f/30);world.tick(1.f/30);
+    const auto* record=world.retailGroupRecord(a);
+    require(record && record->active && record->moving[size_t(RetailGroupClass::Flyer)].count==1,
+            "a flyer's move is not a group mover");
+}
+
+// A formation's patrolling flyer left behind (VTOL_Patrol 419f9b..41a200,
+// the same two checks as VTOL_Move): VTOL_Move_Formation goes ahead of its
+// leg, and when it retires the patrol goes on along the same leg, with no
+// second anchor (4d6b80 finds the leg flagged 0x4000).
+void flyerPatrol() {
+    World world;setup(world,PathfindingMode::Retail);auto t=flyer();
+    std::vector<int> ids;
+    for (int i=0;i<3;++i) ids.push_back(world.spawn(&t,640,1900+float(i)*48,std::nullopt,0));
+    const int outlier=world.spawn(&t,2600,3400,std::nullopt,0);ids.push_back(outlier);
+    for (int id:ids) world.setSquad(id,-1);
+    known(world);
+    for (int id:ids) world.patrol(id,1600,1960);
+    const auto legs=[&] {
+        std::vector<std::pair<Fixed,Fixed>> v;
+        for (const auto& o:world.unit(outlier)->orders) if (!o.formationLevel) v.emplace_back(o.x,o.z);
+        return v;
+    };
+    const auto before=legs();
+    bool pushed=false,retired=false,ahead=false;
+    std::vector<std::pair<Fixed,Fixed>> during;
+    for (int tick=0;tick<1800 && !retired;++tick) {
+        world.tick(1.f/30);
+        const auto& o=world.unit(outlier)->orders;
+        const bool lead=!o.empty() && o[0].formationLevel!=0;
+        if (lead && !pushed) { pushed=true;during=legs();ahead=o.size()>1 && o[1].patrol; }
+        if (pushed && !lead) retired=true;
+    }
+    require(pushed,"a patrolling flyer out of its slot got no VTOL_Move_Formation");
+    require(ahead,"the formation did not go ahead of the patrol leg");
+    require(during==before,"the formation changed the patrol's legs");
+    require(retired,"the patrol's formation never retired");
+    const auto after=legs();
+    require(after.size()==before.size() && after.front()==before.front(),
+            "the patrol did not resume its leg once the formation retired");
+    std::printf("scenario=flyerPatrol legs=%zu\n",after.size());
+}
+
+// The standbys' group check (Standby 407779, VTOL_Standby 417527): an idle
+// formation member out of its slot (51d1e0(unit, 1, 2)) gets the
+// FormationStandby (Move_Ground_FormationStandby with response mode -1:
+// 0x15000000; VTOL_Move_FormationStandby: 0x5000002) at level -1, goes back
+// to the group, and stands by again once it retires.
+void standbys(bool air) {
+    World world;setup(world,PathfindingMode::Retail);auto t=air ? flyer() : mover(0);
+    std::vector<int> ids;
+    for (int i=0;i<3;++i) ids.push_back(world.spawn(&t,640,1900+float(i)*64,std::nullopt,0));
+    const int outlier=world.spawn(&t,1800,2700,std::nullopt,0);ids.push_back(outlier);
+    for (int id:ids) world.setSquad(id,-1);
+    known(world);
+    bool pushed=false,retired=false;uint32_t flags=0;int level=0;
+    for (int tick=0;tick<3000 && !retired;++tick) {
+        world.tick(1.f/30);
+        const auto& u=*world.unit(outlier);
+        const bool lead=!u.orders.empty() && u.orders.front().formationLevel!=0;
+        if (lead && !pushed) { pushed=true;flags=u.orders.front().mission.flags;level=u.orders.front().formationLevel; }
+        if (pushed && !lead) retired=true;
+    }
+    std::printf("scenario=standby air=%d pushed=%d flags=%#x level=%d retired=%d\n",int(air),int(pushed),flags,level,
+                int(retired));
+    require(pushed,"an idle formation member out of its slot got no FormationStandby");
+    require(flags==(air ? 0x5000002u : 0x15000000u) && level==-1,"the FormationStandby's flags or level");
+    require(retired,"the FormationStandby never retired");
+    const auto& u=*world.unit(outlier);
+    require(u.orders.empty() && u.standbyActive,"the member does not stand by after its FormationStandby");
+}
 }
 
 int main() {
     try {
-        geometry();attackHead();slowest();
+        geometry();attackHead();airHeads();slowest();plain();aiSquads();
+        flyerMove();flyerPatrol();standbys(false);standbys(true);
         straggler(PathfindingMode::Retail);
     } catch(const std::exception& error) {std::fprintf(stderr,"FAIL: %s\n",error.what());return 1;}
     std::puts("retail group pacing: PASS");

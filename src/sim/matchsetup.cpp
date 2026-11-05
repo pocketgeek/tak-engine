@@ -102,6 +102,8 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
     // Gate before redirect(): rejected orders must not cancel its construction.
     // Test repeatType rather than queue size so item transitions, mana shortages
     // and blocked output positions do not briefly unlock the producer.
+    // The classic AI's squads: no unit order, so no producer gate below.
+    if (c.kind == Cmd::AiGroup) { world.setAiGroup(int(c.player), c.unitId, c.targetId, c.queue != 0); return; }
     const auto* producer=world.unit(c.unitId);
     const bool repeatingMobile = producer && producer->type &&
         !producer->type->isStructure() && producer->repeatType;
@@ -320,6 +322,7 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
             if (owns(c.unitId)) world.setSquad(c.unitId, c.targetId);
             break;
         case Cmd::Order:   // applied by applySelectionOrder() above
+        case Cmd::AiGroup: // applied above
             break;
         case Cmd::PowerCode:   // the World checks the room's option and ownership
             if (simPowerCode(c.targetId) && c.queue <= uint8_t(PowerArg::Invalid))

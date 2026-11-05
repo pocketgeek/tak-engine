@@ -1419,12 +1419,21 @@ A unit belongs to one group or formation at a time. Each unit shows its number
 under it in green: `3` for group 3, `3F` for formation 3. With the whole group or formation
 selected, the information bar shows its name, such as **GROUP 3**.
 
-- A **group** is a saved selection.
-- A **formation** also travels together: it moves at the pace of its slowest
-  member, and members that fall far behind rejoin once the formation has stopped.
+- A **group** is a saved selection. Its units each move at their own speed.
+- A **formation** also travels together. In **Legion** mode it moves at the pace
+  of its slowest member, and members that fall far behind rejoin once the
+  formation has stopped. In **Retail** mode it keeps together as in the original
+  game: it moves at its slowest member's pace, and a member that falls out of
+  place waits for the others or walks back to them. That goes for flyers too,
+  whatever they are doing: moving, patrolling, attacking, guarding or standing
+  by. An idle member left out of place goes back to its formation by itself,
+  and a flyer that has caught up with a formation still on the move circles
+  near it until the formation stops.
 
 Recalling a group skips its builders, but units those builders produce join the
-group automatically.
+group automatically: a factory's new unit when it leaves the factory, a unit a
+builder conjures when it is finished. (The original game puts only a factory's
+units in its group; that a builder's do too is TAK Engine's own.)
 
 ### Camera and information
 
@@ -1585,9 +1594,10 @@ Choose Retail if you want the game as it was, including its well-known quirks:
 long single-file columns, units jostling at chokepoints, and units occasionally
 circling when stuck.
 
-In Retail, groups and formations keep together the original way: members move at
-the slowest member's speed, a member that falls far behind slows the group
-instead of sprinting, and members far from the group walk back or wait.
+In Retail, formations keep together the original way: members move at the
+slowest member's speed, a member that falls far behind slows the formation
+instead of sprinting, and members far from it walk (or fly) back or wait. A
+group (Ctrl+number) is only a saved selection, as in the original game.
 
 ### Legion
 
