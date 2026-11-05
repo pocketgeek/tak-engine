@@ -6615,6 +6615,16 @@ resolve only in an `InitialMission`. Ours registered a unit under the name an
 - `m X Y` / `ma X Y` (`514120`), `p X Y [T]` (`514307`, +0x4e = T x 30),
   `u X Y` (`5141d3`), `c` (`514a48`: the cloak bit when cloakcost > 0) and
   `r` (`514910`, resurrect; no shipped uses).
+- `m X Y` and `ma X Y` (`514120`, E, `tools/re/check_mission_move_fight.py`)
+  both resolve kind 2, the plain move click (`4de530(out, 2, unit, 0, &point,
+  0)`), and push it queued; the second letter `a`/`A` only starts the scan one
+  character later and sets push argument 6 to -1 (`514130`, 0 for `m`), which
+  `4d78a0` hands to the ctor `4d6c40` and that stores at mission `+0x52`: the
+  move's response mode. That is the argument the fight-move key command sets
+  for a resolved Move_Ground, VTOL_Move or QMove (`521bf4..521c5b`), so `ma` is
+  a fight-move: World's `attackMove` leg (`markFightLeg`, response mode -1),
+  which ours already gave it; `m` keeps mode 0 (no scan). Any other second
+  letter (`mx 5 7`) reads its numbers from that letter and pushes nothing.
 
 **Points (2026-11-04; E = emulated, S = static).** Every handler that reads
 `" %f %f"` -- `m`/`ma`, `p`, `u`, `a X Y` (`5143d6`) and the mobile `b`
@@ -6661,7 +6671,13 @@ for every unit through 0.9.19 (mobiles off by 8,8, even footprints by 8 on that
 axis) and turned Angle into a port heading directly, a half turn from retail's
 (our port heading 0 is retail 0x8000, Angle 180; 5418 of the 7341 placed units
 use 180). `MissionScript::placedPoint` / `placedHeading` and `footprintSnap`
-port it (`mission_orders_test`, `tools/re/check_mission_regions.py`). Skirmish
+port it (`mission_orders_test`, `tools/re/check_mission_regions.py`). The
+Angle word faces the way retail's own units do (E,
+`tools/re/check_mission_facing.py`): Angle 180's 0x8000 is `511990`'s birth
+heading for orientation 0 and buildangle 0 (a freshly built unit), and the
+ground kernel `4d9ad0` turns a unit walking due east to 0xc000 (Angle 270) and
+due west to 0x4000 (Angle 90), from any start heading; World's `steerGround`
+gives the same, and `mission_orders_test` walks a unit both ways. Skirmish
 start positions are unaffected: this path only reads a mission's `.ota`.
 
 **`Create` (2026-11-04, E).** `4d35c0` takes 3 args (player = a0's low byte,
@@ -6696,9 +6712,19 @@ does not fire again). A rectangle (`4d2b20`) holds the footprint-origin cell
 an inverted one never fires (no shipped script has one); a circle when
 max(|dx|,|dz|) + (min >> 2) (`535e90`) <= r, in cells from the origin cell:
 (34,30), (26,27), (30,26) and (33,33) fire for centre (30,30) r 4, (35,30)
-does not. The carried bit (`+0x114` bit 4) is not tested; whether a carried
-unit's `+0x74` follows its transport is not established (I), so ours keeps
-skipping embarked units for regions. Ours through 0.9.19 compared the pixel
+does not. Nothing about being carried is tested (`+0x114`, `+0xa8`), and a
+carried unit's `+0x74` follows its transport (E,
+`tools/re/check_mission_cargo_regions.py`, 648 carriers): every mover tick
+`4dad30`'s attached branch hands the carrier's attach point (piece -1: the
+carrier's own position) to `51b3b0`, which stores it as the passenger's `+0x68`
+and, when the cell changes, the origin cell from the passenger's OWN footprint
+`+0x78` (`51b3cd..51b44e`; `506aa0` / `5066f0` restamp it). So a passenger fires
+the regions its carrier carries it into, at footprintOrigin(carrier, its own
+footprint): a 2x2 soldier on a 3x3 wagon at 184,344 is at cell 11,21, the wagon
+at 10,20. Ours skipped embarked units for regions through 0.9.19 (a transport
+carrying troops into a region fired only for the transport); World's cargo
+step already keeps an embarked unit at its carrier's attach point, and
+`sweepTriggers` now reads it. Ours through 0.9.19 compared the pixel
 position with [x1*16+8, x2*16+8] (min/max), used a Euclidean circle of r*16
 px, fired on every re-entry, looked at unfinished and dying units, re-armed an
 armed slot, and fired `UnitCreated` only when a build finished, with owner 0:

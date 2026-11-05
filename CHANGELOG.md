@@ -265,6 +265,9 @@ their validation reports; both live in [`docs/`](docs/).
   Large ones could be several squares off.
 - **Mission trigger areas cover the same squares as in the original, and fire once for
   each unit.** A unit that walked out of a trigger area and back set it off again.
+- **Troops carried in a transport now set off mission trigger areas**, as in the
+  original game: a transport carrying units into a trigger area set it off only for
+  the transport itself.
 - **Missions now hear about every unit that enters play, and who owns it.** So mission
   20's scripted event can happen.
 - **Fedora 45 packages.** Fedora 45 now has its own x86-64 and ARM64 RPMs, beside

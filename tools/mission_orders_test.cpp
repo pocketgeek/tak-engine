@@ -45,7 +45,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using namespace tak;
@@ -327,6 +329,11 @@ static void points(Fixture& f) {
         check(at(mv, 480 << 16, 640 << 16), "m 30 40 goes to pixel 480,640 (it was the cell centre 488,648)", shown(mv));
         const Order* fight = last(1);
         check(at(fight, 168 << 16, 52 << 16), "ma 10.5 3.25 keeps the fraction: pixel 168,52", shown(fight));
+        // 514120: both push the kind-2 move; ma passes -1 where m passes 0, the
+        // move's response mode +0x52, as the fight-move key does (E,
+        // tools/re/check_mission_move_fight.py).
+        check(fight && fight->attackMove && fight->groundResponse.mode == -1 && mv && !mv->attackMove &&
+              mv->groundResponse.mode == 0, "ma is the move with response mode -1 (the fight-move), m mode 0");
         // float 7.3 * 65536 = 478412.79 -> 478412, x16; 9.99 -> 654704, x16.
         const Order* patrol = last(2);
         check(at(patrol, 478412 * 16, 654704 * 16) && patrol->patrol,
@@ -847,6 +854,51 @@ static void placement() {
     check(createdAt(2, 2, 0, 3, -1, 64, 0), "a building's too, a negative cell included");
 }
 
+// A placed unit's Angle against the headings World gives its own units: 511990's
+// birth heading 0x8000 is Angle 180, and the ground kernel 4d9ad0 turns a unit
+// walking east to 0xc000 (Angle 270) and one walking west to 0x4000 (Angle 90), all
+// E (tools/re/check_mission_facing.py).
+static void facings(Fixture& f) {
+    std::printf("Angle against the birth heading and the walking ones:\n");
+    using sim::MissionScript;
+    using sim::retailHeadingToPort;
+    auto hex = [](uint16_t v) { char s[8]; std::snprintf(s, sizeof s, "%#06x", v); return std::string(s); };
+    {
+        auto w = makeWorld();
+        const Unit* u = w->unit(w->spawn(f.t("soldier"), cell(20), cell(20), std::nullopt, 0));
+        check(u->heading == retailHeadingToPort(MissionScript::placedHeading(180)),
+              "a freshly built unit faces as Angle 180 does", hex(sim::portHeadingToRetail(u->heading)));
+    }
+    // Placed with the Angle as matchsetup places it (514d02's word over the birth
+    // heading), a unit sent due east / west must need no turn: it walks the line
+    // without leaving it and keeps that heading. With the wrong word it would
+    // turn first and its turning arc would take it off the line.
+    for (const auto& [angle, dx, name] : {std::tuple{270, 1, "east"}, std::tuple{90, -1, "west"}}) {
+        auto w = makeWorld();
+        const int id = w->spawn(f.t("soldier"), cell(64), 1040.0f, std::nullopt, 0);
+        w->unit(id)->heading = retailHeadingToPort(MissionScript::placedHeading(angle));
+        w->unit(id)->tickStartHeadingBam = uint16_t(w->unit(id)->heading.v);
+        w->order(id, cell(float(64 + dx * 40)), 1040.0f, false);
+        tickN(*w, 60);
+        const Unit* u = w->unit(id);
+        const bool along = (dx > 0 ? u->x > Fixed::fromFloat(cell(66)) : u->x < Fixed::fromFloat(cell(62))) &&
+                           u->z == Fixed::fromInt(1040);
+        check(along && u->speed > Fixed() && u->heading == retailHeadingToPort(MissionScript::placedHeading(angle)),
+              std::string("a unit placed at Angle ") + std::to_string(angle) + " walks due " + name +
+              " without turning", hex(sim::portHeadingToRetail(u->heading)) + " at " +
+              std::to_string(u->x.toFloat()) + "," + std::to_string(u->z.toFloat()));
+    }
+    // And the other way round: Angle 90 sent east turns and leaves the line.
+    {
+        auto w = makeWorld();
+        const int id = w->spawn(f.t("soldier"), cell(64), 1040.0f, std::nullopt, 0);
+        w->unit(id)->heading = retailHeadingToPort(MissionScript::placedHeading(90));
+        w->order(id, cell(104), 1040.0f, false);
+        tickN(*w, 60);
+        check(w->unit(id)->z != Fixed::fromInt(1040), "(a unit facing west sent east turns, off the line)");
+    }
+}
+
 // ---- 14. trigger regions and UnitCreated -----------------------------------------------------------
 
 // A cob from scripts and a name table (MAP_COMMAND indexes the names).
@@ -991,6 +1043,27 @@ static void regions(Fixture& f) {
           "the sweep goes owner by owner: owner 0's hit runs before owner 1's (it went in spawn order)",
           std::to_string(order.value("hits")) + " hits, last unit " + std::to_string(order.value("unit")) +
           " (owner-1 unit " + std::to_string(first) + ", owner-0 unit " + std::to_string(second) + ")");
+
+    // A unit aboard a transport counts: 4dad30 commits the carrier's attach point
+    // as its position and 51b3b0 its footprint-origin cell from its OWN footprint,
+    // and 4d33a0 tests nothing about being carried (E,
+    // tools/re/check_mission_cargo_regions.py). The 3x3 wagon at 184,344 has
+    // origin cell 10,20; the 2x2 soldier aboard it 11,21.
+    auto ride = makeWorld();
+    const int wagon = ride->spawn(f.t("wagon"), 184, 600, 0.0f, 0);
+    const int rider = ride->spawn(f.t("soldier"), at(60), at(60), 0.0f, 0);
+    sim::MissionScript cargo(recorderCob(), tdf::Node{}, f.reg, 0, "cargo fixture", {-1, 1, 0});
+    cargo.start(*ride);
+    cargo.command(*ride, "SetTrigger", {3, 11, 21, 11, 21});
+    check(ride->embarkInto(rider, wagon), "the soldier boards the wagon");
+    for (int i = 0; i < 2; ++i) cargo.step(*ride, 1.0f / 30.0f);
+    check(cargo.value("hits") == 0, "aboard, away from the region, it does not fire");
+    ride->unit(wagon)->z = Fixed::fromInt(344);
+    tickN(*ride, 1);
+    for (int i = 0; i < 2; ++i) cargo.step(*ride, 1.0f / 30.0f);
+    check(cargo.value("hits") == 1 && cargo.value("unit") == rider && ride->unit(rider)->embarked(),
+          "carried into it, the passenger fires at its own cell under the carrier (ours skipped it)",
+          std::to_string(cargo.value("hits")) + " hits, last unit " + std::to_string(cargo.value("unit")));
 }
 
 // ---- shipped missions -----------------------------------------------------------------------------
@@ -1172,6 +1245,7 @@ int main(int argc, char** argv) {
         setMission(f);
         tableCompacts(f);
         placement();
+        facings(f);
         creates(f);
         regions(f);
     }
