@@ -2871,10 +2871,14 @@ transfer. Deviations kept: the id (I: a new slot would give the new object a
 new id, which every client-side reference and replay would see); the body's
 registrations (ground stamp, sight, air occupancy, mover state) carry over
 in place where retail's old body stays stamped until it retires and the new
-one stamps itself; a carried unit or a carrier changing sides (the mission
-Capture and the CRT transfer do not refuse one) stays aboard / keeps its
-cargo (I: retirement detaches the old object, `51b4f0`, and the new one is
-made where it was; not traced further); a commander changing sides does not
+one stamps itself; a carried unit changing sides (the mission Capture and
+the CRT transfer do not refuse one) stays aboard (I: retirement detaches the
+old object, `51b4f0`, and the new one is made where it was; not traced
+further). A carrier changing sides (the charm, Capture, the CRT transfer;
+ShareUnits refuses one) loses its passengers since gap hunt 3: the old
+object's `512610` hands them its death packet (`512860`, kind 8, see "A
+carrier's passengers"), at the change here rather than at the old object's
+update; a commander changing sides does not
 run `512610`'s commander rule (`5131b0`, I). Tests: `owner_change_test`,
 `campaign_conditions_test` (a capture is a KillUnitType death; the capture
 event comes first), `mission_orders_test` (UnitCreated and the region fire

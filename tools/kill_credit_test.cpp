@@ -265,6 +265,16 @@ int main(int argc,char** argv) try {
             if (shooterLives) check(w.unit(s)->xp==300,"the carrier's killer did not earn its passengers' experience");
             check(w.unit(ship)->cargo.empty(),"the dead carrier kept its passengers");
         }
+        // A carrier changing sides: its old object's death packet takes the
+        // passengers too (514da0 -> 512610 kind 6 -> 512860).
+        World w;terrain(w);
+        const int ship=w.spawn(&boat,400,400,0,0),a=w.spawn(&t,410,400,0,0),s=w.spawn(&t,800,800,0,1);
+        check(w.embarkInto(a,ship),"the passenger did not board");
+        w.unit(ship)->lastHitBy=s;w.unit(ship)->lastHitPlayer=1;
+        check(w.scenarioTransfer(ship,1),"the transfer was refused");
+        check(!w.unit(a)->alive() && w.unit(a)->deathType==8 && w.unit(a)->lastHitBy==s &&
+              w.unit(ship)->cargo.empty() && w.unit(ship)->alive() && w.unit(ship)->player==1,
+              "a carrier changing sides kept its passengers");
     }
     if (argc==2) {
         // The death weapon at retirement: the Bomb Sprinkler's Dying runs for

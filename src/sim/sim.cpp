@@ -9496,6 +9496,12 @@ bool World::changeOwner(Unit& u, int newPlayer, MissionScript* notify) {
     }
     if (u.retailSite) u.retailSite->builder=0;
     killProductionOutput(u,true);
+    // The old object dies (51a140 kind 6, then its 512610): its death packet
+    // takes its passengers with it (512860, killPassengers), with its hitter
+    // while that lives. World runs that at the change, retail at the old
+    // object's update (I); 514da0 hands the new object no cargo.
+    if (!retailHitter(u.lastHitBy,u.lastHitPlayer)) u.lastHitBy=0;
+    killPassengers(u);
     cancelBuilds(unitId);
     stop(unitId);
     noteOrders(unitId);

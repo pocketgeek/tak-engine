@@ -592,8 +592,22 @@ def cargo():
         assert retired == [(a, hitter, 5, 0x80, 0), (b, hitter, 5, 0x80, 0), (t, hitter, 5, 0x11, 40)], retired
         names = [c[0] for c in f.calls]
         assert '51a140' not in names and names.index('56c640') > names.index('512ae0'), names
+    # The old object of a carrier that changed sides (514da0's 51a140 kind 6):
+    # its 512610 sends the packet through 512860 too, so its passengers go.
+    f.record('4e8030', 3); f.p.hooks[0x4e6860] = lambda uc, sp: (1, struct.unpack('<I', uc.mem_read(sp, 4))[0])
+    opts = f.flags
+    f.put(0x62d558, opts); f.put(opts + 8, opts + 0x100); f.put(opts + 0x108, 0); f.put(opts + 0x18, opts + 0x300)
+    t = f.unit(1, player=2); k = f.unit(2, player=5); a = f.unit(3, player=2)
+    for x in (t, a):
+        f.put(x + 0xc0, f.units + 0x6000 + (x & 0xfff))
+    f.put(t + 0xac, a); f.put(a + 0xa8, t); f.put(t + 0xf8, k); f.put(t + 0xfc, 5, 'B')
+    f.calls.clear()
+    f.call(0x512610, (t, 6))
+    retired = [c[1:] for c in f.calls if c[0] == '512ae0']
+    assert retired[0] == (a, k, 5, 0x80, 0) and retired[-1][0] == t and retired[-1][3] == 0x60, retired
     return ('cargo: a carrier\'s passengers die before its Killed, kind 8 and severity 0, with its hitter '
-            '(while it lives) and player, and retire at once')
+            '(while it lives) and player, and retire at once; so too when 512610 ends the old object of a '
+            'carrier that changed sides (kind 6)')
 
 
 def main():

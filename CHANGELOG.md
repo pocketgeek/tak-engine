@@ -266,7 +266,9 @@ their validation reports; both live in [`docs/`](docs/).
 - **Troops aboard a destroyed transport count as its killer's kills.** When a
   transport is destroyed, everyone aboard dies with it at once, as before, and now,
   as in the original game, each of them counts for whoever destroyed the transport:
-  Kills and score for that player and veteran experience for that unit.
+  Kills and score for that player and veteran experience for that unit. A loaded
+  transport that changes sides (charmed or captured) loses its passengers the same
+  way, as in the original game; they used to stay aboard.
 - **Self-destruct keeps the original game's timing.** After its two-second countdown
   a unit now leaves your command up to half a second later, at random, as in the
   original game. Pressing self-destruct while some of the selected units already
