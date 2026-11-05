@@ -78708,80 +78708,80 @@
     },
     "hash@-1": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 55c43282b6cb1015). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was 8d6ba6f9b062e18d). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 55c43282b6cb1015). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "8d6ba6f9b062e18d"
+     "since": "GF312",
+     "value": "6b489b9d1ef60349"
     },
     "hash@-2": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was dd388dbb82759388). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was f0310efd3af5047d). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was dd388dbb82759388). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "f0310efd3af5047d"
+     "since": "GF312",
+     "value": "9d7c813f22c2f112"
     },
     "hash@-3": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 715bb51209c18a93). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was 57768d122450e4bc). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 715bb51209c18a93). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "57768d122450e4bc"
+     "since": "GF312",
+     "value": "6734c296d87536b7"
     },
     "hash@-4": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 4437e599c19ba0d1). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was bd5ec9c625b5f4ba). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 4437e599c19ba0d1). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "bd5ec9c625b5f4ba"
+     "since": "GF312",
+     "value": "23ee0df4b041e17c"
     },
     "hash@-5": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was edb41737afd130db). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was 2bd626269088d7f8). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was edb41737afd130db). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "2bd626269088d7f8"
+     "since": "GF312",
+     "value": "b1091d02d89e8226"
     },
     "hash@0": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was cc0442f0f8c1fcb3). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was 1735b9bacdc5e9c4). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was cc0442f0f8c1fcb3). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "1735b9bacdc5e9c4"
+     "since": "GF312",
+     "value": "f318cc3f55b0668c"
     },
     "hash@1": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 2c4fb03bcae81d44). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was 862f45700c65d1d2). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 2c4fb03bcae81d44). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "862f45700c65d1d2"
+     "since": "GF312",
+     "value": "88a19d158ffb7623"
     },
     "hash@2": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was ce66d3fb33543930). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was c7128217befb51d2). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was ce66d3fb33543930). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "c7128217befb51d2"
+     "since": "GF312",
+     "value": "fcab8c1c1b195c2b"
     },
     "hash@3": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was cd2b1beac73b2269). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was 8922eb40037c794c). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was cd2b1beac73b2269). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "8922eb40037c794c"
+     "since": "GF312",
+     "value": "c8d825cc5db20ae0"
     },
     "hash@4": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 6fe6bd2fa1decaf0). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was 590cbfae5ea5230a). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 6fe6bd2fa1decaf0). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "590cbfae5ea5230a"
+     "since": "GF312",
+     "value": "5c068023571d3b65"
     },
     "hash@5": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 65b2b9926134a6c1). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was ac557503c0aeaf11). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 65b2b9926134a6c1). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "ac557503c0aeaf11"
+     "since": "GF312",
+     "value": "56ec641b51e9dc66"
     },
     "legion_groups": {
      "band": 1.1,
@@ -79544,80 +79544,80 @@
     },
     "hash@-1": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 5422d11b002ddf5c). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was dd4cd69f71941665). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 5422d11b002ddf5c). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "dd4cd69f71941665"
+     "since": "GF312",
+     "value": "9455e68b895407a3"
     },
     "hash@-2": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was a6537ea7347863d4). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was 3108df03bca92701). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was a6537ea7347863d4). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "3108df03bca92701"
+     "since": "GF312",
+     "value": "26d8db1875162d36"
     },
     "hash@-3": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was f13485fb9f034074). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was 5784239e3ccd25d3). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was f13485fb9f034074). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "5784239e3ccd25d3"
+     "since": "GF312",
+     "value": "594eb6f5abbd6f2c"
     },
     "hash@-4": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 279a406a662fc9c6). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was 71da1b98b7f6fabd). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 279a406a662fc9c6). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "71da1b98b7f6fabd"
+     "since": "GF312",
+     "value": "03b48c8c8e7bd35e"
     },
     "hash@-5": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 05523d3cdc48a825). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was 4e045bd8d984e864). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 05523d3cdc48a825). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "4e045bd8d984e864"
+     "since": "GF312",
+     "value": "e30f430b975527dc"
     },
     "hash@0": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 6360676bf0e45066). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was 8465a3c6ff715947). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 6360676bf0e45066). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "8465a3c6ff715947"
+     "since": "GF312",
+     "value": "2c91bc4a22a73dd9"
     },
     "hash@1": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 70a2149ea4ee6b2a). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was 7c20f4f55b988696). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 70a2149ea4ee6b2a). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "7c20f4f55b988696"
+     "since": "GF312",
+     "value": "a9fd10e7c7c039b5"
     },
     "hash@2": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was a65cb166fcafa085). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was 7f3e86618e275efe). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was a65cb166fcafa085). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "7f3e86618e275efe"
+     "since": "GF312",
+     "value": "8ea2e4dd98ae363a"
     },
     "hash@3": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was d067c0c11298a6e5). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was fc999aeac3733ea0). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was d067c0c11298a6e5). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "fc999aeac3733ea0"
+     "since": "GF312",
+     "value": "22508244b3a21510"
     },
     "hash@4": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 857461709cfee044). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was f59c6d21134842be). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 857461709cfee044). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "f59c6d21134842be"
+     "since": "GF312",
+     "value": "43be3e13c0a4b86a"
     },
     "hash@5": {
      "dir": "lower",
-     "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 9ba519404777c9c8). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
+     "reason": "Flyer patrol legs carry VTOL_PATROL's flags (gap-flyers, protocol 312, 2026-11-04; docs/retail-engine.md, the flyer patrol paragraph): the outbound leg's 0x4000 became 0x1004412, and every order's mission flags are hashed; every non-hash key of this fixture is unchanged (gate-offset run of both modes) (was 9402a2c9c7bf75fa). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 9ba519404777c9c8). Before: flyers on fight-move legs and patrols, flying builders at work and a lost ward (VTOL_SeekGuard) step out of a stack (retail's air traffic, the rest of the port), protocol 307",
      "rule": "eq",
-     "since": "TS312",
-     "value": "9402a2c9c7bf75fa"
+     "since": "GF312",
+     "value": "59ba19dcaf3ed580"
     },
     "open_still900": {
      "band": 1.1,
