@@ -1,6 +1,9 @@
 // retailgap_test: verifies the retail-parity sim fixes that have no other harness.
 //
-//   retailgap_test <retail-install-dir>
+//   retailgap_test <retail-install-dir> [slice[,slice...]]
+//
+// The checks are grouped into slices (weapons, rules, fireatwill, orders) so ctest
+// can run them as parallel tests; naming slices runs only those, none runs all.
 //
 // Checks, against the real shipped data:
 //   1. [EXPLODEAS] parses, and a dying unit detonates it where it stands (splashing
@@ -28,6 +31,12 @@ using namespace tak;
 
 namespace {
 int failures = 0;
+
+const char* const kSlices[] = {"weapons", "rules", "fireatwill", "orders"};
+std::vector<std::string> selected;   // empty: every slice
+bool want(const char* slice) {
+    return selected.empty() || std::find(selected.begin(), selected.end(), slice) != selected.end();
+}
 const char* kMap = "maps/Inner Circle.tnt";   // any shipped map; we only need terrain
 
 // Nudge a spawn point onto ground the unit actually fits on. Fixtures used to
@@ -64,7 +73,7 @@ void tick(sim::World& w, float seconds) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 2) { std::fprintf(stderr, "usage: retailgap_test <retail-install-dir>\n"); return 2; }
+    if (argc < 2) { std::fprintf(stderr, "usage: retailgap_test <retail-install-dir> [slice[,slice...]]\n"); return 2; }
     hpi::Vfs vfs = hpi::mountRetailRoot(argv[1]);
     sim::TypeRegistry reg;
     reg.loadMoveInfo(vfs, "gamedata/moveinfo.tdf");
@@ -75,103 +84,118 @@ int main(int argc, char** argv) {
               "Hunter retains all three authored blood colors");
         return failures?1:0;
     }
+    if (argc >= 3) {
+        const std::string list = argv[2];
+        for (size_t at = 0; at <= list.size();) {
+            const size_t comma = std::min(list.find(',', at), list.size());
+            const std::string name = list.substr(at, comma - at);
+            if (std::find(std::begin(kSlices), std::end(kSlices), name) == std::end(kSlices)) {
+                std::fprintf(stderr, "retailgap_test: unknown slice '%s'\n", name.c_str());
+                return 2;
+            }
+            selected.push_back(name);
+            at = comma + 1;
+        }
+    }
 
     // ---- 1. [EXPLODEAS] ----------------------------------------------------
-    std::printf("[EXPLODEAS death blast]\n");
-    const sim::UnitType* rat = reg.find("tarkam");        // Kamikaze Rat
-    const sim::UnitType* victim = reg.find("arasword");    // a plain Aramon swordsman
-    if (!rat || !victim) { std::printf("  (missing unit defs; skipped)\n"); }
-    else {
-        check(rat->hasExplodeAs, "tarkam parses an EXPLODEAS weapon");
-        check(rat->explodeAs.aoe > 100.0f, "its blast has a real radius",
-              "aoe=" + std::to_string(int(rat->explodeAs.aoe)));
-        check(rat->explodeAs.damage > 1000.0f, "and real damage",
-              "dmg=" + std::to_string(int(rat->explodeAs.damage)));
+    if (want("weapons")) {
+        std::printf("[EXPLODEAS death blast]\n");
+        const sim::UnitType* rat = reg.find("tarkam");        // Kamikaze Rat
+        const sim::UnitType* victim = reg.find("arasword");    // a plain Aramon swordsman
+        if (!rat || !victim) { std::printf("  (missing unit defs; skipped)\n"); }
+        else {
+            check(rat->hasExplodeAs, "tarkam parses an EXPLODEAS weapon");
+            check(rat->explodeAs.aoe > 100.0f, "its blast has a real radius",
+                  "aoe=" + std::to_string(int(rat->explodeAs.aoe)));
+            check(rat->explodeAs.damage > 1000.0f, "and real damage",
+                  "dmg=" + std::to_string(int(rat->explodeAs.damage)));
 
-        sim::World w;
-        sim::MatchConfig cfg;
-        cfg.vfs = &vfs;
-        cfg.mapPath = kMap;
-        cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
-        cfg.slots[0].team = 0; cfg.slots[1].team = 1;
-        sim::setupMatch(w, reg, cfg);
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs;
+            cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+            sim::setupMatch(w, reg, cfg);
 
-        // A rat (player 0) with two enemy swordsmen (player 1) standing next to it.
-        int ratId = w.spawn(rat, 500, 500, 0, 0);
-        int aId = w.spawn(victim, 520, 500, 0, 1);
-        int bId = w.spawn(victim, 500, 530, 0, 1);
-        int farId = w.spawn(victim, 500, 1200, 0, 1);   // well outside the blast
-        float aHp0 = w.unit(aId)->hp.toFloat(), farHp0 = w.unit(farId)->hp.toFloat();
-        check(aHp0 > 0 && farHp0 > 0, "victims spawned alive");
+            // A rat (player 0) with two enemy swordsmen (player 1) standing next to it.
+            int ratId = w.spawn(rat, 500, 500, 0, 0);
+            int aId = w.spawn(victim, 520, 500, 0, 1);
+            int bId = w.spawn(victim, 500, 530, 0, 1);
+            int farId = w.spawn(victim, 500, 1200, 0, 1);   // well outside the blast
+            float aHp0 = w.unit(aId)->hp.toFloat(), farHp0 = w.unit(farId)->hp.toFloat();
+            check(aHp0 > 0 && farHp0 > 0, "victims spawned alive");
 
-        w.unit(ratId)->hp = sim::Fixed();    // the rat dies -> its EXPLODEAS should fire
-        tick(w, 0.2f);
+            w.unit(ratId)->hp = sim::Fixed();    // the rat dies -> its EXPLODEAS should fire
+            tick(w, 0.2f);
 
-        const sim::Unit* a = w.unit(aId);
-        const sim::Unit* b = w.unit(bId);
-        const sim::Unit* far = w.unit(farId);
-        check(a && (!a->alive() || a->hp.toFloat() < aHp0), "adjacent enemy took the blast");
-        check(b && (!b->alive() || b->hp.toFloat() < aHp0), "second adjacent enemy took the blast");
-        check(far && far->alive() && far->hp.toFloat() >= farHp0, "distant enemy untouched");
+            const sim::Unit* a = w.unit(aId);
+            const sim::Unit* b = w.unit(bId);
+            const sim::Unit* far = w.unit(farId);
+            check(a && (!a->alive() || a->hp.toFloat() < aHp0), "adjacent enemy took the blast");
+            check(b && (!b->alive() || b->hp.toFloat() < aHp0), "second adjacent enemy took the blast");
+            check(far && far->alive() && far->hp.toFloat() >= farHp0, "distant enemy untouched");
 
-        // Stone/frozen packets suppress death weapons; self-destruction
-        // selects a separate weapon block, absent from the shipped rat.
-        for(int special:{14,15,5}) {
-            sim::World quiet;
-            sim::setupMatch(quiet,reg,cfg);
-            const int source=quiet.spawn(rat,500,500,0,0);
-            const int neighbor=quiet.spawn(victim,520,500,0,1);
-            auto* dying=quiet.unit(source);
-            dying->deathType=special;
-            dying->stonedFor=special==14 ? 100 : 0;
-            dying->frozenFor=special==15 ? 100 : 0;
-            dying->hp=sim::Fixed();
-            const auto hp=quiet.unit(neighbor)->hp;
-            // The death weapon fires at retirement (512ae0), once Dying is over:
-            // watch every tick until then.
-            bool hit=false;
-            for(int t=0;t<600;++t) {
-                quiet.tick(1.f/30);
-                hit=hit || !quiet.hits().empty();
-                if(!quiet.unit(source)->deathPending)break;
+            // Stone/frozen packets suppress death weapons; self-destruction
+            // selects a separate weapon block, absent from the shipped rat.
+            for(int special:{14,15,5}) {
+                sim::World quiet;
+                sim::setupMatch(quiet,reg,cfg);
+                const int source=quiet.spawn(rat,500,500,0,0);
+                const int neighbor=quiet.spawn(victim,520,500,0,1);
+                auto* dying=quiet.unit(source);
+                dying->deathType=special;
+                dying->stonedFor=special==14 ? 100 : 0;
+                dying->frozenFor=special==15 ? 100 : 0;
+                dying->hp=sim::Fixed();
+                const auto hp=quiet.unit(neighbor)->hp;
+                // The death weapon fires at retirement (512ae0), once Dying is over:
+                // watch every tick until then.
+                bool hit=false;
+                for(int t=0;t<600;++t) {
+                    quiet.tick(1.f/30);
+                    hit=hit || !quiet.hits().empty();
+                    if(!quiet.unit(source)->deathPending)break;
+                }
+                check(!quiet.unit(source)->alive() && !quiet.unit(source)->deathPending,
+                      "special death control reached the death transition");
+                check(!hit && quiet.unit(neighbor)->hp==hp,
+                      special==14 ? "stone death emits no death blast or damage" :
+                      special==15 ? "frozen death emits no death blast or damage" :
+                                    "self-destruct does not reuse the ordinary death weapon");
             }
-            check(!quiet.unit(source)->alive() && !quiet.unit(source)->deathPending,
-                  "special death control reached the death transition");
-            check(!hit && quiet.unit(neighbor)->hp==hp,
-                  special==14 ? "stone death emits no death blast or damage" :
-                  special==15 ? "frozen death emits no death blast or damage" :
-                                "self-destruct does not reuse the ordinary death weapon");
-        }
 
-        // An explicit self-destruct weapon must retain its own art and damage.
-        sim::UnitType custom=*rat;
-        custom.hasSelfDestructAs=true;
-        custom.selfDestructAs=rat->explodeAs;
-        custom.selfDestructAs.damage=100;
-        custom.selfDestructAs.explosionClass="small explosion";
-        sim::World explicitWeapon;
-        sim::setupMatch(explicitWeapon,reg,cfg);
-        const int source=explicitWeapon.spawn(&custom,500,500,0,0);
-        const int neighbor=explicitWeapon.spawn(victim,520,500,0,1);
-        const auto hp=explicitWeapon.unit(neighbor)->hp;
-        explicitWeapon.unit(source)->deathType=sim::Unit::kDeathSelfDestruct;
-        explicitWeapon.unit(source)->hp=sim::Fixed();
-        // It bursts at retirement, when its Dying is over (512ae0).
-        bool published=false;
-        for(int t=0;t<600 && !published;++t) {
-            explicitWeapon.tick(1.f/30);
-            published=std::any_of(explicitWeapon.hits().begin(),explicitWeapon.hits().end(),
-                                  [&](const auto& hit){return hit.weapon==&custom.selfDestructAs;});
+            // An explicit self-destruct weapon must retain its own art and damage.
+            sim::UnitType custom=*rat;
+            custom.hasSelfDestructAs=true;
+            custom.selfDestructAs=rat->explodeAs;
+            custom.selfDestructAs.damage=100;
+            custom.selfDestructAs.explosionClass="small explosion";
+            sim::World explicitWeapon;
+            sim::setupMatch(explicitWeapon,reg,cfg);
+            const int source=explicitWeapon.spawn(&custom,500,500,0,0);
+            const int neighbor=explicitWeapon.spawn(victim,520,500,0,1);
+            const auto hp=explicitWeapon.unit(neighbor)->hp;
+            explicitWeapon.unit(source)->deathType=sim::Unit::kDeathSelfDestruct;
+            explicitWeapon.unit(source)->hp=sim::Fixed();
+            // It bursts at retirement, when its Dying is over (512ae0).
+            bool published=false;
+            for(int t=0;t<600 && !published;++t) {
+                explicitWeapon.tick(1.f/30);
+                published=std::any_of(explicitWeapon.hits().begin(),explicitWeapon.hits().end(),
+                                      [&](const auto& hit){return hit.weapon==&custom.selfDestructAs;});
+            }
+            check(published,"self-destruct publishes its own authored weapon effect");
+            check(explicitWeapon.unit(neighbor)->alive() && explicitWeapon.unit(neighbor)->hp<hp &&
+                  explicitWeapon.unit(neighbor)->hp>hp-sim::Fixed::fromInt(150),
+                  "self-destruct uses its separate low damage, not the ordinary lethal blast");
         }
-        check(published,"self-destruct publishes its own authored weapon effect");
-        check(explicitWeapon.unit(neighbor)->alive() && explicitWeapon.unit(neighbor)->hp<hp &&
-              explicitWeapon.unit(neighbor)->hp>hp-sim::Fixed::fromInt(150),
-              "self-destruct uses its separate low damage, not the ordinary lethal blast");
     }
 
     // ---- 1b. weapon-class parse ------------------------------------------
-    std::printf("[weapon class parse]\n");
-    {
+    if (want("weapons")) {
+        std::printf("[weapon class parse]\n");
         struct C { const char* unit; int slot; sim::Weapon::Kind kind; const char* label; };
         const C cases[] = {
             {"arabow",   1, sim::Weapon::Kind::Guided,    "arabow W2 Tracking Arrow = Guided"},
@@ -212,6 +236,7 @@ int main(int argc, char** argv) {
                   bolt.usesVeteranShotModel(11),
                   "Ballista switches its per-shot mesh at rank 10");
 
+            const sim::UnitType* victim = reg.find("arasword");   // as in [EXPLODEAS]
             auto firedVariant = [&](int rank) {
                 sim::World w;
                 sim::MatchConfig cfg;cfg.vfs=&vfs;cfg.mapPath=kMap;
@@ -235,33 +260,35 @@ int main(int argc, char** argv) {
     }
 
     // ---- 2. totalallowed ---------------------------------------------------
-    std::printf("[totalallowed unique cap]\n");
-    const sim::UnitType* drag = reg.find("aradrag");
-    if (!drag) { std::printf("  (no aradrag; skipped)\n"); }
-    else {
-        check(drag->totalAllowed == 1, "aradrag parses totalallowed=1",
-              "got " + std::to_string(drag->totalAllowed));
-        sim::World w;
-        sim::MatchConfig cfg;
-        cfg.vfs = &vfs;
-        cfg.mapPath = kMap;
-        cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
-        cfg.slots[0].team = 0; cfg.slots[1].team = 1;
-        sim::setupMatch(w, reg, cfg);
-        check(!w.atTypeCap(0, drag), "no dragon yet -> not capped");
-        int d1 = w.spawn(drag, 400, 400, 0, 0);
-        check(w.atTypeCap(0, drag), "one live dragon -> player 0 is capped");
-        check(!w.atTypeCap(1, drag), "the cap is PER PLAYER (player 1 free)");
-        if (auto* d = w.unit(d1)) d->hp = sim::Fixed();   // it dies
-        tick(w, 0.2f);
-        check(!w.atTypeCap(0, drag), "dragon died -> the slot frees again");
-        const sim::UnitType* plain = reg.find("arasword");
-        if (plain) check(!w.atTypeCap(0, plain), "an uncapped type is never capped");
+    if (want("weapons")) {
+        std::printf("[totalallowed unique cap]\n");
+        const sim::UnitType* drag = reg.find("aradrag");
+        if (!drag) { std::printf("  (no aradrag; skipped)\n"); }
+        else {
+            check(drag->totalAllowed == 1, "aradrag parses totalallowed=1",
+                  "got " + std::to_string(drag->totalAllowed));
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs;
+            cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+            sim::setupMatch(w, reg, cfg);
+            check(!w.atTypeCap(0, drag), "no dragon yet -> not capped");
+            int d1 = w.spawn(drag, 400, 400, 0, 0);
+            check(w.atTypeCap(0, drag), "one live dragon -> player 0 is capped");
+            check(!w.atTypeCap(1, drag), "the cap is PER PLAYER (player 1 free)");
+            if (auto* d = w.unit(d1)) d->hp = sim::Fixed();   // it dies
+            tick(w, 0.2f);
+            check(!w.atTypeCap(0, drag), "dragon died -> the slot frees again");
+            const sim::UnitType* plain = reg.find("arasword");
+            if (plain) check(!w.atTypeCap(0, plain), "an uncapped type is never capped");
+        }
     }
 
     // ---- 2b. guided homing --------------------------------------------------
-    std::printf("[guided homing]\n");
-    {
+    if (want("weapons")) {
+        std::printf("[guided homing]\n");
         // tarfire (Fire Demon) has a GUIDED primary: Fire Ball of Gloom, range 900,
         // velocity 250 (slow -- long flight), turnrate 180, reload 3.2s. The slow
         // shot + long reload make the dodge unambiguous: one shot is in the air, and
@@ -327,7 +354,7 @@ int main(int argc, char** argv) {
     }
 
     // ---- 2b.1 guided XYZ against an airborne target and target loss --------
-    {
+    if (want("weapons")) {
         const sim::UnitType* flyerBase=reg.find("zonhunt");
         const sim::UnitType* demon=reg.find("tarfire");
         if(!flyerBase || !flyerBase->canFly || !demon || demon->weapons.empty()) {
@@ -450,7 +477,7 @@ int main(int argc, char** argv) {
     }
 
     // ---- 2b.2 guided homing on a carried target -------------------------------
-    {
+    if (want("weapons")) {
         // 52e030 tests only +0x78's alive (0x1000000) and dying (0x1000) bits;
         // the attach (51b5a0) keeps both, so a target that boards a transport
         // is still homed on, at its SweetSpot over the host's attach point
@@ -507,8 +534,8 @@ int main(int argc, char** argv) {
     }
 
     // ---- 2c. remote effect / wandering / mind control ------------------------
-    std::printf("[remote effect + wandering + mind control]\n");
-    {
+    if (want("rules")) {
+        std::printf("[remote effect + wandering + mind control]\n");
         const sim::UnitType* prey = reg.find("arasword");
         auto freshWorld = [&](sim::World& w) {
             sim::MatchConfig cfg;
@@ -717,8 +744,8 @@ int main(int argc, char** argv) {
     }
 
     // ---- 2d. dropped bombs ---------------------------------------------------
-    std::printf("[dropped bombs]\n");
-    {
+    if (want("rules")) {
+        std::printf("[dropped bombs]\n");
         // tarbeak's Egg Bomb is subtype=Dropped: released from the flyer and falls
         // onto the ground beneath, so the bomber must OVERFLY its target rather
         // than shooting from its nominal 200px range.
@@ -765,8 +792,8 @@ int main(int argc, char** argv) {
     }
 
     // ---- 2e. automatic weapon selection --------------------------------------
-    std::printf("[auto weapon selection]\n");
-    {
+    if (want("rules")) {
+        std::printf("[auto weapon selection]\n");
         // Elsin carries Lightning (250px, free, 950), Meteor (400px, 200 mana,
         // 2000) and Earthen Wave (120px, 900 mana, 5000). The sim used to fire slot
         // 0 forever, so he cast Lightning all game and never spent a point of mana.
@@ -867,8 +894,8 @@ int main(int argc, char** argv) {
     }
 
     // ---- 3. data-only mission + InitialMission ------------------------------
-    std::printf("[data-only mission (.cob optional) + InitialMission]\n");
-    {
+    if (want("rules")) {
+        std::printf("[data-only mission (.cob optional) + InitialMission]\n");
         const std::string stem = "takmission05_dh";   // Book of Darien chapter 5: no .cob
         bool hasCob = vfs.has("missions/" + stem + ".cob");
         check(!hasCob, "takmission05_dh really ships no .cob");
@@ -895,8 +922,8 @@ int main(int argc, char** argv) {
     }
 
     // ---- 4. campaign conditions + the mission GET table ----------------------
-    std::printf("[campaign win/lose conditions]\n");
-    {
+    if (want("rules")) {
+        std::printf("[campaign win/lose conditions]\n");
         auto runMission = [&](const char* stem, sim::World& w) {
             int human = 0;
             return sim::setupMission(w, reg, vfs, stem, human);
@@ -968,8 +995,8 @@ int main(int argc, char** argv) {
     // Retail's room option. Two requirements: the same seed must reproduce the
     // same arrangement on every peer (lockstep), and a different seed must
     // actually move somebody (otherwise the option does nothing).
-    std::printf("[random start locations]\n");
-    {
+    if (want("rules")) {
+        std::printf("[random start locations]\n");
         auto startsFor = [&](bool rnd, uint32_t seed) {
             sim::World w;
             sim::MatchConfig cfg;
@@ -1002,8 +1029,8 @@ int main(int argc, char** argv) {
     // --- Tier-4 "cosmetic lows" ------------------------------------------
     // Several of these are display-only, but they all start with an FBI field that
     // must actually reach UnitType/Weapon -- which is the part that silently rots.
-    std::printf("[cosmetic lows: FBI fields reach the registry]\n");
-    {
+    if (want("rules")) {
+        std::printf("[cosmetic lows: FBI fields reach the registry]\n");
         auto ut = [&](const char* id) { return reg.find(id); };
         if (const auto* wall = ut("arawall"))
             check(wall->noShadow, "arawall carries noshadow");
@@ -1046,8 +1073,8 @@ int main(int argc, char** argv) {
     }
     // The repair aura, end to end: a damaged unit next to an Acolyte heals, and the
     // Acolyte's owner pays for it.
-    std::printf("[AdjustJoy repair aura]\n");
-    {
+    if (want("rules")) {
+        std::printf("[AdjustJoy repair aura]\n");
         const sim::UnitType* pri = reg.find("arapries");
         const sim::UnitType* vic = reg.find("arasword");
         if (pri && vic) {
@@ -1081,8 +1108,8 @@ int main(int argc, char** argv) {
     // The turn/brake coupling replaced a flat "big turn -> 30% speed" cliff with
     // retail's arc-distance rule. The risk is a unit that brakes forever and never
     // arrives, so test arrival on a straight run AND on a right-angle dogleg.
-    std::printf("[turn/brake coupling]\n");
-    {
+    if (want("rules")) {
+        std::printf("[turn/brake coupling]\n");
         const sim::UnitType* sw = reg.find("arasword");
         if (sw) {
             sim::World w;
@@ -1112,8 +1139,8 @@ int main(int argc, char** argv) {
     }
 
     // --- missed shots land; lobbers shoot over walls ----------------------
-    std::printf("[ballistic: fields + lobbing]\n");
-    {
+    if (want("rules")) {
+        std::printf("[ballistic: fields + lobbing]\n");
         auto wpn = [&](const char* id, int slot) -> const sim::Weapon* {
             const sim::UnitType* t = reg.find(id);
             if (!t || int(t->weapons.size()) <= slot) return nullptr;
@@ -1154,8 +1181,8 @@ int main(int argc, char** argv) {
     // land where it was aimed and splash whatever is standing there.
     // Every faction's wall must actually block. Two of the four declare canmove=1
     // with no velocity, so a canMove gate left them blocking nothing at all.
-    std::printf("[walls block, all four factions]\n");
-    {
+    if (want("rules")) {
+        std::printf("[walls block, all four factions]\n");
         for (const char* id : {"arawall", "crewall", "verwall", "tarwall"}) {
             const sim::UnitType* t = reg.find(id);
             if (!t) continue;
@@ -1184,8 +1211,8 @@ int main(int argc, char** argv) {
                   std::string(id) + " (canmove=" + (t->canMove ? "1" : "0") + ")");
         }
     }
-    std::printf("[a missed shell craters]\n");
-    {
+    if (want("rules")) {
+        std::printf("[a missed shell craters]\n");
         const sim::UnitType* pult = reg.find("arapult");
         const sim::UnitType* vic = reg.find("arasword");
         if (pult && vic) {
@@ -1260,8 +1287,8 @@ int main(int argc, char** argv) {
     }
     // ...but a shot that CONNECTS must not also crater on the same tick (the
     // life<=0 expiry and the direct hit can coincide -- that is what `spent` guards).
-    std::printf("[a hit does not double-dip]\n");
-    {
+    if (want("rules")) {
+        std::printf("[a hit does not double-dip]\n");
         const sim::UnitType* pult = reg.find("arapult");
         const sim::UnitType* vic = reg.find("araking");   // tough enough to survive
         if (pult && vic) {
@@ -1291,8 +1318,8 @@ int main(int argc, char** argv) {
     // --- units are solid --------------------------------------------------
     // The dangerous change in this area is not "does blocking work" but "does an
     // army still move". Test both, and test the corridor case that deadlocks first.
-    std::printf("[units are solid]\n");
-    {
+    if (want("rules")) {
+        std::printf("[units are solid]\n");
         const sim::UnitType* sw = reg.find("arasword");
         if (sw) {
             // (a) A parked body blocks: walk one unit into a stationary one and
@@ -1478,8 +1505,8 @@ int main(int argc, char** argv) {
 
     // Mobile units take their footprint from the movement class, not their own FBI:
     // 125 of 152 movers declare no footprintx at all, and not one is 1x1.
-    std::printf("[movementclass footprints]\n");
-    {
+    if (want("rules")) {
+        std::printf("[movementclass footprints]\n");
         struct Want { const char* id; int f; const char* cls; };
         const Want want[] = {
             {"arasword", 2, "GROUND2"}, {"araarch", 2, "GROUND2"},
@@ -1509,8 +1536,8 @@ int main(int argc, char** argv) {
     // A '.' cell is not part of a building's footprint: retail runs no test on it.
     // The Keep has two full rows of them, so a tree parked there used to deny a
     // placement retail allows.
-    std::printf("[yardmap-aware placement]\n");
-    {
+    if (want("rules")) {
+        std::printf("[yardmap-aware placement]\n");
         const sim::UnitType* keep = reg.find("arakeep");
         if (keep && !keep->yardMap.empty()) {
             int dots = 0;
@@ -1566,7 +1593,7 @@ int main(int argc, char** argv) {
     // interleaves pathfinding waypoints with the goals the player actually asked
     // for. Anything that treats orders.back() as "the destination" therefore
     // deletes every leg the player lined up behind the current one.
-    {
+    if (want("rules")) {
         auto freshWorld = [&](sim::World& w) {
             sim::MatchConfig cfg;
             cfg.vfs = &vfs; cfg.mapPath = kMap;
@@ -1657,7 +1684,7 @@ int main(int argc, char** argv) {
     // lowest of rand(n)/2 + rand(n); the flag swaps dist^2 for INT_MAX, so the
     // pick stops preferring the nearest body. A rank of archers should therefore
     // cover noticeably more of a crowd than the same number of swordsmen.
-    {
+    if (want("fireatwill")) {
         auto rank = [&](const char* who, uint32_t seed, int& distinct, int& maxOnOne) {
             const sim::UnitType* sh = reg.find(who);
             const sim::UnitType* prey = reg.find("arasword");
@@ -1725,7 +1752,7 @@ int main(int argc, char** argv) {
     }
 
     // ---- standing orders: the stance buttons write TWO retail fields ---------
-    {
+    if (want("orders")) {
         auto freshWorld = [&](sim::World& w) {
             sim::MatchConfig cfg;
             cfg.vfs = &vfs; cfg.mapPath = kMap;
@@ -1823,7 +1850,7 @@ int main(int argc, char** argv) {
     }
 
     // ---- VTOL_standby: an idle flyer finds somewhere to put down -------------
-    {
+    if (want("orders")) {
         const sim::UnitType* fly = reg.find("arafly");
         check(fly && fly->canFly && fly->vtolStandby,
               "arafly parses defaultmissiontype = VTOL_standby");
@@ -1892,7 +1919,7 @@ int main(int argc, char** argv) {
     }
 
     // ---- unitstandorders: which types have a stance at all -------------------
-    {
+    if (want("orders")) {
         const sim::UnitType* keep = reg.find("arakeep");
         const sim::UnitType* cow = reg.find("lifcow");
         const sim::UnitType* sword = reg.find("arasword");
@@ -1943,7 +1970,7 @@ int main(int argc, char** argv) {
     // Builds used to live in a separate list, so "go here, build that, go there"
     // ran as "go here, go there, (never build)" -- the build sat in the other
     // queue with nothing left to drain it.
-    {
+    if (want("orders")) {
         sim::TypeRegistry breg;
         breg.loadMoveInfo(vfs, "gamedata/moveinfo.tdf");
         breg.loadDir(vfs, "units/");
@@ -2021,7 +2048,7 @@ int main(int argc, char** argv) {
     }
 
     // ---- an area reclaim queues like anything else ---------------------------
-    {
+    if (want("orders")) {
         sim::TypeRegistry breg;
         breg.loadMoveInfo(vfs, "gamedata/moveinfo.tdf");
         breg.loadDir(vfs, "units/");
@@ -2072,8 +2099,8 @@ int main(int argc, char** argv) {
     // noticed next tick -- and healtime regen runs a few lines AFTER the expiry.
     // A regenerating unit therefore healed straight back off zero and survived,
     // which is nearly every unit: 209 of 213 shipped FBIs have healtime > 0.
-    std::printf("[self-destruct]\n");
-    {
+    if (want("weapons")) {
+        std::printf("[self-destruct]\n");
         const sim::UnitType* regen = nullptr;
         const sim::UnitType* norgen = nullptr;
         for (const auto& [tid, t] : reg.types()) {
@@ -2203,8 +2230,8 @@ int main(int argc, char** argv) {
     // this asserts a rate, not zero. It is set well below what the bug produced and
     // well above what the fix leaves, so it catches a regression without being
     // brittle about map details.
-    std::printf("\n[benchmark / stress unit placement]\n");
-    {
+    if (want("orders")) {
+        std::printf("\n[benchmark / stress unit placement]\n");
         auto misplaced = [&](sim::MatchConfig cfg, sim::World& w) {
             cfg.vfs = &vfs;
             cfg.mapPath = kMap;
@@ -2351,8 +2378,8 @@ int main(int argc, char** argv) {
     // declaring factory=0.5 took 0.5 damage a swing and regenerated 0.8 HP/s, so a
     // besieging army could not out-damage its own regen. Reported from a real game as
     // "barracks doesn't seem to be killable".
-    std::printf("\n[per-category damage multiplier]\n");
-    {
+    if (want("orders")) {
+        std::printf("\n[per-category damage multiplier]\n");
         // The contract itself, on values rather than on shipped data. Spot-checking a
         // real unit is fragile here for a reason worth recording: the first version of
         // this test used aradrag's dragon=2, which sits on WEAPON2 (Fire Ball) while
@@ -2379,7 +2406,7 @@ int main(int argc, char** argv) {
         w.dmgVs["naval"] = 90;      // a category this target does not carry
         check(w.damageVs(&tgt) == 360.0f, "an override for another category is ignored");
     }
-    {
+    if (want("orders")) {
         // The reported case, end to end: the Crusades Barracks must die to a besieging
         // force. A behavioural check, because the arithmetic above would still pass if
         // regen quietly out-paced the result.
@@ -2434,8 +2461,8 @@ int main(int argc, char** argv) {
     // can appear: tick a bare World, with nobody driving it but tick() itself, and
     // require the god to show up anyway. Any future move back out of the sim fails
     // here regardless of how correct the relocated code is.
-    std::printf("\n[gods are summoned by the sim, not the client]\n");
-    {
+    if (want("orders")) {
+        std::printf("\n[gods are summoned by the sim, not the client]\n");
         sim::World w;
         sim::MatchConfig cfg;
         cfg.vfs = &vfs;
@@ -2493,8 +2520,8 @@ int main(int argc, char** argv) {
     // This pins the DATA half: as long as a shipped type is a structure while
     // reporting canMove, isStructure() is the only safe discriminator and any code
     // that reaches for canMove to answer "is it a building" is wrong.
-    std::printf("\n[canMove is not a structure test]\n");
-    {
+    if (want("orders")) {
+        std::printf("\n[canMove is not a structure test]\n");
         int trap = 0;
         bool keepIsTrap = false;
         for (const auto& [id, t] : reg.types())
