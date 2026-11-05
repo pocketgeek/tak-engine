@@ -395,7 +395,7 @@ add_executable(legion_world_test tools/legion_world_test.cpp)
 target_link_libraries(legion_world_test PRIVATE tak-formats)
 foreach(legion_case clearance groupreuse jagged trapped longroute crowdhold replace unreachable quota pens determinism formation
     slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental planeprebuild penstale lattice wallend staticblock facing
-    navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation flyerfront liftflyers aware b3events lanegeom
+    navalclearance navalisland hovershore navalmissions squadformation formationreform pinwheel landedflyers mixedformation flyerfront liftflyers aware b3events lanegeom
     lonetrees slideback stillturn forestedge mixedsettle entryplanes mixedrandom funnelmouth funneltie staticindex)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
   # TAK_LEGION_VERIFY (debug builds; compiled out of Release): every derived index, work list

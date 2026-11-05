@@ -3015,6 +3015,91 @@ void squadformation() {
     // formation radius is 701 px).
     check(far<=kSquadFar*kSquadFarBand,"a formation member settled far from the point");
 }
+// The formation re-form (World::legionStandbyCheck, our Legion counterpart of
+// Retail's standby group check). An idle member of an Alt+N formation shoved
+// out of its slot -- farther than Retail's tolerance (2*sqrt(area) cells, 9.8
+// for six 2x2 bodies) but inside the W6 rejoin's reach -- walks back to its own
+// slot at a standby wake; a Ctrl group member shoved the same way stays where
+// it was left. Then the slot is walled off with the member shoved outside the
+// wall: it walks once, gives the slot up and is never re-ordered again. A
+// member whose slot a body stands on waits (no walk) until the body leaves.
+void formationreform() {
+    Fixture f(128,112);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> form,ctrl;
+    for(int i=0;i<6;++i)form.push_back(f.spawn(type,10+(i%3)*3,20+(i/3)*3));
+    for(int i=0;i<6;++i)ctrl.push_back(f.spawn(type,10+(i%3)*3,80+(i/3)*3));
+    f.start();
+    for(int id:form)f.world.setSquad(id,-1);
+    for(int id:ctrl)f.world.setSquad(id,2);
+    for(int id:form)f.world.order(id,40*16,24*16,false);
+    for(int id:ctrl)f.world.order(id,40*16,84*16,false);
+    for(int t=0;t<1800;++t)f.world.tick(1.f/30);
+    for(int id:form)check(f.world.unit(id)->orders.empty(),"formationreform: the formation never settled");
+    for(int id:ctrl)check(f.world.unit(id)->orders.empty(),"formationreform: the Ctrl group never settled");
+    auto east=[&](const std::vector<int>& ids) {
+        return *std::max_element(ids.begin(),ids.end(),[&](int a,int b){return f.world.unit(a)->x<f.world.unit(b)->x;});
+    };
+    auto shove=[&](int id,int cells) {
+        Unit& u=*f.world.unit(id);const Fixed x=u.x;
+        for(int i=0;i<cells*4;++i)f.world.commitGroundStep(u,Fixed::fromInt(4),Fixed());
+        check(u.x-x>=Fixed::fromInt(cells*16-8),"formationreform: the shove was refused");
+    };
+    // Runs `ticks` ticks and returns how many times the unit went from idle to carrying orders.
+    auto watch=[&](int id,int ticks) {
+        int orders=0;bool idle=f.world.unit(id)->orders.empty();
+        for(int t=0;t<ticks;++t) {
+            f.world.tick(1.f/30);
+            const bool now=f.world.unit(id)->orders.empty();
+            orders+=idle&&!now;idle=now;
+            check(f.legal(id),"formationreform: illegal footprint");
+        }
+        return orders;
+    };
+    const int a=east(form),b=east(ctrl);
+    const Fixed ax=f.world.unit(a)->x,az=f.world.unit(a)->z,bx0=f.world.unit(b)->x;
+    shove(a,12);shove(b,12);
+    const Fixed bx=f.world.unit(b)->x,bz=f.world.unit(b)->z;
+    int formOrders=0,ctrlOrders=0;
+    {
+        bool idleA=true,idleB=true;
+        for(int t=0;t<900;++t) {
+            f.world.tick(1.f/30);
+            const bool nowA=f.world.unit(a)->orders.empty(),nowB=f.world.unit(b)->orders.empty();
+            formOrders+=idleA&&!nowA;ctrlOrders+=idleB&&!nowB;idleA=nowA;idleB=nowB;
+        }
+    }
+    const auto& ua=*f.world.unit(a);const auto& ub=*f.world.unit(b);
+    const float back=fxLen(ua.x-ax,ua.z-az).toFloat();
+    std::printf("formationreform shove: member walks=%d back_px=%.1f idle=%d | ctrl walks=%d moved_px=%.1f (shoved %.1f)\n",
+        formOrders,back,int(ua.orders.empty()),ctrlOrders,fxLen(ub.x-bx,ub.z-bz).toFloat(),(bx-bx0).toFloat());
+    check(formOrders==1,"formationreform: the shoved formation member did not walk back once");
+    check(ua.orders.empty()&&back<=32.f,"formationreform: the formation member did not settle back in its slot");
+    check(ctrlOrders==0&&ub.x==bx&&ub.z==bz,"formationreform: a Ctrl group member re-formed");
+    // A body standing in the slot: the member waits where it was shoved (no walk) until the body leaves.
+    shove(a,12);
+    const int blocker=f.world.spawn(&type,ax.toFloat(),az.toFloat(),std::nullopt,0);
+    check(blocker>0&&f.world.unit(blocker)->x==ax&&f.world.unit(blocker)->z==az,"formationreform: the blocker missed the slot");
+    const int waits=watch(a,900);
+    std::printf("formationreform occupied: walks=%d\n",waits);
+    check(waits==0,"formationreform: a member walked to a slot a body stands on");
+    f.world.order(blocker,80*16,60*16,false);
+    const int freed=watch(a,1200);
+    const float freedBack=fxLen(f.world.unit(a)->x-ax,f.world.unit(a)->z-az).toFloat();
+    std::printf("formationreform freed: walks=%d back_px=%.1f\n",freed,freedBack);
+    check(freed==1&&freedBack<=32.f,"formationreform: the member did not walk back once its slot was free");
+    // Give up: shove it 16 cells out, wall a ring 14 cells round the point (its slot inside, itself outside).
+    shove(a,16);
+    for(int i=-14;i<=14;++i) {f.wall(40+i,24-14);f.wall(40+i,24+14);f.wall(40-14,24+i);f.wall(40+14,24+i);}
+    f.publish();
+    const int tries=watch(a,2400),later=watch(a,1800);
+    const auto& ug=*f.world.unit(a);
+    std::printf("formationreform walled: walks=%d later=%d idle=%d from_slot_px=%.1f\n",tries,later,int(ug.orders.empty()),
+        fxLen(ug.x-ax,ug.z-az).toFloat());
+    check(tries==1,"formationreform: a member whose slot is walled off did not walk exactly once");
+    check(later==0&&ug.orders.empty(),"formationreform: a member that gave its slot up was re-ordered");
+}
 }
 
 // A formation (Alt+1) of 20 ground bodies and 8 flyers given one order.
@@ -4636,7 +4721,7 @@ int main(int argc,char** argv) {
         {"staticblock",staticblock},{"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn},
         {"approachhold",approachhold},{"approachopen",approachopen},
         {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend},
-        {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
+        {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},{"formationreform",formationreform},
         {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"flyerfront",flyerfront},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainschurn",chainschurn},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
