@@ -638,6 +638,42 @@ static void airPoint(Fixture& f) {
     }
 }
 
+// ---- 8d. a flyer's attack on a unit and its patrol, as the Retail AI reads them -------------
+// The resolver's unit branch (4de8b0..4de9ea) gives a flyer AIRTOAIR at a
+// flyer, AIRSTRIKE on a `dropped` weapon, else AIRTOGROUNDHOVER / AIRTOGROUND;
+// each keeps the target bit (0x1000200), AIRSTRIKE its 0x400 with the order's
+// point (2, 0x1000600). A flyer's patrol is VTOL_PATROL (0x1000412, 0x4000 on
+// the anchored leg). E, tools/re/check_air_point_mission.py.
+
+static void airUnit(Fixture& f) {
+    std::printf("a flyer at a unit, a flyer's patrol (the Retail AI's reading):\n");
+    auto w = makeWorld();
+    const int bomber = w->spawn(f.t("bomber"), 300, 300, 0, 0);
+    const int hoverer = w->spawn(f.t("hoverer"), 340, 300, 0, 0);
+    const int hawk = w->spawn(f.t("hawk"), 380, 300, 0, 0);
+    const int dogfighter = w->spawn(f.t("hawk"), 420, 300, 0, 0);
+    const int patroller = w->spawn(f.t("hawk"), 460, 300, 0, 0);
+    const int walker = w->spawn(f.t("archer"), 500, 300, 0, 0);
+    const int target = w->spawn(f.t("target"), 1200, 1200, 0, 1);
+    const int enemyFlyer = w->spawn(f.t("hawk"), 1300, 1200, 0, 1);
+    for (int id : {bomber, hoverer, hawk, walker}) w->attack(id, target, false);
+    w->attack(dogfighter, enemyFlyer, false);
+    w->patrol(patroller, 900, 300);
+    const struct { int id; std::pair<uint8_t, uint32_t> mission; const char* what; } rows[] = {
+        {bomber, {2, 0x1000600}, "a dropped weapon on a unit: AIRSTRIKE, class 2, 0x1000600 (it read 1, 0x1000280)"},
+        {hoverer, {1, 0x1000200}, "a hoverattack type on a unit: AIRTOGROUNDHOVER, class 1, 0x1000200"},
+        {hawk, {1, 0x1000200}, "else on a unit: AIRTOGROUND, class 1, 0x1000200"},
+        {dogfighter, {1, 0x1000200}, "on a flyer: AIRTOAIR, class 1, 0x1000200"},
+        {patroller, {7, 0x1004412}, "a flyer's patrol: VTOL_PATROL, class 7, 0x1004412 (it read Patrol's 0x3000410)"},
+        {walker, {1, 0x1000280}, "a walker on a unit stays Attack_Chase, class 1, 0x1000280"},
+    };
+    for (const auto& r : rows) {
+        const auto seen = ai::ClassicBrain::firstMissionOf(*w, *w->unit(r.id));
+        char got[32]; std::snprintf(got, sizeof got, "%u %#x", unsigned(seen.first), unsigned(seen.second));
+        check(seen == r.mission, r.what, got);
+    }
+}
+
 // ---- 9. s and d ----------------------------------------------------------------------------
 
 static void selectAndDestruct(Fixture& f) {
@@ -1075,6 +1111,7 @@ int main(int argc, char** argv) {
         attackPoint(f);
         clausePoints(f);
         airPoint(f);
+        airUnit(f);
         selectAndDestruct(f);
         holds(f);
         setMission(f);

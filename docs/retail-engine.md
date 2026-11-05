@@ -6933,6 +6933,20 @@ null target; `Order::airPoint`):
   AI reads AIRSTRIKE as class 2, 0x1000400 and AIRTOGROUNDHOVER and
   AIRTOGROUND as class 1, 0x1000000 (`ClassicBrain`'s `firstMission`; it read
   a move before 0.9.20).
+- E (the same check), a flyer's attack on a unit (the resolver's unit branch,
+  `4de8b0..4de9ea`: AIRTOAIR at a flyer, AIRSTRIKE on a selected `dropped`
+  weapon at a unit that cannot fly, else AIRTOGROUNDHOVER / AIRTOGROUND):
+  with a live target each keeps 0x1000200, class 1; AIRSTRIKE is class 2,
+  0x1000600 with a point and 0x1000200 without. A player's order passes the
+  target's position as the point (S, `521a66..521abc` -> `4d7a30` ->
+  `4d78a0`), an automatic attack none (S, `4d7de0`: `4d8027..4d8035`).
+  `firstMission` read every unit attack as Attack_Chase (1, 0x1000280),
+  flyers included; it now reads the air rows (AirStrike's goal its `+0x22`,
+  which follows the target), and a flyer's patrol as VTOL_PATROL (0x1000412,
+  0x4000 once anchored) instead of Patrol's 0x3000410. The AI's readers
+  (0x200, 0x400 with the goal, 0x2000, class 1 or 2) see the same for every
+  shipped type; only a mod's `dropped` flyer (class 2, 0x400) reads
+  differently. `mission_orders_test`.
 
 `suppress_test` (both modes): `creaeri` flies runs over the
 point and hits it (24 shots, 4 px off); a Tarbeak hovers ~134 px off a point

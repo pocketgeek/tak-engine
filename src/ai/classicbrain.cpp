@@ -50,6 +50,7 @@ struct FirstMission {
     int target = 0;
     int32_t goalX = 0, goalZ = 0;
 };
+const tak::sim::Weapon* currentWeapon(const tak::sim::Unit& u);
 FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u) {
     FirstMission m;
     if (u.type->isStructure()) {
@@ -94,7 +95,26 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
     else if (o.load) { m.cls = 12; m.flags = 0x1000200; m.target = o.targetId; }
     else if (o.unload) { m.cls = 13; m.flags = 0x1000400; }
     else if (o.guard) { m.cls = 5; m.flags = 0x3000200; m.target = o.targetId; }
-    else if (o.targetId) { m.cls = 1; m.flags = 0x1000280; m.target = o.targetId; }
+    else if (o.targetId) {
+        m.cls = 1; m.flags = 0x1000280; m.target = o.targetId;   // Attack_Chase / Attack_Melee (0x5eb8d1 / 0x5eb8ea)
+        // A flyer's attack is one of the air rows (the resolver's unit branch,
+        // 4de8b0..4de9ea): AirToAir at a flyer (0x5ebd82), AirStrike on a
+        // selected `dropped` weapon (0x5ebd69: class 2, 0x1000600), else
+        // AirToGroundHover / AirToGround (0x5ebdb4 / 0x5ebd9b); 0x1000200 each
+        // with a live target. AirStrike keeps its 0x400 with the point an
+        // order passes (521a66..521abc: the target's position), not an
+        // automatic one's (4d7de0 passes none: 4d6d6f clears it); its +0x22
+        // follows the target (tickAirStrike).
+        // tools/re/check_air_point_mission.py.
+        const auto* t = world.unit(o.targetId);
+        if (u.type->canFly && t && t->type) {
+            const auto* w = currentWeapon(u);
+            const bool strike = w && w->cursorAirstrike && !t->type->canFly;
+            m.cls = strike ? 2 : 1;
+            m.flags = strike && !o.autoTarget ? 0x1000600 : 0x1000200;
+            if (strike) { m.goalX = o.attackPointX.v; m.goalZ = o.attackPointZ.v; }
+        }
+    }
     // VTOL_SEEKATTACK (row 0x5ebe7c: 0x1000600), a flyer's attack after its
     // target is lost. World's seek never carries the target, so the mission
     // ctor (0x4d6d66) has cleared the target bit 0x200, as for a dead one.
@@ -102,7 +122,9 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
     // VTOL_SEEKGUARD (row 0x5ebe95: 0x1000600), a flyer's guard after its
     // guarded unit is lost: World's seek carries none, so 0x200 is clear.
     else if (o.seekGuard) { m.cls = 19; m.flags = 0x1000400; }
-    else if (o.patrol) { m.cls = 7; m.flags = 0x3000410; }
+    // Patrol (0x5eb94e: 0x3000410); a flyer's is VTOL_PATROL (0x5ebd50), whose
+    // flags World's leg carries (kVtolPatrolFlags, 0x4000 once anchored).
+    else if (o.patrol) { m.cls = 7; m.flags = u.type->canFly ? tak::sim::kVtolPatrolFlags | (o.mission.flags & 0x4000u) : 0x3000410; }
     // A factory output's GetBuilt PARK: definition class 14, flags 0x200.
     else if (o.park) { m.cls = 14; m.flags = o.mission.flags; }
     // A flyer's step-out (retail's air traffic) ahead of its mission: VTOL_StepOut,
