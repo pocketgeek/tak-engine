@@ -137,8 +137,11 @@ Everything still open at P8, in one place:
 - **Exact ties in the Monarch's retreat** (0x40d010 keeps the first of equally safe
   points): random cases never produce two points at the same squared distance from the
   nearest enemy, so check_ai_retreat cannot see the tie rule; read statically.
-- **U6 remainder**: unit +0x104 is taken as always 0 and the holder bit (+0xa8 ->
-  0x4000000) as never set for a carried unit; their setters were not traced.
+- **U6 remainder** (settled 2026-11-05, S): unit +0x104 is set only when a unit
+  passes to a remote (kind 3) player (514e26), never in lockstep, so 0 is right; the
+  holder bit (+0xa8 -> 0x4000000) is the carrier type's `isairbase`, which no shipped
+  unit sets, so a carried unit is never in a holder. 0x20 now comes from the World
+  (a mission's order parse clears it until its MakeSelectable).
 - **U8**: no Classic game test near the unit cap; the sim refuses at >= where retail
   tests == (above).
 - **U9**: a retail game cannot be replayed from a seed, so whole-game comparison with
