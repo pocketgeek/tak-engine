@@ -8,7 +8,6 @@ cartographer_ai_profile_e2e 60
 legion_choke 60
 mapgen_themes 85
 legion_situation_r10-104540_legion 83
-retailgap 81
 legion_gen1_route_65845_o0 73
 mapgen_naval 72
 render_shadow_atlas_band 70
@@ -87,6 +86,7 @@ cartographer_place_features 20
 benchmark_pathfinding 20
 legion_scenario_strait-2x150 19
 voice_uplink 49
+retailgap_weapons 19
 legion_check_unreach-200 18
 legion_situation_r9-61930_legion 18
 movement_orders_maze 18
@@ -105,11 +105,13 @@ cartographer_feature_ops_zhon 15
 server_voice_cpu 15
 legion_gen1_route_36057_om1 14
 cartographer_place_units 14
+retailgap_rules 14
 server_speed_pacing 13
 issue_selection_test_data 13
 cartographer_place_terrain_aramon 13
 cartographer_place_terrain_creon 13
 cartographer_feature_ops_taros 13
+retailgap_fireatwill 13
 legion_scenario_gapsweep 12
 legion_scenario_strait-3x80 12
 legion_situation_r10-46292_legion 12
@@ -129,6 +131,7 @@ legion_scenario_mixed2 10
 legion_scenario_unreach-200 10
 legion_situation_r9-36060_retail 10
 server_status 10
+retailgap_orders 10
 legion_gen1_route_21096_o0 9
 legion_motion_cross 9
 legion_scenario_refreshchurn 9

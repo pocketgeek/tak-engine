@@ -1844,7 +1844,13 @@ if(TAK_TEST_DATA)
       add_test(NAME gaitpace_shipped COMMAND gaitpace_test "${TAK_TEST_EXTRACTED}/scripts")
       set_tests_properties(cobanim PROPERTIES ENVIRONMENT "TAK_VERIFY_NATIVE_EXPORT=1")
     endif()
-    add_test(NAME retailgap COMMAND retailgap_test "${TAK_TEST_DATA}")
+    # One test per slice so they run side by side. The slices take more than 5 s, but
+    # the retail-gap checks cover too much to leave out of a targeted run, so they are
+    # labelled `quick` here (the rule below only ADDS the label).
+    foreach(retailgap_slice weapons rules fireatwill orders)
+      add_test(NAME retailgap_${retailgap_slice} COMMAND retailgap_test "${TAK_TEST_DATA}" ${retailgap_slice})
+      set_tests_properties(retailgap_${retailgap_slice} PROPERTIES LABELS quick)
+    endforeach()
     add_test(NAME mission_orders_shipped COMMAND mission_orders_test --data "${TAK_TEST_DATA}")
     add_test(NAME conjure COMMAND conjure_test "${TAK_TEST_DATA}")
     add_test(NAME death_lifecycle COMMAND death_lifecycle_test "${TAK_TEST_DATA}")
@@ -4036,7 +4042,8 @@ cmake_language(DEFER CALL tak_isolate_test_profiles)
 # COST so ctest starts the longest first (ctest's own CTestCostData.txt only exists after a
 # first run in a build dir; this is the fresh-checkout default and the lower bound that
 # keeps a long test from being scheduled last). Every other test that is not `nightly` is
-# labelled `quick`: `ctest -L quick -j N` is the targeted run for task agents (about a
+# labelled `quick` (a slow test may also carry the label explicitly, as the retailgap
+# slices do): `ctest -L quick -j N` is the targeted run for task agents (about a
 # minute of wall time at -j 8; it still covers every area). Refresh the file after adding a
 # slow test: tools/ctest_costs.py build-o2 (see docs/development.md).
 set(TAK_CTEST_COSTS "${CMAKE_SOURCE_DIR}/tools/ctest_costs.txt")
