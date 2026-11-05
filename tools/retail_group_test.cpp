@@ -145,6 +145,30 @@ void aiSquads() {
     std::printf("scenario=aiSquads fast_max=%.4f\n",fastest.toFloat());
 }
 
+// A rejoin replays the match from tick 0 into a reset World (resetForReplay):
+// the AI squads' formation flags (hashed) and the group records must not
+// survive the reset, or the rejoiner's sim paces squads the referee's does
+// not yet and its hash differs from the first tick.
+void replayReset() {
+    const auto fresh=[](World& world) {
+        setup(world,PathfindingMode::Retail);world.setPlayerCount(2);world.player(0).automaticGates=true;
+    };
+    World clean;fresh(clean);
+    World world;fresh(world);auto t=mover(0);
+    const int a=world.spawn(&t,640,2048,std::nullopt,0),b=world.spawn(&t,640,2096,std::nullopt,0);
+    for(int id:{a,b}){world.setAiGroup(0,id,7,false);world.order(id,3200,2072,false);}
+    world.setAiGroup(0,0,7,true);
+    known(world);for(int tick=0;tick<30;++tick)world.tick(1.f/30);
+    require(world.retailGroupRecord(a) && world.retailGroupRecord(a)->active,"the AI squad was not a formation");
+    world.resetForReplay();fresh(world);
+    require(!world.aiFormation(0,7),"an AI squad's formation flag survived resetForReplay");
+    require(world.stateHash()==clean.stateHash(),"a World reset for a replay does not hash as a fresh one");
+    const int c=world.spawn(&t,640,2048,std::nullopt,0);world.setAiGroup(0,c,7,false);
+    const auto* record=world.retailGroupRecord(c);
+    require(record && !record->active && record->all[0].count==0,"a group record survived resetForReplay");
+    std::puts("scenario=replayReset");
+}
+
 // Native slot geometry spot checks (51c700/51ce40/51d1e0).
 void geometry() {
     RetailGroupRecord g;g.active=true;
@@ -358,7 +382,7 @@ void standbys(bool air) {
 
 int main() {
     try {
-        geometry();attackHead();airHeads();slowest();plain();aiSquads();
+        geometry();attackHead();airHeads();slowest();plain();aiSquads();replayReset();
         flyerMove();flyerPatrol();standbys(false);standbys(true);
         straggler(PathfindingMode::Retail);
     } catch(const std::exception& error) {std::fprintf(stderr,"FAIL: %s\n",error.what());return 1;}

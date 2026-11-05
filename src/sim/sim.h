@@ -2616,6 +2616,9 @@ public:
         searchGrades_.clear(); activeSearchGrade_=-1;
         units_.clear();unitSlotById_.clear();retiredOwners_.clear();retiredHash_=0;
         replacedObjects_.clear();
+        // The retail group records and the AI squads' formation flags
+        // (hashed) live across ticks: a replay from tick 0 starts with none.
+        retailGroups_={};retailGroupPaced_.clear();aiFormation_={};
         groundOwner_.clear();groundLinkSerial_=0;
         projectiles_.clear();flames_.clear();
         hits_.clear();
