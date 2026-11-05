@@ -213,6 +213,13 @@ their validation reports; both live in [`docs/`](docs/).
 - **A homing shot with a model points along its flight every tick.** It used to do so
   only on a tick it turned, so a mod's spinning homing shot kept spinning once its
   target died. As in the original game, the model now faces the way it flies.
+- **Homing shots follow a unit that boards a transport.** As in the original game, a
+  homing shot in the air keeps after its target when it is picked up, and flies at
+  the transport carrying it; it used to fly straight on.
+- **Homing shots heading straight at their target fly as in the original game.** A
+  fast homing shot (such as a Tracking Arrow) could double or triple its speed a
+  few moments early or late when its target was almost dead ahead; it now speeds up
+  exactly when the original game's does.
 - **A unit short of mana after a shot falls back to a cheaper weapon.** As in the
   original game, a unit that switches weapons (every Monarch and dragon) and has too
   little mana left for another shot of its weapon now switches at once to the best

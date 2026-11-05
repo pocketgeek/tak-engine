@@ -6827,6 +6827,37 @@ Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
   a dead or dying one, or a zero turn angle; World did so only after a turn
   until 2026-11-04. The probe checks all four cases against the native
   routine.
+- E, as retail (same probe, carried mode, 2026-11-04): a Guided shot keeps
+  homing on a target carried off. The attach `51b5a0` (run natively) leaves
+  the cargo's 0x1000000 and 0x1000 alone (it sets bit 0x8000 for piece 0xff;
+  `5207d0` after it can clear only 0x10), and `52e030` reads nothing else, not
+  `+0x114`'s carried bits. The SweetSpot `4dd4f0` -> `4dd2a0` (native in every
+  probe mode now, only the script query `56c720` answered) is the cargo's own
+  `+0x68` plus its drawn piece centre; `4dad30` commits the host's attach point
+  there every tick (`check_cargo_attach_position.py`). World passed the shot's
+  own position for an embarked target until 2026-11-04 and flew it straight on
+  (`retailgap_test`, guided homing on a carried target).
+- E, as retail (same probe, near and nudge modes, 2026-11-04): the turn angle
+  is `5ad930`'s, acos of dot/(|a||b|) with the cosine stored as a float
+  (`5ad99c`; 0 above 1, pi below -1; lengths `5ad6f0` and dot `5ad900` at the
+  53-bit precision, dot summed z, y, x). A target dead ahead gets no turn only
+  when that float is exactly 1; one step under it is 3.45e-4 rad, under every
+  shipped turn rate, so the shot snaps, and a snap rebuilds the velocity at
+  substeps x speed. Of 96 updates exactly ahead off every axis, native kept 88
+  and snapped 8; of 96 a few raw units off ahead, it kept 81 and snapped 15.
+  Even an axis-aligned launch snaps when the float dot rounds below |a||b|.
+  World took the true angle (atan2 of cross and dot), which is exactly 0 for an
+  exactly parallel target and tiny but non-zero for a near one: it kept the
+  first and snapped the second, so a fast homing shot (2 or 3 substeps) could
+  speed up two or three times a few ticks early or late. `retailGuidedAngle`
+  now forms the same float cosine (deterministic double arithmetic, acos
+  through `detmath::atan`), and the snap divides by the 53-bit length into
+  floats and truncates their product with the speed without a float store,
+  as `52e108` does. Every update that skips steering or snaps now matches the
+  native bits (the probe requires 0 raw difference for those modes); the
+  quaternion turn (`52e16b`, float axis, `fsin`/`fcos` of half the rate) keeps
+  its float port, within 10 raw units on the probe. `retail_visual_test` holds
+  three native rows that the old angle got wrong.
 - Campaign `a X Y` gives this order too (`mission.cpp`, `mission_orders_test`).
 
 `suppress_test` checks it in both pathfinding modes.
