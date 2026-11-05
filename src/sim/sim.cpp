@@ -10957,7 +10957,6 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
         --players_[size_t(old->player)].unitCount;
         gPlayersValid_=false;bodyIndexValid_=false;
     }
-    int8_t bsquad = b->squad;   // capture before spawn may realloc units_
     // Preserve retail birth orientation. Factory scripts query this heading to
     // counter-rotate their build pads into the fixed yard where appropriate.
     int id = spawn(type, x, z, std::nullopt, b->player);
@@ -10967,8 +10966,6 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
     site->buildBegun=bool(replacement);
     site->beingBuilt = true;   // its builder owns it this tick (no instant decay)
     site->hp = Fixed::fromFloat(type->maxHp * 0.05f);
-    // Auto-join: a conjured MOBILE unit inherits the builder's squad (a building never does).
-    if (bsquad && !type->isStructure()) site->squad = bsquad;
     // Key off maxVel, NOT the FBI canmove flag: verwall and tarwall both declare
     // canmove=1 with no velocity, so a canMove gate left Veruna and Taros walls
     // blocking neither pathing nor line of sight while Aramon's and Creon's did.
@@ -13148,6 +13145,28 @@ void World::emitConstruction(Unit& u,bool rising) {
     u.constructionEmitter->emit(1,y,rising,[&]{return crtRand(draw++ ? 0x4f14a2u : 0x4f1467u);});
 }
 
+// GetBuilt's group join (40238a, read 2026-11-04): a factory's output, as it
+// is released, takes the factory's group (50b4f0(unit, factory+0xc8)), even
+// none, when the factory is alive and the output's owner is human (+0xea 1).
+// Computer players' outputs are left to their AI's assignment.
+void World::joinFactoryGroup(const Unit& factory,Unit& output) {
+    if (!factory.alive() || !output.type || output.type->isStructure() || output.player!=factory.player ||
+        output.player<0 || size_t(output.player)>=players_.size() || players_[size_t(output.player)].automaticGates)
+        return;
+    output.squad=factory.squad;
+}
+
+// Ours: a unit a mobile builder (or a repeating mobile producer) made joins
+// the builder's group or formation when it is finished, for human owners as
+// GetBuilt's join. Retail's MobileBuild (405560) has no such join: GetBuilt's
+// is a structure builder's only (402291), so its output stays in no group.
+void World::joinBuilderGroup(const Unit& builder,Unit& output) {
+    if (!builder.squad || !output.type || output.type->isStructure() || output.player!=builder.player ||
+        output.player<0 || size_t(output.player)>=players_.size() || players_[size_t(output.player)].automaticGates)
+        return;
+    output.squad=builder.squad;
+}
+
 void World::completeRetailConstruction(Unit& builder,Unit& site) {
     const auto& owner=players_[size_t(builder.player)];
     if (!owner.buildCache) throw std::runtime_error("construction completion catalogue absent");
@@ -13170,6 +13189,7 @@ void World::completeRetailConstruction(Unit& builder,Unit& site) {
         throw std::runtime_error("construction completion rejected by original eligibility rules");
     site.underConstruction=false;site.beingBuilt=false;
     site.standbyAllowed=true;site.guardNoMoveAllowed=true;
+    if (!builder.type->isStructure()) joinBuilderGroup(builder,site);
     // Completion publishes a solid mobile body before later movers/searches.
     // Cached grades must see it even if its stationary mover never refreshes.
     if (!site.type->canFly && !site.type->isStructure()) {
@@ -13200,6 +13220,7 @@ void World::tickRetailGetBuilt(Unit& site) {
                 if (!u.type->isStructure() && builder && builder->alive() && builder->type->isStructure()) {
                     if (!builder->rally.empty())
                         throw std::runtime_error("factory rally completion host is not ported");
+                    w.joinFactoryGroup(*builder,u);
                     const uint32_t first=random(6),second=random(3);
                     if (u.type->canFly) { w.queueFlyerPark(u.id,builder->id,(first+second+6)*16); return 5; }
                     Order order;order.goal=order.groundMission=true;order.park.emplace();
@@ -14735,6 +14756,7 @@ bool World::constructionWork(Unit& b, Unit& site, float dt) {
         site.hp >= Fixed::fromFloat(site.type->maxHp)) {
         site.hp = Fixed::fromFloat(site.type->maxHp);
         site.underConstruction = false;
+        if (!b.type->isStructure()) joinBuilderGroup(b,site);
         return true;
     }
     return false;
@@ -18028,9 +18050,10 @@ void World::finishProduction(int producerId,Unit& finished) {
     }
     if (Unit* pu = unit(producerId)) {
         pu->justBuilt = id;
-        // Auto-join: a squad-member producer's new MOBILE unit joins its squad.
-        if (pu->squad && t && !t->isStructure())
-            if (Unit* nu = unit(id)) nu->squad = pu->squad;
+        if (Unit* nu = unit(id)) {
+            if (getBuilt) joinFactoryGroup(*pu,*nu);
+            else joinBuilderGroup(*pu,*nu);
+        }
         // Infinite build: re-queue so the next one starts once this one clears.
         if (pu->buildQueue.empty() && pu->repeatType)
             pu->buildQueue.push_back(pu->repeatType);

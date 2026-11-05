@@ -4451,6 +4451,10 @@ private:
     bool tickLegionLift(Unit& u);
     void leaveRetailGroupCentre(const Unit& u);
     Fixed retailGroupLimit(const Unit& u) const;
+    // A finished output joins its maker's group (human owners): a factory's
+    // as GetBuilt releases it (40238a), a mobile builder's when it is done.
+    void joinFactoryGroup(const Unit& factory,Unit& output);
+    void joinBuilderGroup(const Unit& builder,Unit& output);
     bool pathPending(int id) const {return paths_.pending(id);}
 
     // A unit's authoritative COB VM plus the host flags its scripts read.

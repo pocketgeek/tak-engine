@@ -1639,6 +1639,116 @@ static void rallyBesideThePad(float x, float z, const char* where) {
     check(onProducer == 0, "none rests on the producer", std::to_string(onProducer));
 }
 
+// A FINISHED OUTPUT JOINS ITS MAKER'S GROUP, for human owners only. Retail's
+// GetBuilt (40238a) gives a factory's output the factory's group as it
+// releases it -- even none, replacing a group the unfinished unit was put in
+// -- when the owner is human (+0xea 1); a computer player's AI assigns its
+// units itself. Ours used to join at construction start, for every owner.
+// A unit a mobile builder (or a repeating mobile producer) makes joins the
+// builder's group when it is finished (ours: retail's MobileBuild has no
+// join). Both pathfinding modes.
+static void outputJoinsGroup() {
+    std::printf("a finished output joins its maker's group (%s):\n",
+                g_pathfinding == PathfindingMode::Retail ? "Retail" : "Legion");
+    const auto output = [](const World& w, int maker, bool finished) {
+        for (const auto& u : w.units())
+            if (u.id != maker && u.alive() && u.type && !u.type->isStructure() &&
+                u.underConstruction != finished) return u.id;
+        return 0;
+    };
+    for (bool computer : {false, true}) {
+        const char* who = computer ? "computer" : "human";
+        char what[160];
+        // A factory in formation 2: nothing while it is built, the formation at release.
+        {
+            auto ownedWorld = makeWorld(128, 128);
+            World& w = *ownedWorld;
+            w.player(0).automaticGates = computer;
+            UnitType fac = factoryType(), sol = soldierType();
+            fac.workerTime = 20; sol.buildTime = 60;
+            const int fid = w.spawn(&fac, 1000, 1000, 0, 0);
+            w.setSquad(fid, -2);
+            w.player(0).mana = 1e9f;
+            w.train(fid, &sol, 1);
+            int site = 0, siteSquad = -99;
+            for (int t = 0; t < 900 && !output(w, fid, true); ++t) {
+                w.tick(1.0f / 30.0f);
+                if (!site) site = output(w, fid, false);
+                if (site && w.unit(site)->underConstruction) siteSquad = w.unit(site)->squad;
+            }
+            const int done = output(w, fid, true);
+            std::snprintf(what, sizeof what, "%s: a factory's unfinished output is in no group", who);
+            check(site && siteSquad == 0, what, std::to_string(siteSquad));
+            std::snprintf(what, sizeof what, computer ? "%s: its released output is in no group"
+                                                      : "%s: its released output joins formation 2", who);
+            check(done && w.unit(done)->squad == (computer ? 0 : -2), what,
+                  done ? std::to_string(w.unit(done)->squad) : "none");
+        }
+        // An ungrouped factory: an unfinished output put in group 3 leaves it at release.
+        if (!computer) {
+            auto ownedWorld = makeWorld(128, 128);
+            World& w = *ownedWorld;
+            UnitType fac = factoryType(), sol = soldierType();
+            fac.workerTime = 20; sol.buildTime = 60;
+            const int fid = w.spawn(&fac, 1000, 1000, 0, 0);
+            w.player(0).mana = 1e9f;
+            w.train(fid, &sol, 1);
+            for (int t = 0; t < 900 && !output(w, fid, true); ++t) {
+                if (const int site = output(w, fid, false)) w.setSquad(site, 3);
+                w.tick(1.0f / 30.0f);
+            }
+            const int done = output(w, fid, true);
+            check(done && w.unit(done)->squad == 0,
+                  "human: an ungrouped factory's output leaves the group it was put in while built",
+                  done ? std::to_string(w.unit(done)->squad) : "none");
+        }
+        // A mobile builder in group 1 conjuring a unit: joins when finished.
+        {
+            auto ownedWorld = makeWorld(128, 128);
+            World& w = *ownedWorld;
+            w.player(0).automaticGates = computer;
+            UnitType builder = soldierType(), sol = soldierType();
+            builder.id = builder.name = "builder"; builder.isBuilder = true; builder.workerTime = 20;
+            sol.buildTime = 60;
+            const int bid = w.spawn(&builder, 1000, 1000, 0, 0);
+            w.setSquad(bid, 1);
+            w.player(0).mana = 1e9f;
+            w.queueBuild(bid, &sol, 1060, 1000, false);
+            int site = 0, siteSquad = -99;
+            for (int t = 0; t < 1500 && !output(w, bid, true); ++t) {
+                w.tick(1.0f / 30.0f);
+                if (!site) site = output(w, bid, false);
+                if (site && w.unit(site) && w.unit(site)->underConstruction) siteSquad = w.unit(site)->squad;
+            }
+            const int done = output(w, bid, true);
+            std::snprintf(what, sizeof what, "%s: a builder's unfinished conjure is in no group", who);
+            check(site && siteSquad == 0, what, std::to_string(siteSquad));
+            std::snprintf(what, sizeof what, computer ? "%s: the finished unit is in no group"
+                                                      : "%s: the finished unit joins the builder's group 1", who);
+            check(done && w.unit(done)->squad == (computer ? 0 : 1), what,
+                  done ? std::to_string(w.unit(done)->squad) : "none");
+        }
+        // A repeating mobile producer in formation 4.
+        {
+            auto ownedWorld = makeWorld(160, 160);
+            World& w = *ownedWorld;
+            w.player(0).automaticGates = computer;
+            UnitType builder = factoryType(), sol = soldierType();
+            builder.maxVel = sol.maxVel; builder.canMove = true;
+            const int id = w.spawn(&builder, 600, 600, 0, 0);
+            w.setSquad(id, -4);
+            w.player(0).mana = 1e9f;
+            w.setRepeat(id, &sol);
+            for (int t = 0; t < 900 && !output(w, id, true); ++t) w.tick(1.0f / 30.0f);
+            const int done = output(w, id, true);
+            std::snprintf(what, sizeof what, computer ? "%s: a mobile producer's output is in no group"
+                                                      : "%s: a mobile producer's output joins its formation 4", who);
+            check(done && w.unit(done)->squad == (computer ? 0 : -4), what,
+                  done ? std::to_string(w.unit(done)->squad) : "none");
+        }
+    }
+}
+
 int main(int argc,char** argv) {
     if(argc==2 && !std::strcmp(argv[1],"--legion"))g_pathfinding=PathfindingMode::Legion;
     else if(argc!=1)return 2;
@@ -1686,6 +1796,7 @@ int main(int argc,char** argv) {
     mobileScriptRandomRunsInWorld();
     outputDoesNotJam();
     rallyIsAdopted();
+    outputJoinsGroup();
     rallyReplaces();
     mobileRallyIsAdopted();
     mobileRallyEndsWithRepeat();
