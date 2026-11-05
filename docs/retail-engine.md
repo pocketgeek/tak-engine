@@ -3056,9 +3056,26 @@ object does). Tests: `new_unit_mana_test` (a CRT Create credits, a plain
 creation does not), `new_unit_mana_shipped` (Ulasem Arena opens all five
 Monarchs' players at 5000; takmission01_mt each player at its placed
 storage), `check_new_unit_mana.py` (the arguments, `401240`, and 48 credits
-against `--storage`). Not ported: `51e352` (`51de30`: a unit whose type has
-`+0x268 & 8` makes its side's second named type once, at a set game time
-`5195e0`; World's god summon is its own mechanism) and the `4264a0` cheat.
+against `--storage`). Not ported: `51e352` (the god, below) and the `4264a0` cheat.
+
+**The god (gap hunt 7).** `+0x268 & 8` is `attractsgods` (S: the parser
+`4c093d..4c0955`; bits 0, 3, 4, 5 are `ghost`, `attractsgods`, `noveteran`,
+`optimizeme`). The drawing test at `4ecfd3` that the engine's comments called
+the key's only reader tests bit 0, `ghost`. The unit update `51de30` ends
+(`51e23c..51e352`, S) with: a unit whose type attracts gods, alive
+(`0x1000000`), not dying (`0x1000`) and finished (`+0x108` == 0) asks
+`5195e0(owner)`, which answers yes once per player, on exactly the tick
+(`game+0x19f44`) equal to 30 x the appear seconds (word `0x64117a`, 0 = no
+god), and sets the player's flag (`0x641170 + player`) (E, 4,000 calls,
+`~/tak-tmp/retail-checks/hunt7/probe_gods.py`). The side's god type is looked
+up by name (`515ac0`), placed by the ring search `509f10` round the unit's
+cell (`507d10`, the mobile placement), and made finished with its storage
+(`512060(..., 1, 1, 0, 0, 1)`). The six shipped `attractsgods` types are the
+priests: `arapries`, `araprie2`, `tarpries`, `verlihr`, `zonsham`, `crechie`.
+So a player with no finished priest on that tick never gets its god. World's
+`summonReadyGods` (debug `TAK_GODS` only; gods are off in every game by the
+owner's decision of 2026-09-16) summons for every player, on or after the
+tick, at the centroid of its forces.
 
 ## A finished wall is a feature (icd, gap hunt 4, 2026-11-05)
 

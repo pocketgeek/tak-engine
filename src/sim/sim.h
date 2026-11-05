@@ -536,10 +536,11 @@ struct UnitType {
     // takes a badTarget one only when nothing else qualifies (icd 412620).
     std::vector<std::string> noTargetCats;
     std::array<std::vector<std::string>,3> badTargetCats;
-    // attractsgods. A real retail key, but NOT a summoning input: the flag lands in
-    // bit 0 of the def's +0x268 and the binary tests it in exactly one place
-    // (0x4ecfd3), inside drawing code, to pick which marker a unit gets. Gods arrive
-    // on a timer regardless (see World::godReady). Kept because it is retail data.
+    // attractsgods: bit 3 of the def's +0x268 (4c093d..4c0955; bit 0 is `ghost`,
+    // the bit the drawing code tests at 0x4ecfd3). Retail's god comes to it: the
+    // unit update (51e23c..51e352) makes the player's god beside the first live,
+    // finished attractsgods unit it updates on the god's tick (5195e0). World's
+    // summon is its own (see World::godReady); gods are off in every game.
     bool  attractsGods = false;
     // weaponswitching: this unit carries ONE active weapon at a time, picked by the
     // player. Without it, a multi-weapon unit fires every weapon independently.
@@ -2825,11 +2826,14 @@ public:
     // Manifest the god of every player due one. Called from tick(), so the referee
     // and every client run it on the same step from the same state.
     void summonReadyGods();
-    // TIME, and nothing else -- retail's whole condition. Its Gods.tdf routine
-    // (0x519420) rolls whether the game is god-based and when they arrive, and after
-    // that nothing gates the arrival: no resource to accumulate, no building to hold,
-    // no priest to keep alive. We used to require a favour pool to fill to 3000 off
-    // priest-channelled mana income; that was ours, not retail's, and it is gone.
+    // Ours, on time alone. Retail's Gods.tdf routine (0x519420) rolls whether the
+    // game is god-based and when they arrive; then, in the unit update (51e23c),
+    // a player's first live, finished `attractsgods` unit (its priest: Aramon's two,
+    // Taros', Veruna's Lihr, Zhon's shaman, Creon's chieftain) updated on EXACTLY the
+    // tick 30 x the appear seconds (5195e0, emulated) brings the side's god to a
+    // free spot beside itself (509f10); a player with no priest then gets none.
+    // No favour pool (we once required one, filled to 3000 by priest income).
+    // Gods are off in every game (matchsetup); this runs only under TAK_GODS.
     bool godReady(int t) const {
         return godsEnabled_ && !players_[size_t(t)].godSummoned &&
                int64_t(tickCounter_) >= godAppearTick_;

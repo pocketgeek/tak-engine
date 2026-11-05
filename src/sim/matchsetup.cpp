@@ -846,10 +846,12 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     // god turning up unannounced in one MP game out of ten, three quarters of an hour
     // in, decides that game for reasons neither player chose.
     //
-    // Nothing gates WHO gets one in retail either -- no favour to accumulate, no
-    // priest to keep alive (`attractsgods` is a real FBI key but the binary tests it
-    // only in drawing code, at 0x4ecfd3). So there is no partial version of this to
-    // keep: it either fires for everyone at a random time or it does not fire.
+    // Retail gives a god only to a player with a priest: on the appear tick the
+    // unit update (51e23c..51e352) makes it beside the player's first live,
+    // finished `attractsgods` unit (UnitDef +0x268 bit 3, 4c093d; the 0x4ecfd3
+    // drawing test once read as attractsgods is bit 0, `ghost`). That gate was
+    // misread when this was decided; World::summonReadyGods (debug TAK_GODS only)
+    // still summons for every player at the centroid of its forces.
     float godSec = 1e9f;   // 1e9 => never manifests
 #ifndef NDEBUG
     // Harness escape hatch: a desync hunt that cannot turn gods on cannot find that
