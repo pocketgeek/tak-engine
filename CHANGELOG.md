@@ -223,6 +223,13 @@ their validation reports; both live in [`docs/`](docs/).
 - **Gates are built closed and switched off**, as in the original game. A new gate
   used to count as switched on with its doors shut, so the first click on its ON
   button did nothing.
+- **New units start with an empty mana pool and fill up, as in the original game.**
+  A mage, priest, dragon or Monarch that is trained, built, conjured, raised or
+  placed at the start of a game used to arrive with a full pool; it now starts
+  empty and regains its recharge rate each second (only once it is finished), so
+  its costly spells, and a spy's cloak, wait until it has the mana. Mission units
+  start with the mana the mission gives them (usually none), and a mission's
+  health setting gives whole hit points as in the original.
 - **A unit that changes sides starts afresh, as in the original game.** A unit
   converted by an enemy, given to an ally or taken over by a mission or a map
   scenario keeps its health and the way it faces, but is a new unit to its new

@@ -2812,11 +2812,7 @@ event comes first), `mission_orders_test` (UnitCreated and the region fire
 again, UnitDestroyed for the old object).
 
 Found along the way (E, `511990`): every new unit starts with an empty mana
-pool (`401000` sets `+0xd8` to 0) unless a placement's `ManaPercentage`
-(`514cf2`, default 0, `4c8de5`) or a mission `SetAttribute` (`4d3ed2`) fills
-it; nothing else writes it but regeneration and spending. Ours fills a
-spawned caster's pool; changing that stalls the Classic duel Aramon v Veruna
-(no winner in 120 game-minutes, against 41.3), so it is left for the owner.
+pool; ported since, see "A new unit's mana pool starts empty" below.
 The HP samples `+0x110`/`+0x111` start at 0, not full (ported: a unit killed
 in its first second has the lower severity retail gives it).
 
@@ -2831,6 +2827,66 @@ automatic gates' first tick ran a needless Deactivate on it, and a player's
 first ON click did nothing. `native_gate.py` had taken the same default for
 its fixture; `check_gate_lifecycle.py` passes for all four gates in both
 balances with retail's.
+
+## A new unit's mana pool starts empty (icd, 2026-11-05)
+
+A unit's pool is a pair of floats, the current value at `+0xd8` and the
+maximum at `+0xdc`, and four small routines are all that write it (S, every
+direct call in .text, `tools/re/check_new_unit_mana.py`):
+
+| routine | what it does | called from |
+|---|---|---|
+| `401000(max)` | current 0, maximum `max` | `511c9d` only (511990) |
+| `401120(v)` | current `v`, capped at the maximum | `514cf2` (a placement record), `4d3ed2` (SetAttribute) |
+| `401100(v)` | current `+= v`, capped at the maximum | `40119e` (regeneration), `4263c8` (ManaMe) |
+| `4010d0(v)` | spends `v` when the pool covers it | `401201` (cloak), `42811d`, `5302d6` (a shot) |
+
+`511990`, which makes every unit object, runs only under `511f60`, which
+only `512060` and `512460` call; `512060`'s callers include the factory
+(`401c20`), the mobile builders (`405560`, `4068b0`) and VTOL builders
+(`41ef00`, `41fe70`), the mission start (`4d3200`), Create (`4d35c0`), the
+placement record (`514b40`), the CRT (`4cad50`, `4cd080`), `513330`,
+`51e352` and the change of owner (`514da0`). No caller writes the pool
+afterwards except `514b40` and SetAttribute. So (E, `401000` run natively)
+every new unit -- produced, placed, created, revived, taken over, and the
+Monarch a skirmish opens with -- starts with 0 mana of its MaxMana. Construction finishing
+fills nothing (`429990` calls none of the four). What fills it afterwards:
+
+- Regeneration (`401160`, E): ManaRechargeRate (type `+0x1a6`, per tick) is
+  added only when the construction left (`+0x108`) is 0, so a unit being
+  built stays empty until it is complete; the sum is capped at MaxMana.
+- A placement record (`514c9d..514cf7`, E): `HealthPercentage` (default 100)
+  and `ManaPercentage` (default 0) are read with atoi into words
+  (`4c8dc3..4c8dec`, the getter `543190` run natively); HP becomes
+  `(maxdamage * pct) / 100` in unsigned 32 bits, kept as a word, and mana
+  `MaxMana * pct * 0.01f` at double precision, stored as a float through
+  `401120`, which caps it at MaxMana. 70 of the shipped records give 100, one
+  gives 1, the other 7270 give 0.
+- A mission `SetAttribute` (`4d3e6a`, `4d3eb9`, E): the same two formulas on
+  an int percentage.
+- The ManaMe cheat (`426390`) and nothing else.
+
+Ours filled every spawned caster's pool, let a unit being built regenerate,
+left a record without `ManaPercentage` full, set an over-100 percentage above
+MaxMana, and gave HealthPercentage a fractional HP (25 of 651 was 162.75, retail
+162). All ported (`World::spawn`, `MissionScript::percentHp/percentMana`);
+`new_unit_mana_test` fails on the old code, and `check_new_unit_mana.py`
+compares 504 percentage cases with the native code. Mana stays a double in
+the port (retail's unit pool is a float); a value is rounded to float where
+retail stores one.
+
+What changes in play: a Mage Archer, an Acolyte (whose first slot,
+Earthquake, costs 250) or Elsin, the Aramon Monarch, waits for its pool to
+regenerate (10 a second for most) before a costly spell; a cloaker cannot
+cloak until it has the cost. The Classic AI reads unit mana in two places,
+both retail ports: the Monarch's flee threshold (`40c890`, the pool at most
+half full doubles it) and the weapon switch (`40f411`, an unaffordable slot is
+not chosen). Over eight seeds each of Aramon v Veruna and Creon v Aramon on
+Edmont's Field 15 of 16 duels end inside 120 game-minutes with empty pools,
+as 15 of 16 did with full ones (a different seed each); the default Creon v
+Aramon seed now ends at 120.7 minutes, an even war (kills 152 / 132 at 45
+minutes) in which at most one caster a side stood on a slot it could not
+pay yet at any 5-minute sample. The duel test's cap is 150 minutes.
 
 ## The Crusades balance swaps only the unit roster (icd, 2026-10-26)
 
