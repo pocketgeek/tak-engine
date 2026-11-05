@@ -1045,12 +1045,13 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
         u.flightNavigation={{u.x.v,u.flightY.v,u.z.v},{},portHeadingToRetail(u.heading)};
     }
     u.hp = Fixed::fromFloat(type ? type->maxHp : 100.0f);
-    // Casters start with a full pool. Retail's 511990 starts it empty (401000
-    // sets +0xd8 to 0 and only the maximum +0xdc from MaxMana; a placement's
-    // ManaPercentage, default 0, or SetAttribute fills it); not ported, see
-    // docs/retail-engine.md "A change of owner is a new object". The HP
-    // samples +0x110/+0x111 the death severity reads start at 0 (511b40).
-    u.mana = type ? type->maxMana : 0;
+    // Every new unit starts with an empty pool: 511990, which every creation
+    // runs (512060 / 512460 -> 511f60), sets +0xd8 to 0 and only the maximum
+    // +0xdc from MaxMana (401000). Only a placement's ManaPercentage (514cd3,
+    // default 0), a script's SetAttribute (4d3eb9), regeneration once complete
+    // and ManaMe fill it (check_new_unit_mana.py). The HP samples +0x110/+0x111
+    // the death severity reads start at 0 (511b40).
+    u.mana = 0;
     u.hpPct1s = 0; u.hpPctCur = 0;
     u.active = type ? type->activateWhenBuilt : true;
     u.homeX = Fixed::fromFloat(x);
@@ -19526,7 +19527,9 @@ void World::tick(float dt) {
                                        retailInverseBuildTime(u.type->buildTime), maxHp), maxHp);
             u.hp = fxMin(Fixed::fromInt(int32_t(maxHp)), u.hp + Fixed::fromInt(int32_t(healed) - whole));
         }
-        if (u.type->maxMana > 0 && u.mana < u.type->maxMana)
+        // 401160: a pool regains ManaRechargeRate only once the unit is complete
+        // (+0x108 == 0); one being built stays as made, empty.
+        if (u.type->maxMana > 0 && u.mana < u.type->maxMana && !u.underConstruction)
             u.mana = std::min(double(u.type->maxMana), u.mana + double(u.type->manaRegen) * double(dt));
         // A WANDERER keeps its spawn point as home -- that anchor is what stops its
         // stroll turning into a migration.

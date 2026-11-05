@@ -73,6 +73,14 @@ public:
     // The record's Angle as the raw retail heading word, (A<<16)/360 chopped
     // toward zero (4c8d2b); 514d02 stores it over the birth heading.
     static uint16_t placedHeading(int angle) { return uint16_t(int32_t(uint32_t(angle) << 16) / 360); }
+    // A record's HealthPercentage / ManaPercentage (514cb9, 514cd3) and the
+    // script's SetAttribute (4d3e6a, 4d3eb9): hit points (maxdamage * pct) / 100
+    // in unsigned 32 bits, kept as a word; mana MaxMana * pct * 0.01f at double
+    // precision, stored as a float through 401120, which caps it at MaxMana. A
+    // new unit's pool is otherwise empty (511990); ManaPercentage defaults to 0
+    // and HealthPercentage to 100 (4c8dc5..4c8dec).
+    static int32_t percentHp(const UnitType& type, int32_t pct);
+    static double percentMana(const UnitType& type, int32_t pct);
     // Create X Z (4d35c0): the type's footprint corner at the cell,
     // (X*2 + footprint) << 19, for mobiles and buildings alike.
     static Point createPoint(const UnitType& type, int x, int z);
