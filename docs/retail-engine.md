@@ -6512,6 +6512,16 @@ resolve only in an `InitialMission`. Ours registered a unit under the name an
 - `m X Y` / `ma X Y` (`514120`), `p X Y [T]` (`514307`, +0x4e = T x 30),
   `u X Y` (`5141d3`), `c` (`514a48`: the cloak bit when cloakcost > 0) and
   `r` (`514910`, resurrect; no shipped uses).
+- `m X Y` and `ma X Y` (`514120`, E, `tools/re/check_mission_move_fight.py`)
+  both resolve kind 2, the plain move click (`4de530(out, 2, unit, 0, &point,
+  0)`), and push it queued; the second letter `a`/`A` only starts the scan one
+  character later and sets push argument 6 to -1 (`514130`, 0 for `m`), which
+  `4d78a0` hands to the ctor `4d6c40` and that stores at mission `+0x52`: the
+  move's response mode. That is the argument the fight-move key command sets
+  for a resolved Move_Ground, VTOL_Move or QMove (`521bf4..521c5b`), so `ma` is
+  a fight-move: World's `attackMove` leg (`markFightLeg`, response mode -1),
+  which ours already gave it; `m` keeps mode 0 (no scan). Any other second
+  letter (`mx 5 7`) reads its numbers from that letter and pushes nothing.
 
 **Points (2026-11-04; E = emulated, S = static).** Every handler that reads
 `" %f %f"` -- `m`/`ma`, `p`, `u`, `a X Y` (`5143d6`) and the mobile `b`

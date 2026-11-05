@@ -324,6 +324,11 @@ static void points(Fixture& f) {
         check(at(mv, 480 << 16, 640 << 16), "m 30 40 goes to pixel 480,640 (it was the cell centre 488,648)", shown(mv));
         const Order* fight = last(1);
         check(at(fight, 168 << 16, 52 << 16), "ma 10.5 3.25 keeps the fraction: pixel 168,52", shown(fight));
+        // 514120: both push the kind-2 move; ma passes -1 where m passes 0, the
+        // move's response mode +0x52, as the fight-move key does (E,
+        // tools/re/check_mission_move_fight.py).
+        check(fight && fight->attackMove && fight->groundResponse.mode == -1 && mv && !mv->attackMove &&
+              mv->groundResponse.mode == 0, "ma is the move with response mode -1 (the fight-move), m mode 0");
         // float 7.3 * 65536 = 478412.79 -> 478412, x16; 9.99 -> 654704, x16.
         const Order* patrol = last(2);
         check(at(patrol, 478412 * 16, 654704 * 16) && patrol->patrol,
