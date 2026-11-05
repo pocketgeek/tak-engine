@@ -1121,11 +1121,41 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   `511170`'s interpolated ground height under it (-1 off the last row or
   column) is at or below sea level. Ours asked whether the cell's top-left
   corner was below sea level, which disagreed in 39% of random shore
-  layouts; `World::updateCorpseWindow` now asks retail's question. The
-  sinking itself (the feature update `495bd0..495c8d`: a fall to the sea
-  bed, a fade) is still World's 75-tick window, unverified, and a statue
-  (stone or freeze) in water, which `512ee0` sinks the same way, keeps its
-  permanent window here. Test: `building_death_test`.
+  layouts; `World::updateCorpseWindow` now asks retail's question. Test:
+  `building_death_test`.
+- **What the feature update does with a corpse** (gap hunt 8; E:
+  `tools/re/check_water_grave.py`, 1,500 cases, and
+  `tools/re/check_corpse_decay.py`, 600, both running the real feature
+  update `4959c0` tick by tick on one record). The placement's own tick runs
+  the first update (`526433`, after the units' `51d3e0`).
+  - *Water*: `512ee0` gives the feature velocity (0, -0x2ccc, 0) (not for an
+    `isfeature` type, `512fcd`) and no decomposition: only the land branch
+    loads `+0x3c` (`513027..513034`), and `4949c0` zeroes it. Each update
+    (`495b81..495c8d`): a fading feature takes its step off its alpha and goes
+    (`496380`) at or below 0; one at rest moves to the static list (`494a80`)
+    and is never updated again; else the velocity is added and the feature
+    comes to rest at or below its bed (`511260`: the cell's (highest + lowest
+    corner) / 2, -1 off the map), sinks at 0x2ccc a tick under sea level,
+    starting a fade (alpha 1, step 0.17498779 / height in pixels) only over a
+    bed of exactly 0, and falls with gravity (`+0x19ecc`, 0x1fdb) above it. So
+    a wreck stays on any bed above 0 for good (a body already on its bed, a
+    walker's, rests at once even over 0), and a ship's or a hover's fades out
+    over a bed of 0, as its height in pixels / 0.175 ticks (229 from 40).
+    Statues sink the same way. Ours had every water grave go after 75 ticks
+    and kept a statue's for good; now `retailWaterGraveLife`
+    (`src/sim/retaildeath.h`), and the viewer lowers a floating wreck towards
+    its bed at the same rate.
+  - *Land*: `+0x3c` is the feature type's `+0x130`, `_ftol(decomposetime *
+    30.0)` & 0xffff (`494337..494353`). Each update counts it down; the one
+    that empties it starts `+0x40` at 1, every update from it adds 1 (the
+    model sinks 0x2000 a tick, `495af6..495b33`) and the one that takes it
+    past 60 removes the feature: decomposition D + 58 updates after the
+    placement one (`retailCorpseDecayLife`), none for D = 0. Ours removed it
+    after D. A reclaim wake reloads `+0x3c` (`406615`, `420ba4`) and leaves
+    `+0x40`, so it holds the decay unless `+0x40` runs out first
+    (`retailCorpseDecayHold`). Not modelled: such a reload on a water grave
+    still sinking or fading, which would start a decay there; the 60-update
+    sink is not drawn.
 - **Mission Kill** (`513130`): ignores its arguments. For every unit this
   machine runs (owner +0xea 1 or 2; lockstep runs them all): `52ae30(u, 1)`
   removes every shot it fired (`529af0`, no impact); a unit whose Dying runs
@@ -7245,6 +7275,11 @@ lookups answering yes and no) and `401450`, against `mission_orders_test
     (`401e77`), MobileBuild (`40595c`) and VTOL_MobileBuild (`41f430`)
     test it in their own allocation gates, which are not ported (see "Not
     ported" below).
+  - The campaign conditions MoveUnitToRadius (`523f15`) and AllUnitsKilled
+    (`524408`), E with `check_campaign_conditions.py`: a unit on its mission
+    orders reaches no radius and keeps its side from no defeat (ported in
+    gap hunt 8, `retailCampaignReady`; see
+    `docs/campaign-conditions-2026-09-26.md` for the tick order it needs).
   - PARK (`407d02..407d55`, E): at stage 1 a next mission (`+0x66`) ends the
     park only for a live, selectable, finished, free, uncarried unit; a
     scripted one parks on until its tries run out (`World`'s ground PARK,

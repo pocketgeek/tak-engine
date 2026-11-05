@@ -259,6 +259,16 @@ their validation reports; both live in [`docs/`](docs/).
   fallen unit's body sinks now depends on the height of the ground right under it,
   as in the original game, so bodies lying level with the water sink, and bodies on
   dry ground beside a deep spot stay to be raised or reclaimed.
+- **Wrecks in the water settle on the bottom and stay**, as in the original game: a
+  sunken ship or a body in the shallows sinks slowly to the sea bed and stays there
+  to be raised or reclaimed, and only a wreck sinking towards the deepest sea floor
+  fades away on the way down. Before, every body in the water vanished after two
+  and a half seconds. Bodies on land that rot away last about two seconds longer, as
+  in the original game.
+- **Campaign objectives ignore units still carrying out their mission orders**, as
+  in the original game: a unit the mission is walking somewhere does not count for
+  "move a unit to this spot" until its orders are done, and does not count as a
+  survivor for "all your units are killed".
 - **Deadly water hurts once a second**, as in the original game: the map's whole
   water damage each second to anything standing at or below the water line that
   cannot hover, ships included, and troops carried on a ship too (a flyer's
