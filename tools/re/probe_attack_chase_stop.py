@@ -28,6 +28,15 @@ straight two-point route, as a search would on open ground.
 
 --sweep N models the fire-at-will sweep (40f330, after the unit updates)
 filling the auto slot every N ticks once the target is in reach.
+
+--switch-tick T gives the unit a second slot (weaponswitching, a copy of the
+first weapon) and switches to it natively (51a8b0, which raises 0x40 at
++0xd0) at tick T right after the weapon update 52ae90, as the mana fallback
+does (52af6c..52afa1). It prints the tick 51a700 first gave slot 1 the
+target: Attack_Chase waits in its fire stage on 0x1f40068 (404493), so the
+dispatch of the same tick wakes on 0x40 and aims the new slot (40448e). With
+--no-event the 0x40 is taken back before the dispatch: the slot waits for
+the stage's own wake (rand(6) + 3 ticks).
 """
 import argparse
 import collections
@@ -67,7 +76,7 @@ def h16(uc, a):
 
 def engagement(unit_name='vermage', distance=664, offset=0, weapon_range=400, tolerance=1024, heading=0xC000,
                ticks=400, order_tick=5, fire_state=0, auto=False, sweep=0, sweep_phase=0, approach_shrink=0,
-               reload_ticks=120):
+               reload_ticks=120, switch_tick=0, keep_event=True):
     info = fbi_info(unit_name)
     p = Phase(160, 160)
     uc = p.uc
@@ -107,9 +116,9 @@ def engagement(unit_name='vermage', distance=664, offset=0, weapon_range=400, to
     uc.mem_write(unit + 0x78, struct.pack('<hh', 2, 2))
     uc.mem_write(unit + 0x74, struct.pack('<hh', (sx - 16) // 16, (sz - 16) // 16))
     profile_type_fields(uc, info, dict(model_top=0, waterline=int(float(info.get('waterline', 0)))))
-    put(uc, TYPE + 0x260, 0x10000 if float(info.get('weaponswitching', 0)) else 0)
+    put(uc, TYPE + 0x260, 0x10000 if switch_tick or float(info.get('weaponswitching', 0)) else 0)
     put(uc, TYPE + 0x1AA, WEAPON)
-    put(uc, TYPE + 0x1AE, 0)
+    put(uc, TYPE + 0x1AE, WEAPON + 0x200 if switch_tick else 0)
     put(uc, TYPE + 0x1B2, 0)
     put(uc, unit + 0xB8, PLAYER)
     # Slot 0's WeaponType: a LineOfSightWeapon (vtable 5f39f4) with itself as handler.
@@ -123,6 +132,13 @@ def engagement(unit_name='vermage', distance=664, offset=0, weapon_range=400, to
     put(uc, record, WEAPON)
     uc.mem_write(record + 4, struct.pack('<HH', 0, 0x8000))       # no target
     uc.mem_write(record + 0x1A, struct.pack('<H', 4 if auto else 0))
+    if switch_tick:
+        # Slot 1: the same weapon (its own WeaponType), no target, no reload.
+        uc.mem_write(WEAPON + 0x200, bytes(uc.mem_read(WEAPON, 0x200)))
+        put(uc, WEAPON + 0x200 + 0x40, WEAPON + 0x200)
+        put(uc, record + 28, WEAPON + 0x200)
+        uc.mem_write(record + 28 + 4, struct.pack('<HH', 0, 0x8000))
+        uc.mem_write(record + 28 + 0x1A, struct.pack('<H', 4 if auto else 0))
     # The target: entity 2 of 51a9a0's array.
     target = ENTITIES + 2 * 0x138
     uc.mem_write(ENTITIES, bytes(0x138 * 8))
@@ -264,6 +280,12 @@ def engagement(unit_name='vermage', distance=664, offset=0, weapon_range=400, to
         name = bytes(uc_.mem_read(a[0], 64)).split(b'\0', 1)[0].decode('ascii')
         calls.append((now[0], name, tuple(struct.unpack('<%di' % a[3], struct.pack('<%dI' % a[3], *a[4:4 + a[3]])))))
     uc.hook_add(UC_HOOK_CODE, callin, begin=0x56C640, end=0x56C640)
+    aims = []
+
+    def slot_target(uc_, _a, _s, _d):
+        a = struct.unpack('<3I', uc_.mem_read(uc_.reg_read(UC_X86_REG_ESP) + 4, 12))
+        aims.append((now[0], a[2]))
+    uc.hook_add(UC_HOOK_CODE, slot_target, begin=0x51A700, end=0x51A700)
     log = []
     for t in range(1, ticks + 1):
         now[0] = t
@@ -275,6 +297,12 @@ def engagement(unit_name='vermage', distance=664, offset=0, weapon_range=400, to
             _, error = p.icd.call(address, args_, ecx=ecx)
             if error:
                 raise RuntimeError((t, hex(address), error))
+            if address == 0x52AE90 and t == switch_tick:
+                _, error = p.icd.call(0x51A8B0, (unit, 1))
+                if error or u32(uc, unit + 0x130) >> 30 != 1 or not u32(uc, unit + 0xD0) & 0x40:
+                    raise RuntimeError((t, 'switch', error))
+                if not keep_event:
+                    put(uc, unit + 0xD0, u32(uc, unit + 0xD0) & ~0x40)
         if sweep and t % sweep == sweep_phase and (u32(uc, unit + 0x130) >> 18) & 3 == 2:
             index, marker = struct.unpack('<HH', uc.mem_read(record + 4, 4))
             if h16(uc, record + 0x1A) & 4 and not index and marker == 0x8000:
@@ -287,7 +315,16 @@ def engagement(unit_name='vermage', distance=664, offset=0, weapon_range=400, to
                         speed=s32(uc, mover + 0x20), stage=uc.mem_read(MISSION + 5, 1)[0],
                         slot=h16(uc, record + 4), heading=h16(uc, unit + 0x7E),
                         st={n: s32(uc, statics + 4 * n) for n in (2, 3, 5, 6, 7, 9, 10)}))
+    if switch_tick:
+        return log, calls, shots, aims
     return log, calls, shots
+
+
+def switched(switch_tick, **options):
+    """The tick slot 1 first got the target (51a700) after a switch at
+    switch_tick."""
+    _, _, _, aims = engagement(switch_tick=switch_tick, **options)
+    return next((t for t, slot in aims if slot == 1 and t >= switch_tick), None)
 
 
 def summarise(log, calls, shots):
@@ -327,7 +364,16 @@ def main():
     ap.add_argument('--sweep', type=int, default=0)
     ap.add_argument('--sweep-phase', type=int, default=0)
     ap.add_argument('--jobs', type=int, default=os.cpu_count())
+    ap.add_argument('--switch-tick', type=int, nargs='+')
+    ap.add_argument('--no-event', action='store_true')
     args = ap.parse_args()
+    if args.switch_tick:
+        for t in args.switch_tick:
+            got = switched(t, distance=args.distance, offset=args.offset, order_tick=args.order_tick,
+                           ticks=max(args.ticks, t + 40), keep_event=not args.no_event)
+            print(f'switch at {t}: 51a700 gives slot 1 the target at {got}'
+                  f'{" (the same dispatch)" if got == t else ""}')
+        return
     options = dict(ticks=args.ticks, sweep=args.sweep, sweep_phase=args.sweep_phase,
                    auto=bool(args.sweep), fire_state=2 if args.sweep else 0)
     if args.grid or args.distances:
