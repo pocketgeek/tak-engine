@@ -3,6 +3,7 @@
 // checker also loads into the original routines. Built by the checker.
 #include "sim/retailgroup.h"
 #include "sim/retailmission.h"
+#include "sim/retailairattack.h"
 #include <cstdio>
 #include <iostream>
 #include <string>
@@ -113,19 +114,41 @@ int main() {
                 [&](int n){calls+="rand"+std::to_string(n)+",";return draw;},
                 [&]{calls+="leave,";retailGroupLeave(r,u);},[&]{calls+="formation,";return true;});
             std::printf("%d %u %s\n",result,flags,calls.empty()?"-":calls.c_str());writeRecord(r);
+        } else if (op=="standbyhead") {
+            // The standbys' group check (retailStandbyGroupCheck): the
+            // result, and the FormationStandby's response mode (+0x52) and
+            // level (+0x56) when it goes ahead; -1 0 0: the stages run.
+            bool m;auto r=readRecord(std::cin,m);auto u=readMember(std::cin);int site;uint32_t flags;
+            std::cin>>site>>flags;
+            const auto kind=site==0 ? RetailStandbyCheck::VtolStandby : site==1 ? RetailStandbyCheck::Standby
+                                    : RetailStandbyCheck::LandIfCan;
+            int level=0,mode=0;
+            const int result=retailStandbyGroupCheck(kind,[&](int lv){
+                return retailGroupOutOfSlot(r,u,true,lv,(flags&0x4000000u)!=0);},
+                [&](int lv,int md){level=lv;mode=md;return true;});
+            std::printf("%d %d %d\n",result,result<0 ? 0 : mode,result<0 ? 0 : level);
         } else if (op=="vtolformation") {
+            // 417750, the FormationStandby branch too (41797e..417ad1): in
+            // the slot with 0x4000000 and the group moving (retailGroupMoving),
+            // the scan's attack (answered) or the loiter point. The draws
+            // are taken in call order, as the checker's 535cc0 hook does.
             bool m;auto r=readRecord(std::cin,m);auto u=readMember(std::cin);
-            int stage,level,canFly,draw;uint32_t flags;
-            std::cin>>stage>>level>>canFly>>flags>>draw;
+            int stage,level,canFly,attack;uint32_t flags,heading,draws[3];RetailFlightVector at;
+            std::cin>>stage>>level>>canFly>>flags>>draws[0]>>draws[1]>>draws[2]>>heading>>attack>>at.x>>at.y>>at.z;
             RetailMissionState s;s.stage=uint8_t(stage);s.flags=flags;
-            std::string calls;int gx=0,gz=0;
+            std::string calls;int gx=0,gz=0;RetailFlightVector point{};unsigned next=0;
             const bool all=(flags&0x4000000u)!=0;
-            const int result=retailFlightFormation(s,1000,level,canFly,
+            const int result=retailFlightFormation(s,1000,level,canFly,uint16_t(heading),
                 [&]{return level>0 ? retailGroupOutOfSlot(r,u,false,level,all) : retailGroupOutOfSlot(r,u,true,-level,all);},
                 [&]{const auto c=retailGroupCentre(r,u,all,level<=0);gx=c.x;gz=c.z;calls+="centre,";},
-                [&]{calls+="begin,";},[&]{calls+="move,";},[&](int){calls+="rand,";return draw;});
+                [&]{calls+="begin,";},[&]{calls+="move,";},
+                [&](int){calls+="rand,";return next<3 ? int(draws[next++]) : 0;},
+                [&]{return retailGroupMoving(r);},
+                [&]{calls+="scan,";return attack!=0;},
+                [&](uint16_t angle,uint32_t distance){calls+="loiter,";point=retailAirRunPoint(at,at.y,angle,distance);});
             if (s.waitMask&1) calls+="sleep"+std::to_string(s.deadline-1000)+",";
-            std::printf("%d %d %d %d %s\n",result,int(s.stage),gx,gz,calls.empty()?"-":calls.c_str());
+            std::printf("%d %d %d %d %s %d %d %d %u\n",result,int(s.stage),gx,gz,calls.empty()?"-":calls.c_str(),
+                        point.x,point.y,point.z,s.waitMask);
         }
         std::fflush(stdout);
     }

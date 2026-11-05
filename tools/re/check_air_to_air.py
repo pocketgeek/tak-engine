@@ -16,7 +16,11 @@ scan 4d8370 and attack 4d7de0 (controlled answers), controller allocation and
 construction (4e40e0 + radius 4e4540, 4e4560; 4e4c60 runs natively on the
 returned buffer), installation 4d4d40 (clears the pending controller events
 as it does), and the mission push (4d4bf0 + 4d6c40 + 4d7750). The group check
-51d1e0 answers no group: it is not ported. The air-traffic counter (unit
+(51d1e0(unit, 1, 5), 41ccde in AirToAir and 41e55a in VTOL_Evade) answers in
+or out of the slot at random, on a mission flagged 0x8000000 or not, with the
+next mission (+0x66) none, a group mover or not: the leave (50c480) is
+recorded and the VTOL_Move_Formation push counted by its row name, built or
+not as the fixture says. The air-traffic counter (unit
 +0x12a) runs below, at and above 5: stage 2 then rescans an auto attack and
 pushes VTOL_StepOut with D = (rand(15) + the target's footX + its own) x 16.
 A lost target's VTOL_SEEKATTACK push (41d654) is counted here;
@@ -128,7 +132,14 @@ def main():
             raise AssertionError('unexpected call to ' + name)
         return hook
 
-    p.hooks[0x51d1e0] = lambda uc, a: (3, 0)                       # no group
+    def group(uc, args):           # 51d1e0(unit, 1, 5)
+        if (get(args), get(args + 4), get(args + 8)) != (unit, 1, 5):
+            raise AssertionError('unexpected 51d1e0 arguments')
+        record('group')
+        return 3, 1 if answers.get('out') else 0
+
+    p.hooks[0x51d1e0] = group
+    p.hooks[0x50c480] = lambda uc, a: (record('leave', get(a)), (1, 0))[1]
     p.hooks[0x4eb9e0] = allocate
     p.hooks[0x4e40e0] = point_ctor
     p.hooks[0x4e4540] = radius
@@ -147,7 +158,7 @@ def main():
     p.hooks[0x519b10] = lambda uc, a: (record('auto', get(a) & 0xff), (1, 0))[1]
     p.hooks[0x519b70] = lambda uc, a: (record('manual', get(a) & 0xff), (1, 0))[1]
     p.hooks[0x51a700] = lambda uc, a: (record('aim', (get(a), get(a + 4), get(a + 8) & 0xff)), (3, 0))[1]
-    for address, name in [(0x50c480, 'group leave'), (0x51a770, 'ground aim')]:
+    for address, name in [(0x51a770, 'ground aim')]:
         p.hooks[address] = unexpected(name)
     p.freeze_hooks()
     draws = [0]
@@ -159,6 +170,23 @@ def main():
     p.uc.hook_add(UC_HOOK_CODE, draw, begin=0x535cc0, end=0x535cc0)
 
     rng = random.Random(0x41ca50)
+    following = HEAP + 0x32000     # the next mission, when +0x66 has one
+    group_stats = {}
+
+    def group_case(nxt):
+        put(mission + 0x66, 'I', following if nxt is not None else 0)
+        put(following + 0x5a, 'I', nxt or 0)
+
+    def group_outcome(result, formations):
+        if not log.get('group'):
+            return
+        if log.get('leave') and log['leave'] != [unit]:
+            raise AssertionError(('leave', log['leave']))
+        key = ('formation' if formations else 'leave+50c480' if log.get('leave') else 'leave') \
+            if answers['out'] else 'in slot'
+        if answers['out'] and not formations and result != 8:
+            raise AssertionError(('out of slot without leave or formation', result))
+        group_stats[key] = group_stats.get(key, 0) + 1
 
     def run(port_mode, rows):
         output = subprocess.run([binary, port_mode], input='\n'.join(rows) + '\n',
@@ -295,7 +323,9 @@ def main():
         on_map = rng.random() < 0.94
         seed = rng.randrange(2**32)
         found = rng.choice((0, target, unit + 0x800))
-        answers.update(scan=found, attack=rng.choice((0, 1)), inserted=rng.choice((0, 1, 1, 1)), lead=lead)
+        answers.update(scan=found, attack=rng.choice((0, 1)), inserted=rng.choice((0, 1, 1, 1)), lead=lead,
+                       out=rng.random() < 0.2)
+        nxt = rng.choice((None, None, 0x3000400, 0x1000400, 0x5012000, 0x15000400, 0))
         retarget = int(found not in (0, target) and answers['attack'] != 0)
         fire_bits = rng.choice((0, 0, 0x40000, 0xc0000))
         traffic = rng.choice((0, 0, 0, 4, 5, 6, 17))
@@ -329,7 +359,7 @@ def main():
         put(mission + 0x52, 'I', automatic)
         put(mission + 0x56, 'I', 0)
         put(mission + 0x5a, 'I', flags)
-        put(mission + 0x66, 'I', 0)
+        group_case(nxt)
         put(mission + 0x6a, 'I', pending)
         put(point_goal + 0xa, 'h', 0)
         put(RNG, 'I', seed)
@@ -344,8 +374,10 @@ def main():
         seek = names.count('VTOL_SEEKATTACK')
         seeks += seek
         evades = names.count('VTOL_EVADE')
+        formations = names.count('VTOL_Move_Formation')
+        group_outcome(s32(result), formations)
         steps = [b[1] for b in log.get('built', []) if b[0] == 'VTOL_StepOut']
-        if set(names) - {'VTOL_SEEKATTACK', 'VTOL_EVADE', 'VTOL_StepOut'}:
+        if set(names) - {'VTOL_SEEKATTACK', 'VTOL_EVADE', 'VTOL_StepOut', 'VTOL_Move_Formation'}:
             raise AssertionError((i, 'pushed', names))
         installs = [c for c in log.get('install', []) if c]
         releases = log.get('install', []).count(0)
@@ -372,20 +404,23 @@ def main():
                          get(mission + 0x6a), get(mission + 0x5a), get(mission + 0x4e, 'i'), len(points),
                          len(moving), *goal, goal_radius, mx, my, mz, vx, vy, vz, mh,
                          len(log.get('begin', [])), len(log.get('auto', [])), len(log.get('scan', [])),
-                         releases, evades, get(RNG), draws[0], len(steps), steps[-1] if steps else 0))
+                         releases, evades, get(RNG), draws[0], len(steps), steps[-1] if steps else 0,
+                         len(log.get('group', [])), len(log.get('leave', [])), formations))
         fixtures.append(' '.join(map(str, (stage, events, tick, deadline, pending, flags, count, s32(x), s32(y),
                                            s32(z), heading, s32(tx), s32(ty), s32(tz), target_heading, *velocity,
                                            *lead, speed, max_speed, reach, automatic, flies, int(on_map), width,
                                            height, seed, retarget, answers['inserted'], traffic, foot,
-                                           target_foot))))
+                                           target_foot, int(answers['out']), nxt or 0))))
         # Which branch: a reposition draws rand(0x8000), a break-off pushes
         # VTOL_Evade, a pursuit installs the controller with neither.
-        kind_of = 'step-out' if steps else 'evade' if evades else 'reposition' if moving and 0x8000 in bounds else \
+        kind_of = 'formation' if formations else 'step-out' if steps else 'evade' if evades else \
+            'reposition' if moving and 0x8000 in bounds else \
             'pursuit' if moving else 'off-map' if points else 'other'
         stats[kind_of] = stats.get(kind_of, 0) + 1
     compare('41ca50', fixtures, expected, run('--air-to-air', fixtures))
-    print('41ca50: %d handler calls match %s; %d lost-target VTOL_SEEKATTACK pushes (check_air_seek_attack.py)' %
-          (len(fixtures), stats, seeks))
+    print('41ca50: %d handler calls match %s; group check %s; %d lost-target VTOL_SEEKATTACK pushes '
+          '(check_air_seek_attack.py)' % (len(fixtures), stats, group_stats, seeks))
+    group_stats.clear()
 
     # --- VTOL_Evade 41e3d0 -----------------------------------------------
     fixtures, expected = [], []
@@ -421,6 +456,8 @@ def main():
         flies = 0 if i % 43 == 0 else 1
         on_map = rng.random() < 0.95
         seed = rng.randrange(2**32)
+        answers.update(out=rng.random() < 0.2, inserted=rng.choice((0, 1, 1, 1)))
+        nxt = rng.choice((None, 0x1000200, 0x1000200, 0x3000400, 0x5012000, 0))
 
         put(game + 0x19f44, 'I', tick)
         put(game + 0x19e90, 'I', width)
@@ -447,7 +484,7 @@ def main():
         put(mission + 0x52, 'i', budget)
         put(mission + 0x56, 'I', 0)
         put(mission + 0x5a, 'I', flags)
-        put(mission + 0x66, 'I', 0)
+        group_case(nxt)
         put(mission + 0x6a, 'I', pending)
         put(RNG, 'I', seed)
         log.clear()
@@ -459,8 +496,10 @@ def main():
             raise AssertionError((i, error))
         installs = [c for c in log.get('install', []) if c]
         points, moving = log.get('point', []), log.get('moving', [])
-        if len(installs) != len(points) + len(moving) or log.get('descriptor'):
+        formations = log.get('descriptor', []).count('VTOL_Move_Formation')
+        if len(installs) != len(points) + len(moving) or len(log.get('descriptor', [])) != formations:
             raise AssertionError((i, 'controllers', log))
+        group_outcome(s32(result), formations)
         goal = points[-1] if points else (0, 0, 0)
         goal_radius = log['radius'][-1] if points else 0
         if moving:
@@ -473,16 +512,18 @@ def main():
         expected.append((s32(result), get(mission + 5, 'B'), get(mission + 6), get(mission + 0xa),
                          get(mission + 0x6a), get(mission + 0x5a), get(mission + 0x4e, 'i'),
                          get(mission + 0x52, 'i'), len(points), len(moving), *goal, goal_radius, mx, my, mz, mh,
-                         get(RNG), draws[0]))
+                         get(RNG), draws[0], len(log.get('group', [])), len(log.get('leave', [])), formations))
         fixtures.append(' '.join(map(str, (stage, events, tick, deadline, pending, flags, maneuver, budget, s32(x),
                                            s32(y), s32(z), heading, s32(tx), 0, s32(tz), max_speed, type_speed,
                                            target_type_speed, turn_rate, target_turn_rate, reach, flies,
-                                           int(on_map), width, height, seed))))
-        key = ('stage%d' % stage, 'maneuver%d' % get(mission + 0x4e, 'i') if stage == 0 and result == 1
+                                           int(on_map), width, height, seed, int(answers['out']), nxt or 0,
+                                           answers['inserted']))))
+        key = ('stage%d' % stage, 'formation' if formations else
+               'maneuver%d' % get(mission + 0x4e, 'i') if stage == 0 and result == 1
                else 'turn' if moving else 'line' if points else 'r%d' % s32(result))
         stats[key] = stats.get(key, 0) + 1
     compare('41e3d0', fixtures, expected, run('--air-evade', fixtures))
-    print('41e3d0: %d handler calls match' % len(fixtures))
+    print('41e3d0: %d handler calls match; group check %s' % (len(fixtures), group_stats))
     for key in sorted(stats):
         print('   %s: %d' % (' '.join(key), stats[key]))
 

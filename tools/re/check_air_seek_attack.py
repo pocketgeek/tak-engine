@@ -13,7 +13,10 @@ return from off the map, the group flag's draw and every random draw (535cc0,
 native, state at 0x64186c). Controller allocation, construction, the radius
 setter and installation are host stubs that record their arguments; the
 installation stub clears the pending controller events as 4d4d40 does. The
-group check (51d1e0) answers no group: it is not ported. The air-traffic
+group check (51d1e0(unit, 1, 5), 4194f9) answers in or out of the slot at
+random, on a mission flagged 0x8000000 or not, with the next mission (+0x66)
+none, a group mover or not: the leave (50c480) is recorded and the
+VTOL_Move_Formation push (row name 6054b8) counted. The air-traffic
 counter (unit +0x12a) runs below, at and above 5: past stage 0 the seek
 pushes VTOL_StepOut ahead (4d7750) with D = (rand(15) + footX) x 16.
 
@@ -36,6 +39,7 @@ from unicorn.x86_const import UC_X86_REG_FPCW, UC_X86_REG_ECX
 
 RNG = 0x64186c
 SEEKATTACK = 0x6055a0
+FORMATION = 0x6054b8
 
 
 def main():
@@ -118,7 +122,14 @@ def main():
             raise AssertionError('unexpected call to ' + name)
         return hook
 
-    p.hooks[0x51d1e0] = lambda uc, a: (3, 0)                       # no group
+    def group(uc, args):       # 51d1e0(unit, 1, 5)
+        if (get(args), get(args + 4), get(args + 8)) != (unit, 1, 5):
+            raise AssertionError('unexpected 51d1e0 arguments')
+        record('group')
+        return 3, 1 if answers.get('out') else 0
+
+    p.hooks[0x51d1e0] = group
+    p.hooks[0x50c480] = lambda uc, a: (record('leave', get(a)), (1, 0))[1]
     p.hooks[0x4eb9e0] = allocate
     p.hooks[0x4e40e0] = construct
     p.hooks[0x4e4540] = radius
@@ -133,7 +144,7 @@ def main():
     p.hooks[0x4d77b0] = insert
     p.hooks[0x4d7750] = lambda uc, a: (record('push', (get(a), get(a + 4))), (2, 0))[1]
     for address, name in [(0x51a700, 'aim'), (0x51a770, 'ground aim'),
-                          (0x50c480, 'group leave'), (0x4d6da0, 'mission destructor')]:
+                          (0x4d6da0, 'mission destructor')]:
         p.hooks[address] = unexpected(name)
     p.freeze_hooks()
     draws = [0]
@@ -157,6 +168,8 @@ def main():
 
     s32 = lambda v: (v + 2**31) % 2**32 - 2**31
     rng = random.Random(0x4192f0)
+    following = HEAP + 0x32000     # the next mission, when +0x66 has one
+    outcomes = {}
 
     # ---- VTOL_SeekAttack (4192f0) ----
     fixtures, expected = [], []
@@ -192,7 +205,8 @@ def main():
         seed = rng.randrange(2**32)
         traffic = rng.choice((0, 0, 0, 4, 5, 7, 17))
         foot = rng.choice((1, 2, 3, 4, 6))
-        answers.update(found=found, offer=offer, retarget=retarget)
+        answers.update(found=found, offer=offer, retarget=retarget, out=rng.random() < 0.2)
+        nxt = rng.choice((None, None, 0x3000400, 0x1000400, 0x5012000, 0x15000400, 0))
 
         put(game + 0x19f44, 'I', tick)
         put(game + 0x19e90, 'I', width)
@@ -212,7 +226,8 @@ def main():
         put(mission + 0x4e, 'I', angle)
         put(mission + 0x52, 'I', 0)
         put(mission + 0x5a, 'I', flags)
-        put(mission + 0x66, 'I', 0)
+        put(mission + 0x66, 'I', following if nxt is not None else 0)
+        put(following + 0x5a, 'I', nxt or 0)
         put(mission + 0x6a, 'I', pending)
         put(controller + 0x26, 'iii', 0, 0, 0)
         put(controller + 0xa, 'h', 0)
@@ -238,21 +253,32 @@ def main():
         if log.get('begin') and get(mission + 0x52) != get(mission + 0x4e) & 1:
             raise AssertionError((i, '+0x52 is not the angle\'s low bit'))
         point = struct.unpack('<3i', p.uc.mem_read(controller + 0x26, 12)) if installs else (0, 0, 0)
+        formations = [m for m, n in zip(log.get('mission', []), log.get('lookup', [])) if n == FORMATION]
+        if any(m[4] != 0xfffffffc for m in formations):
+            raise AssertionError((i, 'formation level', formations))
+        if log.get('leave') and log['leave'] != [unit]:
+            raise AssertionError((i, 'leave', log['leave']))
+        if log.get('group'):
+            key = ('formation' if formations else 'leave+50c480' if log.get('leave') else 'leave') \
+                if answers['out'] else 'in slot'
+            outcomes[key] = outcomes.get(key, 0) + 1
         expected.append((s32(result), get(mission + 5, 'B'), get(mission + 6), get(mission + 0xa),
                          get(mission + 0x6a), get(mission + 0x5a), get(mission + 0x4e) & 0xffff,
                          *struct.unpack('<3i', p.uc.mem_read(mission + 0x22, 12)), installs,
                          *point, get(controller + 0xa, 'h') if installs else 0,
                          len(offers), len(log.get('begin', [])), len(log.get('auto', [])),
-                         len(log.get('scan', [])), get(RNG), draws[0], len(log.get('push', [])),
+                         len(log.get('scan', [])), get(RNG), draws[0], len(log.get('push', [])) - len(formations),
                          s32(steps[-1][2]) if (steps := [m for m, n in zip(log.get('mission', []),
                                                                            log.get('lookup', []))
-                                                         if n == 0x605288]) else 0))
+                                                         if n == 0x605288]) else 0,
+                         len(log.get('group', [])), len(log.get('leave', [])), len(formations)))
         if any(c != (unit, pushed) for c in log.get('push', [])):
             raise AssertionError((i, 'push', log['push']))
         fixtures.append(' '.join(map(str, (stage, events, tick, deadline, pending, flags, angle & 0xffff,
                                            s32(px), s32(py), s32(pz), s32(x), s32(y), s32(z), weapon_range,
                                            int(armed), int(flies), int(carried), int(on_map), width, height,
-                                           seed, offer, int(found and retarget), traffic, foot))))
+                                           seed, offer, int(found and retarget), traffic, foot,
+                                           int(answers['out']), nxt or 0))))
     output = subprocess.run([binary, '--air-seek'], input='\n'.join(fixtures) + '\n',
                             text=True, capture_output=True, check=True)
     actual = [tuple(map(int, line.split())) for line in output.stdout.splitlines()]
@@ -267,10 +293,10 @@ def main():
     installed = sum(1 for row in expected if row[10])
     hops = sum(1 for f, row in zip(fixtures, expected)
                if int(f.split()[0]) == 1 and row[0] == 2 and row[6] != int(f.split()[6]))
-    print('PASS: %d VTOL_SeekAttack calls (stages %s), %d controllers, %d hops, %d step-outs, every state, point, '
-          'radius and draw'
+    print('PASS: %d VTOL_SeekAttack calls (stages %s), %d controllers, %d hops, %d step-outs, group check %s, '
+          'every state, point, radius and draw'
           % (len(expected), ' '.join('%d:%d' % kv for kv in sorted(stages.items())), installed, hops,
-             sum(1 for row in expected if row[21])))
+             sum(1 for row in expected if row[21]), ', '.join('%s %d' % kv for kv in sorted(outcomes.items()))))
 
     # ---- the lost-target exits, 41c8f6, 41d654 and AirToGroundHover's 41e28f ----
     fixtures, expected = [], []
@@ -307,6 +333,7 @@ def main():
         put(target + 0x130, 'I', {'dead': 0, 'dying': 0x1001001}.get(state, 0x1000001 if state != 'offmap' else 0x1000000))
         put(target + 0x114, 'B', 4 if state == 'carried' else 0)
         put(RNG, 'I', rng.randrange(2**32))
+        answers['out'] = False
         log.clear()
         result, error = p.call(0x41d820 if hover else 0x41ca50 if air_to_air else 0x41bf80, (unit, mission, events))
         if error:
