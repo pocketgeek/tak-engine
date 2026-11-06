@@ -240,8 +240,9 @@ int retailFlightFormation(RetailMissionState& m,uint32_t tick,int level,bool can
     if (level!=0 && !outOfSlot()) {
         if (!(m.flags&0x4000000u) || !moving()) return 5;
         if (attack()) { m.waitMask=0; m.stage=0; return 3; }
-        const uint32_t far=uint32_t(random(20));
-        const uint32_t distance=(far+uint32_t(random(10))+10)*16;
+        // Not `far`: MinGW's windows.h defines it away (minwindef.h).
+        const uint32_t first=uint32_t(random(20));
+        const uint32_t distance=(first+uint32_t(random(10))+10)*16;
         const uint16_t angle=uint16_t(heading-0x800u+uint32_t(random(0x1000)));
         loiter(angle,distance);
         m.waitMask|=0x700;
