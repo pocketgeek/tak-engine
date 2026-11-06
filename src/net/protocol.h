@@ -19,7 +19,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 312;      // 312: a blocked-shot write-off lapses when the target leaves its spot; idle units and
+constexpr uint32_t kNetVersion = 313;      // 313: Legion corner lanes: a column turning from one corridor into another keeps
+                                           //      its files across the corner and down the new corridor (hashed, 2026-11-06)
+                                           // 312: a blocked-shot write-off lapses when the target leaves its spot; idle units and
                                            //      guards make way at a factory's door; Hold Position flyers stay put; features
                                            //      play their death; retail target search and allied sight; fire at a point
                                            //      (Cmd::AttackGround); Ctrl front and toggle queueing (all hashed, 2026-11-03).

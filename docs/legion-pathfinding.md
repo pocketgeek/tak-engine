@@ -5325,6 +5325,54 @@ Measured by `ctest:legion_swap`, `ctest:legion_choke`, `ctest:legion_acceptance_
 `ctest:legion_acceptance_crowdheld_legion` and the `scale.arrive.n`, `scale.stuck_end` and `work.swaps.total` keys of
 tools/scenarios/scale/bridges-1000.scn.
 
+### Corner lanes (2026-11-06, protocol 313)
+
+**The report.** On Industrial Zone v1 (a grid of 8-cell causeways) an army of 32 Aramon archers and swordsmen on a
+fight order walked east in three files and, after turning south, in about one and a half: the far half of the
+south causeway stayed empty. Both causeways are 8 cells wide; a straight corridor carries three files either way.
+The difference was the corner. Cut from the recording (`TAK_SITUATION` at tick 31,500): the same walking speed in
+both legs (1.0 px a tick), one body past a gate every 19 ticks along the first causeway and every 31.5 ticks down
+the second.
+
+**The cause.** A corridor narrower than `kLaneSpan` origins and longer than `kGateRun` is left to the field and its
+lane grid: the pinwheel's look-ahead ends at it, the passage gate and the passage lanes take only short strips. Round
+a corner between two such corridors every body descended round the inner corner, and once round it its line to its
+slot opened and it walked that straight line from the corner on, so the files lay along the inner wall. Synthetic
+bends (an 8-cell corridor turning into another, 40 `arasword`, all four turn directions, move and fight) show the
+same: about 2.1 files after the bend, with the ribbon and room-at-a-merge constants making no difference (they do not
+engage in such a corridor).
+
+**The change** (`cornerCommit`, `cornerAdvance`, `Member::gateCorner` in src/sim/legion.cpp; Legion only). A lane
+member (`laneMember`: a formation member of a part of `kPivotMembers` or more; any leg kind, fight included) inside a
+gate strip of two lanes or more, whose descent turns into a strip across it within `kCornerLook` (12) chain cells,
+commits as to a passage gate: its point lies `kCornerLead` (3) chain cells into the new strip, in the lane counted
+from the new strip's inner wall that equals its own lane counted from this strip's inner wall (a column wheeling, so
+no file crosses another), clamped to the new strip's lanes (`laneCap`, footprint pitch, centred). The point is held
+over the straight walk too (`gateCorner`: a gate point otherwise steers only a field follower). When the member
+crosses the point's line the point moves `kCornerLead` origins ahead of it in the same lane while it is in that strip,
+the field still leads along it and it is `kLaneNear` or more from the destination; otherwise it is released and the
+field, the line and the area rules take over. The decision reads only the static plane, the finished field, the
+goal, the footprint and the band; a decline is memoised per member as `gateCommit`'s is (`Member::cornerMemo`), and a
+member off every strip declines before walking a chain. `gateCorner` is hashed with the gate point.
+
+**Measured** (Legion; `legion_scenario` medians):
+
+| case | key | before (d3d6b55a) | corner lanes |
+|---|---|---|---|
+| Industrial Zone situation (32 bodies, fight) | ticks per body past z = 100 / z = 130 | 31.5 / 31.6 | 22.7 / 25.0 |
+| | last body at z = 150 | 4,734 | 4,544 |
+| synthetic bends, 8 cases (4 directions x move/fight) | ticks per body down the second corridor | 27.7-32.1 | 18.7-26.2 |
+| | 90% out of the corridor (where defined) | 2,074-2,414 | 1,859-2,104 |
+| `corridor-corner-40` (offsets 0, +-1..3) | files past the corner / t90 | 2.22-2.62 / 1,507 | 3.43-3.87 / 1,311 |
+
+Every other scenario under tools/scenarios (193 of 194, Legion, offset 0) keeps its hash, the corner, strait, maze
+and bridge fixtures at offsets 0, +-1, +-2 included: their corridors are wider than `kLaneSpan` or turn in open
+ground. The one that moves is `viewcount/march` (4,400 bodies on Ulasem Arena): reversals 7,866 -> 8,017, backward
+103,621 -> 102,963, standing 344 permille either way; its wall time with workers 24.2 s -> 24.6 s (+2%; +20% before
+the off-strip test and the memo). The `--mpai` Inner Circle gates keep their 0.9.20 hashes (Legion 60 s
+`87efa5106c2d3c0e`, 300 s `bd274b29f05f2c18`, Crusades 300 s `ee9c38ff55448ab3`): no column there turns from one
+narrow corridor into another. `ctest -L legion` 414 of 414; the proving test is `ctest:legion_corner`.
+
 ### Legion 10,000: where the program left it
 
 docs/legion-10000-report.md gives the measured result against the starting revision c2c25707:

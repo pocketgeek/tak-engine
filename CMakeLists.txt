@@ -1180,6 +1180,13 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_swap_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
   set_tests_properties(legion_swap PROPERTIES LABELS legion TIMEOUT 1200 SKIP_RETURN_CODE 77)
+  # Corner lanes (protocol 313): a column turning from one corridor into another keeps its files (at least 3.0 past
+  # the corner at offsets 0, +-1..3 and a median t90 of at most 1,400; main 2.22..2.62 files, t90 1,507;
+  # tools/legion_corner_test.py). Asset-free.
+  add_test(NAME legion_corner
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_corner_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios)
+  set_tests_properties(legion_corner PROPERTIES LABELS legion TIMEOUT 600)
   # Legion 10,000 stage 8: shared destination areas -- churn-1000's half stopped and sent again to the point the
   # other half is arriving at joins its area instead of planning round it as traffic (at least 780 of 1,000 arrive,
   # at most 40 stuck; the previous commit 717 / 73).

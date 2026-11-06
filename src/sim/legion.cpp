@@ -33,6 +33,7 @@
 // (World::mobilePlacement / commitGroundStep) takes, so planning on it makes
 // "legal for the planner" and "legal for the mover" the same predicate.
 
+
 namespace tak::sim {
 namespace {
 // Field potentials are 32-bit; kUnreached is "no route". At 16 bits they
@@ -265,6 +266,8 @@ constexpr int kLaneS0=1;                       // free cells between the inner l
 constexpr int kGateCommit=12;                  // chain cells ahead within which a member commits to a gate
 constexpr int kGateQueue=6;                    // cells round a gate point counted as its queue
 constexpr int kGateRun=24;                     // strip cells searched for a gate's narrowest cell
+constexpr int kCornerLook=12;                  // chain cells ahead within which a member commits to a corner lane
+constexpr int kCornerLead=3;                   // its point: this many chain cells into the strip it turns into
 constexpr int kPassageSpan=32;                 // a passage lane's strip: fewer legal origins across than this (the band decides below it)
 constexpr int kSpanCap=96;                     // origins a cross-section scan walks each way
 constexpr int kGoalSearchCells=24;             // blocked click -> nearest legal
@@ -1161,8 +1164,9 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // The passage gate (see gateCommit): the gate point (origin cell, -1
         // none) the member aims at until it crosses the gate line, its lane
         // in the gate, and the travel axis and sign across the line. Hashed
-        // only when set (PLAN 3.0, C27).
-        int gateCell=-1;int8_t gateLane=0,gateAxis=0,gateSign=0;
+        // only when set (PLAN 3.0, C27). gateCorner: the point is a corner
+        // lane's (see cornerCommit), aimed at over the straight walk too.
+        int gateCell=-1;int8_t gateLane=0,gateAxis=0,gateSign=0;bool gateCorner=false;
         // Stage 8 (admission, see admissionHold): the label of the narrow opening this member was admitted
         // through (0: none), kept until it leaves the opening's zone. Hashed while set.
         uint16_t passLabel=0;
@@ -1242,7 +1246,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         struct GateMemo {
             int ox=-1,oz=-1,goal=-1,band=-1;const UnitType* type=nullptr;
             uint64_t field=0,epoch=~0ull,planeEpoch=~0ull;bool valid=false;
-        } gateMemo;
+        } gateMemo,cornerMemo;   // cornerMemo: cornerCommit's, the same inputs
     };
 
     std::vector<Plane> planes;
@@ -12301,6 +12305,18 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             }
             if(unsure)runOnRoute(g,RouteNeed::Lanes);
         }
+        // A corner lane (see cornerCommit) holds over the straight walk: the
+        // line to the slot opens as it clears the inner corner, and walking it
+        // from there put every file back against the inner wall.
+        if(m.gateCorner&&m.gateCell>=0&&here!=m.goal&&laneRoute&&laneMember&&m.site==LegionNavigator::SiteDirect) {
+            int lane=-1;
+            unsure=false;
+            if(gateAim(u,m,g,p,f,ox,oz,lane,route.complete()?-1:groupComp(g,p))) {
+                aimX=centre(lane%W,fx);aimZ=centre(lane/W,fz);
+                pivoting=&m;pivotTarget=lane;direct=false;m.site=LegionNavigator::SiteGate;
+            }
+            if(unsure)runOnRoute(g,RouteNeed::Lanes);
+        }
         // C1: a member of a Point latched in a head-on meet narrows before it (see meetAim).
         if(m.pt&&m.pt->meet.tick!=kNoTick&&here!=m.goal&&pivoting!=&m&&partRefs(m)>=kPivotMembers&&formationMember(m)&&
            meetAim(u,m,p,f,ox,oz,aimX,aimZ)&&f)direct=false;
@@ -12830,7 +12846,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         const int at=first+pick*pitch;
         m.gateCell=bs.axis==0?gz*W+at:at*W+gx;
-        m.gateLane=int8_t(pick);m.gateAxis=int8_t(bs.axis);m.gateSign=int8_t(bs.sign);
+        m.gateLane=int8_t(pick);m.gateAxis=int8_t(bs.axis);m.gateSign=int8_t(bs.sign);m.gateCorner=false;
         ++stats.gateCommits;
 #ifndef NDEBUG
         {   // W9 census (B2): the lane the member's lateral position gives against its part's lateral extent.
@@ -12851,6 +12867,123 @@ struct LegionNavigator::Impl : LegionWorldBinding {
 #endif
         return true;
     }
+    // Corner lanes (2026-11-06). A corridor -- a strip too long for a gate
+    // (gateCommit leaves it to the field and its lane grid) -- that turns
+    // into a crossing strip funnelled the stream into a file: every body
+    // descended round the inner corner and then walked its straight line
+    // from there, so the far side of the next strip stayed empty
+    // (Industrial Zone: three files along the first strip, about 1.5 down
+    // the second, one body through the corner every 32 ticks against 19).
+    // A member inside a strip of two lanes or more whose descent turns into
+    // a strip across it within kCornerLook chain cells commits, as to a gate,
+    // to a point kCornerLead cells into that strip: its lane counted from the
+    // inner wall is the lane it walks in now counted from the inner wall (a
+    // column wheeling: no file crosses another), clamped to the new strip's
+    // lanes (laneCap, footprint pitch, centred). The point is held over the
+    // straight walk too (gateCorner) and released at its line (gateAim).
+    // Static reads, the field and the member's goal only. Not within
+    // kLaneNear of the destination.
+    bool cornerCommit(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz,int comp) {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
+        const int band=laneBand(m,foot);
+        {   // Off every strip (narrow across neither axis): no chain to walk.
+            const uint32_t e=spanAt(p,ox,oz);
+            if(int(e&0xff)+int(e>>8&0xff)+1>=kLaneSpan&&int(e>>16&0xff)+int(e>>24)+1>=kLaneSpan)return false;
+        }
+        // Every read below is static (the plane, the finished field, the
+        // goal, the footprint and the band), so a decline is memoised as
+        // gateCommit's is (Member::cornerMemo).
+        auto& cm=m.cornerMemo;
+        const bool memo=f.complete()&&f.metric()!=0;
+        if(memo&&cm.valid&&cm.ox==ox&&cm.oz==oz&&cm.goal==m.goal&&cm.band==band&&cm.type==u.type&&
+           cm.field==f.metric()&&cm.epoch==epoch&&cm.planeEpoch==p.epoch)return false;
+        cm.valid=false;
+        auto decline=[&] {
+            if(memo&&!unsure)cm={ox,oz,m.goal,band,u.type,f.metric(),epoch,p.epoch,true};
+            return false;
+        };
+        std::array<int,kCornerLook+kCornerLead+4> chain{};int n=0;chain[size_t(n++)]=oz*W+ox;
+        uint64_t work=0;
+        struct Flush {uint64_t& to;uint64_t& n;~Flush() {to+=n;}} flush{stats.laneWork,work};
+        while(n<int(chain.size())) {
+            const int next=descend(p,f,chain[size_t(n-1)]%W,chain[size_t(n-1)]/W,m.goal,fx,fz,true);
+            if(next<0)break;
+            chain[size_t(n++)]=next;++work;
+        }
+        if(unsure)return false;
+        if(n<8)return decline();
+        const Span in=gateSpan(p,chain.data(),n,0,fx,fz);
+        const int acrossIn=in.axis==0?fx:fz;
+        if(!in.sign||!gateStrip(in,band)||in.free<2*acrossIn)return decline();
+        // The first chain cell inside a strip across this one, which runs on
+        // for three cells.
+        int turn=-1;Span out;
+        for(int j=1;j<=kCornerLook&&j+kCornerLead+3<n&&turn<0;++j) {
+            ++work;
+            const Span sp=gateSpan(p,chain.data(),n,j,fx,fz);
+            if(sp.axis==in.axis||!sp.sign||!gateStrip(sp,band))continue;
+            bool runs=true;
+            for(int k=1;k<=3&&runs;++k) {
+                ++work;
+                const Span next=gateSpan(p,chain.data(),n,j+k,fx,fz);
+                runs=next.axis==sp.axis&&next.sign==sp.sign&&gateStrip(next,band);
+            }
+            if(runs) {turn=j;out=sp;}
+        }
+        if(turn<0)return decline();
+        const int G=chain[size_t(turn+kCornerLead)],gx=G%W,gz=G/W;
+        uint32_t potentialG=kUnreached;
+        if(!certainValue(f,p,comp,size_t(G),potentialG))return false;
+        if(potentialG<kLaneNear*kOrthogonal)return decline();
+        const Span at=gateSpan(p,chain.data(),n,turn+kCornerLead,fx,fz);
+        if(at.axis!=out.axis||!gateStrip(at,band))return decline();
+        // The inner wall: in this strip on the side the way turns to (the
+        // new strip's travel sign), in the new one on the side the way came
+        // from (against this strip's travel sign).
+        const uint32_t e=spanAt(p,ox,oz);
+        const int r=in.axis==1?(out.sign>0?int(e>>24):int(e>>16&0xff)):(out.sign>0?int(e>>8&0xff):int(e&0xff));
+        const int lane=r/acrossIn;
+        const int across=out.axis==0?fx:fz,free=at.lo+at.hi+across;
+        const int lanes=std::min(laneCap(m),1+(free-across)/across);
+        if(lanes<2)return decline();
+        const int axisG=out.axis==0?gx:gz,first=axisG-at.lo+(free-(lanes-1)*across-across)/2;
+        const int k=std::min(lane,lanes-1),pick=in.sign>0?k:lanes-1-k;   // lanes count from the low side
+        const int c=first+pick*across;
+        const int cx=out.axis==0?c:gx,cz=out.axis==0?gz:c;
+        ++work;
+        if(!legal(p,cx,cz))return decline();
+        m.gateCell=cz*W+cx;
+        m.gateLane=int8_t(pick);m.gateAxis=int8_t(out.axis);m.gateSign=int8_t(out.sign);m.gateCorner=true;
+        ++stats.gateCommits;
+#ifndef NDEBUG
+        if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d corner-commit lanes=%d lane=%d pick=%d r=%d at=(%d,%d) point=(%d,%d)\n",
+                                     w.tickCounter_,u.id,lanes,lane,pick,r,ox,oz,cx,cz);
+#endif
+        return true;
+    }
+    // A corner lane is kept down the strip it turned into: once the member
+    // crosses its point's line the point moves kCornerLead origins ahead of
+    // it in the same lane, while the member is in that strip, the field
+    // still leads along it and it is kLaneNear or more from the
+    // destination (false: the lane ends, the point is released). Walking
+    // its straight line to the slot from the corner put the files back on
+    // one diagonal (three files round the corner, two again 30 cells on).
+    bool cornerAdvance(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz) {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const uint32_t here=f.estimate(size_t(oz*W+ox));
+        if(here==kUnreached||here<uint32_t(kLaneNear*kOrthogonal))return false;
+        const uint32_t e=spanAt(p,ox,oz);
+        const int axis=m.gateAxis,sign=m.gateSign;
+        if((axis==0?int(e&0xff)+int(e>>8&0xff):int(e>>16&0xff)+int(e>>24))+1>=kLaneSpan)return false;   // out of the strip
+        const int next=descend(p,f,ox,oz,m.goal,fx,fz,true);
+        if(unsure||next<0||(axis==0?next/W-oz:next%W-ox)!=sign)return false;   // the way leaves the strip's axis
+        const int lane=axis==0?m.gateCell%W:m.gateCell/W;
+        const int cx=axis==0?lane:ox+sign*kCornerLead,cz=axis==0?oz+sign*kCornerLead:lane;
+        ++stats.laneWork;
+        if(!legal(p,cx,cz))return false;
+        m.gateCell=cz*W+cx;
+        return true;
+    }
     // A committed member aims at its gate point while it is in a straight
     // legal line (otherwise the field and the pinwheel steer, the gate kept);
     // false when it has none.
@@ -12859,7 +12992,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(m.gateCell>=0) {
             const int gx=m.gateCell%W,gz=m.gateCell/W;
             const int along=m.gateAxis==0?oz-gz:ox-gx;
-            if(!legal(p,gx,gz)||along*m.gateSign>=0) {
+            if(legal(p,gx,gz)&&along*m.gateSign>=0&&m.gateCorner&&cornerAdvance(u,m,p,f,ox,oz)) {}
+            else if(!legal(p,gx,gz)||along*m.gateSign>=0) {
 #ifndef NDEBUG
                 ++census.a4Releases;
                 if(m.slot>=0)++census.a4ReleaseSlotted;
@@ -12869,7 +13003,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
 #endif
                 m.gateCell=-1;++stats.gateReleases;return false;
             }
-        } else if(!gateCommit(u,m,g,p,f,ox,oz,comp))return false;
+        } else if(!gateCommit(u,m,g,p,f,ox,oz,comp)&&(unsure||!cornerCommit(u,m,p,f,ox,oz,comp)))return false;
         ++stats.laneWork;
         if(!sweep(p,u,u.x,u.z,centre(m.gateCell%W,fx),centre(m.gateCell/W,fz)))return false;
         cell=m.gateCell;
@@ -15312,7 +15446,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(m.claimAt>=0) {h=mix(h,0x636c61696dull);h=mix(h,uint64_t(m.claimAt));}
             if(m.gateCell>=0) {
                 h=mix(h,0x67617465ull);h=mix(h,uint32_t(m.gateCell));
-                h=mix(h,uint64_t(uint8_t(m.gateLane))|uint64_t(uint8_t(m.gateAxis))<<8|uint64_t(uint8_t(m.gateSign))<<16);
+                h=mix(h,uint64_t(uint8_t(m.gateLane))|uint64_t(uint8_t(m.gateAxis))<<8|uint64_t(uint8_t(m.gateSign))<<16|uint64_t(m.gateCorner)<<24);
             }
             h=mix(h,m.routeTicks);h=mix(h,m.nextDetour);h=mix(h,m.detourCount);for(int c:m.route)h=mix(h,uint64_t(c));
             if(m.kind!=Kind::Move) {
