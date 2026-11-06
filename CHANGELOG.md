@@ -305,7 +305,8 @@ their validation reports; both live in [`docs/`](docs/).
   a unit now leaves your command up to half a second later, at random, as in the
   original game. Pressing self-destruct while some of the selected units already
   count down now cancels theirs and starts none, as in the original game; it used
-  to start the others too.
+  to start the others too. The notice at the top of the screen now counts the real
+  seconds down (it always said "SELF-DESTRUCT IN 5...").
 - **Gates are built closed and switched off**, as in the original game. A new gate
   used to count as switched on with its doors shut, so the first click on its ON
   button did nothing.
