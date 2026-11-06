@@ -15,6 +15,13 @@ struct Script {
     uint32_t entry = 0;      // word offset into code
 };
 
+// The code an engine-started Activate waits out (see createHold). Empty when
+// nothing waits.
+struct CreateHold {
+    uint32_t begin = 0, end = 0;
+    bool contains(uint32_t pc) const { return pc >= begin && pc < end; }
+};
+
 struct File {
     std::vector<Script> scripts;
     std::vector<std::string> pieces;   // index = piece number
@@ -25,6 +32,7 @@ struct File {
     std::vector<std::string> names;
     std::vector<uint32_t> code;        // 32-bit word stream
     uint32_t numStatics = 0;
+    CreateHold createHold;             // createHold(*this), filled by load()
 
     int scriptIndex(const std::string& name) const;   // -1 if absent
     // Resolve a name-table index (PLAY_SOUND / MAP_COMMAND operand); "" if out of range.
@@ -37,6 +45,19 @@ struct File {
 File load(const std::filesystem::path& path);
 // Parse from an in-memory buffer (a VFS-resolved archive entry).
 File load(const std::vector<uint8_t>& d, const std::string& origin = "<memory>");
+
+// Where Create still holds back an Activate the engine starts on a finished
+// unit's completion or production (World::switchScript). A factory's Create
+// waits in a sleep loop for BUILD_PERCENT_LEFT to reach 0 and only then runs
+// InitState, which sets the RequestState bookkeeping that Activate's
+// RequestState(0) relies on; started before that, Activate finds the yard
+// "already on" and never opens it. Every shipped Create (204 scripts) can
+// return, so the hold is the whole of Create: a thread whose pc lies in it,
+// including Create waiting on a script it CALLed. A Create that cannot return
+// (no RETURN reachable from its entry, an endless loop) would hold forever,
+// so for it the hold ends where its build-wait does: the exit of the first
+// JUMP_IF_FALSE after a BUILD_PERCENT_LEFT read (no build-wait: no hold).
+CreateHold createHold(const File& f);
 
 // Disassemble one script (by index) to text.
 std::string disassemble(const File& f, int script);

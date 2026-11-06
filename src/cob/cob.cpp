@@ -78,6 +78,7 @@ File load(const std::vector<uint8_t>& d, const std::string& origin) {
         for (uint32_t i = 0; i < numNames; ++i)
             f.names.push_back(cstr(d, u32(d, offNames + i * 4)));
     }
+    f.createHold = createHold(f);
     return f;
 }
 
@@ -204,6 +205,46 @@ std::vector<uint8_t> explosionReachability(const File& f) {
     for(size_t i=0;i<work.size();++i)
         for(const auto pc:predecessors[work[i]])mark(pc);
     return unsafe;
+}
+
+CreateHold createHold(const File& f) {
+    const int create = f.scriptIndex("Create");
+    if (create < 0 || f.scripts[size_t(create)].entry >= f.code.size()) return {};
+    const uint32_t begin = f.scripts[size_t(create)].entry;
+    uint32_t end = uint32_t(f.code.size());
+    for (const auto& script : f.scripts)
+        if (script.entry > begin) end = std::min(end, script.entry);
+    // Can a RETURN be reached from the entry? Unknown words end a path.
+    std::vector<uint8_t> seen(end - begin);
+    std::vector<uint32_t> work{begin};
+    while (!work.empty()) {
+        const uint32_t pc = work.back();
+        work.pop_back();
+        if (pc < begin || pc >= end || seen[pc - begin]) continue;
+        seen[pc - begin] = 1;
+        const auto op = f.code[pc];
+        const auto* info = findOp(op);
+        if (!info || pc + 1 + uint32_t(info->args) > end) continue;
+        if (op == 0x10065000) return {begin, end};
+        if (op == 0x10064000) { work.push_back(f.code[pc + 1]); continue; }
+        if (op == 0x10066000) work.push_back(f.code[pc + 1]);
+        work.push_back(pc + 1 + uint32_t(info->args));
+    }
+    // It cannot return: hold only until its build-wait lets it through.
+    bool read = false;
+    for (uint32_t pc = begin; pc < end;) {
+        const auto op = f.code[pc];
+        const auto* info = findOp(op);
+        if (!info) break;
+        if (op == 0x10042000 && pc >= begin + 2 && f.code[pc - 2] == 0x10021001 && f.code[pc - 1] == 17)
+            read = true;
+        if (read && op == 0x10066000) {
+            const uint32_t exit = f.code[pc + 1];
+            return exit > begin && exit <= end ? CreateHold{begin, exit} : CreateHold{};
+        }
+        pc += 1 + uint32_t(info->args);
+    }
+    return {};
 }
 
 std::vector<uint8_t> gaitCode(const File& f) {

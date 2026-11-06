@@ -2229,7 +2229,19 @@ public:
     // activatewhenbuilt type is activated, 51e4d0(1, 1), whose rising edge
     // starts the script's Activate. A new unit's activation byte is 0
     // (511990), so this is the only thing that turns one on unasked.
-    void activateBuilt(int unitId);
+    // `hold` is off for a finished creation, whose Create has not run yet and
+    // runs first in Activate's own zero-elapsed pass (switchScript).
+    void activateBuilt(int unitId,bool hold=true);
+    // An activation edge (51e4d0): sets the script's activation flag and starts
+    // Activate or Deactivate. Owner decision (0.9.20, not retail-proven): an
+    // Activate waits while the unit's Create still runs (cob::createHold). A
+    // factory's Create sleeps until its build is done and only then runs
+    // InitState; production queued on the tick the Navy Yard finished started
+    // Activate first, its RequestState found the yard "already on" and it never
+    // opened. The held Activate starts on the tick Create returns
+    // (tickUnitScript); a Deactivate meanwhile cancels it and starts nothing.
+    // `hold` false starts it at once (a finished creation).
+    void switchScript(Unit& u,bool on,bool hold=true);
     // Whether an aura emitter's auras reach anyone this pass (51d3e0).
     static bool retailAuraEmits(const Unit& s);
     // The activation byte's bit 1 (+0x114 & 2): the script's activation,
@@ -4691,6 +4703,17 @@ private:
         uint32_t debt_=0;       // ticks skipped and not yet paid
     public:
         bool activated=false,ready=false,yardOpen=false,buggerOff=false;
+        // An Activate switchScript holds until Create returns (activated is
+        // already set). Hashed while set.
+        bool activateHeld=false;
+        bool createRunning(const cob::File& file) const {
+            const auto& hold=file.createHold;
+            if (hold.begin==hold.end) return false;
+            const auto& vm=state_.vm;
+            for (uint32_t m=vm.activeThreadMask();m;m&=m-1)
+                if (hold.contains(vm.threads[size_t(std::countr_zero(m))].words[1])) return true;
+            return false;
+        }
         uint32_t movementRate=0;
         // TurnDirection's last reported turn, in whole degrees (mover +0x26,
         // 4d9593), and whether this tick's turn was the idle navigator's

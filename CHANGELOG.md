@@ -309,6 +309,11 @@ their validation reports; both live in [`docs/`](docs/).
 - **Gates are built closed and switched off**, as in the original game. A new gate
   used to count as switched on with its doors shut, so the first click on its ON
   button did nothing.
+- **A factory given orders the moment it is finished opens and builds.** A Navy
+  Yard, Barracks, Keep, Academy or any other factory told to build a unit right as
+  its own construction finished could stay shut and never build it, waiting for
+  ever (the computer player's first Navy Yard often did). A finished factory now
+  switches on once it has finished settling in, a fraction of a second later.
 - **New units start with an empty mana pool and fill up, as in the original game.**
   A mage, priest, dragon or Monarch that is trained, built, conjured, raised or
   placed at the start of a game used to arrive with a full pool; it now starts

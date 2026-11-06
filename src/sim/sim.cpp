@@ -1084,7 +1084,7 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
                                        {uint32_t(type->maxWeaponReloadMs),0,0,0},1);
     }
     groundStamp(*unit(u.id));   // 5122d9: creation places the body
-    if (finished) activateBuilt(u.id);   // 512301, after the script, weapons and stamp
+    if (finished) activateBuilt(u.id,false);   // 512301, after the script, weapons and stamp
     return u.id;
 }
 
@@ -1093,15 +1093,23 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
 // callers test activatewhenbuilt (UnitDef +0x260 & 0x40000): 512301 for a
 // finished creation, 429a8d for a completion, after the detach and before the
 // isfeature test (check_change_owner.py, check_construction_completion.py).
-void World::activateBuilt(int unitId) {
+void World::activateBuilt(int unitId,bool hold) {
     Unit* u=unit(unitId);
     if (!u || !u->type || !u->type->activateWhenBuilt) return;
     auto* script=unitScript(u->id);
     const bool was=script ? script->activated : u->active;
     u->active=true;
     if (was) return;
-    if (script) script->activated=true;
-    notifyUnitScript(*u,"Activate");
+    switchScript(*u,true,hold);
+}
+
+void World::switchScript(Unit& u,bool on,bool hold) {
+    auto* script=unitScript(u.id);
+    if (!script) return;
+    script->activated=on;
+    if (!on && script->activateHeld) { script->activateHeld=false;return; }
+    if (on && hold && script->createRunning(*u.type->script())) { script->activateHeld=true;return; }
+    notifyUnitScript(u,on ? "Activate" : "Deactivate");
 }
 
 // 512060's last argument (5123ce..512417): set, the new unit's mogriumstorage
@@ -6372,9 +6380,7 @@ void World::setActive(int unitId, bool on) {
     u->active = on;
     // 51e4d0 notifies every script on an active-bit edge, including
     // non-gate on/off units such as the Sacred Fire's emitter controller.
-    if (auto script=unitScripts_.find(u->id);script!=unitScripts_.end())
-        script->second.activated=on;
-    notifyUnitScript(*u,on ? "Activate" : "Deactivate");
+    switchScript(*u,on);
 }
 
 void World::setAiGroup(int player, int unitId, int slot, bool formation) {
@@ -18244,11 +18250,13 @@ void World::tickUnitScript(Unit& u) {
         }
     }
     if (factory.dying) { updateCorpseWindow(u);return; }
-    const bool activated=!u.underConstruction && !u.buildQueue.empty();
-    if (u.type->productionScript && activated!=factory.activated) {
-        factory.activated=activated;
-        factory.state().notify(file,file.scriptIndex(activated ? "Activate" : "Deactivate"),host);
+    // switchScript's held Activate, once Create has returned.
+    if (factory.activateHeld && !factory.createRunning(file)) {
+        factory.activateHeld=false;
+        factory.state().notify(file,file.scriptIndex("Activate"),host);
     }
+    const bool activated=!u.underConstruction && !u.buildQueue.empty();
+    if (u.type->productionScript && activated!=factory.activated) switchScript(u,activated);
 }
 
 void World::UnitScript::scheduleSkip(bool eligible) {
@@ -21335,6 +21343,7 @@ uint64_t World::stateHash() const {
             WordMix script(0x434f42564dull);
             script(uint32_t(id));
             script(factory.activated); script(factory.ready); script(factory.yardOpen); script(factory.buggerOff);
+            if (factory.activateHeld) script(0x484f4c44u);
             if (factory.dying) { script(0x44454144u);script(factory.deathStopValue); }
             if (factory.movementRate) { script(0x4d4f5645u);script(factory.movementRate); }
             if (factory.turnDirection) { script(0x5455524eu);script(uint32_t(int32_t(factory.turnDirection))); }
