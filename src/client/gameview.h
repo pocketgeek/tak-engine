@@ -4478,4 +4478,13 @@ private:
     std::string notice_;
     float noticeTimer_ = 0;
     float animClock_ = 0;
+    // The units a self-destruct press armed: the notice follows their real
+    // countdown (updateSelfDestructNotice) until none counts down any more, or
+    // until kSelfDestructArmWait seconds pass with none armed yet (the order
+    // was refused or lost). Display only.
+    std::vector<int> selfDestructWatch_;
+    float selfDestructArmWait_ = 0;
+    bool selfDestructSeen_ = false;
+    static constexpr float kSelfDestructArmWait = 3.0f;
+    void updateSelfDestructNotice(float dt);
 };

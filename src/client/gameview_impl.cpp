@@ -1507,6 +1507,29 @@
         return n;
     }
 
+    // The self-destruct notice reads the longest countdown left among the
+    // units the press armed, as the sim runs it down (UnitR::selfDestructT).
+    void GameView::updateSelfDestructNotice(float dt) {
+        if (selfDestructWatch_.empty()) return;
+        float left = -1.0f;
+        for (int id : selfDestructWatch_)
+            if (const auto* su = frameUnitP(id); su && su->alive() && su->selfDestructT >= 0.0f)
+                left = std::max(left, su->selfDestructT);
+        const bool ours = notice_.rfind("SELF-DESTRUCT IN ", 0) == 0;
+        if (left < 0.0f) {
+            // Gone, cancelled, or not armed yet: stop once it was seen or the
+            // order had its time to arrive; the last notice then fades.
+            selfDestructArmWait_ -= dt;
+            if (selfDestructSeen_ || selfDestructArmWait_ <= 0.0f) selfDestructWatch_.clear();
+            else if (ours) noticeTimer_ = std::max(noticeTimer_, 0.5f);
+            return;
+        }
+        selfDestructSeen_ = true;
+        if (!ours) { selfDestructWatch_.clear(); return; }   // another notice took over
+        notice_ = tak::client::selfDestructNotice(left);
+        noticeTimer_ = std::max(noticeTimer_, 0.5f);
+    }
+
     void GameView::cosmeticStep(float dt) {
         // Reads the render SNAPSHOT (front()), never live world_, so it is safe
         // on the main thread while the sim worker ticks. Transient combat events
@@ -1836,6 +1859,7 @@
         // FEATURE, which never worked: corpse defs are object= models with no
         // sprite art, so addFeature always bailed before drawing anything.)
         if (noticeTimer_ > 0) noticeTimer_ -= dt;
+        updateSelfDestructNotice(dt);
         if (buildLineGapShown_ > 0) buildLineGapShown_ -= dt;
 
         // (T-tracking / edge-scroll / shake now run per-frame in cameraFrame, so
@@ -3833,7 +3857,20 @@
                     issue(c);
                 }
                 if (!send.empty()) {
-                    notice_ = anyArmed ? "SELF-DESTRUCT CANCELLED" : "SELF-DESTRUCT IN 5...";
+                    selfDestructWatch_.clear();
+                    if (anyArmed) notice_ = "SELF-DESTRUCT CANCELLED";
+                    else {
+                        // Until the order reaches the sim, the countdown each
+                        // unit's type will start (selfdestructcountdown).
+                        int seconds = 0;
+                        for (int id : send)
+                            if (const auto* su = frameUnitP(id); su && su->type)
+                                seconds = std::max(seconds, su->type->selfDestructCountdown);
+                        notice_ = tak::client::selfDestructNotice(float(seconds));
+                        selfDestructWatch_ = send;
+                        selfDestructArmWait_ = kSelfDestructArmWait;
+                        selfDestructSeen_ = false;
+                    }
                     noticeTimer_ = 2;
                 }
                 return true;

@@ -2608,6 +2608,43 @@
             std::fprintf(stderr,"PASS: reclaim fan-out to every selected reclaimer\n");
             return;
         }
+        if (tak::devFlag("TAK_SELFDESTRUCT_NOTICE_TEST")) {
+            // Ctrl+Shift+D through the real key path: the notice reads the unit's
+            // own countdown (selfdestructcountdown, 2 s) and counts it down with
+            // the sim, then lets go once the unit has left.
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("self-destruct notice: "+what);
+                std::fprintf(stderr,"PASS: self-destruct notice: %s\n",what.c_str());
+            };
+            noFog_=true;
+            const float cx=float(mapView_.map().blocksX)*16.0f,cz=float(mapView_.map().blocksY)*16.0f;
+            const int unit=spawn("arasword",cx,cz,0,localPlayer_);
+            check(world_.unit(unit)!=nullptr,"fixture has a swordsman");
+            const int countdown=world_.unit(unit)->type->selfDestructCountdown;
+            const auto step=[&](int ticks) {
+                for (int i=0;i<ticks;++i) {
+                    writableWorld().tick(1.f/30);
+                    captureFrame();beginFrame();cosmeticStep(1.f/30);
+                }
+            };
+            selection_={unit};captureFrame();beginFrame();cosmeticStep(0);
+            notice_.clear();
+            handleKey(SDLK_d,KMOD_CTRL|KMOD_SHIFT);
+            const std::string first="SELF-DESTRUCT IN "+std::to_string(countdown)+"...";
+            check(notice_==first,"the press reads the type's countdown ("+notice_+")");
+            step(5);
+            check(world_.unit(unit)->selfDestructT>=0,"the order armed the unit");
+            check(notice_==first,"just armed it still reads "+std::to_string(countdown)+" ("+notice_+")");
+            step(countdown*30-15);   // under a second left
+            check(notice_=="SELF-DESTRUCT IN 1...","with under a second left it reads 1 ("+notice_+")");
+            check(noticeTimer_>0,"the notice stays up while the countdown runs");
+            step(60);
+            check(!world_.unit(unit) || !world_.unit(unit)->alive() || world_.unit(unit)->selfDestructT<0,
+                  "the countdown ended");
+            check(selfDestructWatch_.empty(),"the notice lets go of the unit");
+            std::fprintf(stderr,"PASS: self-destruct notice follows the countdown\n");
+            return;
+        }
         if (tak::devFlag("TAK_AREA_DRAG_TEST")) {
             // Map drags through the real input() and draw(): a small right-drag with a
             // reclaimer is the ordinary order, only a deliberate box clears an area,

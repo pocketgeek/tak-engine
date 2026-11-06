@@ -2595,6 +2595,15 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/area-drag.png")
       set_tests_properties(area_drag_input PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: area drag threshold")
+      # The self-destruct notice follows the unit's real countdown (client only).
+      add_test(NAME selfdestruct_notice COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_SELFDESTRUCT_NOTICE_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/selfdestruct-notice-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/selfdestruct-notice-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/selfdestruct-notice.png")
+      set_tests_properties(selfdestruct_notice PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: self-destruct notice follows the countdown")
       # Shift-drag build lines through real mouse/wheel input: every previewed site is
       # queued and then built, touching at gap 0, wheel gap held and clamped.
       add_test(NAME buildline_harness COMMAND ${CMAKE_COMMAND} -E env

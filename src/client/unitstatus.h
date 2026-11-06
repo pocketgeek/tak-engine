@@ -49,6 +49,16 @@ inline std::vector<int> selfDestructPress(const std::vector<std::pair<int, bool>
     return out;
 }
 
+// The HUD notice while a self-destruct counts down: the whole seconds left on
+// the longest countdown among the units (selfDestructSeconds, or the type's
+// selfdestructcountdown before the order reaches the sim), never below 1 (the
+// last wait reads as its final second).
+inline std::string selfDestructNotice(float seconds) {
+    int whole = int(seconds);
+    if (float(whole) < seconds) ++whole;
+    return "SELF-DESTRUCT IN " + std::to_string(whole < 1 ? 1 : whole) + "...";
+}
+
 // Retail's own mission labels, from translate/unitmissions.tdf -- the table
 // keyed by the UNITMISSIONCODE_* strings the engine's command table carries.
 // Several of these used to be reasonable-sounding paraphrases that retail

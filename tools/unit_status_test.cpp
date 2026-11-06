@@ -65,6 +65,12 @@ int main() try {
     check(selfDestructPress({{1, false}, {2, false}}) == std::vector<int>{1, 2}, "a press did not arm them all");
     check(selfDestructPress({{1, false}, {2, true}, {3, false}}) == std::vector<int>{2},
           "a press over a counting unit armed the others");
+    // The countdown notice: whole seconds left, rounded up, never below 1.
+    using tak::client::selfDestructNotice;
+    check(selfDestructNotice(2.0f) == "SELF-DESTRUCT IN 2...", "a fresh default countdown reads " + selfDestructNotice(2.0f));
+    check(selfDestructNotice(1.2f) == "SELF-DESTRUCT IN 2...", "1.2 s left reads " + selfDestructNotice(1.2f));
+    check(selfDestructNotice(0.9f) == "SELF-DESTRUCT IN 1...", "0.9 s left reads " + selfDestructNotice(0.9f));
+    check(selfDestructNotice(0.0f) == "SELF-DESTRUCT IN 1...", "the last wait reads " + selfDestructNotice(0.0f));
     // The wait after the countdown's draw still reads as counting down.
     w.destroy(a);
     w.unit(a)->selfDestructT = -5;
