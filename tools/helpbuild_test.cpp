@@ -335,9 +335,13 @@ static void repeatConjurer() {
     check(w.unit(conj)->buildSiteId == own, "an Assist on an unfinished own unit is accepted");
     check(w.unit(conj)->repeatType == &ty.sol, "...keeping its repeat queue");
     const int32_t before = w.unit(conj)->buildProgress;
-    for (int i = 0; i < 30; ++i) w.tick(1.0f / 30.0f);
-    check(w.unit(conj)->buildProgress == before && w.unit(conj)->productionSiteId == mine,
-          "...and its own output waits while it helps");
+    const Fixed hpBefore = w.unit(mine)->hp;
+    for (int i = 0; i < 120; ++i) w.tick(1.0f / 30.0f);
+    // Retail runs one mission: the output gets no work while its maker helps.
+    // Ours holds it meanwhile (our choice; retail's GetBuilt would decay it).
+    check(w.unit(conj)->buildProgress == before && w.unit(conj)->productionSiteId == mine &&
+          w.unit(mine)->hp == hpBefore,
+          "...and its own output, unworked while it helps, is held");
     for (int i = 0; i < 600 && w.unit(conj)->buildSiteId; ++i) w.tick(1.0f / 30.0f);
     for (int i = 0; i < 30; ++i) w.tick(1.0f / 30.0f);
     check(w.unit(conj)->buildProgress > before || w.unit(conj)->productionSiteId != mine,
@@ -1174,7 +1178,10 @@ static int spawnSite(World& w, const UnitType& t, float x, float z) {
     const int id = w.spawn(&t, x, z, 0.0f, 0);
     Unit* s = w.unit(id);
     s->underConstruction = true; s->buildBegun = true;
-    s->hp = Fixed::fromInt(t.maxHp / 20);
+    // Half built: nobody works it until a helper arrives, so it must outlast
+    // its GetBuilt's 330 ticks and some decay (a site with no work at all is
+    // removed by the first decay tick).
+    s->hp = Fixed::fromInt(t.maxHp / 20 + t.maxHp * 19 / 40);
     w.blockFoot(t, x, z, true);
     return id;
 }
@@ -1353,7 +1360,9 @@ static void approachBumped() {
 static void approachFailed() {
     std::printf("a helper whose approach fails:\n");
     Types ty;
-    const UnitType hut = hutType();
+    // The help gives up after some 1200 ticks of walking, which do not keep
+    // the site: a slow build decays slowly enough to outlast them.
+    UnitType hut = hutType(); hut.buildTime = 6000;
     char d[160];
     for (const bool inReach : {true, false}) {
         auto ownedWorld = makeWorld();
@@ -1378,8 +1387,8 @@ static void approachFailed() {
         if (inReach)
             check(worked >= 0 && ended < 0, "within builddistance of the site it works from outside the wall", d);
         else
-            check(ended >= 0 && worked < 0 && w.unit(site)->hp == hp && !hasHelpLeg(*w.unit(helper), site),
-                  "out of builddistance the help ends, the site untouched", d);
+            check(ended >= 0 && worked < 0 && w.unit(site)->hp <= hp && !hasHelpLeg(*w.unit(helper), site),
+                  "out of builddistance the help ends, the site unworked (decaying)", d);
     }
     // A still repair target it cannot reach is never given up on.
     auto ownedWorld = makeWorld();

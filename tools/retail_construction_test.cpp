@@ -43,6 +43,34 @@ int main(int argc,char** argv) {
         }
         return 0;
     }
+    // tools/re/check_site_decay.py: an abandoned site's GetBuilt under the
+    // dispatcher, tick by tick. Header "ticks inverse-bits cost-bits remaining-bits
+    // stored-bits start" then one "early late" pair per tick (work events set
+    // before and after the site's dispatch). Per tick: remaining, stored, removed.
+    if (argc==2 && std::strcmp(argv[1],"--site-timeline")==0) {
+        unsigned ticks,inverseBits,costBits,remainingBits,storedBits,start;
+        while (std::scanf("%u %u %u %u %u %u",&ticks,&inverseBits,&costBits,&remainingBits,&storedBits,&start)==6) {
+            RetailMissionState m;
+            float remaining=std::bit_cast<float>(remainingBits),stored=std::bit_cast<float>(storedBits);
+            bool late=false,removed=false;
+            const auto step=retailSiteDecay(std::bit_cast<float>(inverseBits),std::bit_cast<float>(costBits));
+            for (unsigned t=0;t<ticks;++t) {
+                unsigned early,after;
+                if (std::scanf("%u %u",&early,&after)!=2) return 1;
+                if (!removed && retailSiteTimer(m,start+t,early || late)) {
+                    const double sum=double(remaining)+step.progress;
+                    remaining=float(sum);
+                    if (sum>=1) removed=true;
+                    else stored=float(double(stored)+double(step.refund));
+                }
+                late=after!=0;
+                std::printf(t ? " %u %u %u" : "%u %u %u",std::bit_cast<uint32_t>(remaining),
+                            std::bit_cast<uint32_t>(stored),unsigned(removed));
+            }
+            std::putchar('\n');
+        }
+        return 0;
+    }
     if (argc==2 && std::strcmp(argv[1],"--sacred")==0) {
         int x,z,fx,fz,count;float income,prior;
         World world;
@@ -331,5 +359,24 @@ int main(int argc,char** argv) {
     construction.unit(siteId)->hp=Fixed();
     construction.tick(1.f/30);
     if (construction.unit(siteId)->alive()) return 1;
+    // A restored site whose decay takes its remaining work to 1 is removed by
+    // 429af0 and dies (429cea: 51a140(site, site, 30000, 11, 0)), its owner
+    // refunded nothing for that step.
+    {
+        World decay;
+        decay.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
+        const int id=decay.spawn(&siteType,200,200,0,0);
+        auto* site=decay.unit(id);site->underConstruction=true;
+        site->retailSite=RetailConstructionSite{{0.9999f,1,0,0x1000000u},{0.0020040080416947603f,2116,16516},{},0};
+        site->retailSite->mission.emplace();site->retailSite->mission->stage=2;
+        site->retailSite->mission->waitMask=0x10000001u;site->retailSite->mission->deadline=0;
+        decay.player(0).retailResources.emplace();decay.player(0).mana=0;
+        decay.tick(1.f/30);
+        site=decay.unit(id);
+        if (!site || site->alive() || site->deathType!=11 || site->lastHitBy!=id ||
+            decay.player(0).retailResources->stored!=0) {
+            std::puts("FAIL: a restored site decayed to nothing must die of kind 11");return 1;
+        }
+    }
     std::puts("PASS: construction payment, completion, allocation and particle capacity/expiry");
 }

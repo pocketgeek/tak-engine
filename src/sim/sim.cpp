@@ -2109,26 +2109,33 @@ void World::insertOrderFront(int unitId, bool rally, const std::function<void()>
 }
 
 // The build leg insertOrderFront put back runs again (its stage 0). While its
-// site stands unfinished the leg becomes a HelpBuild on it, as a click on the
-// site gives; a site finished meanwhile ends the leg. Otherwise -- the
-// unattended site decayed away during the detour, Ctrl took back an unstarted
-// one, or the builder may not help it -- the leg goes on as the build it is
-// and places the site again (I: retail's resumed MobileBuild keeps its site;
-// what it does once that site has gone is not established). True when the
-// queue changed; the caller then stops for this tick.
+// site stands unfinished a HelpBuild on it, as a click on the site gives, goes
+// ahead of the leg, which waits behind it still remembering the site: when
+// the help ends this runs again (resumeSite negated: helped). A site finished
+// meanwhile ends the leg, and so does one still standing unfinished: the help
+// gave up on it (it could not get there), and giving it again would only
+// repeat that every few ticks. Otherwise -- the unattended site decayed away
+// during the detour or on the way back (walking keeps no site), Ctrl took
+// back an unstarted one, or the builder may not help it -- the leg goes on as
+// the build it is and places the site again (I: retail's resumed MobileBuild
+// keeps its site; what it does once that site has gone is not established).
+// True when the queue changed; the caller then stops for this tick.
 bool World::resumeBuild(Unit& u) {
     const size_t leg = currentLeg(u.orders);
-    const int siteId = std::exchange(u.orders[leg].resumeSite, 0);
+    const int remembered = std::exchange(u.orders[leg].resumeSite, 0);
+    const bool helped = remembered < 0;
+    const int siteId = helped ? -remembered : remembered;
     const Unit* site = unit(siteId);
     if (!site || !site->alive() || site->type != u.orders[leg].buildType || site->player != u.player) return false;
     const int id = u.id;
     OrdersNote note{*this, id};
-    if (!site->underConstruction) {   // finished by someone else
+    if (!site->underConstruction || helped) {   // finished meanwhile, or the help gave up on it
         u.orders.erase(u.orders.begin() + long(leg));
         return true;
     }
     if (!canHelpBuild(u, *site)) return false;
-    std::vector<Order> rest(std::make_move_iterator(u.orders.begin() + long(leg) + 1),
+    u.orders[leg].resumeSite = -siteId;
+    std::vector<Order> rest(std::make_move_iterator(u.orders.begin() + long(leg)),
                             std::make_move_iterator(u.orders.end()));
     u.orders.erase(u.orders.begin() + long(leg), u.orders.end());
     assist(id, siteId, true);
@@ -11487,7 +11494,6 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
     site->underConstruction = true;
     site->lodestoneReplacement=replacement;
     site->buildBegun=bool(replacement);
-    site->beingBuilt = true;   // its builder owns it this tick (no instant decay)
     site->hp = Fixed::fromFloat(type->maxHp * 0.05f);
     // Key off maxVel, NOT the FBI canmove flag: verwall and tarwall both declare
     // canmove=1 with no velocity, so a canMove gate left Veruna and Taros walls
@@ -13846,8 +13852,11 @@ void World::tickRetailGetBuilt(Unit& site) {
                 const auto result=retailConstructionWork(state.progress,state.type,*owner.retailResources,-0.5f);
                 owner.mana=owner.retailResources->stored;u.hp=Fixed::fromInt(state.progress.hp);
                 u.missionEvents=state.progress.events;
-                if (result==RetailConstructionResult::Removed)
-                    throw std::runtime_error("restored unconjure removal notifications are not ported");
+                if (result==RetailConstructionResult::Removed) {
+                    // 429cbb..429cea: 51a140(site, site, 30000, 11, 0), as decayConstruction.
+                    u.overkill=Fixed();u.deathType=11;u.lastHitBy=u.id;u.lastHitPlayer=u.player;
+                    w.sweepDeath(u);
+                }
             });
         }
     } host{*this,site};
@@ -15108,7 +15117,10 @@ void World::tickConstruction(Unit& b, float dt) {
         else leaveFactoryYard(b.id);
         return;
     }
-    site->beingBuilt = true;   // a builder is assigned (walking or working): no decay
+    // Our sites are placed when the order is given, retail's on arrival: until
+    // its first work, a builder on its way keeps the site from decaying.
+    if (!site->buildBegun || (site->lodestoneReplacement && site->lodestoneReplacement->completedWork==0))
+        noteSiteWork(b,*site);
     // A flying job waits behind a step-out pushed ahead of it (its air-traffic
     // check, flyingJobTraffic): its mission is not the head meanwhile.
     if (b.type->canFly && stepOutFront(b)) return;
@@ -15305,11 +15317,8 @@ void World::prepareHelpApproach(Unit& u) {
 // not valid after a true return.
 bool World::constructionWork(Unit& b, Unit& site, float dt) {
     float total = site.type->buildTime / std::max(b.type->workerTime, 0.01f);
-    // Record the current build rate so an interrupted conjure decays at this speed.
-    // hp per TICK, in the same fixed-point hp is kept in (it is subtracted from hp
-    // directly in decayConstruction).
-    site.conjureRate = Fixed::fromFloat(site.type->maxHp * 0.95f
-                                         / (std::max(total, 0.01f) * kTick));
+    // 429af0 raises the site's work event for any work, paid or not.
+    noteSiteWork(b,site);
     Player& tm = players_[size_t(b.player)];
     if (Unit* producer=productionOwnerOf(site)) {
         // A factory's or conjurer's output has ONE progress, its producer's
@@ -15387,19 +15396,38 @@ bool World::constructionWork(Unit& b, Unit& site, float dt) {
     return false;
 }
 
-void World::decayConstruction(Unit& u, float /*dt*/) {
-    // No builder worked this conjure this tick: it "un-conjures", losing HP at the
-    // rate it was last built, and vanishes at zero (no corpse -- it was never
-    // finished). A site that never materialised falls back to its nominal rate.
+void World::noteSiteWork(const Unit& worker, Unit& site) {
+    // Retail dispatches every unit's missions in slot order: the event a worker
+    // in an earlier slot raises reaches the site's GetBuilt this tick, one in a
+    // later slot the next (economyOf carries it over).
+    if (&worker < &site) site.beingBuilt=true;
+    else site.siteWorkLate=true;
+}
+
+void World::decayConstruction(Unit& u) {
+    // 429d70(site, 1) -> 429af0(site, site, -0.5f) (E: tools/re/check_site_decay.py):
+    // the site unconjures 0.5 / buildtime of its build a tick and its owner gets
+    // float(that * buildcost) back, credited like income; once no work would be
+    // left it is removed instead, with no refund. Our sites keep their progress
+    // in the replacement's completedWork (a lodestone upgrade) or, otherwise,
+    // in hp itself (5% of maxdamage for no work, as placed, plus 95% of it for
+    // the whole build), so each gives back the same fraction there and loses
+    // the matching hp. A producer's output never gets here while its producer
+    // holds it (the decay pass); one it lost decays by its hp.
     if (u.hp <= Fixed()) return;   // already killed: the death sweep has it
-    const Fixed rate = u.conjureRate > Fixed()
-                     ? u.conjureRate
-                     : Fixed::fromFloat(u.type->maxHp * 0.95f
-                                        / (std::max(u.type->buildTime, 0.01f) * kTick));
-    // A retail site keeps taking hits at or below zero, so applyHit may have
-    // saturated its hp at -INT32_MAX; subtract in 64 bits so this cannot wrap.
-    u.hp = Fixed::raw(int32_t(std::clamp<int64_t>(int64_t(u.hp.v) - rate.v, -int64_t(INT32_MAX), INT32_MAX)));
-    if (u.hp > Fixed()) return;
+    const auto step=retailSiteDecay(retailInverseBuildTime(u.type->buildTime),u.type->buildCost);
+    const Fixed drop=Fixed::fromFloat(float(double(u.type->maxHp)*0.95*step.progress));
+    bool removed=u.hp<=drop;
+    if (u.lodestoneReplacement) {
+        auto& done=u.lodestoneReplacement->completedWork;
+        removed=removed || done-step.progress<=0;
+        if (!removed) done-=step.progress;
+    } else removed=removed || u.hp-drop<=Fixed::fromFloat(u.type->maxHp*0.05f);
+    if (!removed) {
+        u.hp=u.hp-drop;
+        players_[size_t(u.player)].creditMana(double(step.refund));
+        return;
+    }
     // Retail's unconjure ends as a death (429cbb..429cea: the HP word 0, then
     // 51a140(site, site, 30000, 11, 0)): the site is its own last hitter and
     // dies with kind 11 and severity 0, so it retires at once (no Killed,
@@ -18520,7 +18548,7 @@ void World::tickProduction(Unit& u, float dt) {
        !u.orders.front().transportProductionAhead)return;
     // A conjurer works one job at a time, as retail runs one mission: while
     // it builds or helps elsewhere (buildSiteId) its own output waits, held
-    // (protectedSite keeps it from decaying) rather than growing unattended.
+    // (the decay pass holds a producer's output) rather than growing unattended.
     if (!u.type->isStructure() && u.buildSiteId) return;
     const UnitType* t = u.buildQueue.front();
     if (!buildAllowed(t)) return;
@@ -18568,15 +18596,12 @@ void World::tickProduction(Unit& u, float dt) {
     }
     // spawn can reallocate units_; never use the original reference after it.
     Unit* producer=unit(producerId);
-    site->beingBuilt=true;
     // Mobile conjurers use this queue too. Face the actual output position,
     // which exitSpot may have displaced, just as for a placed build site.
     if (!producer->type->isStructure() && producer->orders.empty()) {
         if (producer->type->canFly) tickConjureHover(*producer,*site);
         else turnBuilderToSite(*producer,*site);
     }
-    const Fixed work=Fixed::fromFloat(t->maxHp*0.95f/float(total));
-    site->conjureRate=work;
     Player& tm=players_[size_t(player)];
     if (site->retailSite && tm.retailResources) {
         float worker=producer->type->workerTime;
@@ -19393,7 +19418,8 @@ void World::tick(float dt) {
         // A unit under construction contributes no economy until it finishes -- a
         // half-built lodestone must not add its mana income or storage capacity yet.
         if (u.underConstruction) {
-            u.beingBuilt = false;
+            u.beingBuilt = u.siteWorkLate;   // last tick's later-slot work (noteSiteWork)
+            u.siteWorkLate = false;
             listSite();
             return;
         }
@@ -19627,37 +19653,6 @@ void World::tick(float dt) {
     // in, with nothing in the command stream to explain it.
     summonReadyGods();
 
-    // Both factory and mobile construction keep their sites alive this tick
-    // (beingBuilt was cleared in the economy walk above).
-    // Factory missions run in unit order below. Protect their existing sites
-    // from orphan decay while the producer still owns an active build.
-    auto protectedSite = [&](const Unit& producer) -> Unit* {
-        if (producer.alive() && producer.hp>Fixed() && !producer.incapacitated() &&
-            !producer.embarked() && !producer.underConstruction && !producer.buildQueue.empty() && producer.productionSiteId)
-            if (auto* site=unitNoRepair(producer.productionSiteId);site && site->alive() &&
-                (site->hp>Fixed() || site->retailSite) && site->player==producer.player) return site;
-        return nullptr;
-    };
-    // On the SimPool from kPrologueMinParallel units (WE E4.3): the walk only
-    // sets flags to true, and nothing in it reads them, so any order of the
-    // (relaxed atomic) stores gives the serial result.
-    if (units_.size() >= kPrologueMinParallel && simPool().workers()) {
-        simPool().forChunks(units_.size(), SimPool::kUnitChunk, 0, [&](size_t, size_t begin, size_t end, unsigned) {
-            for (size_t i = begin; i < end; ++i)
-                if (Unit* site = protectedSite(units_[i]))
-                    __atomic_store_n(&site->beingBuilt, true, __ATOMIC_RELAXED);   // not std::atomic_ref (Apple libc++)
-        });
-#ifndef NDEBUG
-        if (verifyPool())
-            for (const auto& producer : units_)
-                if (const Unit* site = protectedSite(producer); site && !site->beingBuilt)
-                    poolMismatch("producer site walk", tickCounter_);
-#endif
-    } else {
-        TAK_PASS();
-        for (const auto& producer:units_)
-            if (Unit* site = protectedSite(producer)) site->beingBuilt=true;
-    }
     TAK_PASS();
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& u = units_[i];
@@ -19678,9 +19673,15 @@ void World::tick(float dt) {
     // under construction (only a fresh spawn does, and spawns append), so these
     // are all the units the full walk would decay, visited in the same order with
     // the same test at the same moment.
+    // A producer's output (a factory's, a Zhon conjurer's) is HELD while its
+    // producer still owns it -- paused, paralysed, loading, embarked or off
+    // helping elsewhere: our choice, not retail's (whose GetBuilt would decay
+    // it once its producer stops working it). Its timer counts that as work,
+    // so an output its producer lost starts the decay 30 ticks later.
     auto decay = [&](Unit& u) {
-        if (u.alive() && u.type && u.underConstruction && !u.beingBuilt && !(u.retailSite && u.retailSite->mission))
-            decayConstruction(u, dt);
+        if (u.alive() && u.type && u.underConstruction && !u.retailSite &&
+            retailSiteTimer(u.siteTimer,tickCounter_,u.beingBuilt || productionOwnerOf(u)))
+            decayConstruction(u);
     };
 #ifndef NDEBUG
     if (verifyLists()) {
@@ -21753,7 +21754,11 @@ uint64_t World::stateHash() const {
         mix(uint32_t(u.productionSiteId)); mix(uint32_t(u.buildProgress));
         if (u.buildFraction) {mix(0x46524143u);mix(u.buildFraction);}
         if (u.productionRetryTick) {mix(0x52455452u);mix(u.productionRetryTick);}
-        mix(u.underConstruction); mix(u.buildBegun); mix(uint32_t(u.conjureRate.v));
+        mix(u.underConstruction); mix(u.buildBegun);
+        if (u.underConstruction && !u.retailSite) {
+            const auto& m=u.siteTimer;
+            mix(0x44454341u);mix(m.stage);mix(m.waitMask);mix(m.deadline);mix(m.pending);mix(u.siteWorkLate);
+        }
         if (u.lodestoneReplacement) {
             const auto& old=*u.lodestoneReplacement;
             mix(0x4c4f4445u);for (char c:old.type->id) mix(uint8_t(c));

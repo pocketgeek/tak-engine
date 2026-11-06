@@ -163,8 +163,9 @@ int main() try {
         crt::Scenario scene;scene.players.resize(3);
         scene.players[1].push_back({{{9,{"0","hut"}}},{{13,{"All Players","decayed"}}}});
         attach(*world,registry,scene);
-        // 0.5 HP at 100 x 0.95 / (100 x 30) a tick: gone in 16 ticks.
-        for (int i=0;i<60 && world->unit(site) && world->unit(site)->alive();++i) ticks(*world,1);
+        // Never worked: its GetBuilt waits 300 + 30 ticks (check_site_decay.py),
+        // then the first decay finds no work left to give back and removes it.
+        for (int i=0;i<400 && world->unit(site) && world->unit(site)->alive();++i) ticks(*world,1);
         const auto* u=world->unit(site);
         check(u && !u->alive(),"the unattended site did not unconjure away");
         check(u->deathType==11 && u->lastHitBy==site && u->lastHitPlayer==0,

@@ -370,9 +370,9 @@ std::vector<int> hutsAt(const World& w, const UnitType* hut, float x, float z) {
 
 // A builder at work on a site, interrupted by Ctrl: the work stops and the
 // build waits behind the new order, holding its site. The detour is long
-// enough for the site to decay away (the legacy construction path every match
-// runs: an unattended site loses hp at the rate it was built and goes at
-// zero), so the resumed build places it again and the hut still gets built.
+// enough for the site to decay away (an unattended site's GetBuilt decays it
+// 30 ticks after its last work, at 0.5 / buildtime of its build a tick), so
+// the resumed build places it again and the hut still gets built.
 void frontInterruptsBuild() {
     Types t; Rig r;
     const int id = r.w.spawn(&t.builder, 600, 1000, 0, 0);
@@ -428,6 +428,40 @@ void frontResumesStandingSite() {
     const Unit* s = r.w.unit(site);
     check(s && s->alive() && !s->underConstruction && hutsAt(r.w, &t.hut, 800, 1000) == std::vector<int>{site},
           "standing: the builder comes back to the same site and finishes it");
+}
+
+// A Ctrl detour after which the standing site cannot be reached (walled off
+// while the builder was away): the help the resumed build gives ends, and the
+// build with it, as a help job does. It used to give the help again and again,
+// every few ticks in Legion, for as long as the site stood.
+void frontResumeUnreachable() {
+    Types t; Rig r;
+    const int id = r.w.spawn(&t.builder, 600, 1000, 0, 0);
+    r.w.queueBuild(id, &t.hut, 800, 1000, false);
+    int site = 0;
+    for (int i = 0; i < 900 && !site; ++i) { r.ticks(1); site = r.w.unit(id)->buildSiteId; }
+    for (int i = 0; i < 900 && site && !r.w.unit(site)->buildBegun; ++i) r.ticks(1);
+    r.ticks(450);
+    r.send(net::Cmd::Move, id, 600, 1700, kCtrl);
+    for (int i = 0; i < 2000 && r.w.unit(id)->z.toFloat() < 1300; ++i) r.ticks(1);
+    check(site && r.w.unit(site)->underConstruction && r.w.unit(id)->z.toFloat() >= 1300,
+          "unreachable: the builder has left its half-built site");
+    for (int x = 800 - 192; x <= 800 + 192; x += 32)
+        for (int z = 1000 - 192; z <= 1000 + 192; z += 32) {
+            if (x != 800 - 192 && x != 800 + 192 && z != 1000 - 192 && z != 1000 + 192) continue;
+            r.w.spawn(&t.foe, float(x), float(z), 0, 1);
+            r.w.blockFoot(t.foe, float(x), float(z), true);
+        }
+    int helps = 0;
+    bool wasHelp = false;
+    for (int i = 0; i < 4000 && r.w.unit(site) && r.w.unit(site)->alive(); ++i) {
+        r.ticks(1);
+        const auto& o = r.w.unit(id)->orders;
+        const bool help = !o.empty() && o[World::currentLeg(o)].helpSite == site;
+        helps += help && !wasHelp;
+        wasHelp = help;
+    }
+    check(helps == 1, "unreachable: the resumed build helps its standing site once");
 }
 
 // Ctrl in the same tick the site goes down, before any work: the unstarted
@@ -561,6 +595,7 @@ int main(int argc, char** argv) {
     attackGroundApproach();
     frontInterruptsBuild();
     frontResumesStandingSite();
+    frontResumeUnreachable();
     frontBeforeWorkKeepsBuild();
     buildQueue();
     factoryRally();

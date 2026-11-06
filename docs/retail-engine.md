@@ -1280,12 +1280,46 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   corpse, death weapon, credit or loss, and its retirement reaches the
   conditions (`523510`), the mission's `UnitDestroyed` and a CRT game's lost
   tally. Ours (`World::decayConstruction`) retired it silently until gap
-  hunt 10; it now dies that way (`scenario_outcome_test`). Not ported, and
-  a question for the owner: World's own decay, for every site outside the
-  retail-resources games, takes HP at the rate the site was last built, from
-  the first tick it is not worked, and refunds nothing; retail's pace is
-  `0.5 / buildtime` of the work a tick after a 30-tick wait (300 for a site
-  never worked) and gives the mana back as the site shrinks.
+  hunt 10; it now dies that way (`scenario_outcome_test`).
+- **The pace of that decay, ported for every game** (fx-sitedecay, E:
+  `tools/re/check_site_decay.py`, 1000 timelines through the real `4d8450`,
+  `402220`, `429d70` and `429af0`, only the weapon stop `519b70` and the
+  death call hooked). A new GetBuilt's first dispatch sleeps 300; a work
+  event (`429af0` sets `+0xd0 |= 0x10000000` for any work >= 0, paid or not)
+  wakes it to sleep 30; from then on each work event restarts the 30 and a
+  timer wake with none decays once and sleeps 1. So a site never worked
+  first decays on its 331st dispatch, and one last worked on dispatch N by a
+  unit in an earlier slot decays on N + 30 (N + 31 from a later slot, whose
+  event the site sees a tick late). `429d70` passes the site as its own
+  builder, so the refund goes to the SITE owner's pool: `float(0.5 *
+  double(1/buildtime) * buildcost)` a tick at full value whatever the
+  allocation, stored and counted as produced; the removal step refunds
+  nothing. Only `429af0` calls raise the event: a builder walking to the site
+  or a producer not working its output (paused, embarked, its one mission
+  elsewhere) does not. The dispatcher's 32-bit deadlines do not wrap-guard
+  (a tick counter within 300 of 2^32 makes the 101-call guard clear the
+  queue); out of play range and not modelled. Ours runs the same timer on
+  every unfinished site (`Unit::siteTimer`, `retailSiteTimer`) in World's
+  decay pass, which follows all construction work in the tick, so a worker
+  in a later unit slot hands its event over a tick late (`siteWorkLate`).
+  **A producer's output is held, not decayed: our choice, by the owner's
+  decision, not retail's inferred behaviour.** Retail's GetBuilt would decay
+  a factory's or a Zhon conjurer's output once its producer stops working it
+  (paused, paralysed, loading, embarked, or a conjurer whose one mission is
+  a help elsewhere); ours keeps the output, its progress and its mana while
+  the producer still holds it (`World::productionOwnerOf`), as our decay did
+  before the port. The decay pass counts that hold as work for the site's
+  timer, so an output its producer lets go of (a mobile conjurer's, when the
+  conjurer dies) decays 30 ticks later like any site (`site_decay_test`,
+  `helpbuild_test`). A factory's own death still kills its output at once.
+  The decay step (`retailSiteDecay`) comes off whichever store holds the
+  site's progress: the replacement's work for a lodestone upgrade, else HP
+  itself (ours places a site at 5% HP and builds the other 95%; that
+  includes an output no producer holds), and the site dies once a step
+  would leave no work (I: our sites' progress is not retail's single
+  fraction, so HP lost to damage counts as lost work, as `51a3e0`'s does).
+  Until a site's first work (ours places it when the order is given, retail
+  on arrival) a builder on its way keeps it, as before.
 - **Mission Kill** (`513130`): ignores its arguments. For every unit this
   machine runs (owner +0xea 1 or 2; lockstep runs them all): `52ae30(u, 1)`
   removes every shot it fired (`529af0`, no impact); a unit whose Dying runs
@@ -5873,12 +5907,13 @@ The interrupted leg is rewound to its queued state (its route and what its run
 pushed ahead of it go; its mission restarts at stage 0 on a fresh controller);
 a builder whose site is down keeps its build leg, which remembers the site
 (`Order::resumeSite`; retail resumes the MobileBuild mission itself). When the
-leg runs again (`World::resumeBuild`) it becomes a HelpBuild on the site while
-that stands unfinished, ends if the site was finished meanwhile, and otherwise
-places the site again: our matches run the legacy construction path, where an
-unattended site loses hp at its build rate and goes at zero, and Ctrl takes back
-an unstarted site (`cancelBuilds`), so a HelpBuild in the leg's place used to
-lose the build (I: what retail's resumed mission does once its site has gone is
+leg runs again (`World::resumeBuild`) a HelpBuild on the site goes ahead of it
+while that stands unfinished, the leg waiting behind it; when the help ends the
+leg ends too if the site was finished or still stands (the help gave up on it:
+helping again would only repeat that), and otherwise places the site again: an
+unattended site decays away (GetBuilt, above; a builder walking back keeps
+none) and Ctrl takes back an unstarted site (`cancelBuilds`), so a HelpBuild in
+the leg's place used to lose the build (I: what retail's resumed mission does once its site has gone is
 not established). A Ctrl Load front-inserts on the
 carrier as well as the passenger (its pickup is the carrier's mission), a tower
 takes Ctrl on its own list, and Ctrl on an empty list is the plain order. A

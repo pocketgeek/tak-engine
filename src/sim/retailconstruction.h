@@ -82,6 +82,44 @@ int retailGetBuiltWaiting(RetailMissionState& mission,uint32_t tick,uint32_t eve
     }
 }
 
+// One dispatch (4d8450) of an unfinished site's GetBuilt (402220) when the
+// site's own mission is its only one: `worked` is the unit's 0x10000000 event
+// at dispatch time (429af0 sets it for any work >= 0, paid or not). A fresh
+// mission sleeps 300 ticks, a work event wakes it to sleep 30 more, and from
+// then on every work event restarts the 30 while a timer wake with no work
+// decays the site once and sleeps one tick. True when this dispatch decays.
+inline bool retailSiteTimer(RetailMissionState& mission,uint32_t tick,bool worked) {
+    struct Host {
+        RetailMissionState& m;uint32_t tick;bool decay=false;
+        bool enabled() const { return true; }
+        RetailMissionState* head() { return &m; }
+        bool hasNext(const RetailMissionState&) const { return false; }
+        void idle() {}
+        uint32_t random(int) { return 0; }
+        void remove(RetailMissionState&) {}
+        void rotate(RetailMissionState&) {}
+        void clear() {}
+        int handle(RetailMissionState& state,uint32_t events) {
+            return retailGetBuiltWaiting(state,tick,events,[]{},[&]{ decay=true; });
+        }
+    } host{mission,tick};
+    uint32_t events=worked ? 0x10000000u : 0u;
+    retailDispatchMissions(tick,events,host);
+    return host.decay;
+}
+
+// 429d70(site, 1): the decay is 429af0(site, site, 1 * -0.5f), unconjure work
+// done by the site on itself, so the refund goes to the SITE's owner. Each
+// call takes 0.5 / buildtime of the whole build off the site and pays back
+// float(that * buildcost), at full value whatever the owner's allocation.
+// 429af0 removes the site, refunding nothing, once its remaining work would
+// reach the whole build (remaining + progress >= 1).
+struct RetailSiteDecay { double progress=0; float refund=0; };
+inline RetailSiteDecay retailSiteDecay(float inverseTime,float cost) {
+    const double progress=0.5*double(inverseTime);
+    return {progress,float(progress*double(cost))};
+}
+
 struct RetailConstructionSite {
     RetailConstructionProgress progress;
     RetailConstructionType type;

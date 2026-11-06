@@ -1058,7 +1058,8 @@ struct alignas(64) Order {
 
     // A build leg Ctrl interrupted after its site went down (insertOrderFront):
     // that site. When the leg runs again it helps the site if it still stands
-    // unfinished, and places it again if it has gone (World::resumeBuild).
+    // unfinished, and places it again if it has gone (World::resumeBuild);
+    // negated while that help runs ahead of the leg.
     // Cold: read once, when the leg comes back. Hashed with a tag when set.
     int resumeSite = 0;
 };
@@ -1170,7 +1171,7 @@ struct alignas(64) Unit {
     int   weaponSlot = 0;          // active weapon (0=primary); player-selectable
     bool underConstruction = false;
     bool  cloaked = false; // currently invisible to enemies
-    bool  beingBuilt = false;  // site: transient -- a builder worked it this tick
+    bool  beingBuilt = false;  // site: transient -- a work event at its GetBuilt dispatch
     int8_t squad = 0;      // control squad: 0=none, +N=group N, -N=formation N (N=1..10,
                            // the digit 0 key = 10). A unit is in exactly one squad. A
                            // formation (squad<0) moves at its slowest member's speed and
@@ -1369,7 +1370,6 @@ struct alignas(64) Unit {
     int16_t blockedTX = 0, blockedTZ = 0;
     bool workScriptWorking = false; // repair/reclaim requested StartBuilding
     bool buildBegun = false;   // construction site: true once the builder arrived
-    Fixed conjureRate = Fixed();  // site: hp/TICK the last builder added; drives decay
     RetailMissionState standbyState;
     bool standbyAllowed = true; // partial replay can disable unsupported idle handlers
     bool guardNoMoveAllowed = true;
@@ -1624,6 +1624,13 @@ struct alignas(64) Unit {
     // retail AI leaves it out of its bases, and a computer's revive is never
     // abandoned (406ebb). Hashed when clear.
     bool selectable = true;
+    // An unfinished site's own GetBuilt (402220), every game: the dispatcher
+    // state World::tick's decay pass runs it with (retailSiteTimer). A work
+    // event from a worker in a later unit slot reaches the site's dispatch one
+    // tick later (siteWorkLate; beingBuilt is the event at dispatch time).
+    // Hashed while the site is unfinished.
+    RetailMissionState siteTimer;
+    bool siteWorkLate = false;
     const std::string& displayName() const { return scenarioName.empty() ? type->name : scenarioName; }
     bool alive() const { return deadFor < 0; }
     int32_t maximumHp() const { return retailSite ? int32_t(retailSite->type.maxHp) : type->maxHp; }
@@ -3599,9 +3606,12 @@ private:
     bool prepareBuildApproach(Unit& u);
     bool resumeBuild(Unit& u);   // a Ctrl-interrupted build leg back on its site (Order::resumeSite)
     Order makeBuildOrder(const Unit& builder,const UnitType* type,Fixed x,Fixed z) const;
-    // Orphaned conjure (no builder worked it this tick): bleed HP at its build
-    // rate, then vanish with no corpse.
-    void decayConstruction(Unit& u, float dt);
+    // One tick of an abandoned site's decay (429d70): it gives back
+    // 0.5 / buildtime of its build and that much of its cost to its owner, and
+    // dies (kind 11, no corpse) once no work is left to give back.
+    void decayConstruction(Unit& u);
+    // `worker` worked `site` this tick (429af0's 0x10000000 event).
+    void noteSiteWork(const Unit& worker, Unit& site);
     // Retail Reclaim (406250) once its leg is current: the approach events,
     // the stance wait and the two-tick work countdown, then the removal.
     void tickReclaim(Unit& b);
