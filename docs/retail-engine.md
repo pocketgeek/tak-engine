@@ -1209,12 +1209,36 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   corpse, death weapon, credit or loss, and its retirement reaches the
   conditions (`523510`), the mission's `UnitDestroyed` and a CRT game's lost
   tally. Ours (`World::decayConstruction`) retired it silently until gap
-  hunt 10; it now dies that way (`scenario_outcome_test`). Not ported, and
-  a question for the owner: World's own decay, for every site outside the
-  retail-resources games, takes HP at the rate the site was last built, from
-  the first tick it is not worked, and refunds nothing; retail's pace is
-  `0.5 / buildtime` of the work a tick after a 30-tick wait (300 for a site
-  never worked) and gives the mana back as the site shrinks.
+  hunt 10; it now dies that way (`scenario_outcome_test`).
+- **The pace of that decay, ported for every game** (fx-sitedecay, E:
+  `tools/re/check_site_decay.py`, 1000 timelines through the real `4d8450`,
+  `402220`, `429d70` and `429af0`, only the weapon stop `519b70` and the
+  death call hooked). A new GetBuilt's first dispatch sleeps 300; a work
+  event (`429af0` sets `+0xd0 |= 0x10000000` for any work >= 0, paid or not)
+  wakes it to sleep 30; from then on each work event restarts the 30 and a
+  timer wake with none decays once and sleeps 1. So a site never worked
+  first decays on its 331st dispatch, and one last worked on dispatch N by a
+  unit in an earlier slot decays on N + 30 (N + 31 from a later slot, whose
+  event the site sees a tick late). `429d70` passes the site as its own
+  builder, so the refund goes to the SITE owner's pool: `float(0.5 *
+  double(1/buildtime) * buildcost)` a tick at full value whatever the
+  allocation, stored and counted as produced; the removal step refunds
+  nothing. Only `429af0` calls raise the event: a builder walking to the site
+  or a producer not working its output (paused, embarked, its one mission
+  elsewhere) does not. The dispatcher's 32-bit deadlines do not wrap-guard
+  (a tick counter within 300 of 2^32 makes the 101-call guard clear the
+  queue); out of play range and not modelled. Ours runs the same timer on
+  every unfinished site (`Unit::siteTimer`, `retailSiteTimer`) in World's
+  decay pass, which follows all construction work in the tick, so a worker
+  in a later unit slot hands its event over a tick late (`siteWorkLate`).
+  The decay step (`retailSiteDecay`) comes off whichever store holds the
+  site's progress: the producer's count for a production output, the
+  replacement's work for a lodestone upgrade, else HP itself (ours places a
+  site at 5% HP and builds the other 95%), and the site dies once a step
+  would leave no work (I: our sites' progress is not retail's single
+  fraction, so HP lost to damage counts as lost work, as `51a3e0`'s does).
+  Until a site's first work (ours places it when the order is given, retail
+  on arrival) a builder on its way keeps it, as before.
 - **Mission Kill** (`513130`): ignores its arguments. For every unit this
   machine runs (owner +0xea 1 or 2; lockstep runs them all): `52ae30(u, 1)`
   removes every shot it fired (`529af0`, no impact); a unit whose Dying runs
