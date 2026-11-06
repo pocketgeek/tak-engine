@@ -1319,7 +1319,10 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   would leave no work (I: our sites' progress is not retail's single
   fraction, so HP lost to damage counts as lost work, as `51a3e0`'s does).
   Until a site's first work (ours places it when the order is given, retail
-  on arrival) a builder on its way keeps it, as before.
+  on arrival) a builder on its way keeps it, as before. A site that changes
+  sides (`514da0`, "A change of owner is a new object") starts its timer
+  afresh, 300 then 30 (I: the new object's missions are new; the unfinished
+  creation's own GetBuilt is not emulated).
 - **Mission Kill** (`513130`): ignores its arguments. For every unit this
   machine runs (owner +0xea 1 or 2; lockstep runs them all): `52ae30(u, 1)`
   removes every shot it fired (`529af0`, no impact); a unit whose Dying runs

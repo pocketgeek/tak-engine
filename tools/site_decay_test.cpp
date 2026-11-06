@@ -151,6 +151,26 @@ void neverWorked() {
           "then decays");
 }
 
+// A site that changes sides is a new object with a new GetBuilt: its timer
+// starts again at 300 + 30 ticks, whatever the old one had run down.
+void changedSides() {
+    Types t; Rig r;
+    r.w.spawn(&t.builder, 300, 1000, 0, 1);   // storage for the new owner
+    const int site = r.w.spawn(&t.hut, 600, 1000, 0, 0);
+    Unit* s = r.w.unit(site);
+    s->underConstruction = s->buildBegun = true;
+    s->hp = Fixed::fromInt(1000);
+    r.ticks(200);
+    check(r.w.scenarioTransfer(site, 1), "changed sides: the site goes over");
+    r.ticks(330);
+    const Unit* now = r.w.unit(site);
+    check(now && now->alive() && now->player == 1 && now->hp == Fixed::fromInt(1000),
+          "changed sides: its new GetBuilt waits 330 ticks again");
+    if (!now || !now->alive()) return;
+    r.ticks(1);
+    check(r.w.unit(site)->hp == Fixed::fromInt(1000) - hpDrop(t.hut), "changed sides: then decays");
+}
+
 // A factory's output that its factory stops working is HELD, not decayed:
 // our choice, not retail's (whose GetBuilt would decay it once the work
 // stops). It keeps its progress and costs nothing back or again. Only an
@@ -187,6 +207,7 @@ int main() {
     abandoned();
     laterSlot();
     neverWorked();
+    changedSides();
     factoryOutput();
     if (failures) std::printf("%d FAILED\n", failures);
     return failures ? 1 : 0;

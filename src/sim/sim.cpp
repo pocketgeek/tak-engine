@@ -9696,6 +9696,10 @@ bool World::changeOwner(Unit& u, int newPlayer, MissionScript* notify) {
     u.doorYieldFactory = 0; u.doorYieldSerial = 0;
     u.blockedTarget = 0; u.blockedShots = 0; u.repositions = 0; u.searchFailed = 0;
     u.standbyState = {}; u.guardNoMoveState = {}; u.guardNoMoveActive = false;
+    // An unfinished site's GetBuilt is one of the old object's missions; the
+    // new one (512060, not finished) starts its own, a fresh 300-tick sleep
+    // (I: its missions are new; the unfinished creation's GetBuilt not emulated).
+    u.siteTimer = {}; u.siteWorkLate = false; u.beingBuilt = false;
     // 52aae0, 51a880, 519b10: fresh weapon records, every slot auto.
     u.weaponSlot = 0; u.weaponAuto = true;
     u.reloads[0] = u.reloads[1] = u.reloads[2] = 0;
