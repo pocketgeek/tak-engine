@@ -3284,10 +3284,12 @@ Fixed World::retailGroupLimit(const Unit& u) const {
     if (index>=retailGroupPaced_.size() || !retailGroupPaced_[index] || u.type->canFly) return Fixed();
     const auto* record=retailGroupOf(u);
     if (!record || !record->active) return Fixed();
-    // A computer player (owner +0xea == 3) takes navigator vt+0x3c instead,
-    // which is zero for ground navigators (4e60d0): no group cap. Our
-    // computer players are the slots with the AI's automatic gates.
-    if (players_[size_t(u.player)].automaticGates) return Fixed();
+    // 4d978f: owner kinds 1 and 2, this machine's human and computer, take
+    // the cap; kind 3 is a REMOTE player (navigator vt+0x3c instead, zero for
+    // ground navigators, 4e60d0), whose units its own machine moves. A
+    // computer player is kind 2 where it runs (the battle room 49d067, the
+    // mission loader 4a5524, the campaign start 4d298f), and lockstep runs
+    // every seat as its own machine does, so every owner takes the cap.
     const Fixed multiplier=groundTerrainMultiplier(u);
     const int32_t type=(u.type->maxVel*multiplier).v;
     Fixed moded=Fixed::raw(type);

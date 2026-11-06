@@ -684,7 +684,7 @@ Legion keep the `squad < 0` code below unchanged. Ported, static reading
   (`50b4f0` sets `unit+0xc8`, its set-active `50b700` sets `+8`). A strike
   squad is a formation while it attacks (state 2) and a VTOL squad while it
   has units (S, the thinks `40e180` / `40eb40`), so their members are paced
-  as a human formation's are, except the speed cap (owner kind 3, below).
+  as a human formation's are, the speed cap included (owner kind 2, below).
   The server's classic AI tells the sims those squads with `Cmd::AiGroup`
   (`ClassicBrain::publishGroups`, `World::setAiGroup`, `Unit::aiGroup`).
 
@@ -696,10 +696,15 @@ navigator bit it sets, `4e60f0` `nav+0x114|8`); `50c480` as
 head in Patrol (`403600`, checks at `40361c`/`4037e9`, pushes at `4037ad`/`40383b`,
 the same structure; E since 2026-11-05: `check_retail_group.py` `patrol`, 2,000
 heads against `retailGroundGroupCheck`, all agree), so
-grouped patrols re-form too; and computer players skip the cap (owner
-`+0xea` 3 uses navigator `vt+0x3c`, zero for ground navigators). In the
-World "computer" is a player with the AI's automatic gates (every AI seat,
-and a seat the server AI took over); its group checks still run.
+grouped patrols re-form too. Owner `+0xea` 3 uses navigator `vt+0x3c`
+instead of the cap (zero for ground navigators), but kind 3 is a REMOTE
+player, whose units its own machine moves: a computer player is kind 2 on the
+machine that runs it (the battle room `49d067`, the mission loader `4a5524`,
+the campaign start `4d298f`, S), and `4d978f` caps kinds 1 and 2
+(`probe_formation_speed.py`, E). Until gap hunt 11 the World took kind 3 for
+"computer" and left every AI seat uncapped; lockstep runs every seat as its
+own machine does, so every owner now takes the cap (`retail_group_test`
+`aiSquads`).
 
 **Differential check.** `tools/re/check_retail_group.py` loads randomized
 group records into the emulated binary through retail's own setters

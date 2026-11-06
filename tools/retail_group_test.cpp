@@ -110,9 +110,10 @@ void plain() {
 
 // A computer player's AI squads (Cmd::AiGroup): a strike or VTOL squad is
 // its own record, a formation only while the AI flags it (50b700). Its
-// members are aggregated and get the group checks, but owner kind 3 takes no
-// speed cap (4d95f0 -> navigator vt+0x3c, 0 on the ground). A human player
-// cannot use it.
+// members are aggregated, get the group checks and take the speed cap: a
+// computer player is owner kind 2 on the machine that runs it (4d978f caps
+// kinds 1 and 2; only a remote player, kind 3, is left to its own machine).
+// A human player cannot use it.
 void aiSquads() {
     World world;setup(world,PathfindingMode::Retail);world.setPlayerCount(2);
     world.player(0).automaticGates=true;
@@ -130,11 +131,19 @@ void aiSquads() {
     world.setAiGroup(0,0,23,true);
     require(world.aiFormation(0,23),"AI squad formation flag");
     Fixed fastest;
-    for(int tick=0;tick<120;++tick){world.tick(1.f/30);fastest=fxMax(fastest,world.unit(b)->speed);}
+    for(int tick=0;tick<120;++tick){
+        world.tick(1.f/30);
+        const auto& fu=*world.unit(b);
+        if(formationMission(fu))continue;   // re-forming is not paced (no 0x2000000)
+        fastest=fxMax(fastest,fu.speed);
+        const Fixed cap=Fixed::raw(retailGroupSpeedCap(slow.maxVel.v,fu.baseSpeed.v,fu.type->maxVel.v,fu.type->maxVel.v));
+        require(fu.speed<=cap,"a computer player's formation did not take the speed cap");
+    }
     record=world.retailGroupRecord(a);
     require(record && record->active && record->all[0].count==2 && record->groundSpeed==slow.maxVel.v,
             "a flagged AI squad is not a paced formation");
-    require(fastest>slow.maxVel+Fixed::fromFloat(0.5f),"a computer player's formation took the speed cap");
+    require(fastest>Fixed() && fastest<slow.maxVel+Fixed::fromFloat(0.5f),
+            "a computer player's formation did not take the speed cap");
     const auto before=world.stateHash();
     world.setAiGroup(0,0,23,false);
     require(world.stateHash()!=before,"the AI formation flag is not hashed");

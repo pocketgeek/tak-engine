@@ -186,8 +186,8 @@ their validation reports; both live in [`docs/`](docs/).
   As in the original game, a group (Ctrl+number) is only a saved selection; only a
   formation (Alt+number) keeps together, waits for its stragglers and sends them back
   to it. Before, both did. The Retail computer player's attack waves and flyer squads
-  now keep together the same way, as the original game's do (without slowing to
-  their slowest unit, which the original never does for a computer player).
+  now keep together the same way, as the original game's do, and an attack wave
+  marches at its slowest unit's pace as a formation does.
 - **A factory's new unit joins the factory's group or formation when it leaves the
   factory**, as in the original game, not when it is started, in Retail and Legion
   pathfinding alike. A unit a builder conjures joins the builder's group when it is
