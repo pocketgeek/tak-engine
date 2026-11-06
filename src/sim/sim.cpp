@@ -243,6 +243,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.workerTime = float(info->numberOr("workertime", 1));
             t.income = float(info->numberOr("mogriumincome", 0));
             t.storage = float(info->numberOr("mogriumstorage", 0));
+            t.bounty = float(info->numberOr("mogriumbounty", 0));
             t.footX = int(info->numberOr("footprintx", 1));
             t.footZ = int(info->numberOr("footprintz", 1));
             t.gate = (int(info->numberOr("gate",0))&1)!=0;
@@ -1108,6 +1109,19 @@ void World::activateBuilt(int unitId) {
 // action (4cad50 case 7) pass 1; production, the builders, a revive and a
 // change of owner pass 0 (check_new_unit_mana.py storage). So a game opens
 // with the pool its starting units can store: 5000, the Monarch's.
+void World::creditKillBounty(int player, float bounty) {
+    if (bounty == 0.0f || !validUnitOwner(player)) return;
+    auto& p=players_[size_t(player)];
+    if (p.retailResources) {
+        auto& r=*p.retailResources;
+        r.stored=float(double(bounty)+double(r.stored));
+        r.totalProduced+=double(bounty);
+        p.mana=r.stored;
+        return;
+    }
+    p.mana+=double(bounty);
+}
+
 void World::creditCreationStorage(int unitId) {
     const Unit* u=unit(unitId);
     if (!u || !u->type || !validUnitOwner(u->player)) return;
@@ -9767,6 +9781,7 @@ void World::retireDeath(Unit& u) {
         ++hitter.kills;
         if (!scoreAutomaticDisabled_)
             hitter.score = std::bit_cast<int32_t>(uint32_t(hitter.score) + uint32_t(u.type->experiencePoints));
+        creditKillBounty(u.lastHitPlayer, u.type->bounty);   // 512c6b, whoever owns the score
     }
     creditKill(u);
     u.deathPending = false;

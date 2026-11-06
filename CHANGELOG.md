@@ -342,6 +342,9 @@ their validation reports; both live in [`docs/`](docs/).
 - **A modded unit's `damagemodifier` works as in the original game:** while the unit
   is switched on, every hit it takes (deadly water too, heals not) is scaled by it.
   No unit of the original game sets it.
+- **A modded unit's `mogriumbounty` is paid as in the original game:** the player
+  credited with killing such a unit gains that much mana. No unit of the original
+  game sets it.
 - **A unit that changes sides starts afresh, as in the original game.** A unit
   converted by an enemy, given to an ally or taken over by a mission or a map
   scenario keeps its health and the way it faces, but is a new unit to its new

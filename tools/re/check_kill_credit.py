@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Who gets the credit for a hit and a kill in retail, natively.
 
-Thirteen pieces, each run on synthetic units:
+Fourteen pieces, each run on synthetic units:
 
   * the hitter gate of the damage routine 51a140 -> 51a240: a hitter whose
     object lives (+0x130 & 0x1000000, a dying one too) is stored at +0xf8 and
@@ -54,6 +54,9 @@ Thirteen pieces, each run on synthetic units:
 
   * the reload 530140 starts: the weapon's own word, whatever the unit's
     experience or `v F` multiplier (veterans do not fire faster).
+
+  * mogriumbounty: a credited kill pays the victim type's bounty into the
+    killer player's pool and lifetime total.
 
   * damagemodifier: 51a140 scales a hit under 30000 on an activated unit
     (+0x114 & 2) by UnitDef +0x17e, heals excepted, against
@@ -808,13 +811,49 @@ def damage_modifier(binary):
     return 'damage modifier: %d rows match; only an activated unit (+0x114 & 2) scales a hit under 30000' % len(rows)
 
 
+def bounty():
+    """512ae0's kill branch (512c6b..512c99) natively: on a credited kill the
+    killer's player (+0xfc) gains the victim type's mogriumbounty (UnitDef
+    +0x222, a float) in its resource object's pool ([+0x2510] +0, float,
+    uncapped) and lifetime total (+0x18, double), whatever the scenario's
+    score flag (game +0x3070 & 4). World: creditKillBounty, kill_credit_test."""
+    f = Fixture()
+    stubs = {'4c6750': 2, '4c6800': 2, '523510': 1, '50aa20': 1, '51b4f0': 5, '5066a0': 1,
+             '512ee0': 5, '5ba5d0': 0, '4ee560': 1, '4dc7f0': 0, '4eba00': 0, '4c7190': 0, '52ac00': 2}
+    for name, nargs in stubs.items():
+        f.record(name, nargs)
+    scenario = f.flags; vtable = f.flags + 0x100; stub = f.flags + 0x200
+    f.put(0x62da3c, scenario); f.put(scenario, vtable); f.put(vtable + 0x18, stub)
+    f.p.uc.mem_write(stub, b'\xc2\x04\x00')
+    f.put(f.game + 0x175dc, f.map)
+    resources = f.flags + 0x400
+    paid = 0
+    for kind, finished, same, hitter, owned, amount in itertools.product((1, 3, 5, 6, 8), (0, 1), (0, 1), (3, 10),
+                                                                        (0, 4), (0.0, 25.5)):
+        u = f.unit(1, flags=ALIVE | DYING | DEATH_RUNS, player=2)
+        f.put(u + 0x116, kind << 4, 'B'); f.put(u + 0x108, 0.0 if finished else 0.5, 'f')
+        player = 2 if same else hitter
+        f.put(u + 0xfc, player, 'B'); f.put(u + 0x115, 0, 'B')
+        f.put(f.victim_type + 0x222, amount, 'f'); f.put(f.game + 0x3070, owned)
+        if player != 10:
+            f.put(f.game + player * 0x110 + 0x2510, resources)
+        f.p.uc.mem_write(resources, bytes(0x40)); f.put(resources, 10.0, 'f'); f.put(resources + 0x18, 100.0, 'd')
+        f.call(0x512ae0, (u,))
+        credited = kind in (1, 3, 8) and finished and not same and hitter != 10
+        want = amount if credited else 0.0
+        assert f.get(resources, 'f') - 10.0 == want and f.get(resources + 0x18, 'd') - 100.0 == want, \
+            (kind, finished, same, hitter, owned, amount)
+        paid += credited and amount != 0
+    return 'bounty: a credited kill pays mogriumbounty to the killer player\'s pool and total (%d of 160 cases)' % paid
+
+
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else 'build-o2/retail_script_test'
     for line in (hitter_gate(), attack_multiplier(), death_weapon_shot(), retirement(), mission_kill(),
                  water_hit(), water_death(), deadly_water(binary), carried_water(binary),
                  self_destruct(), self_destruct_hit(), self_destruct_death(), commander(), cargo(),
                  hp_sample(binary), severity(binary), death_sample(), veteran_reload(),
-                 damage_modifier(binary)):
+                 damage_modifier(binary), bounty()):
         print(line)
 
 

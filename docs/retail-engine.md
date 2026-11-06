@@ -86,6 +86,13 @@ scenario percentages, and its level. Two deaths no attack causes credit
 nobody: deadly water hurts through 51a140 with no attacker and damage kind 13
 (51e13f), which keeps the last hitter but becomes the death kind (+0x10f,
 512610 at 51e36c); the mission `Kill` verb (0x4d36eb -> 513130) sends kind 10.
+The same branch pays a bounty (`512c6b..512c99`, gap hunt 9, E:
+`check_kill_credit.py` bounty): the victim type's `mogriumbounty` (UnitDef
++0x222, a float read at `4bffab`, default 0) goes into the killer player's
+resource object (record +0x2510): its pool (+0, float, uncapped there) and
+lifetime total (+0x18, double), whether or not the scenario owns the score.
+No shipped type sets the key and World did not read it
+(`UnitType::bounty`, `World::creditKillBounty`; `kill_credit_test`).
 The same gate counts the kill on the killer object itself: its word
 `+0xfe` (`512ccd`), which `511990` zeroes (`511c16`), a placement's `Kills`
 key sets (default 0, `4c8ea6` into the record's `+0x1e`, copied at `514cfb`;

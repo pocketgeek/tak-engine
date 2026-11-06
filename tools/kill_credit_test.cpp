@@ -70,6 +70,24 @@ int main(int argc,char** argv) try {
         check(scaled==whole/2,"an activated unit's hit ignored its damagemodifier");
     }
     {
+        // 512c6b: a credited kill pays the killer's player the victim type's
+        // mogriumbounty into its pool, uncapped; an uncredited one nothing.
+        UnitType prize=fighter("prize");prize.bounty=25.5f;
+        for (const bool credited:{true,false}) {
+            World w;terrain(w);
+            const int k=w.spawn(&t,400,400,0,0),v=w.spawn(&prize,1200,1200,0,1);
+            w.tick(1.f/30);
+            const double before=w.player(0).mana;
+            w.unit(v)->lastHitBy=k;w.unit(v)->lastHitPlayer=credited ? 0 : 1;
+            w.unit(v)->hp=Fixed();w.unit(v)->deathType=1;
+            w.tick(1.f/30);
+            check(!w.unit(v)->alive() && !w.unit(v)->deathPending,"the prize did not retire");
+            const double gained=w.player(0).mana-before;
+            check(credited ? gained>=25.5 && gained<25.6 : gained<0.1,
+                  credited ? "a credited kill did not pay its bounty" : "an uncredited kill paid a bounty");
+        }
+    }
+    {
         // 51a35a: a hit names its hitter only while the hitter's object lives
         // and is the one that fired; otherwise +0xf8/+0xfc keep the old one.
         World w;terrain(w);

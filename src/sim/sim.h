@@ -377,6 +377,9 @@ struct UnitType {
     float workerTime = 1;
     float income = 0;       // mana/sec (mogriumincome)
     float storage = 0;      // mana cap contribution (mogriumstorage)
+    // mogriumbounty (UnitDef +0x222): on a credited kill (512c6b) the killer's
+    // player gains it in its pool and lifetime total. No shipped type sets it.
+    float bounty = 0;
     int footX = 1, footZ = 1;
     std::string yardMap;      // footX*footZ chars; 'o' blocks, '.'/'c' passable
     // Lowercased general category tokens (FBI category/damagecategory/tedclass).
@@ -2226,6 +2229,9 @@ public:
     // A creation that credits its storage (512060's last argument): the unit's
     // mogriumstorage joins its owner's pool and capacity at once.
     void creditCreationStorage(int unitId);
+    // A credited kill's bounty (512c6b..512c99): the victim type's
+    // mogriumbounty to the killer player's pool and lifetime total, uncapped.
+    void creditKillBounty(int player, float bounty);
     // A finished creation or completion of an isfeature type (the walls):
     // it dies with kind 9 and leaves its feature.
     void finishAsFeature(int unitId);
