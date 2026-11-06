@@ -1282,6 +1282,19 @@ before `512dbb`; E: `check_kill_credit.py` retirement, all 16 cases with
 both): the drain spares the blast's own corpse (`World::sparedCorpse_`), so
 it no longer reaches it (fixed 2026-11-05, `kill_credit_shipped`).
 
+### damagemodifier: an activated unit's hits (gap hunt 9)
+
+`51a140` (`51a16e..51a19a`, E: `check_kill_credit.py` damage modifier, 1,650
+rows) scales a hit before `51a240` when the victim's activation byte has bit 1
+(+0x114 & 2), the kind is not a heal (12) and the damage is under 30000: the
+damage times the type's `damagemodifier` (UnitDef +0x17e, read at `4bfd6f` as
+a float x 65536 truncated, default 1.0), a 64-bit product shifted back 16
+(`5d3dc0`). The packet carries the result, so the HP drop, the hit response and
+HitByWeapon see it; deadly water (kind 13) goes through it too, the
+self-destruct's 30000 does not. No shipped type sets the key; World did not
+read it (`UnitType::damageModifier`, `retailDamageModifier`;
+`kill_credit_test`).
+
 ### A dying unit takes no more hits
 
 `52a330` draws its CRT spread and hands the integer damage to `51a140`, which

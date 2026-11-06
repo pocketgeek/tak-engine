@@ -386,6 +386,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // a finished creation (512301) or completion (429990): the four
             // gates, onoffable without the key, start closed.
             t.activateWhenBuilt = info->numberOr("activatewhenbuilt", 0) != 0;
+            t.damageModifier = Fixed::fromRetailNumber(info->numberOr("damagemodifier", 1.0)).v;
             t.cantBeStoned = info->numberOr("cantbestoned", 0) != 0;
             t.cantBeFrozen = info->numberOr("cantbefrozen", 0) != 0;
             // Retail forces both on Monarchs (icd: def bit18 -> cantbestoned +
@@ -6585,8 +6586,10 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         float armour = std::max(e.vetMul() * e.armBuff * e.scenarioArmor, 0.01f);
         float scaledDamage = w.damageVs(e.type) * atkMul / armour * scale;
         damageCrtUsed_ = true;
-        const int dealt = retailDamageWithSpread(scaledDamage, crtRand(0x52a3ba), uint8_t(damageMode_));
-        (e.player == fromPlayer ? ownDamage : enemyDamage) += dealt;   // 52a330's answer, before 51a140
+        const int answer = retailDamageWithSpread(scaledDamage, crtRand(0x52a3ba), uint8_t(damageMode_));
+        (e.player == fromPlayer ? ownDamage : enemyDamage) += answer;   // 52a330's answer, before 51a140
+        // 51a16e: an activated unit takes the hit through its damagemodifier.
+        const int dealt = retailDamageModifier(answer, uint8_t(w.dmgType), retailActivated(e), e.type->damageModifier);
         // Retail 51a140/51a240: a unit whose HP has reached zero is flagged
         // dying (+0x130 |= 0x1000, 51a639) on the spot, and every later hit
         // that tick returns before touching it -- no HP, no kill credit, no
@@ -20130,8 +20133,10 @@ void World::tick(float dt) {
         if (const uint16_t water = retailDeadlyWaterDamage(tickCounter_,
                 (u.type->canFly && !u.embarked() ? u.flightY : u.groundY).v, seaLevel_, u.type->canHover,
                 waterDamage_ != 0, waterDamage_)) {
-            // As hurt: 64-bit, clamped so that -hp is representable.
-            u.hp = Fixed::raw(int32_t(std::clamp<int64_t>(int64_t(u.hp.v) - int64_t(water) * Fixed::kOne,
+            // As hurt: 64-bit, clamped so that -hp is representable; through
+            // the damagemodifier of an activated unit (51a16e), as any hit.
+            const int32_t taken = retailDamageModifier(water, 13, retailActivated(u), u.type->damageModifier);
+            u.hp = Fixed::raw(int32_t(std::clamp<int64_t>(int64_t(u.hp.v) - int64_t(taken) * Fixed::kOne,
                                                           -int64_t(INT32_MAX), INT32_MAX)));
             // 51a3c2: an unfinished site's progress follows its new HP.
             if (u.retailSite && u.underConstruction && u.retailSite->progress.remaining!=0) {

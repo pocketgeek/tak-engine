@@ -335,6 +335,9 @@ their validation reports; both live in [`docs/`](docs/).
   extra flames never started.
 - **A modded unit with `init_cloaked` starts with its cloak switched on**, as the
   original game does (no unit of the original game uses it).
+- **A modded unit's `damagemodifier` works as in the original game:** while the unit
+  is switched on, every hit it takes (deadly water too, heals not) is scaled by it.
+  No unit of the original game sets it.
 - **A unit that changes sides starts afresh, as in the original game.** A unit
   converted by an enemy, given to an ally or taken over by a mission or a map
   scenario keeps its health and the way it faces, but is a new unit to its new

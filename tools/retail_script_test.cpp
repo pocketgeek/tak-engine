@@ -456,6 +456,13 @@ int main(int argc,char** argv) {
             std::cout<<int(tak::sim::retailHpSample(int16_t(hp),maxDamage))<<'\n';
         return 0;
     }
+    // damage kind activated modifier(16.16) -> the damage 51a140 hands on.
+    if (argc==2 && std::string(argv[1])=="--damage-modifier") {
+        int32_t damage,modifier;int kind,activated;
+        while (std::cin>>damage>>kind>>activated>>modifier)
+            std::cout<<int(int16_t(tak::sim::retailDamageModifier(damage,uint8_t(kind),activated!=0,modifier)))<<'\n';
+        return 0;
+    }
     if (argc==2 && std::string(argv[1])=="--severity") {
         int kind,hp,maxDamage,previous;
         while (std::cin>>kind>>hp>>maxDamage>>previous)

@@ -549,6 +549,10 @@ struct UnitType {
     // activatewhenbuilt (the parser's default is retail's, off; a type built
     // in code keeps this on)
     bool  activateWhenBuilt = true;
+    // damagemodifier (UnitDef +0x17e, 16.16 from the float key, default 1.0;
+    // 4bfd6f): 51a16e scales a hit on an ACTIVATED unit (+0x114 bit 1) by it,
+    // heals and hits of 30000 or more excepted. No shipped type sets it.
+    int32_t damageModifier = 0x10000;
     bool  cantBeStoned = false, cantBeFrozen = false;
     bool  cantBeCaptured = false, cantBeTransported = false;
     // immunetoparalyzer (UnitDef+0x260 bit 26): paralyzer weapons (damage
@@ -2207,6 +2211,12 @@ public:
     void activateBuilt(int unitId);
     // Whether an aura emitter's auras reach anyone this pass (51d3e0).
     static bool retailAuraEmits(const Unit& s);
+    // The activation byte's bit 1 (+0x114 & 2): the script's activation,
+    // or the unit's own flag when it has no script.
+    bool retailActivated(const Unit& u) const {
+        const auto* script=unitScript(u.id);
+        return script ? script->activated : u.active;
+    }
     // Whether the unit's script has been activated (its +0x114 bit 1); tests.
     bool unitScriptActivated(int unitId) const {
         const auto* script=unitScript(unitId);

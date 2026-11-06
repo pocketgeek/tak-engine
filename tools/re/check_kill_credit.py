@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Who gets the credit for a hit and a kill in retail, natively.
 
-Twelve pieces, each run on synthetic units:
+Thirteen pieces, each run on synthetic units:
 
   * the hitter gate of the damage routine 51a140 -> 51a240: a hitter whose
     object lives (+0x130 & 0x1000000, a dying one too) is stored at +0xf8 and
@@ -52,6 +52,10 @@ Twelve pieces, each run on synthetic units:
 
   * the reload 530140 starts: the weapon's own word, whatever the unit's
     experience or `v F` multiplier (veterans do not fire faster).
+
+  * damagemodifier: 51a140 scales a hit under 30000 on an activated unit
+    (+0x114 & 2) by UnitDef +0x17e, heals excepted, against
+    `retail_script_test --damage-modifier`.
 
 The deadly-water rows are answered by `retail_script_test --deadly-water`
 and `--carried-water`.
@@ -759,12 +763,49 @@ def veteran_reload():
     return 'veteran reload: 530140 starts the same reload at every rank (%d nominal/roll pairs)' % len(seen)
 
 
+def damage_modifier(binary):
+    """51a140(0, u, damage, kind, 0) natively: the damage it takes off the HP
+    word with the activation byte (+0x114) and the type's damagemodifier
+    (UnitDef +0x17e, 16.16), against the port."""
+    import random
+    f = Fixture()
+    f.record('409a50', 3); f.record('56c640', 8); f.record('51a660', 2)
+    f.put(0x62d558, f.flags); f.put(f.flags + 0x18, f.flags + 0x100)
+    rng = random.Random(5)
+    rows, expected = [], []
+    for kind in (1, 2, 3, 12, 13):
+        for byte in (0, 1, 2, 3, 0x12):
+            for modifier in (0, 0x8000, 0x10000, 0x18000, 0x30000, -0x10000):
+                for damage in (0, 1, 7, 100, 999, 29999, 30000, 40000) + tuple(rng.randint(0, 30000) for _ in range(3)):
+                    u = f.unit(1); f.put(u + 0x10c, 30000, 'H'); f.put(u + 0xc0, f.units + 0x6000)
+                    f.put(f.victim_type + 0x1be, 32767)
+                    f.put(u + 0x114, byte, 'B'); f.put(f.victim_type + 0x17e, modifier & 0xffffffff)
+                    f.call(0x51a140, (0, u, damage, kind, 0))
+                    hp = f.get(u + 0x10c, 'h')
+                    if kind == 12:   # a heal: never scaled, added up to maxdamage
+                        assert hp == min(30000 + (damage & 0xffff), 32767), (damage, byte, modifier, hp)
+                        rows.append('%d %d %d %d' % (damage, kind, byte & 2, modifier))
+                        expected.append('%d' % damage)
+                        continue
+                    rows.append('%d %d %d %d' % (damage, kind, byte & 2, modifier))
+                    expected.append('%d' % ((30000 - hp) & 0xffff))
+    output = subprocess.run([binary, '--damage-modifier'], input='\n'.join(rows) + '\n',
+                            text=True, capture_output=True, check=True)
+    actual = output.stdout.splitlines()
+    assert len(actual) == len(expected), (len(actual), len(expected))
+    bad = ['%s port %s native %s' % (row, got, want) for row, got, want in zip(rows, actual, expected)
+           if (int(got) & 0xffff) != (int(want) & 0xffff)]
+    assert not bad, '\n'.join(bad[:10])
+    return 'damage modifier: %d rows match; only an activated unit (+0x114 & 2) scales a hit under 30000' % len(rows)
+
+
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else 'build-o2/retail_script_test'
     for line in (hitter_gate(), attack_multiplier(), death_weapon_shot(), retirement(), mission_kill(),
                  water_hit(), water_death(), deadly_water(binary), carried_water(binary),
                  self_destruct(), self_destruct_hit(), self_destruct_death(), commander(), cargo(),
-                 hp_sample(binary), severity(binary), death_sample(), veteran_reload()):
+                 hp_sample(binary), severity(binary), death_sample(), veteran_reload(),
+                 damage_modifier(binary)):
         print(line)
 
 
