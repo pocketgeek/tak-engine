@@ -247,6 +247,18 @@ bool Vm::start(const std::string& script, const std::vector<int32_t>& args) {
     return true;
 }
 
+bool Vm::startNow(const std::string& script, const std::vector<int32_t>& args) {
+    if (native_ || ticking_) return start(script, args);
+    if (!start(script, args)) return false;
+    ticking_ = true;
+    run(threads_.back());
+    ticking_ = false;
+    for (auto& t : pending_) threads_.push_back(std::move(t));
+    pending_.clear();
+    std::erase_if(threads_, [](const Thread& t) { return t.dead; });
+    return true;
+}
+
 int32_t Vm::call(const std::string& script, const std::vector<int32_t>& args) {
     lastLocals_.clear();
     lastReturn_ = 0;

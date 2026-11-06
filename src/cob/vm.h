@@ -84,6 +84,11 @@ public:
 
     // Start a script by name with integer args; returns false if unknown.
     bool start(const std::string& script, const std::vector<int32_t>& args = {});
+    // Start a script and run its first slice at once, until it sleeps, waits
+    // or ends (retail's run-now start, 56c680 with its flag set: 56c870 runs
+    // the VM at the same time, where only the new thread is due). Inside a
+    // tick it starts as `start` does. Interpreted VMs only.
+    bool startNow(const std::string& script, const std::vector<int32_t>& args = {});
 
     // Run a script SYNCHRONOUSLY to completion and return its top-level RETURN
     // value (0 if the script is absent or yields without returning). This is for

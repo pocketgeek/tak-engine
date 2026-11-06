@@ -97,6 +97,11 @@ public:
     // its old owner and UnitDestroyed (replacedObjectDied, with the deaths).
     void objectReplaced(int id);
     void replacedObjectDied(World& w, int id, const UnitType* type, int oldPlayer);
+    // The retirements World is about to feed, in order, each with the World
+    // slot of the owner whose population word it still holds (its old owner
+    // for a change of owner's old object). GET(5) counts the ones from the
+    // unit whose UnitDestroyed runs to the end (runUnitDestroyed).
+    void setRetiring(std::vector<std::pair<int, int>> r) { retiring_ = std::move(r); }
 
     int outcome() const { return outcome_; }   // 0 running / +1 victory / -1 defeat
     // Run one MAP_COMMAND by its name, as the script would (tests).
@@ -132,6 +137,8 @@ private:
     }
     int retailOwner(int player) const;   // World slot -> retail player byte (+0xfd)
     int worldPlayer(int record) const;   // retail player record index -> World slot
+    void runUnitDestroyed(World& w, int id, int owner);
+    std::vector<std::pair<int, int>> retiring_;   // see setRetiring
     int32_t getValue(World& w, int32_t valId, const std::vector<int32_t>& args);
     void setUnitValue(int32_t valId, int32_t value);
 

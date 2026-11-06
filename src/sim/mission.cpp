@@ -188,11 +188,25 @@ void MissionScript::conditionDeaths(World& w, const UnitType* type, int player, 
 }
 
 void MissionScript::unitDied(World& w, int id) {
-    if (const Unit* victim=w.unit(id)) conditionDeaths(w,victim->type,victim->player,id);
+    const Unit* victim=w.unit(id);
+    if (victim) conditionDeaths(w,victim->type,victim->player,id);
     triggerBits_.erase(id);
-    if (!vm_ || cob_.scriptIndex("UnitDestroyed") < 0) return;
-    world_ = &w;
-    vm_->start("UnitDestroyed", {id});
+    runUnitDestroyed(w,id,victim ? victim->player : -1);
+}
+
+// 512b4e: the scenario's +0x18 (4d2d90) starts UnitDestroyed with the run-now
+// flag (56c640 -> 56c680 -> 56c870), so its first slice runs inside the
+// retirement, before 512e52 takes the unit off its owner's population word:
+// a GET(5) there counts the retiring unit and the ones retiring after it this
+// tick (retiring_, set by World's feed).
+void MissionScript::runUnitDestroyed(World& w, int id, int owner) {
+    const bool listed=!retiring_.empty() && retiring_.front().first==id;
+    if (!listed) retiring_.insert(retiring_.begin(),{id,owner});
+    if (vm_ && cob_.scriptIndex("UnitDestroyed") >= 0) {
+        world_ = &w;
+        vm_->startNow("UnitDestroyed", {id});
+    }
+    retiring_.erase(retiring_.begin());
 }
 
 void MissionScript::objectReplaced(int id) { triggerBits_.erase(id); }
@@ -205,9 +219,7 @@ void MissionScript::objectReplaced(int id) { triggerBits_.erase(id); }
 // the change, objectReplaced) is left alone.
 void MissionScript::replacedObjectDied(World& w, int id, const UnitType* type, int oldPlayer) {
     conditionDeaths(w,type,oldPlayer,0);
-    if (!vm_ || cob_.scriptIndex("UnitDestroyed") < 0) return;
-    world_ = &w;
-    vm_->start("UnitDestroyed", {id});
+    runUnitDestroyed(w,id,oldPlayer);
 }
 
 // ---- MAP_COMMAND dispatch (on the resolved verb string) --------------------
@@ -625,6 +637,7 @@ int32_t MissionScript::getValue(World& w, int32_t valId, const std::vector<int32
             int n = 0;
             for (const auto& u : w.units())
                 if (World::retailObjectLives(u) && u.player == player) ++n;
+            for (const auto& [id, owner] : retiring_) n += owner == player;
             return n;
         }
         case 7: {

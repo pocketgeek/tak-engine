@@ -282,5 +282,33 @@ int main(int argc,char** argv) {
         check(m.get(w,35,{big,0,0,0})==9 && m.get(w,36,{big,0,0,0})==10,"GET(35/36) is the footprint-origin cell");
         check(m.get(w,40,{1,0,0,0})==1234,"GET(40, 1) is Player2's score");
     }
+    {
+        // UnitDestroyed starts with the run-now flag (4d2d90 -> 56c680), so its
+        // first slice runs inside the retirement (512ae0), before 512e52 takes
+        // the unit off its owner's population word: GET(5) there counts the
+        // retiring unit and those retiring after it in the same tick.
+        // UnitDestroyed: WriteValue pop, GET(5, 1).
+        const std::vector<uint32_t> code={0x10021001,5,0x10021001,1,0x10021001,0,0x10021001,0,0x10021001,0,
+            0x10043000,0x10073000,0,1,0x10024000,0x10021001,0,0x10065000};
+        std::vector<uint8_t> cob(512);
+        auto put=[&](size_t offset,uint32_t value){std::memcpy(cob.data()+offset,&value,4);};
+        put(0,6);put(4,1);put(12,uint32_t(code.size()));put(24,52);put(28,56);
+        put(36,160);put(44,60);put(48,1);put(52,0);put(56,72);put(60,96);
+        std::memcpy(cob.data()+72,"UnitDestroyed",14);std::memcpy(cob.data()+96,"WriteValue pop",15);
+        for(size_t i=0;i<code.size();++i)put(160+i*4,code[i]);
+        sim::World w;w.setTerrain(std::vector<uint8_t>(64*64,50),64,64,0);
+        w.spawn(soldier,100,100,0,0);
+        int enemy[3];for(int& id:enemy)id=w.spawn(soldier,300,100,0,1);
+        auto m=std::make_unique<sim::MissionScript>(cob,tdf::Node{},registry,0,"population fixture");
+        auto* mission=m.get();w.setMission(std::move(m));
+        w.tick(1.f/30);
+        auto kill=[&](int id){w.unit(id)->hp=sim::Fixed();w.unit(id)->overkill=sim::Fixed::fromInt(50);w.unit(id)->deathType=1;};
+        kill(enemy[0]);
+        for(int i=0;i<3;++i)w.tick(1.f/30);
+        check(mission->value("pop")==3,"a UnitDestroyed's GET(5) still counts the retiring unit");
+        kill(enemy[1]);kill(enemy[2]);
+        for(int i=0;i<3;++i)w.tick(1.f/30);
+        check(mission->value("pop")==1,"and those retiring after it in the same tick, not those before");
+    }
     return failed?1:0;
 }

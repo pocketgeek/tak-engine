@@ -20938,8 +20938,15 @@ void World::tick(float dt) {
     justDied_.clear();
     if (mission_) {
         TAK_PASS();
+        // Each UnitDestroyed runs its first slice in its retirement, where the
+        // population words still hold the units retiring after it.
+        std::vector<std::pair<int,int>> retiring;
+        for (int id : died) if (const Unit* u=unit(id)) retiring.push_back({id,u->player});
+        for (const auto& o : replaced) retiring.push_back({o.id,o.owner});
+        mission_->setRetiring(std::move(retiring));
         for (int id : died) mission_->unitDied(*this, id);
         for (const auto& o : replaced) mission_->replacedObjectDied(*this, o.id, o.type, o.owner);
+        mission_->setRetiring({});
         mission_->step(*this, dt);
     }
     // Scenario (.crt) trigger runner: same lockstep contract as the mission
