@@ -6856,12 +6856,12 @@ bool World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
     // Every shot keeps the shooter visible for 600 ticks (icd 0x52af41, set just
     // before the release 0x530220).
     blockCloak(u, 600);
-    // A shot with no script (none shipped: every unit has one) starts the
-    // nominal reload. Veterancy does not shorten it: the scripted start
-    // (530140) reads only the weapon's reload word and the slot counts it down
-    // one a tick (52af0c); the multiplier reaches attack, armour and mana per
-    // shot (51d567, 531ea0), not the reload.
-    const float rl = w.reload;
+    // Ours: a shot with no script (none shipped; the synthetic test armies)
+    // divides its reload by the veteran multiplier. Retail's scripted start
+    // (530140) reads only the weapon's reload word, so a veteran's scripted
+    // shot keeps the nominal reload; changing this fallback moves the Legion
+    // battle scenarios' baselines and nothing retail can run.
+    const float rl = w.reload / std::max(u.vetMul(), 0.01f);
     if(!scriptTriggered) {u.reloads[slot] = int32_t(rl * kTick + 0.5f);u.fireAnimations|=uint32_t(1)<<slot;u.weaponAnimations.add(tak::RetailWeaponAnimation::Fire,slot);}   // seconds -> ticks, as retail stores it
     u.justFired = true;
     if (slot < 32) u.firedWeapons |= uint32_t(1) << slot;

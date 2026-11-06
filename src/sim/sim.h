@@ -1627,8 +1627,9 @@ struct alignas(64) Unit {
     bool incapacitated() const { return frozenFor > 0 || stonedFor > 0 || paralyzedFor > 0; }
     // Veterancy stat multiplier (retail: base 1.0, +10% per level, level capped
     // at 10 => up to 2.0x). Scales attack up, armor up (less damage taken) and
-    // divides mana per shot; not the reload (530140 reads the weapon's own).
-    // Verified against KINGDOMS.icd. See retail-engine-internals.
+    // divides mana per shot; not the reload (530140 reads the weapon's own),
+    // except in World's script-less fallback (fire). Verified against
+    // KINGDOMS.icd. See retail-engine-internals.
     // A mission's `v F` (vetOverride) replaces it, as getMult 0x5193c0 does.
     float vetMul() const {
         if (vetOverride != 0.0f && type && !type->noVeteran) return vetOverride;

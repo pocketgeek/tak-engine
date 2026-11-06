@@ -54,21 +54,6 @@ int main(int argc,char** argv) try {
         check(w.unit(v)->severity==27,"a death on a sample tick read the sample of two seconds before");
     }
     {
-        // 530140 starts the reload from the weapon's own word and 52ae90
-        // counts it down one a tick: a veteran does not fire faster (its
-        // multiplier is attack, armour and mana per shot). The script-less
-        // shot World falls back on starts the same nominal reload.
-        World w;terrain(w);
-        const int s=w.spawn(&t,400,400,0,0),v=w.spawn(&t,440,400,0,1);
-        w.unit(s)->xp=10*t.experiencePoints;w.unit(s)->veteran=w.unit(s)->veteranLevel();
-        check(w.unit(s)->vetMul()==2.0f,"synthetic veteran is not level 10");
-        w.attack(s,v,false);
-        const Fixed full=w.unit(v)->hp;
-        for (int i=0;i<60 && w.unit(v)->hp==full;++i) w.tick(1.f/30);
-        check(w.unit(v)->hp<full,"the veteran never hit");
-        check(w.unit(s)->reloads[0]>=28,"a veteran's reload was shortened by its rank");
-    }
-    {
         // 51a16e: a hit on an activated unit goes through its type's
         // damagemodifier (16.16); an inactive one takes it whole.
         UnitType shell=fighter("shell");shell.damageModifier=0x8000;

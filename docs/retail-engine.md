@@ -124,9 +124,12 @@ multiplies +0xe0 and +0xe4 each tick) and **divides** the mana per shot
 unchanged. It does not touch the reload (S, gap hunt 9): `530140` starts a
 slot's reload from the weapon's own reload word (+0x9c) with its +-20% CRT
 spread, and `52ae90` counts it down one a tick (`52af0c`). This note used to
-say veterans fire faster, and World's script-less fallback in `World::fire`
-divided its reload so; no shipped unit lacks a script, and the fallback now
-starts the nominal reload (`kill_credit_test`). `noveteran` opts out; `veteranmodel` swaps the mesh at max rank.
+say veterans fire faster. World's scripted shots start the nominal reload
+(`retailWeaponReload`); only its script-less fallback in `World::fire`, which
+no shipped unit reaches (every one has a script) and the synthetic test armies
+use, still divides its reload by the multiplier, since changing it moves the
+Legion battle scenarios' baselines for no retail behaviour. `noveteran` opts
+out; `veteranmodel` swaps the mesh at max rank.
 
 **Build/repair rate** (`@0x4d4b30`, the `hp=%i buildtime=%i buildrate=%i` system):
 
