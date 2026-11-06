@@ -210,10 +210,6 @@ their validation reports; both live in [`docs/`](docs/).
   and attackers, its troops walking to board a transport and its transports on their
   way to pick them up or set them down now count as moving with it, and its guards
   keep to its pace.
-- **In Retail pathfinding, troops riding a transport stay part of their formation**,
-  as in the original game: the formation keeps together around them where the
-  transport carries them, but never waits for them or sends them back to their
-  places while they ride.
 - **In Legion pathfinding, an idle unit in a formation that ends up out of its place
   walks back to it by itself.** This is TAK Engine's own Legion behaviour, matching
   how a formation re-forms in Retail pathfinding and the original game: when a unit
@@ -331,10 +327,9 @@ their validation reports; both live in [`docs/`](docs/).
   as soon as it is finished: it still blocks the way and can be smashed, but it is
   no longer a unit you can select, that counts against your units, or that enemies
   pick as a target. Building one no longer counts as a loss.
-- **Priests, the Lihr, the Zhon Shaman and the Aramon Smith have their auras again.**
-  Earlier changes in this release left every healing and armour or attack aura
-  switched off. They work as in the original game: a paralysed priest still
-  heals, and so does a Sacred Fire you switch off.
+- **Auras keep working while their unit is paralysed or switched off**, as in the
+  original game: a paralysed priest still heals, and so does a Sacred Fire you
+  switch off.
 - **A selected unit of yours shows how many enemies it has killed**, beside its health
   and mana bars, as in the original game (once it has a kill). A unit that changes
   sides starts again from none.
@@ -376,7 +371,8 @@ their validation reports; both live in [`docs/`](docs/).
   its way back. A unit that a factory or a Zhon builder is making does not fade while
   its maker holds on to it, even when the maker is paused, stunned, boarding a ship
   or helping elsewhere: it waits with its progress, as before (the original game
-  would let it fade).
+  would let it fade). An unfinished building that changes sides never fades away,
+  as in the original game; its new owner can still finish it.
 - **A unit that changes sides starts afresh, as in the original game.** A unit
   converted by an enemy, given to an ally or taken over by a mission or a map
   scenario keeps its health and the way it faces, but is a new unit to its new
