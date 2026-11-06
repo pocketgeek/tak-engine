@@ -12,10 +12,10 @@ independent security audit or protection against a volumetric DDoS.
 ## Versions
 
 Server and clients must speak the same gameplay protocol; update the server and
-every client together when it changes. **0.9.19 changed it (protocol 311):** a 0.9.19
-`takserver` turns away 0.9.18 and older clients with a *protocol version mismatch*
-message, and a 0.9.18 or older server turns away 0.9.19 clients, so a server still on
-0.9.18 or older must update. (0.9.16, 0.9.17 and 0.9.18 shared protocol 309; 0.9.15 and 0.9.14 used protocol 308, 0.9.13 307, 0.9.12 305, 0.9.11 304; 0.9.9 and 0.9.10 shared 303;
+every client together when it changes. **0.9.20 changed it (protocol 312):** a 0.9.20
+`takserver` turns away 0.9.19 and older clients with a *protocol version mismatch*
+message, and a 0.9.19 or older server turns away 0.9.20 clients, so a server still on
+0.9.19 or older must update. (0.9.19 used protocol 311; 0.9.16, 0.9.17 and 0.9.18 shared protocol 309; 0.9.15 and 0.9.14 used protocol 308, 0.9.13 307, 0.9.12 305, 0.9.11 304; 0.9.9 and 0.9.10 shared 303;
 306 was never released.) Since 0.9.12 a
 server whose game has no human player left (AIs watched by spectators) no longer
 computes the lockstep check nobody compares, except for a recorded replay's

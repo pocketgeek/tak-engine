@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Quick start](quick-start.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Changelog](../CHANGELOG.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.9.19**. Which versions it plays with, and whose
+This guide covers **TAK Engine 0.9.20**. Which versions it plays with, and whose
 replays it plays: see [Versions](#versions). What changed in each release: see
 the [CHANGELOG](../CHANGELOG.md). It is written for three kinds of reader:
 
@@ -609,10 +609,13 @@ square by square: black, darkened and clear.
 
 ### The goal
 
-In a normal skirmish, each player starts with **only their Monarch**. You build
-an economy and an army from nothing. A player is out when they lose their Monarch
-(unless **Monarch Expendable** is on) or when they have no units left. The last
-team standing wins.
+In a normal skirmish, each player starts with **only their Monarch** and 5,000
+mana, the Monarch's whole store, as in the original game. You build an economy
+and an army from nothing. A player is out when they lose their Monarch (unless
+**Monarch Expendable** is on) or when they have no units left. The last team
+standing wins. With Monarch Expendable off, losing your Monarch (or the transport
+carrying it) also loses everything else of yours at that moment, every unit and
+building, as in the original game; scenario games keep their own rules.
 
 #### Scenario games
 
@@ -685,7 +688,11 @@ for later.
 
 **Personal mana.** Spellcasters, priests and the Monarch also have their **own**
 mana pool, shown on the unit. Their spells and special abilities draw from it,
-and it recharges over time.
+and it recharges over time. As in the original game, a new unit starts with an
+empty pool, whether it is trained, built, conjured or raised, and fills it at its
+recharge rate once it is finished, so its costly spells wait until it has the
+mana; the units a game starts with start empty too. A unit that changes sides
+starts again with an empty pool.
 
 **Allies.** Teammates can share surplus mana automatically. See
 [Teams, allies and diplomacy](#teams-allies-and-diplomacy).
@@ -795,6 +802,13 @@ target underneath.
   moves on to its next order. A site blocked by anything else, such as a
   building, a rock it cannot reclaim, unsuitable ground or the unit cap, is
   given up at once.
+- **Abandoned sites decay**: as in the original game, a site nobody works on
+  stands for a second after its last work (eleven seconds if nobody ever worked
+  on it), then fades away at a steady pace set by the kind of building, and every
+  bit that fades gives back its share of the mana spent on it. A builder only
+  walking over to help does not stop the fading. A unit a factory or a Zhon
+  builder is making never fades while its maker holds on to it, even when the
+  maker is paused or busy elsewhere (the original game would let it fade).
 
 **Training units at a building.** Select a production building and click its
 build icons:
@@ -877,7 +891,7 @@ move, and removes wrecks before a priest can raise them.
   to reach.
 - The box has to be at least
   about 32 pixels wide and 32 tall (at 100% UI scale); a smaller or thinner
-  drag is an ordinary right-click order. The orange box and the broom cursor
+  drag is an ordinary right-click order. The yellow box and the broom cursor
   appear once the drag is big enough, and the box stays on the ground you
   pressed if the view scrolls or zooms while you drag.
 
@@ -887,6 +901,12 @@ Some priests raise the dead. A priest that can resurrect brings back your own
 fallen units from their bodies, at a tenth of their health; one that can
 animate raises any body, friend or foe, as one of its own creatures at full
 health. An idle priest starts on a body lying close by of its own accord.
+
+As in the original game, a body in water (a sunken ship, a unit fallen in the
+shallows, or a unit turned to stone or ice there) sinks slowly to the bottom and
+stays there to be raised or reclaimed; only one sinking towards the deepest sea
+floor fades from view. Whether a body at the water's edge sinks depends on the
+ground right under it.
 
 - As in the original game, raising costs no mana and never shows in the mana
   bulb.
@@ -945,7 +965,13 @@ whatever the stance.
 while they carry out a move or a patrol, without stopping or turning to aim:
 only hovering attack flyers, and the few ground units that must turn in place
 to aim, face their target first. A unit standing with no orders turns towards
-what it shoots. Units pick targets among the enemies their player can see.
+what it shoots. Units pick targets among the enemies their side can see, with
+their own sight or any of their team's (allies share sight, computer allies too), so
+catapults and other long-range units need a spotter near the enemy. As in the
+original game, units on standby, patrol or an attack-move take only enemies already
+in weapon range (units that fight hand to hand go after any enemy they see), and
+among those the choice is a weighted draw: nearer, weaker and easier targets are
+likelier. A unit hit by an enemy it cannot see still fights back.
 As in the original game, units aim at the middle of the target's body as it
 stands at that moment, so spears and arrows strike chest-high rather than at
 the feet.
@@ -1004,7 +1030,13 @@ themselves, by the original game's rules: for example a splash weapon when
 enemies are bunched together and their own units are not.
 
 **Veterancy.** Units gain experience by destroying enemies and grow stronger as
-they rank up. Some units, such as Monarchs, never gain ranks.
+they rank up. As in the original game, each kill earns a unit the experience its
+victim is worth, and the unit gains a rank each time that adds up to its own worth
+again, up to rank 10: killing a unit worth more than itself can earn more than one
+rank, a cheaper one less. Buildings and towers rank up too. Killing your own units,
+unfinished units, or a unit that self-destructs or drowns earns nothing. Some units,
+such as Monarchs, never gain ranks. A selected unit shows its kill count beside its
+bars once it has a kill.
 
 **Status effects.** Some weapons and spells **petrify** or **freeze** a unit,
 which dies as a statue, **paralyse** it, which stops it until the effect wears
@@ -1030,8 +1062,10 @@ gate. Clicking the doorway of an open gate is like clicking the ground, so a
 right-click there moves units through or into the opening; click a gate post or
 close the gate to select it.
 
-**Self-destruct.** **Ctrl+Shift+D** starts a five-second self-destruct on the
-selected units. Press it again to cancel.
+**Self-destruct.** **Ctrl+Shift+D** starts a self-destruct on the selected
+units: after a two-second countdown each one goes, up to half a second later at
+random, as in the original game. Press it again to cancel; if some of the
+selected units are already counting down, it cancels theirs and starts none.
 
 ### Air units
 
@@ -1056,9 +1090,15 @@ units in the same group or formation:
   front). Flyers in a group fly at their own speed to where you send them, as
   they do when they are in no group.
 - In **Retail** mode, as in the original game, they are never slowed to the
-  army's pace. A flyer that gets far out of place is sent back to the group,
-  and a flyer that gets ahead of the group a second time has a one-in-four
-  chance to drop all its orders and stop where it is.
+  army's pace. In a formation, a flyer that gets far out of place is sent back
+  to it, whatever it is doing (moving, patrolling, attacking, guarding). A flyer
+  moving or patrolling that gets ahead of the formation a second time has a
+  one-in-four chance to drop all its orders, and then goes back to the formation
+  as an idle member; a guarding flyer that keeps falling out of place may give up
+  guarding the same way. One that has caught up while the formation still moves
+  circles near it until it stops. A group (Ctrl+number) is
+  only a saved selection, so flyers in a group fly at their own speed and are
+  never sent back.
 
 ![Side-by-side pictures of the same Zhon formation: in Retail the flyers are far ahead of the ground units, in Legion they fly over the leading ground units](img/guide/flyers-retail-legion.jpg)
 
@@ -1267,23 +1307,25 @@ speed keys are fixed.
 
 | Input | Action |
 | --- | --- |
-| **Left-click** | Select a unit. |
+| **Left-click** | Select a unit. Where units overlap, the smallest one under the pointer, the one the cursor shows. Left-clicking an enemy or ally clears your selection, as in the original game; with nothing of yours selected it selects that unit so you can look at it. |
 | **Left-drag** | Box-select your own units. If the box catches any armed mobile units, the builders and buildings in it are left out. |
 | **Double-click** a unit of yours | Select every unit of that type drawn on the screen (not under the panels). Enemy and allied units select just the one. |
 | **Shift** + double-click | Add all of that type on the screen to the selection. |
 | **Ctrl** + double-click | Remove all of that type on the screen from the selection. |
-| **Shift** + select | Add to the selection. |
+| **Shift** + select | Add to the selection; Shift-clicking a unit already selected removes it. |
 | **Ctrl** + select | Remove from the selection. |
-| **Right-click** | The natural order for what is under the cursor: move, attack, guard, repair, load, reclaim and so on. |
+| **Right-click** | The natural order for what is under the cursor: move, attack, guard, repair, load, reclaim and so on. As in the original game, the order goes out when you let go of the button, and each selected unit decides for itself what the click means. A loaded transport just moves there. |
 | **Right-click one of your units** | If it is unfinished, the selected builders that can build it help build it and the other units do nothing. Otherwise each selected unit decides for itself: a mobile builder repairs it if it is damaged, and every other unit that can guard (builders included, gods not) guards it. The pointer shows repair when a builder will repair; for a guard it stays the select arrow, as in the original. |
-| **Right-click an enemy** | Attack it. As in the original, the pointer shows the attack cursor whenever a selected unit's active weapon can hurt that enemy; a unit that can move walks into range, however far away the enemy is. The "too far" cursor means no selected unit can attack it from where it is: the active weapon cannot hurt that enemy (it does no damage to it, the unit is never allowed to target that kind of unit, it is an anti-air weapon and the enemy is on the ground, a ground weapon and the enemy is flying, or a stoning or freezing weapon and the enemy is immune), or a tower or other building has the enemy out of range or inside its minimum range. A building still takes the order and fires once the enemy comes in range. A selected factory sends the units it builds after that enemy. |
-| **Shift + right-click** | Queue that order after the current ones. |
-| **Right-drag** with a reclaiming builder | Reclaim everything in the box (at least about 32 × 32 pixels; a smaller drag is an ordinary right-click). |
+| **Right-click an enemy** | Attack it. As in the original, the pointer shows the attack cursor whenever a selected unit's active weapon can hurt that enemy; a unit that can move walks into range, however far away the enemy is. The "too far" cursor means no selected unit can attack it from where it is: the active weapon cannot hurt that enemy (it does no damage to it, the unit is never allowed to target that kind of unit, it is an anti-air weapon and the enemy is on the ground, a ground weapon and the enemy is flying, or a stoning or freezing weapon and the enemy is immune), or a tower or other building has the enemy out of range or inside its minimum range. A building still takes the order and fires once the enemy comes in range. A selected factory sends the units it builds after that enemy. Among the selection, units with no weapon walk there and a unit that cannot hurt the enemy stays put. |
+| **Shift + right-click** | Queue that order after the current ones. On an order already queued (the same target, or within 16 pixels of a queued point) it takes that order back. |
+| **Ctrl + right-click** | Put the order at the front of each unit's queue: it does that first, then carries on with what it was doing. Ctrl on an order already queued takes it back, as Shift does. |
+| **Alt + right-click** | Unload the selected transports there. |
+| **Right-drag** | A box (at least about 32 × 32 pixels; a smaller drag is an ordinary right-click): the selection attacks the visible enemies in it, nearest first; units with no attack order that can clear it clear the box (reclaim); a lone transport loads your units in it. The cursor shows what the box will do. |
 | **Middle-drag**, or the cursor at a screen edge | Scroll the map. |
 | **Mouse wheel** | Zoom in and out, towards the cursor. Far out, **Options → Tactical Dots** can draw units as minimap-style dots. |
 | **Mouse wheel** during a Shift-drag build line | Space the buildings out (up) or pack them tighter (down), one cell per notch. The camera does not zoom. |
 | **Minimap left-click / drag** | Move the camera. With an order armed, issue it there instead. |
-| **Minimap right-click** | Move the selection there. Shift queues it. |
+| **Minimap right-click** | Move the selection there, or attack, help or repair the unit under the pointer. Shift queues it. |
 | **Right-click a cycling setting** | Go back one choice (left-click goes forward). Works in menus and options. |
 
 ### Orders
@@ -1296,8 +1338,8 @@ pressed button in the command panel; no text appears on screen.
 | Key | Order |
 | --- | --- |
 | **M** | Move. |
-| **A** | Attack. Click an enemy, or click the ground to fight-move there. |
-| **F** | Fight-move: move, attacking enemies met on the way. |
+| **A** | Attack. Click an enemy to attack it, or click the ground or one of your own units to fire at that spot (**Attack Ground**, the original game's fire at a point): ground units and towers fire at the spot, walkers stepping into range first, and flyers make attack runs over it, hover over it or bomb it. Shift queues more spots, which take turns one shot each. |
+| **F** | Fight-move, the original game's move-fight: move to the point, stopping for an enemy seen in range, fighting it and coming back to carry on. Over a friendly unit it does what Move does there. |
 | **P** | Patrol. |
 | **G** | Guard a unit or building. |
 | **H** | Heal or repair a friendly unit or building. |
@@ -1422,7 +1464,10 @@ selected, the information bar shows its name, such as **GROUP 3**.
 - A **group** is a saved selection. Its units each move at their own speed.
 - A **formation** also travels together. In **Legion** mode it moves at the pace
   of its slowest member, and members that fall far behind rejoin once the
-  formation has stopped. In **Retail** mode it keeps together as in the original
+  formation has stopped. An idle member that ends up out of its place (pushed,
+  back from a fight, or sent somewhere on its own) walks back to its spot by
+  itself, and waits if something stands on it; the computer player's attack
+  squads re-form the same way. In **Retail** mode it keeps together as in the original
   game: it moves at its slowest member's pace, and a member that falls out of
   place waits for the others or walks back to them. That goes for flyers too,
   whatever they are doing: moving, patrolling, attacking, guarding or standing
@@ -2336,15 +2381,15 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-TAK Engine 0.9.19 uses network protocol **311** and replay format **15**. No earlier
-release uses protocol 311 (0.9.18, 0.9.17 and 0.9.16 used 309), so:
+TAK Engine 0.9.20 uses network protocol **312** and replay format **15**. No earlier
+release uses protocol 312 (0.9.19 used 311), so:
 
-- **Multiplayer:** 0.9.19 plays only with 0.9.19. A server turns away a client whose
-  protocol differs from its own, so a 0.9.18 or older player cannot join a 0.9.19
-  server, nor a 0.9.19 player an older one; the connection fails with a *protocol
+- **Multiplayer:** 0.9.20 plays only with 0.9.20. A server turns away a client whose
+  protocol differs from its own, so a 0.9.19 or older player cannot join a 0.9.20
+  server, nor a 0.9.20 player an older one; the connection fails with a *protocol
   version mismatch* message. When a release changes the protocol, a server and all of
   its players update together.
-- **Replays:** 0.9.19 plays replays recorded by 0.9.19. A replay recorded by 0.9.18
+- **Replays:** 0.9.20 plays replays recorded by 0.9.20. A replay recorded by 0.9.19
   or earlier needs a version with that replay's protocol; keep an old copy of the
   engine (built from its tag, see the [development guide](development.md)) if you want
   to keep watching old replays.

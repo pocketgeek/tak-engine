@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.19-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.20-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,14 +26,17 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.19
+## What's new in 0.9.20
 
-- Legion: allied units meeting head on swap places, so crowded bridges no longer gridlock.
-- Legion: units queued behind their own army close up and press on; formations flow round obstacles at full speed.
-- Passive AI strikes only near its own buildings.
+- Groups and formations as in the original game: a Ctrl group is a saved selection, a formation keeps together (flyers too), and a factory's new unit joins its group as it leaves.
+- Legion formations re-form: idle members walk back to their places, the computer's squads too.
+- A skirmish opens with 5000 mana; new units start with an empty mana pool.
+- Losing your Monarch loses your whole army (Monarch Expendable off); a transport's passengers die with it.
+- Abandoned building sites fade away and give their mana back; bodies and statues in water sink and stay.
+- Original-game clicks, target search, fire at a point, allied sight, kill credit and veterancy; mission 4 fixed.
 
-Protocol 311: does not play with 0.9.18 or earlier, nor their replays; servers must update too.
-Details in the [CHANGELOG](CHANGELOG.md#0919).
+Protocol 312: does not play with 0.9.19 or earlier, nor their replays; servers must update too.
+Details in the [CHANGELOG](CHANGELOG.md#0920).
 
 ## Features
 

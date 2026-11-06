@@ -19,9 +19,133 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
-## Unreleased
-*protocol 312 · replay format 15 · does not play with 0.9.19 or earlier, nor their replays*
+## 0.9.20
+*2026-11-06 · protocol 312 · replay format 15 · does not play with 0.9.19 or earlier, nor their replays*
 
+- **In Retail pathfinding a Ctrl group no longer moves at its slowest unit's pace.**
+  As in the original game, a group (Ctrl+number) is only a saved selection; only a
+  formation (Alt+number) keeps together, waits for its stragglers and sends them back
+  to it. Before, both did. The Retail computer player's attack waves and flyer squads
+  now keep together the same way, as the original game's do, and an attack wave
+  marches at its slowest unit's pace as a formation does.
+- **A factory's new unit joins the factory's group or formation when it leaves the
+  factory**, as in the original game, not when it is started, in Retail and Legion
+  pathfinding alike. A unit a builder conjures joins the builder's group when it is
+  finished (the original game leaves it out of any group; this one is TAK Engine's
+  own).
+- **In Retail pathfinding, flyers keep to their formation whatever they are doing**,
+  as in the original game. A flyer left behind on patrol, in an air fight, while
+  hunting for a new target, or while guarding flies back to its formation and then
+  carries on; one that keeps falling behind may give up guarding. An idle member,
+  on the ground or in the air, that ends up away from its formation goes back to it
+  by itself, and a flyer that lands, or waits, does so with its formation. A flyer
+  that has caught up while the formation is still moving circles near it, attacking
+  what it finds, until the formation stops. Ground units in a formation do the same
+  while guarding: one left behind walks back to its formation first and then guards
+  on, and one that keeps falling behind may give up guarding. A formation's guards
+  and attackers, its troops walking to board a transport and its transports on their
+  way to pick them up or set them down now count as moving with it, and its guards
+  keep to its pace.
+- **In Retail pathfinding, troops riding a transport stay part of their formation**,
+  as in the original game: the formation keeps together around them where the
+  transport carries them, but never waits for them or sends them back to their
+  places while they ride.
+- **In Legion pathfinding, an idle unit in a formation that ends up out of its place
+  walks back to it by itself.** This is TAK Engine's own Legion behaviour, matching
+  how a formation re-forms in Retail pathfinding and the original game: when a unit
+  standing in a formation (Alt+number) has been pushed, stepped aside, has come back
+  from a fight, or was sent somewhere on its own, and ends up farther from its place
+  than the original game allows, it walks back to its own spot in the formation. The
+  computer player's attack squads re-form the same way, and gather their stragglers as
+  your formations do. If another unit or a building stands on that spot it waits until
+  the spot is free, and if it cannot get there it stays where it stopped instead of
+  trying again and again. A formation you stop on the way stays where it stopped.
+  Flyers keep to their formation as before, and units in a group (Ctrl+number) are
+  left where they are.
+- **New units start with an empty mana pool and fill up, as in the original game.**
+  A mage, priest, dragon or Monarch that is trained, built, conjured, raised or
+  placed at the start of a game used to arrive with a full pool; it now starts
+  empty and regains its recharge rate each second (only once it is finished), so
+  its costly spells, and a spy's cloak, wait until it has the mana. Mission units
+  start with the mana the mission gives them (usually none), and a mission's
+  health setting gives whole hit points as in the original.
+- **Every game opens with the mana its starting units can store, as in the original
+  game.** A skirmish or multiplayer game used to open with 2800 mana a player; it now
+  opens with 5000, the Monarch's whole store. A campaign mission opens each player
+  with the store of the units the mission gives them (it used to be 500), and a
+  unit a mission or a map scenario creates during play adds its whole store to its
+  player's mana at once. Units you train or build add no mana of their own.
+- **An abandoned building fades away as in the original game, and you get its mana
+  back.** A site nobody works on now stands for a second after its last work (eleven
+  seconds when nobody ever worked on it), then fades at a steady pace that depends
+  only on the kind of building, and every bit that fades returns its share of the
+  mana spent on it, until nothing is left. It used to start fading the moment the
+  builder stopped, as fast as it had been built, and gave nothing back. A builder
+  walking over to help no longer keeps a site from fading, and a builder Ctrl-clicked
+  away from its building puts it down again if it fades away while the builder is on
+  its way back. A unit that a factory or a Zhon builder is making does not fade while
+  its maker holds on to it, even when the maker is paused, stunned, boarding a ship
+  or helping elsewhere: it waits with its progress, as before (the original game
+  would let it fade). An unfinished building that changes sides never fades away,
+  as in the original game; its new owner can still finish it.
+- **A building left unfinished until it fades away counts as destroyed**, as in the
+  original game: missions and map scenarios hear of it (a mission goal to destroy
+  that kind of unit counts it), though it is still nobody's kill and no loss. It
+  used to vanish without a word.
+- **A finished wall becomes part of the scenery, as in the original game.** A wall
+  you build, and every wall a campaign mission places, now turns into a wall feature
+  as soon as it is finished: it still blocks the way and can be smashed, but it is
+  no longer a unit you can select, that counts against your units, or that enemies
+  pick as a target. Building one no longer counts as a loss.
+- **A player who loses their Monarch loses their whole army with it.** With Monarch
+  Expendable off, the moment a Monarch dies (or a transport carrying it is destroyed)
+  every other unit and building of that player dies too, as in the original game;
+  before, the player was out but their army stayed on the field. Scenario games keep
+  their own rules.
+- **Troops aboard a destroyed transport count as its killer's kills.** When a
+  transport is destroyed, everyone aboard dies with it at once, as before, and now,
+  as in the original game, each of them counts for whoever destroyed the transport:
+  Kills and score for that player and veteran experience for that unit. A loaded
+  transport that changes sides (charmed or captured) loses its passengers the same
+  way, as in the original game; they used to stay aboard.
+- **Self-destruct keeps the original game's timing.** After its two-second countdown
+  a unit now leaves your command up to half a second later, at random, as in the
+  original game. Pressing self-destruct while some of the selected units already
+  count down now cancels theirs and starts none, as in the original game; it used
+  to start the others too. The notice at the top of the screen now counts the real
+  seconds down (it always said "SELF-DESTRUCT IN 5...").
+- **Deadly water hurts once a second**, as in the original game: the map's whole
+  water damage each second to anything standing at or below the water line that
+  cannot hover, ships included, and troops carried on a ship too (a flyer's
+  passengers high above the water are safe). A unit the water kills dies that
+  moment, not a moment later.
+- **Units that explode when they die do it when their death ends.** A Bomb
+  Sprinkler, Kamikaze Rat, Grenadier, Fire Wagon, Shock Trooper or Dirigible now
+  bursts once its death animation is over, as in the original game (the Bomb
+  Sprinkler about five seconds after it falls), not the moment it is killed. The burst
+  belongs to nobody: its kills earn no player a kill or score and no unit experience,
+  and it is not stronger for a veteran. It bursts before its own body is left behind,
+  so it never damages that body. On a map made with the sea-level trigger switched
+  off (none of the original maps), a burst, or any shot that hits nothing, landing in
+  the water does nothing at all, as in the original game.
+- **Bodies and statues in water settle on the bottom and stay**, as in the original
+  game: a sunken ship or a body in the shallows, and now also a unit turned to stone
+  or ice there, sinks slowly to the sea bed and stays there to be raised or
+  reclaimed, and only one sinking towards the deepest sea floor fades from view on
+  the way down. Before, every body in the water vanished after two and a half
+  seconds and a statue stood on the water for good. A sinking body that is reclaimed
+  stops where it is until the reclaim takes it away; one a builder starts to reclaim
+  and then leaves rots away as a body on land does. Bodies on land that rot away
+  last about two seconds longer, as in the original game.
+- **Bodies at the water's edge sink or stay as in the original game.** Whether a
+  fallen unit's body sinks now depends on the height of the ground right under it,
+  as in the original game, so bodies lying level with the water sink, and bodies on
+  dry ground beside a deep spot stay to be raised or reclaimed.
+- **How badly a unit is wrecked when it dies follows the original game.** The death
+  animation and body a unit leaves depend on how hard the last blow hit it and on
+  its health a second earlier. That earlier health is now taken in whole numbers and
+  just before the death, as in the original game, so a unit dying on the second
+  reads its health of one second before rather than two.
 - **Clicks do what the original game's clicks do, and the cursor says so.** Orders now
   go out when you let go of the button, as in the original game, and every click
   picks the same unit the cursor shows: where units overlap, the smallest one under
@@ -59,70 +183,6 @@ their validation reports; both live in [`docs/`](docs/).
     away. Shift- or Ctrl-clicking the same order again (on the same target, or
     within 16 pixels of a queued point) takes that queued order back. For a factory,
     or a Zhon builder repeating production, both work on its rally orders.
-- **A unit no longer ignores an enemy for good after its shots hit a rock.** A unit
-  that wrote off an enemy because three shots in a row struck a hill or rock used to
-  keep skipping it, even after that enemy walked into the open, until you gave it an
-  attack or move order. Now the write-off lapses as soon as either unit moves off its
-  spot, and the unit opens fire as the original game would. A target that keeps
-  moving behind cover no longer makes your unit walk to a clear spot; it fires on, as
-  in the original game.
-- **Idle ships make way at a Navy Yard's door.** Your own idle ships parked in front of
-  a Navy Yard now move aside while a new ship is leaving, and an idle ship on the
-  yard's pad moves off it, so a crowd of Iron Clads no longer stops the yard (it used
-  to finish two ships of six, or none with a ship on the pad). The original game moves
-  no idle ship. A ship leaving a door that faces a shore still sails out slowly: that
-  is the original game's own behaviour.
-- **Idle units make way at a land factory's door too.** Your own idle units standing in
-  front of a land factory (a Barracks, a Keep, a Dungeon, an Academy and the rest) now
-  step aside while a new unit is leaving, and one on the factory's pad steps off it, so
-  they no longer stop the factory: one idle unit on the pad used to stop it before its
-  first unit, and a crowd at a Creon Academy's door let it finish one of six. Your
-  guards step aside for the factory's new units too, at land factories and at a Navy
-  Yard, keep their Guard order and go back to guarding afterwards, once for each new
-  unit (a dozen guards at a Legion Academy's door used to let none of six out); a guard
-  that is fighting stays where it is. Units with other orders of their own and your
-  allies' units stay put, as in the original game, which moves no idle unit. When a
-  factory cannot start its next unit, units standing where that unit would appear,
-  just outside the factory's pad, step aside as well. A factory's own new units, parked
-  round it, now move again only when they stand on its pad or hold up the next one out;
-  at a Navy Yard too, and with Legion pathfinding as well (there, at a Navy Yard whose
-  door faces a shore with guards at it, the yard's own parked Iron Clads used to hold
-  the sixth one in the yard). With Legion pathfinding, a factory's own new unit told
-  to step aside that is boxed in where it stood gives up the step and stays there.
-  A factory whose rally point is on its own pad no longer stalls: its new unit steps
-  off the pad. A unit guarding or building beside its own factory moves nobody.
-- **Reclaimed trees and rocks fade out.** As in the original game, a reclaimed tree or
-  rock turns into a white silhouette of itself that fades away over about a second,
-  instead of vanishing at once.
-- **Trees and scenery destroyed by damage play their death first.** A tree, hut,
-  wall or other scenery knocked down by weapons now plays its falling or collapsing
-  animation (two-thirds of a second for a tree) before its stump or rubble appears,
-  as in the original game, instead of changing at once. While it falls it still
-  blocks its ground, takes no more damage, cannot catch fire and cannot be reclaimed.
-  A burning tree takes no weapon damage either, as in the original game; it burns
-  down instead of being knocked into its stump. Rocks, which have no death animation,
-  still go at once.
-- **Flyers on Hold Position hold their post.** An idle flyer on Hold Position used to
-  take off after an enemy that came into range and fly attack runs at it, hundreds of
-  pixels from where you left it. Now it stays where it is and shoots what it can reach
-  from there, as in the original game. The Thirsha, the Ghost Ship, the Dirigible and
-  the Dark and Darkest Priests start on Hold Position, so idle ones now stay put: set
-  them to Maneuver to have them go after enemies.
-- **Units stand where the ground is painted.** Every unit, tree, effect and the fog
-  used to be drawn too far down the screen by half the height of the map's most common
-  ground: 110 pixels on a map whose ground is high, such as INDUSTRIAL Zone, enough to
-  draw units on a road beside lava in the lava itself. Now everything is drawn at its
-  own height, as in the original game, on every map. Ships and wading units ride at
-  the water surface over deep water, with their health bars and markers on them, and
-  an order clicked on water sends a ship to where you clicked. The camera centres on
-  where a unit is drawn.
-- **The result screen's buttons click.** The two buttons on the victory and defeat
-  screen now play their clicks when pressed, as in the original game (the left one
-  its cancel click, the right one its OK click), like the title menu's buttons. The
-  SETTINGS, LOAD REPLAY, BENCHMARK and server pages click too, with the clicks the
-  original game gives the same kinds of button. Menu clicks now also follow the
-  Options MASTER and SOUND EFFECTS volumes; at the default full volumes they sound as
-  before.
 - **Units pick their own targets the way the original game does.** Every target a
   unit chooses for itself now comes from the original game's own search:
   - A unit only goes after an enemy that your side can see, with its own sight or
@@ -182,59 +242,42 @@ their validation reports; both live in [`docs/`](docs/).
   had aimed at while they do; they now turn back at once, not a moment later.
   Patrolling flyers in a formation now count as moving with it on the way out as
   well as on the way back, as in the original game.
-- **In Retail pathfinding a Ctrl group no longer moves at its slowest unit's pace.**
-  As in the original game, a group (Ctrl+number) is only a saved selection; only a
-  formation (Alt+number) keeps together, waits for its stragglers and sends them back
-  to it. Before, both did. The Retail computer player's attack waves and flyer squads
-  now keep together the same way, as the original game's do, and an attack wave
-  marches at its slowest unit's pace as a formation does.
-- **In Retail pathfinding, troops riding a transport stay part of their formation**,
-  as in the original game: the formation keeps together around them where the
-  transport carries them, but never waits for them or sends them back to their
-  places while they ride.
-- **A factory's new unit joins the factory's group or formation when it leaves the
-  factory**, as in the original game, not when it is started, in Retail and Legion
-  pathfinding alike. A unit a builder conjures joins the builder's group when it is
-  finished (the original game leaves it out of any group; this one is TAK Engine's
-  own).
-- **In Retail pathfinding, flyers keep to their formation whatever they are doing**,
-  as in the original game. A flyer left behind on patrol, in an air fight, while
-  hunting for a new target, or while guarding flies back to its formation and then
-  carries on; one that keeps falling behind may give up guarding. An idle member,
-  on the ground or in the air, that ends up away from its formation goes back to it
-  by itself, and a flyer that lands, or waits, does so with its formation. A flyer
-  that has caught up while the formation is still moving circles near it, attacking
-  what it finds, until the formation stops. Ground units in a formation do the same
-  while guarding: one left behind walks back to its formation first and then guards
-  on, and one that keeps falling behind may give up guarding. A formation's guards
-  and attackers, its troops walking to board a transport and its transports on their
-  way to pick them up or set them down now count as moving with it, and its guards
-  keep to its pace.
-- **In Legion pathfinding, an idle unit in a formation that ends up out of its place
-  walks back to it by itself.** This is TAK Engine's own Legion behaviour, matching
-  how a formation re-forms in Retail pathfinding and the original game: when a unit
-  standing in a formation (Alt+number) has been pushed, stepped aside, has come back
-  from a fight, or was sent somewhere on its own, and ends up farther from its place
-  than the original game allows, it walks back to its own spot in the formation. The
-  computer player's attack squads re-form the same way, and gather their stragglers as
-  your formations do. If another unit or a building stands on that spot it waits until
-  the spot is free, and if it cannot get there it stays where it stopped instead of
-  trying again and again. A formation you stop on the way stays where it stopped.
-  Flyers keep to their formation as before, and units in a group (Ctrl+number) are
-  left where they are.
+- **Flyers on Hold Position hold their post.** An idle flyer on Hold Position used to
+  take off after an enemy that came into range and fly attack runs at it, hundreds of
+  pixels from where you left it. Now it stays where it is and shoots what it can reach
+  from there, as in the original game. The Thirsha, the Ghost Ship, the Dirigible and
+  the Dark and Darkest Priests start on Hold Position, so idle ones now stay put: set
+  them to Maneuver to have them go after enemies.
+- **A unit no longer ignores an enemy for good after its shots hit a rock.** A unit
+  that wrote off an enemy because three shots in a row struck a hill or rock used to
+  keep skipping it, even after that enemy walked into the open, until you gave it an
+  attack or move order. Now the write-off lapses as soon as either unit moves off its
+  spot, and the unit opens fire as the original game would. A target that keeps
+  moving behind cover no longer makes your unit walk to a clear spot; it fires on, as
+  in the original game.
 - **An armed factory from a mod gets no Attack Ground order**, as in the original
   game, which takes the attack command away from any factory. It never attacks an
   enemy unit itself either, ordered or on its own (an Attack on a unit still sends
   its new units there), though its weapons still fire at what comes in range.
-- **Holding Shift shows a cloaked unit's decloak range.** While Shift is held, each
-  of your selected units, and your unit under the pointer, that is cloaked now shows a
-  white circle at its decloak distance, as in the original game. A `kamikaze` unit
-  from a mod shows the original's two red circles: a pulse out to half its blast and
-  a ring at its trigger distance.
-- **Order display matches the original game.** The red corner brackets on a unit you
-  ordered your units to attack are gone (the original never marked it; hold Shift and
-  the target shows the Attack pointer). Area reclaim and area mana-building boxes are
-  drawn in the original's yellow instead of gold and cyan.
+- **A unit short of mana after a shot falls back to a cheaper weapon.** As in the
+  original game, a unit that switches weapons (every Monarch and dragon) and has too
+  little mana left for another shot of its weapon now switches at once to the best
+  cheaper one it can afford, or to its first, whether it is yours or the computer's.
+  Your units used to wait on the dear weapon until their mana came back, and the
+  computer's switched only later. A shot the unit cannot quite pay for still leaves
+  without taking mana, so mana no longer drops below zero, and veterans pay less per
+  shot, as in the original game. A flyer attacking a unit now restarts its attack on
+  the new weapon at once, and a unit on foot aims the new weapon at once instead of
+  a moment later.
+- **Homing shots fly as in the original game.**
+  - A homing shot in the air keeps after its target when the target boards a
+    transport, and flies at the transport carrying it; it used to fly straight on.
+  - A fast homing shot (such as a Tracking Arrow) almost dead ahead of its target
+    could double or triple its speed a few moments early or late; it now speeds up
+    exactly when the original game's does.
+  - A homing shot with a model always faces the way it flies. It used to turn only
+    when the shot turned, so a mod's spinning homing shot kept spinning once its
+    target died.
 - **Veterans rank up as in the original game.** A unit used to gain one veteran level
   per kill. Now, as in the original game, each kill earns it the experience the victim
   is worth, and it reaches a level each time that adds up to its own worth again, up
@@ -250,63 +293,88 @@ their validation reports; both live in [`docs/`](docs/).
   shooter's veteran bonus. The Kills count and score now go to the player whose unit
   landed the killing blow for the same kills that earn a unit experience, so killing
   an ally's unit now counts there too.
-- **Units that explode when they die do it when their death ends.** A Bomb
-  Sprinkler, Kamikaze Rat, Grenadier, Fire Wagon, Shock Trooper or Dirigible now
-  bursts once its death animation is over, as in the original game (the Bomb
-  Sprinkler about five seconds after it falls), not the moment it is killed. The burst
-  belongs to nobody: its kills earn no player a kill or score and no unit experience,
-  and it is not stronger for a veteran. It bursts before its own body is left behind,
-  so it never damages that body. On a map made with the sea-level trigger switched
-  off (none of the original maps), a burst, or any shot that hits nothing, landing in
-  the water does nothing at all, as in the original game.
-- **Bodies at the water's edge sink or stay as in the original game.** Whether a
-  fallen unit's body sinks now depends on the height of the ground right under it,
-  as in the original game, so bodies lying level with the water sink, and bodies on
-  dry ground beside a deep spot stay to be raised or reclaimed.
-- **Bodies and statues in water settle on the bottom and stay**, as in the original
-  game: a sunken ship or a body in the shallows, and now also a unit turned to stone
-  or ice there, sinks slowly to the sea bed and stays there to be raised or
-  reclaimed, and only one sinking towards the deepest sea floor fades from view on
-  the way down. Before, every body in the water vanished after two and a half
-  seconds and a statue stood on the water for good. A sinking body that is reclaimed
-  stops where it is until the reclaim takes it away; one a builder starts to reclaim
-  and then leaves rots away as a body on land does. Bodies on land that rot away
-  last about two seconds longer, as in the original game.
-- **How badly a unit is wrecked when it dies follows the original game.** The death
-  animation and body a unit leaves depend on how hard the last blow hit it and on
-  its health a second earlier. That earlier health is now taken in whole numbers and
-  just before the death, as in the original game, so a unit dying on the second
-  reads its health of one second before rather than two.
-- **Campaign objectives ignore units still carrying out their mission orders**, as
-  in the original game: a unit the mission is walking somewhere does not count for
-  "move a unit to this spot" until its orders are done, and does not count as a
-  survivor for "all your units are killed".
-- **A mission hears of a death when the death animation ends**, as in the original
-  game: objectives such as "kill the enemy Monarch" or "kill so many of a unit" are
-  met, and the mission's own reaction to a death starts, once the fallen unit has
-  finished dying, not the moment it was struck down.
-- **Deadly water hurts once a second**, as in the original game: the map's whole
-  water damage each second to anything standing at or below the water line that
-  cannot hover, ships included, and troops carried on a ship too (a flyer's
-  passengers high above the water are safe). A unit the water kills dies that
-  moment, not a moment later.
-- **A player who loses their Monarch loses their whole army with it.** With Monarch
-  Expendable off, the moment a Monarch dies (or a transport carrying it is destroyed)
-  every other unit and building of that player dies too, as in the original game;
-  before, the player was out but their army stayed on the field. Scenario games keep
-  their own rules.
-- **Troops aboard a destroyed transport count as its killer's kills.** When a
-  transport is destroyed, everyone aboard dies with it at once, as before, and now,
-  as in the original game, each of them counts for whoever destroyed the transport:
-  Kills and score for that player and veteran experience for that unit. A loaded
-  transport that changes sides (charmed or captured) loses its passengers the same
-  way, as in the original game; they used to stay aboard.
-- **Self-destruct keeps the original game's timing.** After its two-second countdown
-  a unit now leaves your command up to half a second later, at random, as in the
-  original game. Pressing self-destruct while some of the selected units already
-  count down now cancels theirs and starts none, as in the original game; it used
-  to start the others too. The notice at the top of the screen now counts the real
-  seconds down (it always said "SELF-DESTRUCT IN 5...").
+- **A selected unit of yours shows how many enemies it has killed**, beside its health
+  and mana bars, as in the original game (once it has a kill). A unit that changes
+  sides starts again from none.
+- **The rank mark on a unit's picture follows the original game**: none until rank 4,
+  then one mark for ranks 4 to 6, the next for 7 to 9 and the last at rank 10. It
+  used to show from the first rank and reach the last at rank 7.
+- **A modded unit's `mogriumbounty` is paid as in the original game:** the player
+  credited with killing such a unit gains that much mana. No unit of the original
+  game sets it.
+- **A modded unit's `damagemodifier` works as in the original game:** while the unit
+  is switched on, every hit it takes (deadly water too, heals not) is scaled by it.
+  No unit of the original game sets it.
+- **The Losses count follows the original game.** Units removed without being
+  killed no longer count as losses: an army that falls with its Monarch, a map
+  scenario's removals and defeats, and a factory's unfinished unit lost when the
+  factory dies or its order is cancelled. A unit removed when its player is defeated
+  in a map scenario still counts as killed by the player that last hit it.
+- **A unit that changes sides starts afresh, as in the original game.** A unit
+  converted by an enemy, given to an ally or taken over by a mission or a map
+  scenario keeps its health and the way it faces, but is a new unit to its new
+  owner: its mana pool starts empty, it is no longer paralysed, cloaked by order or
+  set to its old owner's stance (it takes its type's), its weapons start with no
+  reload, and it loses a mission-given name. Its old owner loses the unit: missions
+  and map scenarios count it as a loss for the old owner (a mission's "kill N of
+  these" goal counts a converted enemy, and the last player to hit it is credited in
+  a scenario's tallies), but no one is credited a kill. A unit no longer changes sides
+  to a player who already has the one copy of it a player may have (such as a dragon).
+- **Idle ships make way at a Navy Yard's door.** Your own idle ships parked in front of
+  a Navy Yard now move aside while a new ship is leaving, and an idle ship on the
+  yard's pad moves off it, so a crowd of Iron Clads no longer stops the yard (it used
+  to finish two ships of six, or none with a ship on the pad). The original game moves
+  no idle ship. A ship leaving a door that faces a shore still sails out slowly: that
+  is the original game's own behaviour.
+- **Idle units make way at a land factory's door too.** Your own idle units standing in
+  front of a land factory (a Barracks, a Keep, a Dungeon, an Academy and the rest) now
+  step aside while a new unit is leaving, and one on the factory's pad steps off it, so
+  they no longer stop the factory: one idle unit on the pad used to stop it before its
+  first unit, and a crowd at a Creon Academy's door let it finish one of six. Your
+  guards step aside for the factory's new units too, at land factories and at a Navy
+  Yard, keep their Guard order and go back to guarding afterwards, once for each new
+  unit (a dozen guards at a Legion Academy's door used to let none of six out); a guard
+  that is fighting stays where it is. Units with other orders of their own and your
+  allies' units stay put, as in the original game, which moves no idle unit. When a
+  factory cannot start its next unit, units standing where that unit would appear,
+  just outside the factory's pad, step aside as well. A factory's own new units, parked
+  round it, now move again only when they stand on its pad or hold up the next one out;
+  at a Navy Yard too, and with Legion pathfinding as well (there, at a Navy Yard whose
+  door faces a shore with guards at it, the yard's own parked Iron Clads used to hold
+  the sixth one in the yard). With Legion pathfinding, a factory's own new unit told
+  to step aside that is boxed in where it stood gives up the step and stays there.
+  A factory whose rally point is on its own pad no longer stalls: its new unit steps
+  off the pad. A unit guarding or building beside its own factory moves nobody.
+- **Units stand where the ground is painted.** Every unit, tree, effect and the fog
+  used to be drawn too far down the screen by half the height of the map's most common
+  ground: 110 pixels on a map whose ground is high, such as INDUSTRIAL Zone, enough to
+  draw units on a road beside lava in the lava itself. Now everything is drawn at its
+  own height, as in the original game, on every map. Ships and wading units ride at
+  the water surface over deep water, with their health bars and markers on them, and
+  an order clicked on water sends a ship to where you clicked. The camera centres on
+  where a unit is drawn.
+- **Trees and scenery destroyed by damage play their death first.** A tree, hut,
+  wall or other scenery knocked down by weapons now plays its falling or collapsing
+  animation (two-thirds of a second for a tree) before its stump or rubble appears,
+  as in the original game, instead of changing at once. While it falls it still
+  blocks its ground, takes no more damage, cannot catch fire and cannot be reclaimed.
+  A burning tree takes no weapon damage either, as in the original game; it burns
+  down instead of being knocked into its stump. Rocks, which have no death animation,
+  still go at once.
+- **Reclaimed trees and rocks fade out.** As in the original game, a reclaimed tree or
+  rock turns into a white silhouette of itself that fades away over about a second,
+  instead of vanishing at once.
+- **Order display matches the original game.** The red corner brackets on a unit you
+  ordered your units to attack are gone (the original never marked it; hold Shift and
+  the target shows the Attack pointer). Area reclaim and area mana-building boxes are
+  drawn in the original's yellow instead of gold and cyan.
+- **Holding Shift shows a cloaked unit's decloak range.** While Shift is held, each
+  of your selected units, and your unit under the pointer, that is cloaked now shows a
+  white circle at its decloak distance, as in the original game. A `kamikaze` unit
+  from a mod shows the original's two red circles: a pulse out to half its blast and
+  a ring at its trigger distance.
+- **In a multiplayer game a selected Monarch shows its player's name**, as in the
+  original game, instead of the Monarch's own name.
 - **Gates are built closed and switched off**, as in the original game. A new gate
   used to count as switched on with its doors shut, so the first click on its ON
   button did nothing.
@@ -315,105 +383,16 @@ their validation reports; both live in [`docs/`](docs/).
   its own construction finished could stay shut and never build it, waiting for
   ever (the computer player's first Navy Yard often did). A finished factory now
   switches on once it has finished settling in, a fraction of a second later.
-- **New units start with an empty mana pool and fill up, as in the original game.**
-  A mage, priest, dragon or Monarch that is trained, built, conjured, raised or
-  placed at the start of a game used to arrive with a full pool; it now starts
-  empty and regains its recharge rate each second (only once it is finished), so
-  its costly spells, and a spy's cloak, wait until it has the mana. Mission units
-  start with the mana the mission gives them (usually none), and a mission's
-  health setting gives whole hit points as in the original.
-- **Every game opens with the mana its starting units can store, as in the original
-  game.** A skirmish or multiplayer game used to open with 2800 mana a player; it now
-  opens with 5000, the Monarch's whole store. A campaign mission opens each player
-  with the store of the units the mission gives them (it used to be 500), and a
-  unit a mission or a map scenario creates during play adds its whole store to its
-  player's mana at once. Units you train or build add no mana of their own.
-- **A finished wall becomes part of the scenery, as in the original game.** A wall
-  you build, and every wall a campaign mission places, now turns into a wall feature
-  as soon as it is finished: it still blocks the way and can be smashed, but it is
-  no longer a unit you can select, that counts against your units, or that enemies
-  pick as a target. Building one no longer counts as a loss.
-- **Auras keep working while their unit is paralysed or switched off**, as in the
-  original game: a paralysed priest still heals, and so does a Sacred Fire you
-  switch off.
-- **A selected unit of yours shows how many enemies it has killed**, beside its health
-  and mana bars, as in the original game (once it has a kill). A unit that changes
-  sides starts again from none.
-- **In a multiplayer game a selected Monarch shows its player's name**, as in the
-  original game, instead of the Monarch's own name.
-- **The rank mark on a unit's picture follows the original game**: none until rank 4,
-  then one mark for ranks 4 to 6, the next for 7 to 9 and the last at rank 10. It
-  used to show from the first rank and reach the last at rank 7.
 - **A Pillar of Light and a Sacred Fire light up as in the original game.** Both
   switch themselves on when they are finished, whether you build one or a mission
   or map scenario places it, and the original game runs their flames twice over
   from then on. They used to count as switched on while still being built and their
   extra flames never started.
+- **Auras keep working while their unit is paralysed or switched off**, as in the
+  original game: a paralysed priest still heals, and so does a Sacred Fire you
+  switch off.
 - **A modded unit with `init_cloaked` starts with its cloak switched on**, as the
   original game does (no unit of the original game uses it).
-- **A modded unit's `damagemodifier` works as in the original game:** while the unit
-  is switched on, every hit it takes (deadly water too, heals not) is scaled by it.
-  No unit of the original game sets it.
-- **A modded unit's `mogriumbounty` is paid as in the original game:** the player
-  credited with killing such a unit gains that much mana. No unit of the original
-  game sets it.
-- **The Losses count follows the original game.** Units removed without being
-  killed no longer count as losses: an army that falls with its Monarch, a map
-  scenario's removals and defeats, and a factory's unfinished unit lost when the
-  factory dies or its order is cancelled. A unit removed when its player is defeated
-  in a map scenario still counts as killed by the player that last hit it.
-- **A building left unfinished until it fades away counts as destroyed**, as in the
-  original game: missions and map scenarios hear of it (a mission goal to destroy
-  that kind of unit counts it), though it is still nobody's kill and no loss. It
-  used to vanish without a word.
-- **An abandoned building fades away as in the original game, and you get its mana
-  back.** A site nobody works on now stands for a second after its last work (eleven
-  seconds when nobody ever worked on it), then fades at a steady pace that depends
-  only on the kind of building, and every bit that fades returns its share of the
-  mana spent on it, until nothing is left. It used to start fading the moment the
-  builder stopped, as fast as it had been built, and gave nothing back. A builder
-  walking over to help no longer keeps a site from fading, and a builder Ctrl-clicked
-  away from its building puts it down again if it fades away while the builder is on
-  its way back. A unit that a factory or a Zhon builder is making does not fade while
-  its maker holds on to it, even when the maker is paused, stunned, boarding a ship
-  or helping elsewhere: it waits with its progress, as before (the original game
-  would let it fade). An unfinished building that changes sides never fades away,
-  as in the original game; its new owner can still finish it.
-- **A unit that changes sides starts afresh, as in the original game.** A unit
-  converted by an enemy, given to an ally or taken over by a mission or a map
-  scenario keeps its health and the way it faces, but is a new unit to its new
-  owner: its mana pool starts empty, it is no longer paralysed, cloaked by order or
-  set to its old owner's stance (it takes its type's), its weapons start with no
-  reload, and it loses a mission-given name. Its old owner loses the unit: missions
-  and map scenarios count it as a loss for the old owner (a mission's "kill N of these" goal counts a converted enemy, and the last
-  player to hit it is credited in a scenario's tallies), but no one is credited a
-  kill. A unit no longer changes sides to a player who already has the one copy of
-  it a player may have (such as a dragon).
-- **Sound and music at full quality.** In-game music used to be turned into 11 kHz
-  mono. The game now mixes at 44.1 kHz: the original's music plays in
-  stereo at its own rate, a mod's 44.1 kHz or surround sounds and music keep their
-  quality, and the original's 11 kHz unit sounds keep their pitch and length with a
-  cleaner top end. On 6.1 speakers the surrounds of 5.1 music now play at full level.
-  Video streams carry the same 44.1 kHz sound.
-- **Homing shots fly as in the original game.**
-  - A homing shot in the air keeps after its target when the target boards a
-    transport, and flies at the transport carrying it; it used to fly straight on.
-  - A fast homing shot (such as a Tracking Arrow) almost dead ahead of its target
-    could double or triple its speed a few moments early or late; it now speeds up
-    exactly when the original game's does.
-  - A homing shot with a model always faces the way it flies. It used to turn only
-    when the shot turned, so a mod's spinning homing shot kept spinning once its
-    target died.
-- **A unit short of mana after a shot falls back to a cheaper weapon.** As in the
-  original game, a unit that switches weapons (every Monarch and dragon) and has too
-  little mana left for another shot of its weapon now switches at once to the best
-  cheaper one it can afford, or to its first, whether it is yours or the computer's.
-  Your units used to wait on the dear weapon until their mana came back, and the
-  computer's switched only later. A shot the unit cannot quite pay for still leaves
-  without taking mana, so mana no longer drops below zero, and veterans pay less per
-  shot, as in the original game. A flyer attacking a unit now restarts its attack on
-  the new weapon at once, and a unit on foot aims the new weapon at once instead of
-  a moment later.
 - **Campaign missions play out as in the original game.**
   - The units a mission starts with stand on the same squares as in the original
     and face the same way: they stood half a square off, and most of them faced the
@@ -459,8 +438,61 @@ their validation reports; both live in [`docs/`](docs/).
     game; they could stop coming partway through a mission.
   - A mission that checks where a unit is, or who owned a unit that died, reads
     the same square and owner as the original game.
+- **Campaign objectives ignore units still carrying out their mission orders**, as
+  in the original game: a unit the mission is walking somewhere does not count for
+  "move a unit to this spot" until its orders are done, and does not count as a
+  survivor for "all your units are killed".
+- **A mission hears of a death when the death animation ends**, as in the original
+  game: objectives such as "kill the enemy Monarch" or "kill so many of a unit" are
+  met, and the mission's own reaction to a death starts, once the fallen unit has
+  finished dying, not the moment it was struck down.
+- **Sound and music at full quality.** In-game music used to be turned into 11 kHz
+  mono. The game now mixes at 44.1 kHz: the original's music plays in
+  stereo at its own rate, a mod's 44.1 kHz or surround sounds and music keep their
+  quality, and the original's 11 kHz unit sounds keep their pitch and length with a
+  cleaner top end. On 6.1 speakers the surrounds of 5.1 music now play at full level.
+  Video streams carry the same 44.1 kHz sound.
+- **The result screen's buttons click.** The two buttons on the victory and defeat
+  screen now play their clicks when pressed, as in the original game (the left one
+  its cancel click, the right one its OK click), like the title menu's buttons. The
+  SETTINGS, LOAD REPLAY, BENCHMARK and server pages click too, with the clicks the
+  original game gives the same kinds of button. Menu clicks now also follow the
+  Options MASTER and SOUND EFFECTS volumes; at the default full volumes they sound as
+  before.
 - **Fedora 45 packages.** Fedora 45 now has its own x86-64 and ARM64 RPMs, beside
   Fedora 44's.
+- **Protocol 312:** almost every game plays differently, in Retail and Legion pathfinding
+  alike, so 0.9.20 plays with neither 0.9.19 nor any earlier version, nor their replays.
+  Replay format 15 and the random map generator (version 9) are unchanged.
+- **Technical:** protocol 312 changes the simulation in both pathfinding modes, hashed,
+  and adds two commands: `Cmd::AttackGround` (fire at a point: SUPPRESS for walkers and
+  towers, AIRSTRIKE, AIRTOGROUNDHOVER and AIRTOGROUND for flyers) and `Cmd::AiGroup`
+  (the server's classic AI tells the sims its squads; never accepted from a client). An
+  order's queue byte also carries `kQueueFront` (Ctrl) and the `kQueueToggle` bit. The
+  lockstep hash now also folds each unit's mana pool and, when there are any, the
+  sinking water graves and a held Activate. A finished unit's Activate waits until its
+  Create script has returned (`World::switchScript`, `cob::createHold`; TAK Engine's own
+  rule, see docs/retail-engine.md).
+  Ported from the original and checked by emulating its routines (harnesses under
+  `tools/re/`): the target search (mission scans, the 7-tick visible-enemy list, the
+  weighted draw), allied sight, the click resolver, Ctrl front-insert and Shift/Ctrl
+  toggle-remove (rally-aware), every group check of the walker and flyer missions and
+  the standbys, kill credit, death weapons and retirement, death sight, the commander
+  rule, change of owner, deadly water, self-destruct, the creation mana credit and empty
+  new pools, site decay (the GetBuilt timer and decay step), water graves, the mission
+  GET table and order points, trigger regions and the UnitDestroyed run-now start, and
+  guided steering (native float-cosine turn angle and snap). Terrain lift is retail's
+  absolute `z - (y >> 1)`. Legion: an enemy body is never oncoming traffic, two enemies'
+  fight legs are not oncoming traffic to each other, a stalled aim is cleared once, a
+  formation member re-forms to its settled slot (the AI's flagged squads too), the yard
+  door's own outputs move off a held pad, and the formation slot search starts at the
+  first ring that can hold a cell (same cells chosen, far fewer searched). The mixer
+  resamples through a polyphase windowed sinc at 44.1 kHz and the stream capture takes
+  the mix rate. Scenario baselines and navigation goldens are retaken for 312, and all
+  seven `--mpai` gate hashes change. Build and CI: Fedora 45 packages, the Legion selection's programs
+  built in CI, the retail-gap tests in the quick label, GCC 13/14 alloc-size warning,
+  `NOMINMAX` and UBSan fixes, the Opus download falls back to the GitHub release tarball,
+  and the streaming dependencies' cross build passes `CROSS_PREFIX` to OpenSSL.
 - **Investigated, no change needed:**
   - A computer's Sea Dragon on Hold Position with an enemy just outside Tsunami's range
     keeps switching weapons and never fires: the original game does exactly the same.
@@ -470,6 +502,12 @@ their validation reports; both live in [`docs/`](docs/).
     production, selected sends its new units there fighting on the way, and the
     builder keeps producing (the original game gives a factory nothing there). A
     click on the factory itself still gives it nothing, as in the original game.
+
+**Upgrading (server operators):** update `takserver` together with your
+players.
+
+Full notes: [release-0.9.20-notes.md](docs/release-0.9.20-notes.md) ·
+validation: [release-0.9.20-validation.md](docs/release-0.9.20-validation.md)
 
 ## 0.9.19
 *2026-11-03 · protocol 311 · replay format 15 · does not play with 0.9.18 or earlier, nor their replays*
