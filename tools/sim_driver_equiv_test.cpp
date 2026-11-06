@@ -222,7 +222,8 @@ int testSimEquivalence(const std::string& mapArg, const std::string& dataRoot) {
     cfg.vfs = &vfs;
     cfg.mapPath = mapPath;
     cfg.slots = {{true, 0, 0}, {true, 1, 1}};   // 2 players, FFA
-    cfg.startMana = 2800;
+    // startMana stays 0, as a real game's: each player opens with the
+    // storage its starting units credit (World::creditCreationStorage).
 
     tak::sim::World A, B;                        // separate instances -- never alias
     auto spots = tak::sim::setupMatch(A, reg, cfg);

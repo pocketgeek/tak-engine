@@ -1791,6 +1791,11 @@ add_executable(air_traffic_test tools/air_traffic_test.cpp ${TAK_AI_SOURCES})
 target_link_libraries(air_traffic_test PRIVATE tak-formats)
 set(TAK_TEST_DATA "" CACHE PATH "Retail install for the data-backed tests (optional)")
 if(TAK_TEST_DATA)
+    # The data-backed half: a real match start, commands applied directly and
+    # through the wire format, hashes equal every tick.
+    add_test(NAME sim_driver_equiv_data COMMAND sim_driver_equiv_test "Ulasem Arena" "${TAK_TEST_DATA}")
+    set_tests_properties(sim_driver_equiv_data PROPERTIES PASS_REGULAR_EXPRESSION "direct == wire"
+                         FAIL_REGULAR_EXPRESSION "FAIL")
     add_test(NAME builder_automation_data COMMAND builder_automation_test "${TAK_TEST_DATA}")
     set_tests_properties(builder_automation_data PROPERTIES TIMEOUT 300)
     add_test(NAME movement_orders_maze COMMAND movement_orders_test "${TAK_TEST_DATA}")
