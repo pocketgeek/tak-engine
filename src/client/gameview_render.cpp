@@ -7796,13 +7796,20 @@
             bool areas=false;
             for(const auto& o:actual)if(o.goal && (o.manaBuildArea || o.reclaimArea)) {
                 areas=true;
-                SDL_FRect box{(o.x.toFloat()-mapView_.offX())*zm,(o.z.toFloat()-mapView_.offY())*zm,
-                    (o.buildX-o.x).toFloat()*zm,(o.buildZ-o.z).toFloat()*zm};
+                // The corners are ground points the drag picked through the terrain
+                // lift (pickWorld), so each is drawn lifted back onto the raised tile
+                // art; drawn flat, the box slid south of the drag on high ground.
+                const float x0=o.x.toFloat(),z0=o.z.toFloat(),x1=o.buildX.toFloat(),z1=o.buildZ.toFloat();
+                const auto corner=[&](float wx,float wz) {
+                    return SDL_FPoint{(wx-mapView_.offX())*zm-terrainLiftX(wx,wz)*zm,
+                                      (wz-mapView_.offY())*zm-terrainLift(wx,wz)*zm};
+                };
+                const SDL_FPoint box[5]{corner(x0,z0),corner(x1,z0),corner(x1,z1),corner(x0,z1),corner(x0,z0)};
                 // Retail's 0x4d5180: white, yellow when the ordering unit is
                 // selected -- and every unit drawn here is.
                 const uint32_t argb=tak::client::retailAreaOrderArgb(true);
                 SDL_SetRenderDrawColor(ren_,Uint8(argb>>16),Uint8(argb>>8),Uint8(argb),Uint8(argb>>24));
-                SDL_RenderDrawRectF(ren_,&box);
+                SDL_RenderDrawLinesF(ren_,box,5);
             }
             if(areas && beads) {
                 auto& cache=orderTrailCache_[size_t(drawn)];
