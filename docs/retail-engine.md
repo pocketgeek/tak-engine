@@ -1231,10 +1231,20 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   every unfinished site (`Unit::siteTimer`, `retailSiteTimer`) in World's
   decay pass, which follows all construction work in the tick, so a worker
   in a later unit slot hands its event over a tick late (`siteWorkLate`).
+  **A producer's output is held, not decayed: our choice, by the owner's
+  decision, not retail's inferred behaviour.** Retail's GetBuilt would decay
+  a factory's or a Zhon conjurer's output once its producer stops working it
+  (paused, paralysed, loading, embarked, or a conjurer whose one mission is
+  a help elsewhere); ours keeps the output, its progress and its mana while
+  the producer still holds it (`World::productionOwnerOf`), as our decay did
+  before the port. The decay pass counts that hold as work for the site's
+  timer, so an output its producer lets go of (a mobile conjurer's, when the
+  conjurer dies) decays 30 ticks later like any site (`site_decay_test`,
+  `helpbuild_test`). A factory's own death still kills its output at once.
   The decay step (`retailSiteDecay`) comes off whichever store holds the
-  site's progress: the producer's count for a production output, the
-  replacement's work for a lodestone upgrade, else HP itself (ours places a
-  site at 5% HP and builds the other 95%), and the site dies once a step
+  site's progress: the replacement's work for a lodestone upgrade, else HP
+  itself (ours places a site at 5% HP and builds the other 95%; that
+  includes an output no producer holds), and the site dies once a step
   would leave no work (I: our sites' progress is not retail's single
   fraction, so HP lost to damage counts as lost work, as `51a3e0`'s does).
   Until a site's first work (ours places it when the order is given, retail

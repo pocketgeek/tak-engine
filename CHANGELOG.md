@@ -364,10 +364,12 @@ their validation reports; both live in [`docs/`](docs/).
   only on the kind of building, and every bit that fades returns its share of the
   mana spent on it, until nothing is left. It used to start fading the moment the
   builder stopped, as fast as it had been built, and gave nothing back. A builder
-  walking over to help no longer keeps a site from fading; a unit that a factory or
-  a Zhon builder stops working on fades the same way, and costs its mana again when
-  the work resumes; and a builder Ctrl-clicked away from its building puts it down
-  again if it fades away while the builder is on its way back.
+  walking over to help no longer keeps a site from fading, and a builder Ctrl-clicked
+  away from its building puts it down again if it fades away while the builder is on
+  its way back. A unit that a factory or a Zhon builder is making does not fade while
+  its maker holds on to it, even when the maker is paused, stunned, boarding a ship
+  or helping elsewhere: it waits with its progress, as before (the original game
+  would let it fade).
 - **A unit that changes sides starts afresh, as in the original game.** A unit
   converted by an enemy, given to an ally or taken over by a mission or a map
   scenario keeps its health and the way it faces, but is a new unit to its new

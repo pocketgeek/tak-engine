@@ -15394,10 +15394,11 @@ void World::decayConstruction(Unit& u) {
     // the site unconjures 0.5 / buildtime of its build a tick and its owner gets
     // float(that * buildcost) back, credited like income; once no work would be
     // left it is removed instead, with no refund. Our sites keep their progress
-    // in the producer's count (a production output), the replacement's
-    // completedWork (a lodestone upgrade) or, otherwise, in hp itself (5% of
-    // maxdamage for no work, as placed, plus 95% of it for the whole build), so
-    // each gives back the same fraction there and loses the matching hp.
+    // in the replacement's completedWork (a lodestone upgrade) or, otherwise,
+    // in hp itself (5% of maxdamage for no work, as placed, plus 95% of it for
+    // the whole build), so each gives back the same fraction there and loses
+    // the matching hp. A producer's output never gets here while its producer
+    // holds it (the decay pass); one it lost decays by its hp.
     if (u.hp <= Fixed()) return;   // already killed: the death sweep has it
     const auto step=retailSiteDecay(retailInverseBuildTime(u.type->buildTime),u.type->buildCost);
     const Fixed drop=Fixed::fromFloat(float(double(u.type->maxHp)*0.95*step.progress));
@@ -15406,12 +15407,6 @@ void World::decayConstruction(Unit& u) {
         auto& done=u.lodestoneReplacement->completedWork;
         removed=removed || done-step.progress<=0;
         if (!removed) done-=step.progress;
-    } else if (Unit* producer=productionOwnerOf(u)) {
-        const int64_t total=int64_t(productionTotal(*producer,u.type))*65536;
-        const int64_t done=int64_t(producer->buildProgress)*65536+producer->buildFraction;
-        const int64_t left=done-int64_t(step.progress*double(total));
-        removed=removed || left<=0;
-        if (!removed) { producer->buildProgress=int32_t(left>>16);producer->buildFraction=uint16_t(left&0xffff); }
     } else removed=removed || u.hp-drop<=Fixed::fromFloat(u.type->maxHp*0.05f);
     if (!removed) {
         u.hp=u.hp-drop;
@@ -18536,7 +18531,7 @@ void World::tickProduction(Unit& u, float dt) {
        !u.orders.front().transportProductionAhead)return;
     // A conjurer works one job at a time, as retail runs one mission: while
     // it builds or helps elsewhere (buildSiteId) its own output waits, held
-    // (protectedSite keeps it from decaying) rather than growing unattended.
+    // (the decay pass holds a producer's output) rather than growing unattended.
     if (!u.type->isStructure() && u.buildSiteId) return;
     const UnitType* t = u.buildQueue.front();
     if (!buildAllowed(t)) return;
@@ -19641,42 +19636,6 @@ void World::tick(float dt) {
     // in, with nothing in the command stream to explain it.
     summonReadyGods();
 
-    // Both factory and mobile construction raise their sites' work events this
-    // tick (beingBuilt was reset in the economy walk above).
-    // Factory missions run in unit order below. Their existing sites get the
-    // work event of the producer's tick of work, which tickProduction does
-    // whenever these gates (its own) let it, paid or not.
-    auto protectedSite = [&](const Unit& producer) -> Unit* {
-        if (producer.alive() && producer.hp>Fixed() && !producer.incapacitated() &&
-            !producer.embarked() && !producer.underConstruction && !producer.buildQueue.empty() && producer.productionSiteId &&
-            !(!producer.orders.empty() && producer.orders.front().load && !producer.orders.front().transportProductionAhead) &&
-            !(!producer.type->isStructure() && producer.buildSiteId) && buildAllowed(producer.buildQueue.front()))
-            if (auto* site=unitNoRepair(producer.productionSiteId);site && site->alive() &&
-                (site->hp>Fixed() || site->retailSite) && site->player==producer.player) return site;
-        return nullptr;
-    };
-    // On the SimPool from kPrologueMinParallel units (WE E4.3): the walk only
-    // sets flags to true, and nothing in it reads them, so any order of the
-    // (relaxed atomic) stores gives the serial result. A site has one producer.
-    if (units_.size() >= kPrologueMinParallel && simPool().workers()) {
-        simPool().forChunks(units_.size(), SimPool::kUnitChunk, 0, [&](size_t, size_t begin, size_t end, unsigned) {
-            for (size_t i = begin; i < end; ++i)
-                if (Unit* site = protectedSite(units_[i]))   // noteSiteWork, atomically
-                    __atomic_store_n(&units_[i] < site ? &site->beingBuilt : &site->siteWorkLate, true,
-                                     __ATOMIC_RELAXED);   // not std::atomic_ref (Apple libc++)
-        });
-#ifndef NDEBUG
-        if (verifyPool())
-            for (const auto& producer : units_)
-                if (const Unit* site = protectedSite(producer);
-                    site && !(&producer < site ? site->beingBuilt : site->siteWorkLate))
-                    poolMismatch("producer site walk", tickCounter_);
-#endif
-    } else {
-        TAK_PASS();
-        for (const auto& producer:units_)
-            if (Unit* site = protectedSite(producer)) noteSiteWork(producer,*site);
-    }
     TAK_PASS();
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& u = units_[i];
@@ -19697,9 +19656,14 @@ void World::tick(float dt) {
     // under construction (only a fresh spawn does, and spawns append), so these
     // are all the units the full walk would decay, visited in the same order with
     // the same test at the same moment.
+    // A producer's output (a factory's, a Zhon conjurer's) is HELD while its
+    // producer still owns it -- paused, paralysed, loading, embarked or off
+    // helping elsewhere: our choice, not retail's (whose GetBuilt would decay
+    // it once its producer stops working it). Its timer counts that as work,
+    // so an output its producer lost starts the decay 30 ticks later.
     auto decay = [&](Unit& u) {
         if (u.alive() && u.type && u.underConstruction && !u.retailSite &&
-            retailSiteTimer(u.siteTimer,tickCounter_,u.beingBuilt))
+            retailSiteTimer(u.siteTimer,tickCounter_,u.beingBuilt || productionOwnerOf(u)))
             decayConstruction(u);
     };
 #ifndef NDEBUG

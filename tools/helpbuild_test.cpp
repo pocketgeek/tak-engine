@@ -335,11 +335,13 @@ static void repeatConjurer() {
     check(w.unit(conj)->buildSiteId == own, "an Assist on an unfinished own unit is accepted");
     check(w.unit(conj)->repeatType == &ty.sol, "...keeping its repeat queue");
     const int32_t before = w.unit(conj)->buildProgress;
-    for (int i = 0; i < 30; ++i) w.tick(1.0f / 30.0f);
-    // Retail runs one mission: the output gets no work while its maker helps,
-    // so its GetBuilt starts the decay 30 ticks after the last work.
-    check(w.unit(conj)->buildProgress < before && w.unit(conj)->productionSiteId == mine,
-          "...and its own output, unworked while it helps, decays");
+    const Fixed hpBefore = w.unit(mine)->hp;
+    for (int i = 0; i < 120; ++i) w.tick(1.0f / 30.0f);
+    // Retail runs one mission: the output gets no work while its maker helps.
+    // Ours holds it meanwhile (our choice; retail's GetBuilt would decay it).
+    check(w.unit(conj)->buildProgress == before && w.unit(conj)->productionSiteId == mine &&
+          w.unit(mine)->hp == hpBefore,
+          "...and its own output, unworked while it helps, is held");
     for (int i = 0; i < 600 && w.unit(conj)->buildSiteId; ++i) w.tick(1.0f / 30.0f);
     for (int i = 0; i < 30; ++i) w.tick(1.0f / 30.0f);
     check(w.unit(conj)->buildProgress > before || w.unit(conj)->productionSiteId != mine,

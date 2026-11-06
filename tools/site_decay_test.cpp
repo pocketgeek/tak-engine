@@ -151,8 +151,10 @@ void neverWorked() {
           "then decays");
 }
 
-// A factory's output that its factory stops working gives its progress back
-// with the mana, so finishing it later costs the whole price again.
+// A factory's output that its factory stops working is HELD, not decayed:
+// our choice, not retail's (whose GetBuilt would decay it once the work
+// stops). It keeps its progress and costs nothing back or again. Only an
+// output its producer no longer holds decays, 30 ticks after it let go.
 void factoryOutput() {
     Types t; Rig r;
     const int f = r.w.spawn(&t.factory, 600, 1000, 0, 0);
@@ -162,14 +164,22 @@ void factoryOutput() {
     r.ticks(100);
     check(site && r.w.unit(site)->underConstruction, "the factory works its output");
     const int32_t progress = r.w.unit(f)->buildProgress;
+    const Fixed hp = r.w.unit(site)->hp;
     const double mana = r.w.player(0).mana;
-    r.w.unit(f)->paralyzedFor = 200;
+    r.w.unit(f)->paralyzedFor = 400;
+    r.ticks(360);
+    const Unit* held = r.w.unit(site);
+    const bool kept = held && held->alive() && held->hp == hp && r.w.unit(f)->productionSiteId == site;
+    check(kept && r.w.unit(f)->buildProgress == progress && r.w.player(0).mana == mana,
+          "a stopped factory's output is held: no decay, no refund");
+    if (!kept) return;
+    r.w.unit(f)->productionSiteId = 0;   // the producer lets go of it
     r.ticks(29);
-    check(r.w.unit(f)->buildProgress == progress && r.w.player(0).mana == mana,
-          "a stopped factory's output waits 30 ticks");
+    check(r.w.unit(site)->hp == hp && r.w.player(0).mana == mana,
+          "an output its producer let go of waits 30 ticks");
     r.ticks(1);
-    check(r.w.unit(f)->buildProgress < progress && r.w.player(0).mana == mana + refund(t.sol),
-          "then gives back its progress and its mana");
+    check(r.w.unit(site)->hp == hp - hpDrop(t.sol) && r.w.player(0).mana == mana + refund(t.sol),
+          "then decays as any site");
 }
 }  // namespace
 
