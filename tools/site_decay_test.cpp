@@ -151,8 +151,8 @@ void neverWorked() {
           "then decays");
 }
 
-// A site that changes sides is a new object with a new GetBuilt: its timer
-// starts again at 300 + 30 ticks, whatever the old one had run down.
+// A site that changes sides is a new object, created finished, that takes
+// the old one's remaining work: it has no GetBuilt at all.
 void changedSides() {
     Types t; Rig r;
     r.w.spawn(&t.builder, 300, 1000, 0, 1);   // storage for the new owner
@@ -162,13 +162,14 @@ void changedSides() {
     s->hp = Fixed::fromInt(1000);
     r.ticks(200);
     check(r.w.scenarioTransfer(site, 1), "changed sides: the site goes over");
-    r.ticks(330);
+    const double mana = r.w.player(1).mana;
+    // 514da0 makes the new object finished and copies the remaining work
+    // over after: it carries no GetBuilt, so nothing ever decays it.
+    r.ticks(1200);
     const Unit* now = r.w.unit(site);
-    check(now && now->alive() && now->player == 1 && now->hp == Fixed::fromInt(1000),
-          "changed sides: its new GetBuilt waits 330 ticks again");
-    if (!now || !now->alive()) return;
-    r.ticks(1);
-    check(r.w.unit(site)->hp == Fixed::fromInt(1000) - hpDrop(t.hut), "changed sides: then decays");
+    check(now && now->alive() && now->player == 1 && now->underConstruction && now->hp == Fixed::fromInt(1000),
+          "changed sides: the new object has no GetBuilt and never decays");
+    check(r.w.player(1).mana == mana, "changed sides: no refund either");
 }
 
 // A factory's output that its factory stops working is HELD, not decayed:

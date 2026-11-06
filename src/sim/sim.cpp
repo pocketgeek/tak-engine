@@ -9696,10 +9696,12 @@ bool World::changeOwner(Unit& u, int newPlayer, MissionScript* notify) {
     u.doorYieldFactory = 0; u.doorYieldSerial = 0;
     u.blockedTarget = 0; u.blockedShots = 0; u.repositions = 0; u.searchFailed = 0;
     u.standbyState = {}; u.guardNoMoveState = {}; u.guardNoMoveActive = false;
-    // An unfinished site's GetBuilt is one of the old object's missions; the
-    // new one (512060, not finished) starts its own, a fresh 300-tick sleep
-    // (I: its missions are new; the unfinished creation's GetBuilt not emulated).
-    u.siteTimer = {}; u.siteWorkLate = false; u.beingBuilt = false;
+    // An unfinished site's GetBuilt is one of the old object's missions. The
+    // new object is created finished (512060's sixth argument 1, 514ec6) and
+    // takes the old one's remaining work and HP afterwards (514f8a..514fa1),
+    // with no mission pushed: it has no GetBuilt, so it never decays (E,
+    // check_change_owner.py unfinished).
+    u.siteTimer = {}; u.siteWorkLate = false; u.beingBuilt = false; u.siteGetBuilt = false;
     // 52aae0, 51a880, 519b10: fresh weapon records, every slot auto.
     u.weaponSlot = 0; u.weaponAuto = true;
     u.reloads[0] = u.reloads[1] = u.reloads[2] = 0;
@@ -19683,7 +19685,7 @@ void World::tick(float dt) {
     // it once its producer stops working it). Its timer counts that as work,
     // so an output its producer lost starts the decay 30 ticks later.
     auto decay = [&](Unit& u) {
-        if (u.alive() && u.type && u.underConstruction && !u.retailSite &&
+        if (u.alive() && u.type && u.underConstruction && !u.retailSite && u.siteGetBuilt &&
             retailSiteTimer(u.siteTimer,tickCounter_,u.beingBuilt || productionOwnerOf(u)))
             decayConstruction(u);
     };
@@ -21762,6 +21764,7 @@ uint64_t World::stateHash() const {
         if (u.underConstruction && !u.retailSite) {
             const auto& m=u.siteTimer;
             mix(0x44454341u);mix(m.stage);mix(m.waitMask);mix(m.deadline);mix(m.pending);mix(u.siteWorkLate);
+            if (!u.siteGetBuilt) mix(0x4e4f4742u);
         }
         if (u.lodestoneReplacement) {
             const auto& old=*u.lodestoneReplacement;

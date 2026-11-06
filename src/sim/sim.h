@@ -1631,6 +1631,14 @@ struct alignas(64) Unit {
     // Hashed while the site is unfinished.
     RetailMissionState siteTimer;
     bool siteWorkLate = false;
+    // Whether the unit carries that GetBuilt. A site placed by a builder or a
+    // producer does (pushed at 401f95 / 405a2b); the new object of a change of
+    // owner never does: 514da0 creates it finished (512060's sixth argument 1,
+    // 514ec6) and only then copies the old object's remaining work and HP, so
+    // an unfinished site that changes sides never decays (E: no mission is
+    // pushed on it, check_change_owner.py unfinished). Hashed when clear on an
+    // unfinished site.
+    bool siteGetBuilt = true;
     const std::string& displayName() const { return scenarioName.empty() ? type->name : scenarioName; }
     bool alive() const { return deadFor < 0; }
     int32_t maximumHp() const { return retailSite ? int32_t(retailSite->type.maxHp) : type->maxHp; }

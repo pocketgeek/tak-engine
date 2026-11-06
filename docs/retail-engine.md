@@ -1320,9 +1320,13 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   fraction, so HP lost to damage counts as lost work, as `51a3e0`'s does).
   Until a site's first work (ours places it when the order is given, retail
   on arrival) a builder on its way keeps it, as before. A site that changes
-  sides (`514da0`, "A change of owner is a new object") starts its timer
-  afresh, 300 then 30 (I: the new object's missions are new; the unfinished
-  creation's own GetBuilt is not emulated).
+  sides (`514da0`, "A change of owner is a new object") never decays: the
+  new object is created finished (`512060`'s sixth argument 1 at `514ec6`,
+  so `512301`'s activation runs) and only then takes the old object's
+  remaining work and HP (`514f8a..514fa1`); no mission is pushed on it, and
+  GetBuilt is pushed only by the builders (`401f95`, `405a2b`), so it has
+  none (E: `check_change_owner.py` unfinished; `Unit::siteGetBuilt`,
+  `site_decay_test` changedSides). It can still be worked to completion.
 - **Mission Kill** (`513130`): ignores its arguments. For every unit this
   machine runs (owner +0xea 1 or 2; lockstep runs them all): `52ae30(u, 1)`
   removes every shot it fired (`529af0`, no impact); a unit whose Dying runs

@@ -54,6 +54,7 @@ class Fixture:
         self.p = Icd()
         (self.game, self.types, self.units, self.cond, self.scen, self.vt) = (HEAP + i * 0x40000 for i in range(6))
         self.log, self.draws = [], []
+        self.remaining = 0.0   # the old object's +0x108 (unfinished())
         p = self.p
 
         def rec(name, n, ret=0, thiscall=False):
@@ -126,7 +127,7 @@ class Fixture:
             f.p.uc.mem_write(u + 0xfd, bytes([slot // 4]))
         old = f.units + 1 * UNIT
         f.put(old, kind, 'H'); f.put(old + 0x130, ALIVE | 0x20 | (DYING if dying else 0))
-        f.put(old + 0xb4, tp); f.put(old + 0x108, 0.0, 'f'); f.put(old + 0x10c, 77, 'H')
+        f.put(old + 0xb4, tp); f.put(old + 0x108, f.remaining, 'f'); f.put(old + 0x10c, 77, 'H')
         f.p.uc.mem_write(old + 0x114, bytes([act]))
         f.put(old + 0x68, 100 << 16); f.put(old + 0x6c, 20 << 16); f.put(old + 0x70, 200 << 16)
         f.put(old + 0xd8, 40.0, 'f'); f.p.uc.mem_write(old + 0x10e, bytes([5])); f.put(old + 4, HEAP + 0x3f0000)
@@ -203,9 +204,35 @@ def activate_default():
     return 'activatewhenbuilt: default 0, so a type without it is not activated at creation'
 
 
+def unfinished(f):
+    """An unfinished unit (+0x108 = remaining work) changing sides. 514da0
+    creates the new object finished (512060's sixth argument 1, 514ec6: the
+    activatewhenbuilt Activate of 512301 runs) and then copies the old
+    object's +0x108 and +0x10c over (514f8a..514fa1). Nothing pushes a
+    mission on it: its mission list head (+0x60) is never written, so it has
+    no GetBuilt (pushed only by the builders, 401f95 / 405a2b) and nothing
+    decays it (World: Unit::siteGetBuilt, site_decay_test changedSides)."""
+    for remaining in (0.25, 0.5, 1.0):
+        f.remaining = remaining
+        try:
+            f.run(0, 0, 0, 0, 1, 0, 1, 0)
+        finally:
+            f.remaining = 0.0
+        new = [e for e in f.log if e[0] == 'created'][0][1]
+        assert f.get(new + 0x108, 'f') == remaining, (remaining, f.get(new + 0x108, 'f'))
+        assert f.get(new + 0x10c, 'H') == 77
+        scripts = [e[1] for e in f.log if e[0] == 'script']
+        assert scripts == ['Activate', 'Deactivate'], scripts
+        assert f.get(new + 0x60) == 0xc3c3c3c3 and f.get(new + 0x64) == 0xc3c3c3c3, \
+            'a mission was pushed on the new object'
+    return ('unfinished: the new object is created finished, takes the remaining work after, '
+            'and gets no mission (no GetBuilt)')
+
+
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else 'build-o2/owner_change_test'
     print(activate_default())
+    print(unfinished(Fixture()))
     f = Fixture()
     rows, expected = [], []
     for same, dying, capped, limited, flag, spread, moving, act in itertools.product(
