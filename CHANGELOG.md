@@ -188,6 +188,10 @@ their validation reports; both live in [`docs/`](docs/).
   to it. Before, both did. The Retail computer player's attack waves and flyer squads
   now keep together the same way, as the original game's do, and an attack wave
   marches at its slowest unit's pace as a formation does.
+- **In Retail pathfinding, troops riding a transport stay part of their formation**,
+  as in the original game: the formation keeps together around them where the
+  transport carries them, but never waits for them or sends them back to their
+  places while they ride.
 - **A factory's new unit joins the factory's group or formation when it leaves the
   factory**, as in the original game, not when it is started, in Retail and Legion
   pathfinding alike. A unit a builder conjures joins the builder's group when it is
