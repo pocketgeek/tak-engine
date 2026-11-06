@@ -2111,26 +2111,30 @@ void World::insertOrderFront(int unitId, bool rally, const std::function<void()>
 // The build leg insertOrderFront put back runs again (its stage 0). While its
 // site stands unfinished a HelpBuild on it, as a click on the site gives, goes
 // ahead of the leg, which waits behind it still remembering the site: when
-// the help ends this runs again, and a site finished meanwhile ends the leg.
-// Otherwise -- the unattended site decayed away during the detour or on the
-// way back (walking keeps no site), Ctrl took back an unstarted one, or the
-// builder may not help it -- the leg goes on as the build it is and places
-// the site again (I: retail's resumed MobileBuild keeps its site; what it
-// does once that site has gone is not established). True when the queue
-// changed; the caller then stops for this tick.
+// the help ends this runs again (resumeSite negated: helped). A site finished
+// meanwhile ends the leg, and so does one still standing unfinished: the help
+// gave up on it (it could not get there), and giving it again would only
+// repeat that every few ticks. Otherwise -- the unattended site decayed away
+// during the detour or on the way back (walking keeps no site), Ctrl took
+// back an unstarted one, or the builder may not help it -- the leg goes on as
+// the build it is and places the site again (I: retail's resumed MobileBuild
+// keeps its site; what it does once that site has gone is not established).
+// True when the queue changed; the caller then stops for this tick.
 bool World::resumeBuild(Unit& u) {
     const size_t leg = currentLeg(u.orders);
-    const int siteId = std::exchange(u.orders[leg].resumeSite, 0);
+    const int remembered = std::exchange(u.orders[leg].resumeSite, 0);
+    const bool helped = remembered < 0;
+    const int siteId = helped ? -remembered : remembered;
     const Unit* site = unit(siteId);
     if (!site || !site->alive() || site->type != u.orders[leg].buildType || site->player != u.player) return false;
     const int id = u.id;
     OrdersNote note{*this, id};
-    if (!site->underConstruction) {   // finished by someone else
+    if (!site->underConstruction || helped) {   // finished meanwhile, or the help gave up on it
         u.orders.erase(u.orders.begin() + long(leg));
         return true;
     }
     if (!canHelpBuild(u, *site)) return false;
-    u.orders[leg].resumeSite = siteId;
+    u.orders[leg].resumeSite = -siteId;
     std::vector<Order> rest(std::make_move_iterator(u.orders.begin() + long(leg)),
                             std::make_move_iterator(u.orders.end()));
     u.orders.erase(u.orders.begin() + long(leg), u.orders.end());

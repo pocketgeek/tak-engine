@@ -5825,12 +5825,13 @@ The interrupted leg is rewound to its queued state (its route and what its run
 pushed ahead of it go; its mission restarts at stage 0 on a fresh controller);
 a builder whose site is down keeps its build leg, which remembers the site
 (`Order::resumeSite`; retail resumes the MobileBuild mission itself). When the
-leg runs again (`World::resumeBuild`) it becomes a HelpBuild on the site while
-that stands unfinished, ends if the site was finished meanwhile, and otherwise
-places the site again: our matches run the legacy construction path, where an
-unattended site loses hp at its build rate and goes at zero, and Ctrl takes back
-an unstarted site (`cancelBuilds`), so a HelpBuild in the leg's place used to
-lose the build (I: what retail's resumed mission does once its site has gone is
+leg runs again (`World::resumeBuild`) a HelpBuild on the site goes ahead of it
+while that stands unfinished, the leg waiting behind it; when the help ends the
+leg ends too if the site was finished or still stands (the help gave up on it:
+helping again would only repeat that), and otherwise places the site again: an
+unattended site decays away (GetBuilt, above; a builder walking back keeps
+none) and Ctrl takes back an unstarted site (`cancelBuilds`), so a HelpBuild in
+the leg's place used to lose the build (I: what retail's resumed mission does once its site has gone is
 not established). A Ctrl Load front-inserts on the
 carrier as well as the passenger (its pickup is the carrier's mission), a tower
 takes Ctrl on its own list, and Ctrl on an empty list is the plain order. A

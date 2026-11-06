@@ -1057,7 +1057,8 @@ struct alignas(64) Order {
 
     // A build leg Ctrl interrupted after its site went down (insertOrderFront):
     // that site. When the leg runs again it helps the site if it still stands
-    // unfinished, and places it again if it has gone (World::resumeBuild).
+    // unfinished, and places it again if it has gone (World::resumeBuild);
+    // negated while that help runs ahead of the leg.
     // Cold: read once, when the leg comes back. Hashed with a tag when set.
     int resumeSite = 0;
 };
