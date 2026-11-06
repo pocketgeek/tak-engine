@@ -118,9 +118,15 @@ count, score and experience gates, 519310/5193c0 and 519370 natively against
 natively. When and to whom the credit is given: "Kill credit and retirement"
 below.
 
-The multiplier scales the instance's **attack** and **armour** up and **divides**
-a reload/cooldown field (veterans hit harder, tank more, fire faster); max HP is
-unchanged. `noveteran` opts out; `veteranmodel` swaps the mesh at max rank.
+The multiplier scales the instance's **attack** and **armour** up (`51d567`
+multiplies +0xe0 and +0xe4 each tick) and **divides** the mana per shot
+(`531ea0`): veterans hit harder, tank more and cast more cheaply; max HP is
+unchanged. It does not touch the reload (S, gap hunt 9): `530140` starts a
+slot's reload from the weapon's own reload word (+0x9c) with its +-20% CRT
+spread, and `52ae90` counts it down one a tick (`52af0c`). This note used to
+say veterans fire faster, and World's script-less fallback in `World::fire`
+divided its reload so; no shipped unit lacks a script, and the fallback now
+starts the nominal reload (`kill_credit_test`). `noveteran` opts out; `veteranmodel` swaps the mesh at max rank.
 
 **Build/repair rate** (`@0x4d4b30`, the `hp=%i buildtime=%i buildrate=%i` system):
 

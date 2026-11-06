@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Who gets the credit for a hit and a kill in retail, natively.
 
-Eleven pieces, each run on synthetic units:
+Twelve pieces, each run on synthetic units:
 
   * the hitter gate of the damage routine 51a140 -> 51a240: a hitter whose
     object lives (+0x130 & 0x1000000, a dying one too) is stored at +0xf8 and
@@ -49,6 +49,9 @@ Eleven pieces, each run on synthetic units:
     `--severity`; and the order inside the update: a unit that is dying
     takes its sample before 512610 ends the update (51e36c), so on a sample
     tick the severity reads the sample just moved into +0x111.
+
+  * the reload 530140 starts: the weapon's own word, whatever the unit's
+    experience or `v F` multiplier (veterans do not fire faster).
 
 The deadly-water rows are answered by `retail_script_test --deadly-water`
 and `--carried-water`.
@@ -734,12 +737,34 @@ def death_sample():
             '+0x111 holds the sample of a second before (frames %s)' % rows)
 
 
+def veteran_reload():
+    """530140(unit, slot) natively: the reload it starts is the weapon's
+    word (+0x9c) with the CRT spread, whatever the unit's experience (+0xf0)
+    or `v F` multiplier (+0xf4); 52ae90 counts it down one a tick."""
+    f = Fixture()
+    f.record('56c640', 8); f.record('4ea560', 2)
+    weapon, slot = f.shot, f.shot + 0x200
+    f.put(f.victim_type + 0x1c2, 100); f.put(f.victim_type + 0x268, 0)
+    seen = {}
+    for nominal in (1, 30, 90, 600):
+        for roll in (0, 16384, 32767):
+            f.p.hooks[0x5d4444] = lambda uc, sp, r=roll: (0, r)
+            for xp, vf in ((0, 0.0), (1000, 0.0), (100000, 0.0), (0, 2.0)):
+                u = f.unit(1); f.put(u + 0xf0, xp); f.put(u + 0xf4, vf, 'f'); f.put(u + 0xbc, f.units + 0x6000)
+                f.p.uc.mem_write(weapon, bytes(0x100)); f.put(weapon + 0x9c, nominal, 'H')
+                f.p.uc.mem_write(slot, bytes(0x1c)); f.put(slot, weapon)
+                f.call(0x530140, (u, slot))
+                seen.setdefault((nominal, roll), set()).add(f.get(slot + 0x14, 'H'))
+    assert all(len(v) == 1 for v in seen.values()), seen
+    return 'veteran reload: 530140 starts the same reload at every rank (%d nominal/roll pairs)' % len(seen)
+
+
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else 'build-o2/retail_script_test'
     for line in (hitter_gate(), attack_multiplier(), death_weapon_shot(), retirement(), mission_kill(),
                  water_hit(), water_death(), deadly_water(binary), carried_water(binary),
                  self_destruct(), self_destruct_hit(), self_destruct_death(), commander(), cargo(),
-                 hp_sample(binary), severity(binary), death_sample()):
+                 hp_sample(binary), severity(binary), death_sample(), veteran_reload()):
         print(line)
 
 

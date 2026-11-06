@@ -1323,7 +1323,7 @@ struct alignas(64) Unit {
     // or an authored level's worth (setLevel 519370). `veteran` is its level.
     int32_t xp = 0;
     float scenarioArmor = 1.0f, scenarioWeapon = 1.0f; // permanent authored multipliers, separate from auras
-    int   veteran = 0;     // veteranLevel(): up to 10; scales attack/armor/reload
+    int   veteran = 0;     // veteranLevel(): up to 10; scales attack/armor/mana per shot
     float atkBuff = 1;     // live attack multiplier from auras (decays to 1)
     float armBuff = 1;     // live armour multiplier from auras (decays to 1)
     // OFF until ordered. Retail treats cloaking as a MISSION, not a spawn state:
@@ -1622,8 +1622,9 @@ struct alignas(64) Unit {
     // Frozen/petrified/paralyzed units can't move, turn, or fire.
     bool incapacitated() const { return frozenFor > 0 || stonedFor > 0 || paralyzedFor > 0; }
     // Veterancy stat multiplier (retail: base 1.0, +10% per level, level capped
-    // at 10 => up to 2.0x). Scales attack up, armor up (less damage taken), and
-    // reload down (faster). Verified against KINGDOMS.icd. See retail-engine-internals.
+    // at 10 => up to 2.0x). Scales attack up, armor up (less damage taken) and
+    // divides mana per shot; not the reload (530140 reads the weapon's own).
+    // Verified against KINGDOMS.icd. See retail-engine-internals.
     // A mission's `v F` (vetOverride) replaces it, as getMult 0x5193c0 does.
     float vetMul() const {
         if (vetOverride != 0.0f && type && !type->noVeteran) return vetOverride;

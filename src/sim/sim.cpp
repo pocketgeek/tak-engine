@@ -6853,8 +6853,12 @@ bool World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
     // Every shot keeps the shooter visible for 600 ticks (icd 0x52af41, set just
     // before the release 0x530220).
     blockCloak(u, 600);
-    // Veterans reload faster (retail divides the cooldown by the veteran multiplier).
-    const float rl = w.reload / std::max(u.vetMul(), 0.01f);
+    // A shot with no script (none shipped: every unit has one) starts the
+    // nominal reload. Veterancy does not shorten it: the scripted start
+    // (530140) reads only the weapon's reload word and the slot counts it down
+    // one a tick (52af0c); the multiplier reaches attack, armour and mana per
+    // shot (51d567, 531ea0), not the reload.
+    const float rl = w.reload;
     if(!scriptTriggered) {u.reloads[slot] = int32_t(rl * kTick + 0.5f);u.fireAnimations|=uint32_t(1)<<slot;u.weaponAnimations.add(tak::RetailWeaponAnimation::Fire,slot);}   // seconds -> ticks, as retail stores it
     u.justFired = true;
     if (slot < 32) u.firedWeapons |= uint32_t(1) << slot;
