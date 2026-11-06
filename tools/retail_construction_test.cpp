@@ -359,5 +359,24 @@ int main(int argc,char** argv) {
     construction.unit(siteId)->hp=Fixed();
     construction.tick(1.f/30);
     if (construction.unit(siteId)->alive()) return 1;
+    // A restored site whose decay takes its remaining work to 1 is removed by
+    // 429af0 and dies (429cea: 51a140(site, site, 30000, 11, 0)), its owner
+    // refunded nothing for that step.
+    {
+        World decay;
+        decay.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
+        const int id=decay.spawn(&siteType,200,200,0,0);
+        auto* site=decay.unit(id);site->underConstruction=true;
+        site->retailSite=RetailConstructionSite{{0.9999f,1,0,0x1000000u},{0.0020040080416947603f,2116,16516},{},0};
+        site->retailSite->mission.emplace();site->retailSite->mission->stage=2;
+        site->retailSite->mission->waitMask=0x10000001u;site->retailSite->mission->deadline=0;
+        decay.player(0).retailResources.emplace();decay.player(0).mana=0;
+        decay.tick(1.f/30);
+        site=decay.unit(id);
+        if (!site || site->alive() || site->deathType!=11 || site->lastHitBy!=id ||
+            decay.player(0).retailResources->stored!=0) {
+            std::puts("FAIL: a restored site decayed to nothing must die of kind 11");return 1;
+        }
+    }
     std::puts("PASS: construction payment, completion, allocation and particle capacity/expiry");
 }

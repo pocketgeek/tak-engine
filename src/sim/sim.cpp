@@ -13831,8 +13831,11 @@ void World::tickRetailGetBuilt(Unit& site) {
                 const auto result=retailConstructionWork(state.progress,state.type,*owner.retailResources,-0.5f);
                 owner.mana=owner.retailResources->stored;u.hp=Fixed::fromInt(state.progress.hp);
                 u.missionEvents=state.progress.events;
-                if (result==RetailConstructionResult::Removed)
-                    throw std::runtime_error("restored unconjure removal notifications are not ported");
+                if (result==RetailConstructionResult::Removed) {
+                    // 429cbb..429cea: 51a140(site, site, 30000, 11, 0), as decayConstruction.
+                    u.overkill=Fixed();u.deathType=11;u.lastHitBy=u.id;u.lastHitPlayer=u.player;
+                    w.sweepDeath(u);
+                }
             });
         }
     } host{*this,site};
