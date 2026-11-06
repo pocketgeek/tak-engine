@@ -345,6 +345,11 @@ their validation reports; both live in [`docs/`](docs/).
 - **A modded unit's `mogriumbounty` is paid as in the original game:** the player
   credited with killing such a unit gains that much mana. No unit of the original
   game sets it.
+- **The Losses count follows the original game.** Units removed without being
+  killed no longer count as losses: an army that falls with its Monarch, a map
+  scenario's removals and defeats, and a factory's unfinished unit lost when the
+  factory dies or its order is cancelled. A unit removed when its player is defeated
+  in a map scenario still counts as killed by the player that last hit it.
 - **A unit that changes sides starts afresh, as in the original game.** A unit
   converted by an enemy, given to an ally or taken over by a mission or a map
   scenario keeps its health and the way it faces, but is a new unit to its new

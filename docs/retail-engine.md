@@ -1286,9 +1286,21 @@ queues the death weapon with no shooter. `World::missionKillAll`,
 Test: `kill_credit_test` (and `kill_credit_shipped`, the Bomb Sprinkler's
 blast on its retirement tick 147).
 
-Not ported: the losses counter (`512bce`, owner record +0xa2) counts only
-when the local player's alliance byte for the owner is 0, a per-machine
-display figure; ours counts every loss. The XP add at retirement goes to the
+The losses counter (owner record +0xa2, the end screen's "Losses",
+`500535`) is a word `512ae0` adds 1 to only in its switch cases for kinds
+1, 2, 3, 7, 8, 14, 15 (`512bce`) and 5, 13 (`512d23`), finished or not and
+whoever hit (E: `check_kill_credit.py` losses, all 16 kinds). A scripted
+removal (0), a change of owner (6), a feature conversion (9), the mission
+Kill and an army ended by the commander rule or a CRT defeat (10), and a
+factory's aborted output (11) are no loss. Ours counted every death but
+kind 9 until gap hunt 10 (`retailDeathCountsAsLoss`; `kill_credit_test`,
+`factory_death_test`, `scenario_outcome_test`). Not ported: both cases also
+need the local player's alliance byte for the owner to be 0, a per-machine
+display gate. `5131b0` calls `512610(u, 10)` directly, which keeps the last
+hitter while its object lives and its player either way (`512860`, E:
+`check_kill_credit.py` cargo), so a CRT game's killed tally counts a unit
+its owner's defeat removed for the player that last hit it; ours cleared
+the hitter there until gap hunt 10. The XP add at retirement goes to the
 +0xf8 slot even if a new unit has since taken it (retail reuses slots; World
 ids are never reused, so that credit is dropped). A carried unit is not
 hurt by deadly water here (fixed since: see below). A deadly-water death was
@@ -2762,7 +2774,7 @@ Port: `World::killProductionOutput`, for a producer that `isStructure()`.
 The death sweep sets the output's hp to 0 with damage type 11 and the
 factory as `lastHitBy`, and takes it later in the same pass (an output is
 spawned after its factory). Every other caller retires it at once through
-`scenarioDestroy(output, 11)` (counted as the owner's loss, nobody's kill, no
+`scenarioDestroy(output, 11)` (no loss since gap hunt 10, nobody's kill, no
 corpse, no refund): `scenarioDestroy` of the factory, `dequeue` of the unit in
 work (ours removes the type's newest copy, so that is the front only when it
 is the last copy, as retail's mission count), `setRepeat` toggled off,

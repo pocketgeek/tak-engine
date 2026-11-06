@@ -307,6 +307,8 @@ int main(int argc,char** argv) try {
             const int ship=carried ? w.spawn(&boat,420,400,0,0) : 0;
             if (carried) check(w.embarkInto(m,ship),"the monarch did not board");
             const int victim=carried ? ship : m;
+            // b was last hit by the other player: 512610 keeps that (512860).
+            w.unit(b)->lastHitBy=e;w.unit(b)->lastHitPlayer=1;
             w.unit(victim)->hp=Fixed();w.unit(victim)->deathType=1;
             w.tick(1.f/30);
             const bool swept=!w.unit(a)->alive() && !w.unit(b)->alive();
@@ -316,6 +318,12 @@ int main(int argc,char** argv) try {
                       carried ? "a carrier's death with the monarch aboard did not end its player's units"
                               : "the monarch's death did not end its player's units at once");
                 check(w.player(0).kills==0 && w.player(1).kills==0,"the commander rule credited a kill");
+                check(w.unit(b)->lastHitBy==e && w.unit(b)->lastHitPlayer==1,
+                      "the commander rule cleared a unit's last hitter");
+                // 512ae0 counts no loss for kind 10 (check_kill_credit.py
+                // losses): only the commander killed by kind 1, or its
+                // carrier and, as its passenger, the commander (kind 8).
+                check(w.player(0).losses==(carried ? 2 : 1),"the commander rule's kind-10 deaths counted as losses");
             }
             check(w.unit(e)->alive(),"the commander rule took another player's unit");
         }

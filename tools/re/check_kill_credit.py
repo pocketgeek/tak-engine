@@ -585,7 +585,7 @@ def commander():
         assert got == want, (count, got)
     return ('commander: a commander\'s death, or its carrier\'s, ends with 5131b0 for that player '
             '(CommanderDeath on, a local owner, no campaign); 5131b0 kills every live unit kind 10 '
-            'and retires a dying one at once')
+            '(512610 keeps the last hitter: see cargo) and retires a dying one at once')
 
 
 def cargo():
@@ -638,6 +638,15 @@ def cargo():
     f.call(0x512610, (t, 6))
     retired = [c[1:] for c in f.calls if c[0] == '512ae0']
     assert retired[0] == (a, k, 5, 0x80, 0) and retired[-1][0] == t and retired[-1][3] == 0x60, retired
+    # 5131b0's 512610(u, 10) (the commander rule, a CRT defeat): the unit
+    # retires with its last hitter while that lives, its player either way.
+    for lives in (True, False):
+        u = f.unit(1, player=2); k = f.unit(2, flags=ALIVE if lives else 0, player=5)
+        f.put(u + 0xc0, f.units + 0x6000 + (u & 0xfff)); f.put(u + 0xf8, k); f.put(u + 0xfc, 5, 'B')
+        f.calls.clear()
+        f.call(0x512610, (u, 10))
+        retired = [c[1:] for c in f.calls if c[0] == '512ae0']
+        assert retired == [(u, k if lives else 0, 5, 0xa0, 0)], retired
     return ('cargo: a carrier\'s passengers die before its Killed, kind 8 and severity 0, with its hitter '
             '(while it lives) and player, and retire at once; so too when 512610 ends the old object of a '
             'carrier that changed sides (kind 6)')
@@ -853,6 +862,37 @@ def bounty():
     return 'bounty: a credited kill pays mogriumbounty to the killer player\'s pool and total (%d of 160 cases)' % paid
 
 
+def losses():
+    """512ae0's losses word natively (owner record +0xa2, the end screen's
+    'Losses', 500535): which death kinds (+0x116 >> 4) add 1, finished or
+    not, whoever hit it (World: retailDeathCountsAsLoss). The local player's alliance byte for the
+    owner (game +0x24d1 in its record) is left 0, as it is for an enemy."""
+    f = Fixture()
+    stubs = {'4c6750': 2, '4c6800': 2, '523510': 1, '50aa20': 1, '51b4f0': 5, '5066a0': 1,
+             '512ee0': 5, '5ba5d0': 0, '4ee560': 1, '4dc7f0': 0, '4eba00': 0, '4c7190': 0, '52ac00': 2}
+    for name, nargs in stubs.items():
+        f.record(name, nargs)
+    scenario = f.flags; vtable = f.flags + 0x100; stub = f.flags + 0x200
+    f.put(0x62da3c, scenario); f.put(scenario, vtable); f.put(vtable + 0x18, stub)
+    f.p.uc.mem_write(stub, b'\xc2\x04\x00')
+    f.put(f.game + 0x175dc, f.map)
+    f.put(f.game + 3 * 0x110 + 0x2510, f.flags + 0x400)   # the hitter player's resources (the bounty)
+    counted = set()
+    for kind, finished, hitter in itertools.product(range(16), (0, 1), (3, 10)):
+        u = f.unit(1, flags=ALIVE | DYING | DEATH_RUNS, player=2)
+        f.put(u + 0x116, kind << 4, 'B'); f.put(u + 0x108, 0.0 if finished else 0.5, 'f')
+        f.put(u + 0xfc, hitter, 'B'); f.put(u + 0x115, 0, 'B')
+        f.put(f.local + 0xa2, 0, 'H')
+        f.call(0x512ae0, (u,))
+        if f.get(f.local + 0xa2, 'H'):
+            counted.add(kind)
+        else:
+            assert kind not in counted, (kind, finished, hitter)
+    want = {1, 2, 3, 5, 7, 8, 13, 14, 15}
+    assert counted == want, sorted(counted)
+    return 'losses: 512ae0 counts kinds %s, finished or not, whoever hit it' % sorted(counted)
+
+
 def crt_health():
     """The CRT action cases natively, entered with their own frame: the
     arguments each hands 51a140, for every type/region combination."""
@@ -893,7 +933,7 @@ def main():
                  water_hit(), water_death(), deadly_water(binary), carried_water(binary),
                  self_destruct(), self_destruct_hit(), self_destruct_death(), commander(), cargo(),
                  hp_sample(binary), severity(binary), death_sample(), veteran_reload(),
-                 damage_modifier(binary), bounty(), crt_health()):
+                 damage_modifier(binary), bounty(), losses(), crt_health()):
         print(line)
 
 

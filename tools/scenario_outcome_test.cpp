@@ -134,14 +134,18 @@ int main() try {
               world->unit(first)->corpseUntil==0 && !world->unit(first)->deathHasCorpse,
               "scenario removal used an ordinary animated or corpse-producing death");
         check(world->canPlace(monarch,128,128,1),"retired structure left blocked terrain");
-        check(world->player(0).unitCount==0 && world->player(0).losses==2 &&
+        // 5131b0's kind 10 is no loss (512ae0, check_kill_credit.py losses),
+        // and 512610 keeps the last hitter (cargo).
+        check(world->player(0).unitCount==0 && world->player(0).losses==0 &&
               world->player(1).kills==0 && world->player(1).score==0,
-              "scenario removal credited an earlier attacker or kept the unit cap occupied");
+              "scenario removal credited an earlier attacker, counted losses or kept the unit cap occupied");
+        check(world->unit(first)->lastHitBy==enemy && world->unit(first)->lastHitPlayer==1,
+              "scenario removal cleared the last hitter");
         const auto messages=world->scenario()->drainMessages();
         check(messages.size()==1 && messages[0].text=="removed",
               "later rules did not see removal loss counters in the same pass");
         world->forceDefeat(0);ticks(*world,60);
-        check(world->player(0).losses==2 && world->unit(enemy)->alive(),
+        check(world->player(0).losses==0 && world->unit(enemy)->alive(),
               "repeated defeat duplicated losses or removed another owner's unit");
     }
     {

@@ -9526,7 +9526,7 @@ void World::scenarioDestroy(int unitId,uint8_t deathType) {
     for (auto& plane:searchGrades_) refreshSearchRect(plane,footprintOrigin(u.x,u.type->footX),
         footprintOrigin(u.z,u.type->footZ),u.type->footX,u.type->footZ);
     if (validUnitOwner(owner)) {
-        ++players_[size_t(owner)].losses;
+        if (retailDeathCountsAsLoss(deathType)) ++players_[size_t(owner)].losses;
         if (players_[size_t(owner)].unitCount>0) --players_[size_t(owner)].unitCount;
     }
     // Retired at once: 512610 with zero severity runs no Dying (512ac8).
@@ -18319,9 +18319,9 @@ void World::sweepDeath(Unit& u) {
     cancelPath(u);
     refreshMovingSearchBody(u);
     killProductionOutput(u);
-    // End-of-game "Losses" column; a unit becoming its feature (kind 9) is
-    // none (512b71's switch).
-    if (u.player >= 0 && u.player < int(players_.size()) && u.deathType!=Unit::kDeathBecomeFeature)
+    // End-of-game "Losses" column: only the kinds 512b71's switch counts
+    // (retailDeathCountsAsLoss).
+    if (u.player >= 0 && u.player < int(players_.size()) && retailDeathCountsAsLoss(uint8_t(u.deathType)))
         players_[size_t(u.player)].losses++;
     // 512860 keeps the last hitter only while its object lives; the
     // kill itself is credited at retirement (retireDeath).
@@ -22138,7 +22138,10 @@ void World::removeScenarioUnits(int player) {
         cancelPath(u);
         killProductionOutput(u);
         u.hp = Fixed();
-        u.lastHitBy = 0; u.lastHitPlayer = -1;
+        // 512610 (through 512860) keeps the last hitter while its object
+        // lives and its player either way, so a CRT game's killed tally
+        // credits that player (E: check_kill_credit.py cargo).
+        if (!retailHitter(u.lastHitBy,u.lastHitPlayer)) u.lastHitBy = 0;
         u.deathType = 10; u.severity = 0; u.corpseStatue = -1;
         killPassengers(u);
         beginUnitDeath(u);
@@ -22152,7 +22155,7 @@ void World::removeScenarioUnits(int player) {
         for (auto& plane : searchGrades_)
             refreshSearchRect(plane,footprintOrigin(u.x,u.type->footX),
                 footprintOrigin(u.z,u.type->footZ),u.type->footX,u.type->footZ);
-        ++players_[size_t(player)].losses;
+        // Kind 10 is no loss (retailDeathCountsAsLoss).
         // Feed rule counters directly: initial evaluation and end-of-tick rules
         // can both reach here outside the ordinary justDied_ collection window.
         if (scenario_) scenario_->unitDied(*this,u.id);

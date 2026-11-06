@@ -132,7 +132,10 @@ static void factoryDies(bool scripted) {
     check(!s || !s->deathHasCorpse, "...with no corpse", d);
     std::snprintf(d, sizeof d, "losses %d -> %d, enemy kills %d -> %d", lossesBefore, w.player(0).losses,
                   killsBefore, w.player(1).kills);
-    check(w.player(0).losses == lossesBefore + 2, "both count as the owner's losses", d);
+    // 512ae0 counts kinds 1-3, 5, 7, 8, 13-15 (check_kill_credit.py losses):
+    // the factory killed by a weapon is a loss, a scripted removal (0) and
+    // the output's kind 11 are not.
+    check(w.player(0).losses == lossesBefore + (scripted ? 0 : 1), "only the factory killed by a weapon is a loss", d);
     check(w.player(1).kills == killsBefore + (scripted ? 0 : 1), "the factory's killer is credited with the factory only", d);
     check(w.unit(first)->alive() && w.unit(first)->hp.toFloat() > 299, "the finished output is untouched", d);
     tickN(w, 60);
@@ -255,7 +258,7 @@ static void cancelCase(Cancel how, const char* label) {
                   w.player(0).mana, queued, w.unit(producer)->buildQueue.size());
     if (dies) {
         check(gone(w, site), "the unfinished output dies at once (no tick)", d);
-        check(w.player(0).losses == losses + 1 && w.player(1).kills == kills, "...as the owner's loss, nobody's kill", d);
+        check(w.player(0).losses == losses && w.player(1).kills == kills, "...as nobody's kill and no loss (kind 11)", d);
         check(w.player(0).mana == mana, "...and no mana comes back", d);
         tickN(w, 2);
         check(gone(w, site) && !w.unit(producer)->productionSiteId, "...and stays gone; the producer holds no output", d);

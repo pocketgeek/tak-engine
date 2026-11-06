@@ -27,6 +27,18 @@ inline bool retailKillCreditsExperience(uint8_t deathType, bool finished, int hi
 // goes up and, unless the scenario took the score over (game +0x3070 & 4),
 // its score gains the victim type's experiencepoints. A dead or converted
 // killer still counts: only the player recorded at the hit is read.
+// The owner's losses word (record +0xa2): 512ae0 adds 1 only in the switch
+// cases of the credit kinds (512bce) and of self-destruct and a no-hitter
+// hit, kinds 5 and 13 (512d23), whoever hit it and finished or not (table
+// 512ec4, S). A feature conversion (9), a change of owner (6), a mission
+// Kill or a player's army ended (10), a factory's aborted output or a site
+// unconjured away (11) and a scripted removal (0) are no loss.
+inline bool retailDeathCountsAsLoss(uint8_t deathType) {
+    constexpr uint16_t kinds = 1u << 1 | 1u << 2 | 1u << 3 | 1u << 5 | 1u << 7 | 1u << 8 | 1u << 13 |
+                               1u << 14 | 1u << 15;
+    return deathType < 16 && (kinds >> deathType & 1);
+}
+
 inline bool retailKillCountsForPlayer(uint8_t deathType, bool finished, int hitterPlayer, int victimPlayer) {
     return hitterPlayer >= 0 && retailKillCreditsExperience(deathType, finished, hitterPlayer, victimPlayer);
 }
