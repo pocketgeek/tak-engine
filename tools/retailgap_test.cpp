@@ -989,6 +989,32 @@ int main(int argc, char** argv) {
                           std::to_string(w.missionOutcome()));
             }
         }
+        // GET's player argument is retail's 0-based record index (4d4060, the
+        // index Create takes): takmission04's GET(5, 1) counts Player2, the
+        // Veruna opponent. Until gap hunt 12 it counted Player1, the human, so
+        // losing your own army won the mission and beating Veruna did not.
+        for (bool ownSide : {true, false}) {
+            sim::World w;
+            int human = 0;
+            if (!sim::setupMission(w, reg, vfs, "takmission04_ph", human)) continue;
+            tickM(w, 1.0f);
+            int enemy = -1;
+            for (const auto& u : w.units())
+                if (u.alive() && u.player != human && !w.player(u.player).passiveNeutral) enemy = u.player;
+            const int side = ownSide ? human : enemy;
+            int left = 0;
+            for (const auto& u : w.units()) if (u.alive() && u.player == side) ++left;
+            for (auto& u : w.units())
+                if (u.alive() && u.player == side && left > 3)
+                    if (auto* p = w.unit(u.id)) { p->hp = sim::Fixed(); --left; }
+            tickM(w, 5.0f);
+            if (ownSide)
+                check(enemy >= 0 && w.missionOutcome() != 1, "takmission04: losing your own army is no victory",
+                      "outcome=" + std::to_string(w.missionOutcome()));
+            else
+                check(enemy >= 0 && w.missionOutcome() == 1, "takmission04: Veruna down to three units is the victory",
+                      "outcome=" + std::to_string(w.missionOutcome()));
+        }
     }
 
     // --- Random Start Locations -------------------------------------------

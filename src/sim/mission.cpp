@@ -24,7 +24,7 @@ bool ieq(const std::string& a, const char* b) {
         if (std::tolower((unsigned char)a[n]) != std::tolower((unsigned char)b[n])) return false;
     return n == a.size() && b[n] == '\0';
 }
-// Deterministic per-type numeric id for GetUtype / GET_UNIT_VALUE(7) comparisons
+// Deterministic per-type numeric id for GetUtype / GET(30) comparisons
 // (FNV-1a of the lowercased type id, so both peers agree without an assignment order).
 int32_t typeHash(const UnitType* t) {
     if (!t) return 0;
@@ -191,7 +191,7 @@ void MissionScript::unitDied(World& w, int id) {
     if (const Unit* victim=w.unit(id)) conditionDeaths(w,victim->type,victim->player,id);
     triggerBits_.erase(id);
     if (!vm_ || cob_.scriptIndex("UnitDestroyed") < 0) return;
-    world_ = &w; getUnitContext_ = id;
+    world_ = &w;
     vm_->start("UnitDestroyed", {id});
 }
 
@@ -206,7 +206,7 @@ void MissionScript::objectReplaced(int id) { triggerBits_.erase(id); }
 void MissionScript::replacedObjectDied(World& w, int id, const UnitType* type, int oldPlayer) {
     conditionDeaths(w,type,oldPlayer,0);
     if (!vm_ || cob_.scriptIndex("UnitDestroyed") < 0) return;
-    world_ = &w; getUnitContext_ = id;
+    world_ = &w;
     vm_->start("UnitDestroyed", {id});
 }
 
@@ -294,7 +294,6 @@ int32_t MissionScript::doCreate(World& w, const std::string& type, const std::ve
     int id = w.spawn(t, at.x.toFloat(), at.z.toFloat(), std::nullopt, player);
     w.creditCreationStorage(id);   // 4d36cd: Create's 512060 passes 1
     w.finishAsFeature(id);         // 51230c: created finished
-    if (id >= 0) getUnitContext_ = id;
     return id >= 0 ? id : 0;
 }
 
@@ -601,42 +600,58 @@ void MissionScript::doSetAttribute(World& w, const std::string& sub, int unitId,
 
 // ---- GET / SET -------------------------------------------------------------
 
+int MissionScript::worldPlayer(int record) const {
+    // A retail player record index is the .ota Player number less one, the
+    // index Create's player argument is (4d36cc); map it as placements do.
+    const int ota = record + 1;
+    if (ota >= 1 && ota < int(playerMap_.size()) && playerMap_[size_t(ota)] >= 0) return playerMap_[size_t(ota)];
+    return record;
+}
+
 int32_t MissionScript::getValue(World& w, int32_t valId, const std::vector<int32_t>& a) {
-    // The mission GET table. Scripts call GET(valId, a1..a4) 135 times across the
-    // shipped missions and we answered only id 7, returning 0 for everything else --
-    // which silently mis-resolved real missions: takmission04 read a player's unit
-    // count as 0 and declared victory the instant anything died, takmission09 never
-    // recognised Heket's death, and takmission22's POW counter never advanced.
+    // The mission GET table, 4d4060 (E: tools/re/check_mission_get.py). GET and
+    // GET_UNIT_VALUE both reach it (the host's slot +0x54, 56d0cd: the latter
+    // with four zero arguments). The shipped scripts use ids 5, 7, 30, 31, 35,
+    // 36 and 40; the others read display and settings fields and are 0 here.
     int32_t a1 = a.empty() ? 0 : a[0];
     switch (valId) {
         case 5: {
-            // Living units belonging to an .ota player (the script uses .ota player
-            // numbers, so map them into our compacted slots the way placements do).
-            int player = a1;
-            if (a1 >= 1 && a1 < int(playerMap_.size()) && playerMap_[size_t(a1)] >= 0)
-                player = playerMap_[size_t(a1)];
+            // Player record a1's population word (+0x24ec): every object of the
+            // player from its creation (512334, 512574) to its retirement
+            // (512e52), a unit being built or one whose Dying runs too. a1 is
+            // the 0-based record index (the scripts test GET(5, 1) before
+            // creating units for player 1).
+            const int player = worldPlayer(a1);
             int n = 0;
             for (const auto& u : w.units())
-                if (u.alive() && u.type && u.player == player) ++n;
+                if (World::retailObjectLives(u) && u.player == player) ++n;
             return n;
         }
-        case 7:    // the context unit's type (GET_UNIT_VALUE form)
-            if (Unit* u = w.unit(getUnitContext_)) return typeHash(u->type);
-            return 0;
+        case 7: {
+            // The unit cap word (+0x14e7c), whatever the arguments: every shipped
+            // GET_UNIT_VALUE(7) is `GET(5, p) < GET_UNIT_VALUE(7) - n` ahead of
+            // creating n units for p. An uncapped World reads as the word's top.
+            const int cap = w.unitCap();
+            return cap > 0 ? std::min(cap, 0xffff) : 0xffff;
+        }
         case 30:   // a named unit's TYPE -- compared against the getUtype command,
                    // so it must hash identically
             if (Unit* u = w.unit(a1)) return typeHash(u->type);
             return 0;
-        case 35:   // a unit's X cell (paired with 36 and compared to cell constants)
-            if (Unit* u = w.unit(a1)) return int32_t(u->x.toFloat()) / 16;
+        case 31:   // the unit's owner byte (+0xfd), 10 for no unit
+            if (Unit* u = a1 ? w.unit(a1) : nullptr; u && u->type) return retailOwner(u->player);
+            return 10;
+        case 35:   // the unit's footprint-origin cell (+0x74 / +0x76, 51b3b0), as words
+            if (Unit* u = w.unit(a1); u && u->type) return int16_t(footprintOrigin(u->x, u->type->footX));
             return 0;
-        case 36:   // a unit's Z cell
-            if (Unit* u = w.unit(a1)) return int32_t(u->z.toFloat()) / 16;
+        case 36:
+            if (Unit* u = w.unit(a1); u && u->type) return int16_t(footprintOrigin(u->z, u->type->footZ));
             return 0;
-        case 40:   // native 4d42f3: score of the requested zero-based player slot
-            return a1>=0 && a1<w.numPlayers() ? w.player(a1).score : 0;
+        case 40: {   // native 4d42f3: player record a1's score
+            const int player = worldPlayer(a1);
+            return player>=0 && player<w.numPlayers() ? w.player(player).score : 0;
+        }
         default:
-            // id 31 (one use, semantics unclear) and anything else: 0.
             return 0;
     }
 }
@@ -670,7 +685,6 @@ void MissionScript::sweepTriggers(World& w) {
         uint32_t& bits = triggerBits_[u.id];
         if (!(bits & 0x80000000u)) {
             bits |= 0x80000000u;
-            getUnitContext_ = u.id;
             if (created) vm_->start("UnitCreated", {u.id, owner});
         }
         const int ox = footprintOrigin(u.x, u.type->footX), oz = footprintOrigin(u.z, u.type->footZ);
@@ -680,7 +694,6 @@ void MissionScript::sweepTriggers(World& w) {
             if (!(r.rect ? retailTriggerRect(ox, oz, r.x1, r.z1, r.x2, r.z2)
                          : retailTriggerCircle(ox, oz, r.x1, r.z1, r.r))) continue;
             bits |= 1u << rid;
-            getUnitContext_ = u.id;
             if (hit) vm_->start("TriggerHit", {int32_t(rid), u.id, owner});
         }
     }

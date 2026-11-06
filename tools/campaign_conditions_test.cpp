@@ -37,9 +37,11 @@ int main(int argc,char** argv) {
         ("tak-campaign-conditions-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     struct Cleanup {std::filesystem::path path;~Cleanup(){std::error_code ec;std::filesystem::remove_all(path,ec);}} cleanup{root};
     std::filesystem::create_directories(root/"units");
-    for(const char* name:{"soldier","monarch","pretender","building","thrall","dyer"}) {
+    for(const char* name:{"soldier","monarch","pretender","building","thrall","dyer","wide"}) {
         std::ofstream f(root/"units"/(std::string(name)+".fbi"));
-        f<<"[UNITINFO]{\nunitname="<<name<<";\nobjectname="<<name<<";\nmaxdamage=100;\nfootprintx=1;\nfootprintz=1;\n";
+        const bool wide=std::string(name)=="wide";   // a 3x2 footprint (GET 35 / 36)
+        f<<"[UNITINFO]{\nunitname="<<name<<";\nobjectname="<<name<<";\nmaxdamage=100;\nfootprintx="<<(wide?3:1)
+         <<";\nfootprintz="<<(wide?2:1)<<";\n";
         if(std::string(name)=="thrall")f<<"bmcode=1;\nupright=1;\n";   // a body the charm can take (52da10)
         if(std::string(name)!="building")f<<"canmove=1;\nmaxvelocity=1;\n";
         if(std::string(name)=="monarch" || std::string(name)=="pretender")f<<"commander=1;\n";
@@ -254,6 +256,31 @@ int main(int argc,char** argv) {
         check(!early,"a death was not heard before its Dying ended");
         w.tick(1.f/30);
         check(mission->outcome()==1,"a retired unit's death reached the conditions");
+    }
+    {
+        // The mission GET table, 4d4060 (E: tools/re/check_mission_get.py).
+        // Its player argument is the 0-based record index Create takes:
+        // GET(5, 1) is .ota Player2's population word (+0x24ec), every object
+        // from its creation to its retirement, a unit being built and one
+        // whose Dying runs too. GET_UNIT_VALUE(7), the same routine, is the
+        // unit cap; 31 is the owner byte (10 for none); 35/36 are the
+        // footprint-origin cell (+0x74/+0x76); 40 a record's score.
+        sim::World w;w.setUnitCap(200);
+        const auto* wide=registry.find("wide");
+        for(int i=0;i<3;++i)w.spawn(soldier,100,100,0,0);
+        int enemy[5];for(int& id:enemy)id=w.spawn(soldier,300,100,0,1);
+        w.unit(enemy[1])->underConstruction=true;
+        w.unit(enemy[2])->hp=sim::Fixed();w.unit(enemy[2])->deadFor=0;w.unit(enemy[2])->deathPending=true;  // Dying runs
+        w.unit(enemy[3])->hp=sim::Fixed();w.unit(enemy[3])->deadFor=0;                                       // retired
+        const int big=w.spawn(wide,165,170,0,1);
+        w.player(1).score=1234;
+        sim::MissionScript m(std::vector<uint8_t>{},tdf::Node{},registry,0,"get fixture",{-1,0,1});
+        check(m.get(w,5,{1,0,0,0})==5,"GET(5, 1) is Player2's population, a unit being built and a dying one included");
+        check(m.get(w,5,{0,0,0,0})==3,"GET(5, 0) is Player1's");
+        check(m.get(w,7,{})==200 && m.get(w,7,{1,0,0,0})==200,"GET_UNIT_VALUE(7) is the unit cap");
+        check(m.get(w,31,{enemy[0],0,0,0})==1 && m.get(w,31,{0,0,0,0})==10,"GET(31) is the owner byte, 10 for no unit");
+        check(m.get(w,35,{big,0,0,0})==9 && m.get(w,36,{big,0,0,0})==10,"GET(35/36) is the footprint-origin cell");
+        check(m.get(w,40,{1,0,0,0})==1234,"GET(40, 1) is Player2's score");
     }
     return failed?1:0;
 }
