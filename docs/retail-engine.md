@@ -3193,6 +3193,33 @@ first ON click did nothing. `native_gate.py` had taken the same default for
 its fixture; `check_gate_lifecycle.py` passes for all four gates in both
 balances with retail's.
 
+### Ours, not retail: an Activate waits for Create (owner decision, 0.9.20)
+
+Every shipped factory and yard `Create` (all 27 scripts with a
+`RequestState`) sleeps 100 ms at a time until `BUILD_PERCENT_LEFT` reads 0 and
+only then calls `InitState`, which sets the `RequestState` statics (current
+state 1 = off, busy 0). Before that the statics are 0, which `RequestState`
+reads as "already on". Production queued on the tick after a Navy Yard
+finished (the AI's opening, `naval_ai`) made `World::tickUnitScript` start
+`Activate` while `Create` was still asleep: `RequestState(0)` changed nothing,
+`Go`/`OpenYard` never ran, and the yard waited for ever. Land factories had the
+same race. Whether retail can meet it was not established (I: retail starts
+`Activate` through the same immediate `51e4d0` edge, so it likely can, and its
+AI likely just never queues that early; not checked).
+
+Ours: `World::switchScript`, used by the completion (`activateBuilt`), the
+production edge and the on/off order, holds an `Activate` while a thread is
+still in the unit's `Create` (`cob::createHold`), and `tickUnitScript` starts
+it on the tick `Create` has returned; a `Deactivate` meanwhile cancels it. All
+204 shipped `Create` scripts can return. One that cannot (no `RETURN`
+reachable, an endless loop) holds only until the exit of its build-wait (the
+first `JUMP_IF_FALSE` after a `BUILD_PERCENT_LEFT` read), or not at all with
+no build-wait, so it never blocks activation for good. A finished creation
+still runs `Activate` at once: its `Create` has not run yet and runs first in
+`Activate`'s own zero-elapsed pass. The hold is hashed while set. Test:
+`factory_activate` (each production structure built and given a unit as it
+finishes, at three builder speeds; the old code failed 9 of 33).
+
 ## A new unit's mana pool starts empty (icd, 2026-11-05)
 
 A unit's pool is a pair of floats, the current value at `+0xd8` and the
