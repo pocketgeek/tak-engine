@@ -428,6 +428,17 @@ their validation reports; both live in [`docs/`](docs/).
     drafting it into its own army, whose orders replaced the mission's. Troops a
     mission's transport puts ashore set off on their own orders at once, instead of
     first finishing them and then shuffling aside where they ended up.
+  - A mission that counts a side's units counts the side it names. Missions that
+    end when the enemy is down to a few units (such as mission 4) ended when *your*
+    army was down to a few instead, and beating the enemy did not end them. The
+    count also includes units still being built and units still falling, and a unit
+    whose death the mission is reacting to still counts at that moment, as in the
+    original game.
+  - Reinforcements a mission sends in waves (the drakes of mission 15, and others)
+    keep coming while their side has room under the unit limit, as in the original
+    game; they could stop coming partway through a mission.
+  - A mission that checks where a unit is, or who owned a unit that died, reads
+    the same square and owner as the original game.
 - **Fedora 45 packages.** Fedora 45 now has its own x86-64 and ARM64 RPMs, beside
   Fedora 44's.
 - **Investigated, no change needed:**

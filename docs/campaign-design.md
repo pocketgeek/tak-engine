@@ -137,9 +137,12 @@ empty unit table). Details and addresses: [retail-engine.md](retail-engine.md#mi
 Example (`takmission01`): `SetMission s, w 4, m 133 68, m 129 68, w 3, m 133 68, a TARZOM`.
 
 ### GET / SET
-`GET_UNIT_VALUE id=7` → a unit's type id (compare against `GetUtype`). `GET valId=30`
-→ roster/build-list index (already implemented). `SET_UNIT_VALUE(id=2, value=1|0)` →
-**force victory / force defeat** (scripted override of the data-driven rules).
+`GET` and `GET_UNIT_VALUE` reach the same table (retail `4d4060`): 5 = a player's
+population (0-based player index, as `Create`'s), 7 = the unit cap, 30 = a unit's type
+(compare against `GetUtype`), 31 = a unit's owner, 35/36 = its footprint-origin cell,
+40 = a player's score. Details: [retail-engine.md](retail-engine.md#the-mission-get-table-icd-0x4d4060-gap-hunt-12-2026-11-05).
+`SET_UNIT_VALUE(id=2, value=1|0)` → **force victory / force defeat** (scripted override
+of the data-driven rules).
 
 ### PLAY_SOUND
 `PLAY_SOUND <nameIdx>` resolves `nameTable[nameIdx]` as a WAV and preserves its

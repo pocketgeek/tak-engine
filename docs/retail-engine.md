@@ -7419,6 +7419,57 @@ footprint test, abandons the mission (8) when the owner is a seated computer
 (`405928..40598f`) and VTOL_MobileBuild (`41f3fc..41f463`) do the same with
 0.7. Only RESURRECT's end is ported (`computerOwned` there).
 
+### The mission GET table (icd 0x4d4060, gap hunt 12, 2026-11-05)
+
+S = static, E = emulated (`tools/re/check_mission_get.py`, 12,600 calls).
+The god script's GET (`0x10043000`, valId and four arguments) and its
+GET_UNIT_VALUE (`0x10042000`, valId alone) both call the host's slot +0x54
+(`56d0cd..56d0e5`; GET_UNIT_VALUE pushes four zeros), which for the mission
+host (vtable `5f2774`) is `4d4060` (S). Its switch (`4d4078`, tables
+`4d4348`/`4d4388`) answers 1, 5, 6, 7, 10, 11, 15, 16, 20, 21, 30, 31, 35, 36,
+40 and 41 and gives 0 for the rest. The shipped scripts use 5, 7, 30, 31, 35,
+36 and 40 (E for each):
+
+- **5**: player record a1's population word (`+0x24ec`, record stride 0x110).
+  a1 is the 0-based record index `Create`'s player argument is (`4d36cc`), so
+  GET(5, 1) is .ota Player2. The word counts every object from its creation
+  (`512334`, `512574`) to its retirement (`512e52`, at the end of `512ae0`): a
+  unit being built and one whose Dying runs count (S).
+- **7**: the unit cap word (`+0x14e7c`, the word `512166` tests), whatever the
+  arguments. All 40 shipped GET_UNIT_VALUE calls are GET_UNIT_VALUE(7), each
+  in `GET(5, p) < GET_UNIT_VALUE(7) - n` ahead of creating n units for p.
+- **30**: a live object's type word, else 0. **31**: a live object's owner byte
+  (`+0xfd`), else 10 (also for id 0). **35 / 36**: a live object's
+  footprint-origin cell words `+0x74` / `+0x76`, sign-extended, else 0.
+  "Live" is `+0x130 & 0x1000000`, a dying object included.
+- **40**: player record a1's score (`+0xa4`).
+
+UnitDestroyed runs inside the retirement: the scenario's +0x18 (`4d2d90`,
+called at `512b4e`) starts it through `56c640` with the run-now flag, and
+`56c680` then runs the VM (`56c870`) at once (S). So its first slice comes
+before `512e52` takes the unit off its owner's population and while the object
+lives: GET(5) there counts the dying unit and every unit retiring after it in
+the same tick. Six shipped UnitDestroyed handlers read GET(5): missions 4, 14
+and 18 win when the enemy's count is under 5 or 9 (one kill later than a count
+without the dying unit), and 16, 27 and 34 lose when the human's count is 0,
+which from inside UnitDestroyed never happens.
+
+Ours until gap hunt 12 (`MissionScript::getValue`): GET(5, a1) counted live
+units of .ota Player a1, one player off (GET(5, 1) counted the human, so
+takmission04 was won by losing your own army and not by beating Veruna), and
+left out units being built and dying ones; GET_UNIT_VALUE(7) returned the type
+of the last unit the mission had heard of, 0 once that unit was gone, so wave
+reinforcements (takmission15's drakes) stopped while that unit was dead and
+otherwise ignored the cap; 31 was always 0; 35/36 were the cell under the
+unit's centre, not its footprint origin; UnitDestroyed was queued for the VM's
+next run, after the retirement. Now: `MissionScript::getValue` /
+`worldPlayer`, `cob::Vm::startNow` and `MissionScript::runUnitDestroyed`, with
+the feed's retirements in order (`setRetiring`). Tests:
+`campaign_conditions_test` (the table, the population in UnitDestroyed),
+`retailgap_test` rules (takmission04). Not ported: GET 30 and 35/36 answer for
+any unit World still holds rather than only a live object, which differs only
+for a unit already retired whose id a script still holds after a sleep.
+
 ## Selection ring (`4fd0d0`)
 
 Both draw passes (`4fca0f`, `4fcbef`) call one routine, and it draws through the
