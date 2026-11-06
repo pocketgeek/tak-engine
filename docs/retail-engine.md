@@ -1135,6 +1135,18 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   the dying unit as its shooter: its kills were credited to the unit's
   player and it was scaled by its veterancy. The Bomb Sprinkler's Dying runs
   147 ticks, so its cannonball burst came five seconds early.
+- **The mission hears a death at retirement** (gap hunt 9). Before the kill
+  credit, `512ae0` sends the conditions their death event (`512b40`
+  `523510`, its only caller in .text) and the scenario its `+0x18` (`512b4e`:
+  a campaign's `UnitDestroyed`, a CRT game's lost/killed tallies); `512610`
+  sends neither (S; E: `check_kill_credit.py` retirement, 144 cases). So a
+  unit whose Dying runs is counted for KillUnitType, KillEnemyCommander and
+  the rest, and its `UnitDestroyed` starts, only when its Dying ends; one
+  with no Dying retires at once. World fed them at the death (`sweepDeath`)
+  until then; `retireDeath` now does (`campaign_conditions_test`: a Dying
+  of SET 31 holds KillUnitType for some 35 ticks). A retirement the
+  mission's own step makes (its Kill) is heard at the next tick's feed;
+  pending ones are hashed.
 - **The water grave** (`512ee0`, `512f8f..512fab`; E over 3,000 layouts,
   gap hunt 6, `tools/re/check_corpse_water.py`): the corpse feature goes in either way
   (`495360`); the body is a water grave, the feature given the sinking

@@ -37,13 +37,26 @@ int main(int argc,char** argv) {
         ("tak-campaign-conditions-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     struct Cleanup {std::filesystem::path path;~Cleanup(){std::error_code ec;std::filesystem::remove_all(path,ec);}} cleanup{root};
     std::filesystem::create_directories(root/"units");
-    for(const char* name:{"soldier","monarch","pretender","building","thrall"}) {
+    for(const char* name:{"soldier","monarch","pretender","building","thrall","dyer"}) {
         std::ofstream f(root/"units"/(std::string(name)+".fbi"));
         f<<"[UNITINFO]{\nunitname="<<name<<";\nobjectname="<<name<<";\nmaxdamage=100;\nfootprintx=1;\nfootprintz=1;\n";
         if(std::string(name)=="thrall")f<<"bmcode=1;\nupright=1;\n";   // a body the charm can take (52da10)
         if(std::string(name)!="building")f<<"canmove=1;\nmaxvelocity=1;\n";
         if(std::string(name)=="monarch" || std::string(name)=="pretender")f<<"commander=1;\n";
         f<<"}";
+    }
+    {
+        // dyer's script: a Dying that ends its death animation (SET 31), so
+        // the unit retires some 35 ticks after it dies.
+        const std::vector<uint32_t> code={0x10021001,31,0x10021001,0,0x10082000,0x10021001,0,0x10065000};
+        std::vector<uint8_t> cob(256);
+        auto put=[&](size_t offset,uint32_t value){std::memcpy(cob.data()+offset,&value,4);};
+        put(0,4);put(4,1);put(12,uint32_t(code.size()));put(24,52);put(28,56);put(32,60);put(36,128);
+        put(52,0);put(56,72);std::memcpy(cob.data()+72,"Dying",6);
+        for(size_t i=0;i<code.size();++i)put(128+i*4,code[i]);
+        std::filesystem::create_directories(root/"scripts");
+        std::ofstream(root/"scripts"/"dyer.cob",std::ios::binary).write(reinterpret_cast<const char*>(cob.data()),
+                                                                      std::streamsize(cob.size()));
     }
     hpi::Vfs vfs;vfs.addLayer(hpi::MountSet(root));sim::TypeRegistry registry;registry.loadDir(vfs,"units");
     const auto* soldier=registry.find("soldier");const auto* monarch=registry.find("monarch");const auto* building=registry.find("building");
@@ -216,6 +229,31 @@ int main(int argc,char** argv) {
         m.start(w);m.step(w,1.f/30);
         for(int i=0;i<3;++i)w.tick(1.f/30);
         check(!w.unit(enemy)->alive() && w.unit(mine)->xp==0,"scripted Kill credited the last attacker");
+    }
+    {
+        // 523510 (the conditions' death event) and the scenario's +0x18
+        // (UnitDestroyed) are retirement's (512ae0), not the death's: a unit
+        // whose Dying runs is heard of when its Dying ends.
+        const auto* dyer=registry.find("dyer");
+        check(dyer && dyer->script(),"the dyer fixture has its script");
+        if(!dyer)return 1;
+        sim::World w;w.setTerrain(std::vector<uint8_t>(64*64,50),64,64,0);
+        w.spawn(soldier,100,100,0,0);const int enemy=w.spawn(dyer,300,100,0,1);
+        tdf::Node header;header.values["killunittype"]="dyer,1";
+        auto m=std::make_unique<sim::MissionScript>(std::vector<uint8_t>{},header,registry,0,"retirement fixture");
+        auto* mission=m.get();w.setMission(std::move(m));
+        w.tick(1.f/30);
+        w.unit(enemy)->hp=sim::Fixed();w.unit(enemy)->overkill=sim::Fixed::fromInt(50);w.unit(enemy)->deathType=1;
+        int ticks=0;bool early=false;
+        while(w.unit(enemy)->deathPending || w.unit(enemy)->alive()) {
+            w.tick(1.f/30);++ticks;
+            if(ticks>200)break;
+            if(w.unit(enemy)->deathPending)early|=mission->outcome()!=0;
+        }
+        check(ticks>30 && ticks<=200,"the dyer's Dying ran to its end");
+        check(!early,"a death was not heard before its Dying ended");
+        w.tick(1.f/30);
+        check(mission->outcome()==1,"a retired unit's death reached the conditions");
     }
     return failed?1:0;
 }

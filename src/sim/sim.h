@@ -2704,7 +2704,7 @@ public:
         paths_.clear();legion_.reset();convoys_.clear();
         searchGrades_.clear(); activeSearchGrade_=-1;
         units_.clear();unitSlotById_.clear();retiredOwners_.clear();retiredHash_=0;
-        replacedObjects_.clear();
+        replacedObjects_.clear();justDied_.clear();
         // The retail group records and the AI squads' formation flags
         // (hashed) live across ticks: a replay from tick 0 starts with none.
         retailGroups_={};retailGroupPaced_.clear();aiFormation_={};
@@ -4282,7 +4282,9 @@ private:
     void noteScriptedProduction(Unit& producer, const UnitType* t);
     LeftEmptyOnCopy<std::unique_ptr<ScenarioScript>> scenario_; // optional .crt trigger runner
     std::vector<uint8_t> forcedDefeat_;        // scenario Victory/Defeat: forced-defeated slots
-    std::vector<int> justDied_;                // unit ids that died this tick (mission/scenario hook)
+    // Units retired (512ae0) since the last feed to the mission/scenario, which
+    // hear a death at retirement (523510, +0x18); hashed while pending.
+    std::vector<int> justDied_;
     // The old objects of changes of owner (514da0, changeOwner) whose death
     // (kind 6, retired at once) the mission and scenario have yet to hear:
     // their id (which the new object keeps), type, old owner and last hitter's

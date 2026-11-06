@@ -9754,6 +9754,12 @@ void World::creditKill(const Unit& victim) {
 // sweep's.
 void World::retireDeath(Unit& u) {
     if (!u.deathPending || !u.type) return;
+    // 512b40 / 512b4e: retirement, not the death, hands the conditions their
+    // death event (523510, the only caller) and the scenario its +0x18
+    // (a campaign's UnitDestroyed, a CRT game's tallies): a unit whose Dying
+    // runs is heard of when its Dying ends (E: check_kill_credit.py
+    // retirement).
+    if (mission_ || scenario_) justDied_.push_back(u.id);
     const bool finished = !u.underConstruction;
     if (retailKillCountsForPlayer(u.deathType, finished, u.lastHitPlayer, u.player) &&
         validUnitOwner(u.lastHitPlayer)) {
@@ -18299,7 +18305,6 @@ void World::sweepDeath(Unit& u) {
     // 512860 keeps the last hitter only while its object lives; the
     // kill itself is credited at retirement (retireDeath).
     if (!retailHitter(u.lastHitBy,u.lastHitPlayer)) u.lastHitBy=0;
-    if (mission_ || scenario_) justDied_.push_back(u.id);
     killPassengers(u);
     // Killed decides corpse admission; Dying controls when the original
     // body retires. Only then does decomposition or water sinking begin.
@@ -19420,7 +19425,6 @@ void World::tick(float dt) {
             }
         });
     }
-    if (mission_ || scenario_) justDied_.clear();   // deaths this tick, fed to mission/scenario below
     transportEffects_.clear();
     scriptEmissions_.clear();
     scriptSounds_.clear();
@@ -20891,16 +20895,20 @@ void World::tick(float dt) {
     // then advance it (VM + UnitCreated/trigger sweep + win/lose). Runs on every
     // peer (events queue VM threads; the spawns/orders happen in step()), so the
     // mission stays in lockstep with no relayed actions.
+    // The retirements since the last feed: a retirement the mission's own
+    // step makes (its Kill) is heard at the next tick's feed.
+    const auto died=std::move(justDied_);
+    justDied_.clear();
     if (mission_) {
         TAK_PASS();
-        for (int id : justDied_) mission_->unitDied(*this, id);
+        for (int id : died) mission_->unitDied(*this, id);
         for (const auto& o : replaced) mission_->replacedObjectDied(*this, o.id, o.type, o.owner);
         mission_->step(*this, dt);
     }
     // Scenario (.crt) trigger runner: same lockstep contract as the mission
     // runner -- built identically on every peer, ticked here, hashed below.
     if (scenario_) {
-        for (int id : justDied_) scenario_->unitDied(*this, id);
+        for (int id : died) scenario_->unitDied(*this, id);
         for (const auto& o : replaced) scenario_->objectDied(o.type, o.owner, o.lastHitPlayer);
         scenario_->step(*this, dt);
         updateOutcome(); // Rules can change results and unit counts this tick.
@@ -21302,6 +21310,8 @@ uint64_t World::stateHash() const {
     if(!retiredOwners_.empty()) {mix(0x52455449524544ull);mix(retiredHash_);mix(uint32_t(nextId_));}
     // Old objects of changes of owner whose death is still to be heard.
     for (const auto& o:replacedObjects_) {mix(0x5245504cull);mix(uint32_t(o.id));mix(uint32_t(o.owner));mix(uint32_t(o.lastHitPlayer));}
+    // Retirements the mission or scenario has yet to hear (its own step's).
+    for (const int id:justDied_) {mix(0x52455449ull);mix(uint32_t(id));}
     TAK_PASS();
     for (const auto& u : units_) {
         mix(uint64_t(u.id));

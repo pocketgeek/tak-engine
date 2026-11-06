@@ -12,7 +12,9 @@ Thirteen pieces, each run on synthetic units:
     and is not dying (+0x130 & 0x1000).
   * the death weapon 52ac00: a shot with no shooter (+0x7c = 0) for the dying
     unit's player (+0x92 = +0xfd) at its position, through 529c10.
-  * retirement 512ae0: the death weapon fires inside it while the unit's
+  * retirement 512ae0: the conditions' death event 523510 (its only caller)
+    and the scenario's +0x18 (UnitDestroyed) come with it, not with the
+    death 512610; the death weapon fires inside it while the unit's
     object still lives, and only for severity > 0 (+0x115) on a finished
     unit (+0x108 == 0); the object is freed after.
   * the mission Kill 513130: every unit this machine runs loses its shots
@@ -196,6 +198,8 @@ def retirement():
     scenario = f.flags; vtable = f.flags + 0x100; stub = f.flags + 0x200
     f.put(0x62da3c, scenario); f.put(scenario, vtable); f.put(vtable + 0x18, stub)
     f.p.uc.mem_write(stub, b'\xc2\x04\x00')                    # ret 4
+    f.p.hooks[stub] = lambda uc, sp: (f.calls.append(('scenario+18',) + struct.unpack('<I', uc.mem_read(sp, 4)))
+                                      or (1, 0))
     f.put(f.game + 0x175dc, f.map)
     alive_at_blast = []
     def blast(uc, sp):
@@ -223,11 +227,16 @@ def retirement():
         # after the death weapon: the blast never reaches its own corpse.
         names = [c[0] for c in f.calls]
         assert ('512ee0' in names) == (corpse > 0), (corpse, names)
+        # The conditions' death event (523510, which only 512ae0 calls) and
+        # the scenario's +0x18 (UnitDestroyed) come with the retirement.
+        assert ('523510', u) in f.calls and ('scenario+18', u) in f.calls, f.calls
+        assert names.index('523510') < names.index('scenario+18'), names
         if fired and corpse:
             assert names.index('52ac00') < names.index('512ee0'), names
             ordered += 1
         cases.append(fired)
-    return ('retirement: 512ae0 fires the death weapon (%d of %d cases) while the object lives, for '
+    return ('retirement: 512ae0 sends the death to the conditions (523510) and the scenario (+0x18), '
+            'fires the death weapon (%d of %d cases) while the object lives, for '
             'severity > 0 on a finished unit, then frees it; the corpse (512ee0) after the blast in all %d '
             'cases with both' % (sum(cases), len(cases), ordered))
 

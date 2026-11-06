@@ -274,6 +274,10 @@ their validation reports; both live in [`docs/`](docs/).
   in the original game: a unit the mission is walking somewhere does not count for
   "move a unit to this spot" until its orders are done, and does not count as a
   survivor for "all your units are killed".
+- **A mission hears of a death when the death animation ends**, as in the original
+  game: objectives such as "kill the enemy Monarch" or "kill so many of a unit" are
+  met, and the mission's own reaction to a death starts, once the fallen unit has
+  finished dying, not the moment it was struck down.
 - **Deadly water hurts once a second**, as in the original game: the map's whole
   water damage each second to anything standing at or below the water line that
   cannot hover, ships included, and troops carried on a ship too (a flyer's
