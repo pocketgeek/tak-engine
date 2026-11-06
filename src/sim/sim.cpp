@@ -1112,19 +1112,6 @@ void World::activateBuilt(int unitId) {
 // action (4cad50 case 7) pass 1; production, the builders, a revive and a
 // change of owner pass 0 (check_new_unit_mana.py storage). So a game opens
 // with the pool its starting units can store: 5000, the Monarch's.
-void World::creditKillBounty(int player, float bounty) {
-    if (bounty == 0.0f || !validUnitOwner(player)) return;
-    auto& p=players_[size_t(player)];
-    if (p.retailResources) {
-        auto& r=*p.retailResources;
-        r.stored=float(double(bounty)+double(r.stored));
-        r.totalProduced+=double(bounty);
-        p.mana=r.stored;
-        return;
-    }
-    p.mana+=double(bounty);
-}
-
 void World::creditCreationStorage(int unitId) {
     const Unit* u=unit(unitId);
     if (!u || !u->type || !validUnitOwner(u->player)) return;
@@ -1140,6 +1127,21 @@ void World::creditCreationStorage(int unitId) {
     }
     p.mana+=storage;
     p.storage=float(storage+double(p.storage));
+}
+
+// 512c6b..512c99: a credited kill pays the victim type's mogriumbounty
+// (type +0x222) into the killer player's pool and lifetime total, uncapped.
+void World::creditKillBounty(int player, float bounty) {
+    if (bounty == 0.0f || !validUnitOwner(player)) return;
+    auto& p=players_[size_t(player)];
+    if (p.retailResources) {
+        auto& r=*p.retailResources;
+        r.stored=float(double(bounty)+double(r.stored));
+        r.totalProduced+=double(bounty);
+        p.mana=r.stored;
+        return;
+    }
+    p.mana+=double(bounty);
 }
 
 // A finished creation (512060 at 51230c) and a completion (429990 at 429a92)

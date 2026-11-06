@@ -219,9 +219,9 @@ their validation reports; both live in [`docs/`](docs/).
   computer player's attack squads re-form the same way, and gather their stragglers as
   your formations do. If another unit or a building stands on that spot it waits until
   the spot is free, and if it cannot get there it stays where it stopped instead of
-  trying again and again. A formation you stop on
-  the way stays where it stopped. Flyers keep to their formation as before, and units
-  in a group (Ctrl+number) are left where they are.
+  trying again and again. A formation you stop on the way stays where it stopped.
+  Flyers keep to their formation as before, and units in a group (Ctrl+number) are
+  left where they are.
 - **An armed factory from a mod gets no Attack Ground order**, as in the original
   game, which takes the attack command away from any factory. It never attacks an
   enemy unit itself either, ordered or on its own (an Attack on a unit still sends
@@ -320,8 +320,8 @@ their validation reports; both live in [`docs/`](docs/).
   game.** A skirmish or multiplayer game used to open with 2800 mana a player; it now
   opens with 5000, the Monarch's whole store. A campaign mission opens each player
   with the store of the units the mission gives them (it used to be 500), and a
-  unit a mission or a map scenario creates during play brings its store with it
-  full. Units you train or build still arrive with nothing.
+  unit a mission or a map scenario creates during play adds its whole store to its
+  player's mana at once. Units you train or build add no mana of their own.
 - **A finished wall becomes part of the scenery, as in the original game.** A wall
   you build, and every wall a campaign mission places, now turns into a wall feature
   as soon as it is finished: it still blocks the way and can be smashed, but it is
@@ -378,9 +378,8 @@ their validation reports; both live in [`docs/`](docs/).
   scenario keeps its health and the way it faces, but is a new unit to its new
   owner: its mana pool starts empty, it is no longer paralysed, cloaked by order or
   set to its old owner's stance (it takes its type's), its weapons start with no
-  reload, and it loses a mission-given name. Its old
-  owner loses the unit: missions and map scenarios count it as a loss for the old
-  owner (a mission's "kill N of these" goal counts a converted enemy, and the last
+  reload, and it loses a mission-given name. Its old owner loses the unit: missions
+  and map scenarios count it as a loss for the old owner (a mission's "kill N of these" goal counts a converted enemy, and the last
   player to hit it is credited in a scenario's tallies), but no one is credited a
   kill. A unit no longer changes sides to a player who already has the one copy of
   it a player may have (such as a dragon).
