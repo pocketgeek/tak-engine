@@ -103,6 +103,37 @@ void abandoned() {
           "the refunds come to what was paid, less the last slice");
 }
 
+// The worker in a later unit slot than the site: retail dispatches the site
+// before it each tick, so the site's GetBuilt hears of the last work a tick
+// late and the decay starts on the 31st tick after it, not the 30th.
+void laterSlot() {
+    Types t; Rig r;
+    const int site = r.w.spawn(&t.hut, 660, 1000, 0, 0);
+    Unit* s = r.w.unit(site);
+    s->underConstruction = s->buildBegun = true;
+    s->hp = Fixed::fromInt(1000);
+    r.w.blockFoot(t.hut, 660, 1000, true);
+    const int id = r.w.spawn(&t.builder, 600, 1000, 0, 0);
+    check(id > site, "later slot: the helper comes after the site");
+    r.w.assist(id, site, false);
+    Fixed last = r.w.unit(site)->hp;
+    int worked = 0;
+    for (int i = 0; i < 300 && worked < 20; ++i) {
+        r.ticks(1);
+        if (r.w.unit(site)->hp > last) ++worked;
+        last = r.w.unit(site)->hp;
+    }
+    check(worked >= 20 && r.w.unit(site)->underConstruction, "later slot: the helper works the site");
+    r.w.cancelBuilds(id);
+    const double mana = r.w.player(0).mana;
+    r.ticks(30);
+    check(r.w.unit(site)->hp == last && r.w.player(0).mana == mana,
+          "later slot: 30 ticks after its last work the site is untouched");
+    r.ticks(1);
+    check(r.w.unit(site)->hp == last - hpDrop(t.hut) && r.w.player(0).mana == mana + refund(t.hut),
+          "later slot: the 31st decays it");
+}
+
 // A site nobody has worked: 300 ticks, then 30 more, then the decay.
 void neverWorked() {
     Types t; Rig r;
@@ -144,6 +175,7 @@ void factoryOutput() {
 
 int main() {
     abandoned();
+    laterSlot();
     neverWorked();
     factoryOutput();
     if (failures) std::printf("%d FAILED\n", failures);
