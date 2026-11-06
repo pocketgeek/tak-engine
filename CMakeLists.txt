@@ -1445,6 +1445,11 @@ target_link_libraries(movement_orders_test PRIVATE tak-formats)
 add_executable(retail_motion_test tools/retail_motion_test.cpp)
 add_executable(retail_script_test tools/retail_script_test.cpp)
 target_link_libraries(retail_script_test PRIVATE tak-formats)
+# Its single main() holds many World locals (~1.9 MB of frame), past MinGW's
+# default 2 MB stack; Linux and macOS give 8 MB.
+if(MINGW)
+    target_link_options(retail_script_test PRIVATE -Wl,--stack,16777216)
+endif()
 add_test(NAME retail_script COMMAND retail_script_test)
 add_executable(vfs_names_test tools/vfs_names_test.cpp)
 target_link_libraries(vfs_names_test PRIVATE tak-formats)
