@@ -260,7 +260,10 @@ static void standing(Fixture& f) {
     check(fields(3) == spawned.substr(0, 1) + "/1/2", "o 1 2 sets the move and fire fields, not the shown order",
           fields(3));
     check(fields(4) == "0/0/0", "a type without stance buttons still takes a script's o", fields(4));
-    check(w->unit(p[5].id)->standingOrder == 3, "o 3 is out of range and does nothing", fields(5));
+    // The soldier type sets no standingunitorder: retail's parser stores its
+    // composite as 2 (4c00a7), and o 3 leaves it there.
+    check(w->unit(p[5].id)->standingOrder == w->unit(p[5].id)->type->defaultStandingOrder &&
+          w->unit(p[5].id)->standingOrder == 2, "o 3 is out of range and does nothing", fields(5));
 }
 
 // ---- 3. b: real build orders ----------------------------------------------------

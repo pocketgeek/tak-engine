@@ -1782,8 +1782,16 @@ int main(int argc, char** argv) {
         // flyers. So in retail essentially no mobile ground unit roams without a
         // leash -- they are all either hold-position or leashed at 500.
         const sim::UnitType* flyer = reg.find("arafly");
-        check(flyer && flyer->defaultStandingOrder == 3 && flyer->defaultMove == 2 && flyer->defaultFire == 2,
-              "arafly (no standingunitorder) defaults to unlimited roam");
+        // Retail's parser stores that composite as 2 (4c00a7), so GET 46 answers
+        // 2 for such a type, never 3.
+        check(flyer && flyer->defaultStandingOrder == 2 && flyer->defaultMove == 2 && flyer->defaultFire == 2,
+              "arafly (no standingunitorder) defaults to unlimited roam, its composite order 2");
+        if (flyer) {
+            sim::World w; freshWorld(w);
+            const int f = w.spawn(flyer, 1000, 1000, 0, 0);
+            check(w.unit(f) && w.unit(f)->standingOrder == 2,
+                  "a spawned arafly's standing unit order (GET 46) is 2");
+        }
         const sim::UnitType* sword = reg.find("arasword");
         check(sword && sword->defaultMove == 1,
               "arasword (standingunitorder=2) is leashed, not roaming");

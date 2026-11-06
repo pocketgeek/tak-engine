@@ -294,10 +294,13 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // standingunitorder is a front-end that expands into the two fields
             // that actually drive behaviour, and its ABSENCE is a distinct case --
             // the sentinel default 3 falls through to standingmoveorder /
-            // standingfireorder (both default 2), i.e. roam + fire at will.
+            // standingfireorder (both default 2), i.e. roam + fire at will. That
+            // branch stores the composite itself as 2 (4c00a7: bits 4-5 of
+            // UnitDef +0x260 go from 3 to 2), so a type never carries 3 and GET 46
+            // answers 2 (E: 125 key combinations through 4c005d..4c00fb).
             {
                 int suo = int(info->numberOr("standingunitorder", 3)) & 3;
-                t.defaultStandingOrder = uint8_t(suo);
+                t.defaultStandingOrder = uint8_t(suo == 3 ? 2 : suo);
                 if (suo == 2)      { t.defaultMove = 1; t.defaultFire = 2; }
                 else if (suo == 1) { t.defaultMove = 0; t.defaultFire = 2; }
                 else if (suo == 0) { t.defaultMove = 0; t.defaultFire = 0; }

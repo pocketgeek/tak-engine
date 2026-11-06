@@ -3239,6 +3239,24 @@ fixtures) still makes a unit. Tests: `new_unit_mana_shipped` (takmission02's
 54 placed walls and a wall the Monarch builds are features, no loss). The
 build-line harnesses count a wall turned feature as built.
 
+## A type without standingunitorder is Offensive (icd, gap hunt 11, 2026-11-05)
+
+The `[UNITINFO]` parser (`4c005d..4c00fb`) reads `standingunitorder` with
+default 3 into UnitDef `+0x260` bits 4-5. 2, 1 and 0 expand into the move and
+fire fields (bits 0-1 and 2-3: 1/2, 0/2, 0/0). 3, which is also what an absent
+key gives, reads `standingmoveorder` and `standingfireorder` (default 2 each,
+`& 3`) and stores the composite itself as 2 (`4c00a7`: `and al, 0xef; or al,
+0x20`). `511c5d` copies the composite into a new unit's `+0x130` bits 20-21,
+`514f35` again on a change of owner, and GET 46 (`50cee6`) and the panel's
+stance aggregate (`4affa3..4affcd`) read it there. So no unit ever holds 3
+(E: `check_animation_standing_order.py` runs the parser on all 125 key
+combinations, absent or 0..3). The 56 shipped types without the key
+(castles, lodestones, gates, walls, towers, the animals, `arafly` and a few
+more) are 2. Ours kept 3 ("individual defaults"), hashed and answered by GET
+46; only `verbers` and `vercrus` read GET 46 and both set the key, so no
+shipped script saw the difference. Now `defaultStandingOrder` is 2 there
+(`retailgap_test` orders, `mission_orders_test`).
+
 ## The Crusades balance swaps only the unit roster (icd, 2026-10-26)
 
 With the Crusades balance on, the unit lookup `0x518080` searches only the

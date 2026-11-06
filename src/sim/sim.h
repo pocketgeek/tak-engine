@@ -461,9 +461,10 @@ struct UnitType {
     // fire 2, 1 -> move 0 / fire 2, 0 -> move 0 / fire 0. When the key is absent
     // the parser's default is the sentinel 3, which falls through to
     // standingmoveorder (default 2) and standingfireorder (default 2) -- Roam and
-    // Fire At Will. 147 of the 203 shipped units set standingunitorder; none sets
-    // either of the other two, so the 56 that do not are the only ones that roam.
-    uint8_t defaultStandingOrder = 3; // native composite, exposed as COB GET 46
+    // Fire At Will -- and stores the composite as 2 (Offensive), so it is never 3.
+    // 147 of the 203 shipped units set standingunitorder; only the animals set
+    // standingmoveorder (2), so the 56 that do not are the only ones that roam.
+    uint8_t defaultStandingOrder = 2; // native composite (+0x130 bits 20-21), COB GET 46
     uint8_t defaultMove = 2;
     uint8_t defaultFire = 2;
     // FBI defaultmissiontype = VTOL_standby: an idle flyer looks for somewhere to
@@ -1188,7 +1189,7 @@ struct alignas(64) Unit {
     // fireState: 0 = hold fire (no auto-acquire, no retaliation -- an explicit
     //   attack order still works), 1 = return fire (never self-acquires, but
     //   shoots what it is handed and does hit back), 2 = fire at will.
-    uint8_t standingOrder = 3; // 0 passive, 1 defensive, 2 offensive, 3 individual defaults
+    uint8_t standingOrder = 2; // 0 passive, 1 defensive, 2 offensive (retail never holds 3)
     uint8_t moveState = 2;
     uint8_t fireState = 2;
     bool  active = true;   // onoffable units: false = powered down
