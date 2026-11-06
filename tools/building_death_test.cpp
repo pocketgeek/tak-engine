@@ -44,19 +44,23 @@ int main(int argc,char** argv) {
                       w.unit(id)->corpseUntil>w.unit(id)->deadFor,
                       "restored corpse survives its authored death-animation handoff");
                 if(water) {
-                    // Over a bed of 0 (4959c0): a body on the bed is at rest
-                    // there at once and its wreck stays; a ship's, at its
-                    // waterline, fades out as it sinks.
-                    const auto* u=w.unit(id);
-                    const int64_t life=sim::retailWaterGraveLife(u->groundY.v,0,20);
-                    check(life<0 ? u->corpseUntil==INT32_MAX
-                                 : int64_t(u->corpseUntil)-u->corpseAnimationTicks()==life,
-                          "a water grave lives as the feature update moves it");
-                    (life<0 ? waterStays : waterFades)++;
-                    for(int i=0;i<300 && w.unit(id) && w.unit(id)->corpseUntil>0;++i)w.tick(1.f/30);
-                    check(life<0 ? w.unit(id) && w.unit(id)->corpseUntil==INT32_MAX
-                                 : !w.unit(id) || w.unit(id)->corpseUntil==0,
-                          "a wreck at rest stays and a fading one is gone");
+                    // A sea bed of 0: a body at its own height (a wreck on
+                    // the bed) lands at once (y <= 511260's 0) and lies there
+                    // for good, with no decomposition timer; one held above
+                    // the bed (a ship at its waterline) fades out as it
+                    // reaches it and leaves the plane.
+                    const auto* first=w.corpseSink(id);
+                    check(first!=nullptr,"a water grave sinks");
+                    const bool above=first && (first->fading || first->y>0);
+                    bool gone=false;
+                    for(int i=0;i<600 && !gone;++i) {
+                        w.tick(1.f/30);
+                        gone=!w.unit(id) || w.unit(id)->corpseUntil==0;
+                    }
+                    const auto* sink=w.corpseSink(id);
+                    check(above ? gone && !sink : !gone && w.unit(id)->corpseUntil==INT32_MAX && sink && sink->y==0,
+                          "a water grave lies on a bed of 0 for good, or fades out reaching it");
+                    (above ? waterFades : waterStays)++;
                 }
                 hash=(hash*1099511628211ULL)^w.stateHash();
             }
@@ -69,7 +73,8 @@ int main(int argc,char** argv) {
             if (!type.explosionCorpse || type.instantCorpse) continue;
             const int ct=definitions.corpseTypeOf(&type);
             int decomposeOverride=-1;
-            auto lifetime=[&](const std::vector<uint8_t>& heights,int32_t x,int32_t z,int32_t y=-1) {
+            // The corpse's lifetime after its placement and whether it sinks.
+            auto grave=[&](const std::vector<uint8_t>& heights,int32_t x,int32_t z,int32_t y=-1) {
                 sim::World w;w.setTerrain(heights,64,64,20);
                 auto features=definitions.featureTypes();
                 if (decomposeOverride>=0) features[size_t(ct)].decomposeTicks=decomposeOverride;
@@ -81,7 +86,10 @@ int main(int argc,char** argv) {
                 w.tick(1.f/30);
                 for(int i=0;i<1500 && w.unit(id)->deadFor<w.unit(id)->corpseAnimationTicks();++i)
                     w.tick(1.f/30);
-                return int64_t(w.unit(id)->corpseUntil)-w.unit(id)->deadFor;
+                return std::pair{int64_t(w.unit(id)->corpseUntil)-w.unit(id)->deadFor,w.corpseSink(id)!=nullptr};
+            };
+            auto lifetime=[&](const std::vector<uint8_t>& heights,int32_t x,int32_t z,int32_t y=-1) {
+                return grave(heights,x,z,y).first;
             };
             const int decompose=definitions.featureTypes()[size_t(ct)].decomposeTicks;
             const int64_t land=lifetime(std::vector<uint8_t>(64*64,100),512<<16,512<<16);
@@ -95,20 +103,52 @@ int main(int argc,char** argv) {
             check(lifetime(std::vector<uint8_t>(64*64,5),512<<16,512<<16,18<<16)>=INT32_MAX-3000,
                   "a water grave has no decomposition");
             decomposeOverride=-1;
-            check(lifetime(std::vector<uint8_t>(64*64,20),512<<16,512<<16)>=INT32_MAX-3000,
-                  "a body on ground level with the sea is a water grave at rest at once: it stays");
+            const auto level=grave(std::vector<uint8_t>(64*64,20),512<<16,512<<16);
+            check(level.second && level.first>=INT32_MAX-3000,
+                  "a body on ground level with the sea is a water grave, with no decomposition");
             std::vector<uint8_t> corner(64*64,100);corner[32*64+32]=0;
-            check(lifetime(corner,(32*16+15)<<16,(32*16+15)<<16)==land,
+            const auto dry=grave(corner,(32*16+15)<<16,(32*16+15)<<16);
+            check(!dry.second && dry.first==land,
                   "a body on dry ground over a sunken cell corner became a water grave");
-            // 4959c0 (E, check_water_grave.py): a floating wreck sinks 0x2ccc
-            // a tick; over a bed of 0 it fades out on the way, over any other
-            // bed it comes to rest there for good. Before: 75 ticks either way.
-            const int64_t fade=sim::retailWaterGraveLife(18<<16,0,20);
-            check(fade>90 && fade<110 && lifetime(std::vector<uint8_t>(64*64,0),512<<16,512<<16,18<<16)==fade,
-                  "a wreck over a bed of 0 fades out as it sinks");
-            check(lifetime(std::vector<uint8_t>(64*64,5),512<<16,512<<16,18<<16)>=INT32_MAX-3000,
-                  "a wreck over a bed above 0 comes to rest there and stays");
             break;
+        }
+        // The sinking (4959c0, emulated: tools/re/check_corpse_sink.py and
+        // check_water_grave.py): a grave sinks 0x2ccc a tick from the body's height to 511260's sea
+        // bed and lies there; over a bed of 0 it fades as it falls and leaves
+        // the plane. Corpses and statues alike (512ee0), each placed at the
+        // body's height at sea level (20), over a bed of 0 or 10.
+        {
+            const auto* keep=registry.find("arakeep");
+            const auto* sword=registry.find("arasword");
+            auto sinking=[&](const sim::UnitType* type,int bed,bool statue,int& gone,int32_t& rest) {
+                sim::World w;w.setTerrain(std::vector<uint8_t>(64*64,uint8_t(bed)),64,64,20);
+                w.setFeatureTypes(definitions.featureTypes());
+                w.mapCorpse(type,definitions.corpseTypeOf(type));
+                w.mapStatue(type,definitions.statueTypeOf(type,false),definitions.statueTypeOf(type,true));
+                const int id=w.spawn(type,512,512,std::nullopt,0);
+                w.unit(id)->groundY=sim::Fixed::fromInt(20);
+                if (statue) w.unit(id)->stonedFor=100;
+                w.unit(id)->hp={};w.unit(id)->deathType=1;
+                gone=-1;rest=-1;
+                for (int t=0;t<1200 && gone<0;++t) {
+                    w.tick(1.f/30);
+                    const auto* c=w.unit(id);
+                    if (c->corpseUntil==0) gone=t;
+                    else if (const auto* sink=w.corpseSink(id);sink && !sink->vy) rest=sink->y;
+                }
+                return w.unit(id)->corpseStatue;
+            };
+            int gone;int32_t rest;
+            // 1310720 - 11468 = 1299252 after the placing tick's pass; the
+            // fade's step is 11468 / 1299252, so the 114th pass after it ends
+            // the alpha (113.3 steps of fall) and the wreck leaves the plane.
+            sinking(keep,0,false,gone,rest);
+            check(gone==114,"a wreck over a sea bed of 0 fades out as it reaches the bed (tick 114)");
+            sinking(keep,10,false,gone,rest);
+            check(gone<0 && rest==(10<<16),"a wreck over a sea bed of 10 lies on it for good");
+            check(sinking(sword,0,true,gone,rest)>=0 && gone==114,"a statue in water sinks and fades as a corpse does");
+            check(sinking(sword,10,true,gone,rest)>=0 && gone<0 && rest==(10<<16),
+                  "a statue in water lies on its sea bed");
         }
         // The Crusades roster has no Cult of Lokken Ship (tarcship has no unitscb FBI).
         check(restored==(balance?28:29),"all 29 (Crusades 28) omitted corpse types restored");

@@ -8,10 +8,11 @@ list; 50e600 is answered from a cell table, and the removal 496380, the
 rest 494a80 and the other feature calls are observation boundaries) for
 random sea levels, cell corner heights (511260 reads (+5 + +6) / 2), body
 heights above and below the sea and cells off the map, and requires
-retail_script_test --water-grave (retailWaterGraveLife) to give the same
-outcome: the update that removes it (a fade, only on a bed of 0) or its
-coming to rest for good. Observation only: nothing from the binary is copied
-into the engine.
+retail_script_test --water-grave (World's retailFeatureSinkStep, the step
+tools/re/check_corpse_sink.py also checks) to give the same outcome: the
+update that removes it (a fade, only on a bed of 0) or its coming to rest
+for good. Observation only: nothing from the binary is copied into the
+engine.
 
     python3 tools/re/check_water_grave.py --binary build/retail_script_test
 """

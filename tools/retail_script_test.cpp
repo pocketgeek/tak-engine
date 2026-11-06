@@ -11,6 +11,7 @@
 #include "sim/retailhweffectdata.h"
 #include "sim/retailanimationqueries.h"
 #include "sim/retaildeath.h"
+#include "sim/retailfeaturesink.h"
 #include "sim/retailtransport.h"
 #include <algorithm>
 #include <bit>
@@ -478,16 +479,29 @@ int main(int argc,char** argv) {
         return 0;
     }
     // tools/re/check_water_grave.py: y(16.16) bed sea -> the updates a water
-    // grave's feature lives after its placement update (-1: it stays).
+    // grave's feature lives after its placement update (-1: it comes to rest
+    // and stays), run as World runs it (retailFeatureSinkStep).
     if (argc==2 && std::string(argv[1])=="--water-grave") {
         int32_t y;int bed,sea;
-        while (std::cin>>y>>bed>>sea) std::cout<<tak::sim::retailWaterGraveLife(y,bed,sea)<<'\n';
+        while (std::cin>>y>>bed>>sea) {
+            tak::sim::RetailFeatureSink f{(3*16+5)<<16,y,(3*16+5)<<16,0,tak::sim::kRetailSinkVelocity,0};
+            int32_t life=-1;
+            for (int32_t update=1;update<(1<<20);++update) {
+                const auto r=tak::sim::retailFeatureSinkStep(f,[&](int32_t,int32_t) { return bed; },uint8_t(sea),0x1fdb);
+                if (r==tak::sim::RetailSinkResult::Moving) continue;
+                if (r==tak::sim::RetailSinkResult::Removed) life=update-1;
+                break;
+            }
+            std::cout<<life<<'\n';
+        }
         return 0;
     }
     // tools/re/check_corpse_decay.py: decomposition, the update after the
     // placement one before which a reclaim reloads +0x3c (-1: none), the
     // reload -> the updates after the placement one until the removal (-1:
-    // it stays).
+    // it stays). The closed form World keeps for a land corpse must agree
+    // with the record stepped as a water grave's is (retailFeatureSinkStep
+    // with no velocity).
     if (argc==2 && std::string(argv[1])=="--corpse-decay") {
         int32_t decompose,wake,reload;
         while (std::cin>>decompose>>wake>>reload) {
@@ -497,6 +511,20 @@ int main(int argc,char** argv) {
             if (wake>=0 && life>=0 && wake<=life) {
                 const int32_t left=tak::sim::retailCorpseDecayHold(life-wake,reload);
                 life=left<0 ? -1 : wake+left;
+            }
+            tak::sim::RetailFeatureSink f;f.decay=decompose;
+            int32_t stepped=-1;
+            for (int32_t update=1;update<(1<<20);++update) {
+                if (update==wake+1) f.decay=reload;
+                const auto r=tak::sim::retailFeatureSinkStep(f,[](int32_t,int32_t) { return 0; },0,0);
+                if (r==tak::sim::RetailSinkResult::Moving) continue;
+                if (r==tak::sim::RetailSinkResult::Removed) stepped=update-1;
+                break;
+            }
+            if (stepped!=life) {
+                std::cerr<<"closed form "<<life<<" != stepped "<<stepped<<" (decompose "<<decompose
+                         <<" wake "<<wake<<" reload "<<reload<<")\n";
+                return 1;
             }
             std::cout<<life<<'\n';
         }

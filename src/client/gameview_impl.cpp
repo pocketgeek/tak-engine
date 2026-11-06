@@ -1083,6 +1083,15 @@
                                            : world_.corpseTypeOf(u.type);
         s.corpseReclaimable=false;
         s.corpseFading=u.corpseFading;
+        // A water grave sinks to its sea bed (4959c0); the body is drawn at
+        // its feature's height.
+        if (const auto* sink=u.alive() ? nullptr : world_.corpseSink(u.id)) {
+            s.corpseSinking=true;s.corpseSinkY=float(sink->y)/65536.0f;
+            // The record's own fade (+0x2f) is drawn: the feature draw hands
+            // +0x2f and the alpha to the model instance (4fd844..4fd85f), and
+            // the model draw blends the body at ftol(alpha * 255.0f) (4ed04a).
+            s.corpseSinkAlpha=sink->fading ? tak::sim::retailFadeByte(sink->alpha) : uint8_t(255);
+        } else {s.corpseSinking=false;s.corpseSinkAlpha=255;}
         if (!u.alive() && s.corpseFeat>=0 && size_t(s.corpseFeat)<world_.featureTypes().size()) {
             const auto& corpse=world_.featureTypes()[size_t(s.corpseFeat)];
             s.corpseReclaimable=corpse.reclaimable && !u.corpseFading;
@@ -3217,15 +3226,13 @@
     // terrain lift. Retail stands a canhover unit at max(terrain, sea - waterline)
     // and a floater at sea - waterline (0x51b220 / 0x51b2fa), so over deep water
     // the body rides near the surface, not on the seabed.
-    float GameView::waterSink(const tak::sim::UnitType* t, float wx, float wz, float sunk) {
+    float GameView::waterSink(const tak::sim::UnitType* t, float wx, float wz) {
         if (!t || !(t->canHover || t->floater)) return 0.0f;
         const auto& m = mapView_.map();
         if (m.heights.empty()) return 0.0f;
         const float terrain = rawHeight(wx, wz);
-        float body = tak::client::lift::bodyHeight(terrain, m.seaLevel, t->waterline,
-                                                   t->canHover, t->floater);
-        // A wreck `sunk` pixels below where it floated, never under its bed.
-        if (sunk > 0.0f && terrain <= float(int(uint8_t(m.seaLevel)))) body = std::max(terrain, body - sunk);
+        const float body = tak::client::lift::bodyHeight(terrain, m.seaLevel, t->waterline,
+                                                         t->canHover, t->floater);
         return std::floor(terrain * kHeightScale_) - std::floor(body * kHeightScale_);
     }
 

@@ -1163,39 +1163,110 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   corner was below sea level, which disagreed in 39% of random shore
   layouts; `World::updateCorpseWindow` now asks retail's question. Test:
   `building_death_test`.
-- **What the feature update does with a corpse** (gap hunt 8; E:
-  `tools/re/check_water_grave.py`, 1,500 cases, and
-  `tools/re/check_corpse_decay.py`, 600, both running the real feature
-  update `4959c0` tick by tick on one record). The placement's own tick runs
-  the first update (`526433`, after the units' `51d3e0`).
-  - *Water*: `512ee0` gives the feature velocity (0, -0x2ccc, 0) (not for an
-    `isfeature` type, `512fcd`) and no decomposition: only the land branch
-    loads `+0x3c` (`513027..513034`), and `4949c0` zeroes it. Each update
-    (`495b81..495c8d`): a fading feature takes its step off its alpha and goes
-    (`496380`) at or below 0; one at rest moves to the static list (`494a80`)
-    and is never updated again; else the velocity is added and the feature
-    comes to rest at or below its bed (`511260`: the cell's (highest + lowest
-    corner) / 2, -1 off the map), sinks at 0x2ccc a tick under sea level,
-    starting a fade (alpha 1, step 0.17498779 / height in pixels) only over a
-    bed of exactly 0, and falls with gravity (`+0x19ecc`, 0x1fdb) above it. So
-    a wreck stays on any bed above 0 for good (a body already on its bed, a
-    walker's, rests at once even over 0), and a ship's or a hover's fades out
-    over a bed of 0, as its height in pixels / 0.175 ticks (229 from 40).
-    Statues sink the same way. Ours had every water grave go after 75 ticks
-    and kept a statue's for good; now `retailWaterGraveLife`
-    (`src/sim/retaildeath.h`), and the viewer lowers a floating wreck towards
-    its bed at the same rate.
+- **What the feature update does with a corpse** (gap hunt 8 and fx-sink,
+  merged). Three natives settle it, each running the real feature update
+  `4959c0` tick by tick: `tools/re/check_corpse_sink.py` (3,000 cases; places
+  the body with the real `512ee0` and runs `4959c0` with the real `511260`,
+  `50e600`, `494a80` and the cell extrema of `50ed60`, against
+  `src/sim/retailfeaturesink.h` built into `corpse_sink_driver.cpp`, with
+  661 reclaims and 264 decay reloads at random ticks),
+  `tools/re/check_water_grave.py`
+  (1,500 records: sea levels, beds, body heights above and under the sea,
+  off the map) and `tools/re/check_corpse_decay.py` (600 land records, 393
+  with a reload), the last two against `retail_script_test --water-grave` /
+  `--corpse-decay`, which run the same step. `4959c0` runs after the units
+  every tick (`526433`, after `51d3e0`), so the placement's own tick runs the
+  first update. Per record in its moving list (`495aaf..495cc4`):
+  1. the decay `+0x3c`, if any, counts down, and the update that empties it
+     starts the sink count `+0x40` at 1; while `+0x40` runs each update adds 1
+     (and lowers the model 0x2000, `495af6..495b33`, display) and the one
+     that takes it past 60 removes the feature (`496380`);
+  2. the reclaim fade (`+0x2e`, `495b35`), then, for a type with `+0x13c`
+     bit 0 clear:
+  3. a fade (`+0x2f`) takes the step `+0x34` off the alpha `+0x30` (a float)
+     and at <= 0 removes the feature (`495b81..495bb5`);
+  4. a record with no velocity goes to the static list (`494a80`, never
+     updated again) only when `+0x3c`, `+0x40` and `+0x2e` are all 0
+     (`495c92..495cc4`);
+  5. otherwise the position takes the velocity and `511260` (the mean of the
+     cell's lowest and highest corner, the high word over 16 toward zero; -1
+     off the map) is the bed: at or below it the record lands there and its
+     velocity is cleared; below sea level the velocity is reset to
+     (0, -0x2ccc, 0) and, over a bed of exactly 0 and not yet fading, the fade
+     starts with alpha 1.0 and step `0.17498779 / (y * 2^-16)` = 0x2ccc / y
+     (`495c5d..495c77`), so it lasts the rest of the fall; at or above sea
+     level the velocity takes gravity (`game+0x19ecc`, 0x1fdb by default;
+     `check_corpse_sink.py` varies it, so World passes its own).
+  - *Water*: `512ee0`'s water branch (`512fd9..512fe2`) gives the record the
+    velocity (0, -0x2ccc, 0) (`+0x18`, `+0x1c`; `+0x14` is not written, I: 0)
+    at the body's height, for a corpse and a statue (stone `+0x250`, freeze
+    `+0x252`) alike, and leaves `+0x3c` at the 0 `4949c0` gave it (only the
+    land branch, `513027..513034`, loads it); a type with isfeature (`+0x260 &
+    0x1000000`, the walls, `512fcd`) gets no velocity and rests at once. So a
+    grave lies on its sea bed for good, reclaimable and raisable (a body
+    already on its bed, a walker's, rests at once even over 0), unless the bed
+    is 0, where a ship's or a hover's fades out as it reaches it (the fade ends
+    the tick it lands or the next; a handful of cases land with alpha left
+    and go the tick after) -- as its height in pixels / 0.175 ticks
+    (229 from 40). The float step agrees with the x87's for every y below
+    `256 << 16` (checked exhaustively against 64-bit and 53-bit rounding),
+    and both water harnesses pass on the one step. Ours removed every water
+    corpse 75 ticks after its handoff and kept a statue's for good. Port:
+    `retailFeatureSinkStep`, run by `World::tickCorpseSinks` at the end of
+    the tick on `World::corpseSinks_` (hashed only when a grave sinks, so a
+    game without one hashes as before; position, velocity, fade, decay and
+    settled state); a water grave's `corpseUntil` stays open and the sink
+    takes it off the plane. Tests: `building_death_test`.
   - *Land*: `+0x3c` is the feature type's `+0x130`, `_ftol(decomposetime *
-    30.0)` & 0xffff (`494337..494353`). Each update counts it down; the one
-    that empties it starts `+0x40` at 1, every update from it adds 1 (the
-    model sinks 0x2000 a tick, `495af6..495b33`) and the one that takes it
-    past 60 removes the feature: decomposition D + 58 updates after the
-    placement one (`retailCorpseDecayLife`), none for D = 0. Ours removed it
-    after D. A reclaim wake reloads `+0x3c` (`406615`, `420ba4`) and leaves
-    `+0x40`, so it holds the decay unless `+0x40` runs out first
-    (`retailCorpseDecayHold`). Not modelled: such a reload on a water grave
-    still sinking or fading, which would start a decay there; the 60-update
-    sink is not drawn.
+    30.0)` & 0xffff (`494337..494353`), and the record has no velocity, so
+    steps 1 and 4 are all of it: removal at decomposition D + 58 updates
+    after the placement one (`retailCorpseDecayLife`), none for D = 0. Ours
+    removed it after D. A reclaim wake reloads `+0x3c` (`406615`, VTOL
+    `420ba4`) and leaves `+0x40`, so it holds the decay unless `+0x40` runs
+    out first (`retailCorpseDecayHold`). World keeps a land corpse in this
+    closed form (`corpseUntil`, no record); `--corpse-decay` also steps the
+    record and requires the two to agree. The 60-update sink into the ground
+    is not drawn.
+  - *A reload on a water grave*: the wake writes `+0x3c` whatever the record
+    is. One at rest is off the update list and never counts it; one still
+    sinking or fading counts it as a land corpse would and goes D + 58
+    updates after the last wake (step 1) unless its fade ends first, sinking
+    on meanwhile, and a landed one with the decay running does not rest
+    (step 4). Hunt 8 left this unmodelled; World now loads the sink's decay
+    on every wake while it is in the moving list (`World::tickReclaim`; E:
+    `check_corpse_sink.py`, 264 reloads, 162 of them decaying the grave
+    away; test: `reclaim_test`).
+  - *Display* (S): the feature draw (`4fd82b..4fd935`) loads the record into
+    the renderer's stand-in unit (`game+0x19e78`: position `+0x68` from the
+    record, model instance `+0xc0` = the record's `+4`) and copies `+0x2f` to
+    the instance's `+0x12`, `+0x2e` to `+0x13` and the alpha to `+0x18`, then
+    draws it through `4ee700` -> the unit model draw `4ec7b0`. There `+0x12`
+    picks renderer state 6 (`4ecfdc..4ecff2`, blending from the vertex alpha;
+    4 otherwise) and the body's rendered image (`+0x24`, `+0x78`) is drawn by
+    `4ebce0` with vertex colour `(ftol(alpha * 255.0f) << 24) | 0xffffff`
+    (`4ed04a..4ed067`, `4ebda2..4ebdb1`); `+0x13` is read only at `4ece6d`
+    (against `+0x3d`, the image cache) -- `4ec9ba`'s `+0x13` is a settings
+    object's (`[62d558]+0x18`), not the instance's. So the sinking fade IS
+    drawn (the body fades out over the rest of its fall) and a 3DO feature's
+    reclaim fade is not. Ours draws the body at its feature height
+    (`UnitR::corpseSinkY`) and, while the record fades, at that vertex alpha
+    (`BodyMaterial::fade`, `UnitR::corpseSinkAlpha`; display only).
+- **A reclaim of a sinking grave** (E: `check_corpse_sink.py`, 661 reclaims
+  at random ticks). `494ce0` mode 1 on a 3DO feature (`494e08..494ed8`)
+  takes a NEW record (`4949c0`: `+0x2e`, `+0x2f`, `+0x3c`, `+0x40` reset,
+  the velocity not), sets `+0x2e` = 1 and alpha 1.0, copies position and
+  model from the old record and frees the old one (`494a80` to the free
+  list). With a slot whose velocity is 0 the body stops where it is, its
+  own fade and any decay end, and the reclaim's 34 passes (`495b35`, then
+  `494f00`) take it away. Ours kept it sinking (and could take it away by
+  its own fade first); `World::finishReclaim` now stops it
+  (`retailFeatureSinkReclaim`). Test: `reclaim_test`. Not ported: the new
+  slot keeps the velocity its last user left (no record pool in World, which
+  takes 0). A slot freed while it moved -- a grave that faded out, or one
+  reclaimed while sinking -- still holds (0, -0x2ccc, 0), and the next 3DO
+  record to take it moves: in 234 such cases the reclaimed body sank on in
+  86, and in 5, over a bed of 0, its sink fade started again at alpha 1.0
+  on top of the reclaim's (E).
 - **A site unconjured away** (gap hunt 10, E: `check_kill_credit.py`
   unconjure). Every site, a factory's and a mobile builder's alike, carries
   GetBuilt (`401f95`, `405a2b`: the mission named "getbuilt", `604ab4`).
@@ -2372,9 +2443,10 @@ Not a fade: a feature DESTROYED by damage (`494ce0` mode 0) with a
 at +0x10) and at its end (`495ef7`) calls `494f00` with 0, which places the
 `featuredead` stage (type+0x12c, `494f50`); without a `seqnamedie` it swaps at
 once (`494ee3`). A burn plays seqnameburn and swaps through `495300`. 3DO
-features (statues, corpses) hand +0x2e and +0x30 to the model draw
-(`4fd850`/`4fd85c` -> `4ee700`; `4ec9ba` picks draw mode 2 when +0x13 is
-set); ours does not draw that one yet.
+features (statues, corpses) hand +0x2f, +0x2e and +0x30 to the model draw
+(`4fd844..4fd85f` -> `4ee700`), which fades the body by +0x2f only (a
+sinking grave, "What the feature update does with a corpse" above): a 3DO feature's reclaim fade is not
+drawn.
 
 **The death playback** (static analysis, 2026-11-03; established unless
 marked). The loader resolves `seqnamedie` (string `611520`, read at `493ed3`)

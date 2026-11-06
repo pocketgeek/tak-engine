@@ -5228,11 +5228,9 @@
         // FBI waterline: a wading god or a floating hull sits BELOW the water
         // surface, so the sink is added where the terrain lift is subtracted.
         // Zero on land and for every type that carries neither canhover nor floater.
-        // A wreck in water sinks to its bed at 0x2ccc a tick (the feature
-        // update 4959c0; the sim keeps its lifetime, retailWaterGraveLife).
-        const float sunk = u.corpsePhase && !flying
-            ? std::max(0.0f, u.deadFor*30.0f - float(u.corpseAnimationTicks)) * float(0x2ccc) / 65536.0f : 0.0f;
-        ay += waterSink(u.type, ix, iz, sunk) * zm;
+        ay += waterSink(u.type, ix, iz) * zm;
+        // A water grave is drawn at its feature's height as it sinks (uLiftY).
+        if (u.corpsePhase && u.corpseSinking) ay = (iz - mapView_.offY()) * zm - uLiftY(u) * zm;
         // Body attitude precedes the animated piece tree for both ground and
         // flying units. Convert the retail mirrored basis at the same boundary.
         // Retail applies the birth heading to buildings as well as movers.
@@ -5322,7 +5320,8 @@
         // MATERIAL: veterancy, ghost, conjuring progress (+ clock), emote/statue tint.
         const MaterialKey materialKey{uint64_t(u.veteran),ghost,conjuring,disco,
             uint64_t(discoCol.r)|(uint64_t(discoCol.g)<<8)|(uint64_t(discoCol.b)<<16),
-            floatBits(discoMix),floatBits(p),conjuring ? floatBits(animClock_) : 0u};
+            floatBits(discoMix),floatBits(p),conjuring ? floatBits(animClock_) : 0u,
+            u.corpsePhase && u.corpseSinking ? uint64_t(255-u.corpseSinkAlpha) : 0u};
         // PLACEMENT: zoom, interpolated anchor (lift, sink, altitude), emote bob,
         // flyer altitude (shadow lean), wall occlusion line (draw-only clip).
         const PlacementKey placementKey{floatBits(zm),floatBits(ax),floatBits(ay),floatBits(discoBob),
@@ -5390,6 +5389,7 @@
         // FBI ghost: a spectral body is see-through. Retail switches the renderer
         // to its translucent blend mode for these; we scale vertex alpha instead.
         in.material.spectral=ghost && !conjuring;
+        in.material.fade=u.corpsePhase && u.corpseSinking ? u.corpseSinkAlpha : Uint8(255);
         // Body-only local change: the silhouette's own inputs are all unchanged.
         in.shadowValid=!localValid && !reference && !g.localKey.empty() &&
             shadowInputsEqual(g.localKey,g.localLayout,key,layout,vt->second.meta.animationFrameMasks);

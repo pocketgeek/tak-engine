@@ -210,6 +210,10 @@ their validation reports; both live in [`docs/`](docs/).
   and attackers, its troops walking to board a transport and its transports on their
   way to pick them up or set them down now count as moving with it, and its guards
   keep to its pace.
+- **In Retail pathfinding, troops riding a transport stay part of their formation**,
+  as in the original game: the formation keeps together around them where the
+  transport carries them, but never waits for them or sends them back to their
+  places while they ride.
 - **In Legion pathfinding, an idle unit in a formation that ends up out of its place
   walks back to it by itself.** This is TAK Engine's own Legion behaviour, matching
   how a formation re-forms in Retail pathfinding and the original game: when a unit
@@ -263,12 +267,15 @@ their validation reports; both live in [`docs/`](docs/).
   fallen unit's body sinks now depends on the height of the ground right under it,
   as in the original game, so bodies lying level with the water sink, and bodies on
   dry ground beside a deep spot stay to be raised or reclaimed.
-- **Wrecks in the water settle on the bottom and stay**, as in the original game: a
-  sunken ship or a body in the shallows sinks slowly to the sea bed and stays there
-  to be raised or reclaimed, and only a wreck sinking towards the deepest sea floor
-  fades away on the way down. Before, every body in the water vanished after two
-  and a half seconds. Bodies on land that rot away last about two seconds longer, as
-  in the original game.
+- **Bodies and statues in water settle on the bottom and stay**, as in the original
+  game: a sunken ship or a body in the shallows, and now also a unit turned to stone
+  or ice there, sinks slowly to the sea bed and stays there to be raised or
+  reclaimed, and only one sinking towards the deepest sea floor fades from view on
+  the way down. Before, every body in the water vanished after two and a half
+  seconds and a statue stood on the water for good. A sinking body that is reclaimed
+  stops where it is until the reclaim takes it away; one a builder starts to reclaim
+  and then leaves rots away as a body on land does. Bodies on land that rot away
+  last about two seconds longer, as in the original game.
 - **How badly a unit is wrecked when it dies follows the original game.** The death
   animation and body a unit leaves depend on how hard the last blow hit it and on
   its health a second earlier. That earlier health is now taken in whole numbers and

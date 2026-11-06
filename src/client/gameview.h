@@ -2830,7 +2830,7 @@ private:
     // unit from the terrain lift: retail stands it at the sea minus its FBI
     // `waterline` (client/terrainlift.h bodyHeight), so over deep water it rises
     // above the seabed and a floater on a shoal sinks into it. Zero on land.
-    float waterSink(const tak::sim::UnitType* t, float wx, float wz, float sunk = 0.0f);
+    float waterSink(const tak::sim::UnitType* t, float wx, float wz);
     // Screen-space displacement of a world point's surface from its flat grid cell,
     // baked into the tile art by the tilted 2.5D view: up (Y) AND sideways (X).
     // Retail's z - (y >> 1): whole pixels, odd heights rounding down.
@@ -2896,6 +2896,7 @@ private:
     // Snapshot overloads. A FLYER rides the coarse dilated datum, not the relief
     // under its nose -- see flyerGround.
     float uLiftY(const UnitR& u) {
+        if (u.corpsePhase && u.corpseSinking) return std::floor(u.corpseSinkY * kHeightScale_);
         if (u.type && u.type->canFly) return flyerDatum(u) * kHeightScale_;
         return terrainLift(u.x, u.z) - waterSink(u.type, u.x, u.z);
     }
