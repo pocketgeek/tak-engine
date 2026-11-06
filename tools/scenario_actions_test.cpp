@@ -37,6 +37,28 @@ int main() try {
         run(w,reg,10,{"Any unit","23","source"});check(w.unit(a)->hp==sim::Fixed(),"heal resurrected dead unit");
     }
     {
+        // Damage is 51a140(0, unit, amount, 13, 0) (4cb23b): no hitter, so the
+        // last hitter stays (51a350), and an activated unit takes a damage
+        // below 30000 through its damagemodifier before the 16-bit packet
+        // (51a16e, 51a1d4). Heal (kind 12) is never scaled.
+        auto shell=*soldier;shell.id="shell";shell.damageModifier=0x8000;
+        sim::World w;setup(w);int a=w.spawn(&shell,40,56,0,0),enemy=w.spawn(soldier,72,88,0,1);
+        w.unit(a)->lastHitBy=enemy;w.unit(a)->lastHitPlayer=1;
+        run(w,reg,11,{"Any unit","20","source"});
+        check(w.unit(a)->hp.floorInt()==180,"an inactive unit's damage was scaled");
+        check(w.unit(a)->lastHitBy==enemy&&w.unit(a)->lastHitPlayer==1,"scripted damage cleared the last hitter");
+        w.unit(a)->active=true;
+        check(w.retailActivated(*w.unit(a)),"fixture: the unit is not activated");
+        run(w,reg,11,{"Any unit","20","source"});
+        check(w.unit(a)->hp.floorInt()==170,"an activated unit's damage ignored its damagemodifier");
+        run(w,reg,11,{"Any unit","65556","source"});   // 30000 or more: unscaled, then its low word, 20
+        check(w.unit(a)->hp.floorInt()==150,"the modifier was applied after the 16-bit truncation");
+        run(w,reg,10,{"Any unit","20","source"});
+        check(w.unit(a)->hp.floorInt()==170,"a heal was scaled");
+        run(w,reg,11,{"Any unit","340","source"});w.tick(1.f/30);
+        check(!w.unit(a)->alive()&&w.unit(a)->lastHitPlayer==1,"a scripted death lost its last hitter");
+    }
+    {
         sim::World w;setup(w);int a=w.spawn(soldier,40,56,0,0),b=w.spawn(other,56,72,0,0),enemy=w.spawn(soldier,72,88,0,1);
         run(w,reg,15,{"Any unit","source","destination"});
         for(int id:{a,b}) {check(w.unit(id)->orders.size()==1,"move wildcard missed unit");

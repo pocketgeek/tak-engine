@@ -58,6 +58,12 @@ Fourteen pieces, each run on synthetic units:
   * mogriumbounty: a credited kill pays the victim type's bounty into the
     killer player's pool and lifetime total.
 
+  * the CRT's Heal and Damage actions (4cb106, 4cb1b8): for each of the
+    player's units (game +0x2478..+0x247c) of the type (or any, 0) whose
+    origin cell is in the region (none, -1: no unit), 51a140(0, unit,
+    amount, 12 / 13, 0) with the action's whole dword, so 51a140's
+    damagemodifier and its no-hitter rule apply as to any hit.
+
   * damagemodifier: 51a140 scales a hit under 30000 on an activated unit
     (+0x114 & 2) by UnitDef +0x17e, heals excepted, against
     `retail_script_test --damage-modifier`.
@@ -847,13 +853,47 @@ def bounty():
     return 'bounty: a credited kill pays mogriumbounty to the killer player\'s pool and total (%d of 160 cases)' % paid
 
 
+def crt_health():
+    """The CRT action cases natively, entered with their own frame: the
+    arguments each hands 51a140, for every type/region combination."""
+    f = Fixture()
+    f.record('51a140', 5)
+    stub, action, context, regions = f.flags - 0x80, f.flags + 0x200, f.flags + 0x400, f.flags + 0x800
+    f.put(context, 2); f.put(context + 0xc, regions)
+    f.put(regions + 3 * 0x110 + 0x100, 4); f.put(regions + 3 * 0x110 + 0x104, 6)
+    f.put(regions + 3 * 0x110 + 0x108, 9); f.put(regions + 3 * 0x110 + 0x10c, 11)
+    first = f.units
+    f.put(f.game + 2 * 0x110 + 0x2478, first); f.put(f.game + 2 * 0x110 + 0x247c, first + 3 * 0x138)
+    cases = 0
+    for entry, kind in ((0x4cb106, 12), (0x4cb1b8, 13)):
+        stub += 0x80   # a stub of its own: unicorn keeps translated code
+        # push ebp; mov ebp,esp; push ebx; push esi; push edi; mov ebx,ctx; mov edi,action; jmp entry
+        code = bytes.fromhex('55 89 e5 53 56 57') + b'\xbb' + struct.pack('<I', context) + \
+            b'\xbf' + struct.pack('<I', action)
+        code += b'\xe9' + struct.pack('<i', entry - (stub + len(code) + 5))
+        f.p.uc.mem_write(stub, code)
+        for typ, region, amount in itertools.product((0, 7, 8), (3, -1), (20, 65556, -5)):
+            us = []
+            for i, (t, x, z) in enumerate(((7, 4, 6), (8, 9, 11), (7, 10, 6), (7, 5, 12))):
+                u = f.unit(i); f.put(u, t, 'H'); f.put(u + 0x74, x, 'h'); f.put(u + 0x76, z, 'h'); us.append(u)
+            f.put(action + 0x4d, typ, 'H'); f.put(action + 0x4f, region & 0xffffffff); f.put(action + 4, amount & 0xffffffff)
+            f.calls.clear()
+            f.call(stub, (0, 0))
+            want = [('51a140', 0, u, amount & 0xffffffff, kind, 0) for u, (t, x, z) in
+                    zip(us, ((7, 4, 6), (8, 9, 11), (7, 10, 6), (7, 5, 12)))
+                    if region != -1 and (typ in (0, t)) and 4 <= x <= 9 and 6 <= z <= 11]
+            assert f.calls == want, (hex(entry), typ, region, amount, f.calls, want)
+            cases += 1
+    return 'CRT heal/damage: %d cases, 51a140(0, unit, amount, 12 / 13, 0) for the region\'s units' % cases
+
+
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else 'build-o2/retail_script_test'
     for line in (hitter_gate(), attack_multiplier(), death_weapon_shot(), retirement(), mission_kill(),
                  water_hit(), water_death(), deadly_water(binary), carried_water(binary),
                  self_destruct(), self_destruct_hit(), self_destruct_death(), commander(), cargo(),
                  hp_sample(binary), severity(binary), death_sample(), veteran_reload(),
-                 damage_modifier(binary), bounty()):
+                 damage_modifier(binary), bounty(), crt_health()):
         print(line)
 
 

@@ -25,6 +25,16 @@ Run `python3 tools/re/check_scenario_actions.py` to repeat the 99 cases.
   healing changes HP without advancing work, matching the native receiver.
   Lethal damage to an unfinished site retires it instead of leaving a zero-HP
   construction record that a later work tick could restore.
+  Gap hunt 10 (2026-11-05, E: `tools/re/check_kill_credit.py` "CRT
+  heal/damage", 36 cases of the cases at `4cb106`/`4cb1b8`, and its damage
+  modifier and hitter rows): both are `51a140(0, unit, amount, 12 / 13, 0)`
+  with the action's whole dword. So a damage below 30000 on an activated unit
+  goes through its `damagemodifier` (`51a16e`) before the packet keeps its
+  low word (`51a1d4`), and with no hitter `51a240` leaves the last hitter
+  (`+0xf8`/`+0xfc`) as it was. Ours cleared the last hitter, so a CRT game's
+  killed tally lost the player that had last hit a unit the script then
+  finished off, and took the damage unscaled from its low 16 bits
+  (`scenario_actions_test`).
 * Movement destination at `4cb3c4` is the integer region midpoint, multiplied by
   16 pixels. There is no extra half-cell offset. Native movement rejects
   unfinished construction (`Unit+108 != 0`), which the engine now does too.

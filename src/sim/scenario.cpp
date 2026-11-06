@@ -239,7 +239,7 @@ void ScenarioScript::runAction(World& w, int player, int group, const tak::crt::
             std::vector<int> targets;
             for (const auto& u:w.units())
                 if (u.alive() && u.player==player && typeMatches(u,s[0]) && inRegion(w,u,s[2])) targets.push_back(u.id);
-            for (int id:targets) w.scenarioAdjustHealth(id,uint16_t(toInt(s[1])),a.opcode==10);
+            for (int id:targets) w.scenarioAdjustHealth(id,toInt(s[1]),a.opcode==10);
             break;
         }
         case 12: showClock_ = true; break;                                     // Display gameclock

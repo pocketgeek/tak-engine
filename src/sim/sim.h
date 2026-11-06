@@ -2260,7 +2260,9 @@ public:
             applyHit(w,target->x.toFloat(),target->z.toFloat(),fromPlayer,0,target);
     }
 #endif
-    void scenarioAdjustHealth(int unitId,uint16_t amount,bool heal);
+    // The CRT's Heal / Damage actions (4cb131 / 4cb1e3): 51a140(0, unit,
+    // amount, 12 / 13, 0) for each of the player's units in the region.
+    void scenarioAdjustHealth(int unitId,int32_t amount,bool heal);
     // Benchmark: install the staged spawn plan (see BenchStage). endTick marks when the
     // benchmark run finishes; benchmarkMode() is true while a plan is installed.
     void setBenchmarkPlan(std::vector<BenchStage> plan, uint32_t endTick) {

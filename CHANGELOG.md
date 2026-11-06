@@ -405,6 +405,9 @@ their validation reports; both live in [`docs/`](docs/).
     mission also hears that the old owner's unit is gone.
   - The mission Kill command kills every unit on the map, whatever unit it names.
     No original mission uses it.
+  - A scenario's Damage action no longer wipes out who last hit a unit, so a unit it
+    finishes off still counts as killed by that player, and a unit that is switched
+    on takes the damage through its damage modifier, as any other hit.
   - A unit the mission is giving orders to cannot be selected until those orders
     are done, as in the original game; a unit sent on a patrol by the mission stays
     under its control. While its orders run, a moving unit does not turn on whoever

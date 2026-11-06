@@ -9537,9 +9537,16 @@ void World::scenarioDestroy(int unitId,uint8_t deathType) {
     if (mission_) mission_->unitDied(*this,unitId);
 }
 
-void World::scenarioAdjustHealth(int unitId,uint16_t amount,bool heal) {
+// The CRT's Heal (kind 12) and Damage (kind 13) are 51a140 with no hitter
+// (4cb189 / 4cb23b, S; the routine E in check_kill_credit.py): a damage below
+// 30000 on an activated unit goes through its damagemodifier (51a16e) before
+// the packet keeps its low 16 bits (51a1d4), a heal never does; with no
+// hitter, 51a240 leaves the last hitter (+0xf8/+0xfc) as it was (51a350).
+void World::scenarioAdjustHealth(int unitId,int32_t raw,bool heal) {
     auto* u=unit(unitId);
     if (!u || !u->type || !u->alive() || (u->hp<=Fixed() && !u->underConstruction)) return;
+    const uint16_t amount=uint16_t(heal ? raw :
+        retailDamageModifier(raw,13,retailActivated(*u),u->type->damageModifier));
     const int64_t delta=int64_t(amount)*Fixed::kOne;
     if (heal) u->hp=Fixed::raw(int32_t(std::min<int64_t>(Fixed::fromInt(u->maximumHp()).v,int64_t(u->hp.v)+delta)));
     else {
@@ -9558,7 +9565,7 @@ void World::scenarioAdjustHealth(int unitId,uint16_t amount,bool heal) {
             progress.remaining=float(1.0-double(progress.hp)/std::max(1,u->maximumHp()));
     }
     if (!heal) {
-        u->deathType=13;u->lastHitBy=0;u->lastHitPlayer=-1;
+        u->deathType=13;
         if (u->underConstruction && u->hp<=Fixed()) scenarioDestroy(unitId,13);
     }
 }
@@ -13121,8 +13128,7 @@ void World::clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, F
 //    retailAirTrafficCheck): VTOL_StepOut ahead, the guard again from stage 0;
 //  - a guarded unit lost (dead or dying; World posts no 0x208) while the
 //    guard is the last mission inserts VTOL_SeekGuard (4191d7, seekLostWard).
-// Not ported: the group check (51d1e0(unit, 1, 4)) with its VTOL_Move_Formation
-// push and its flag's rand(10) (AirToGround's is ported: retailAirGroupCheck).
+//  - the group check (418a7b, retailGuardGroupCheck), below.
 void World::tickFlyingGuard(Unit& u) {
     const size_t end=currentLeg(u.orders);
     if (!u.orders[end].guard) return;
