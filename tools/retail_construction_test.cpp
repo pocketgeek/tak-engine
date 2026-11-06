@@ -43,6 +43,34 @@ int main(int argc,char** argv) {
         }
         return 0;
     }
+    // tools/re/check_site_decay.py: an abandoned site's GetBuilt under the
+    // dispatcher, tick by tick. Header "ticks inverse-bits cost-bits remaining-bits
+    // stored-bits start" then one "early late" pair per tick (work events set
+    // before and after the site's dispatch). Per tick: remaining, stored, removed.
+    if (argc==2 && std::strcmp(argv[1],"--site-timeline")==0) {
+        unsigned ticks,inverseBits,costBits,remainingBits,storedBits,start;
+        while (std::scanf("%u %u %u %u %u %u",&ticks,&inverseBits,&costBits,&remainingBits,&storedBits,&start)==6) {
+            RetailMissionState m;
+            float remaining=std::bit_cast<float>(remainingBits),stored=std::bit_cast<float>(storedBits);
+            bool late=false,removed=false;
+            const auto step=retailSiteDecay(std::bit_cast<float>(inverseBits),std::bit_cast<float>(costBits));
+            for (unsigned t=0;t<ticks;++t) {
+                unsigned early,after;
+                if (std::scanf("%u %u",&early,&after)!=2) return 1;
+                if (!removed && retailSiteTimer(m,start+t,early || late)) {
+                    const double sum=double(remaining)+step.progress;
+                    remaining=float(sum);
+                    if (sum>=1) removed=true;
+                    else stored=float(double(stored)+double(step.refund));
+                }
+                late=after!=0;
+                std::printf(t ? " %u %u %u" : "%u %u %u",std::bit_cast<uint32_t>(remaining),
+                            std::bit_cast<uint32_t>(stored),unsigned(removed));
+            }
+            std::putchar('\n');
+        }
+        return 0;
+    }
     if (argc==2 && std::strcmp(argv[1],"--sacred")==0) {
         int x,z,fx,fz,count;float income,prior;
         World world;
