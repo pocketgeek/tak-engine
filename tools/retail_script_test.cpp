@@ -448,6 +448,20 @@ int main(int argc,char** argv) {
         }
         return 0;
     }
+    // tools/re/check_kill_credit.py: hp maxdamage -> the HP sample (51e07c);
+    // kind hp maxdamage previous -> 512610's severity.
+    if (argc==2 && std::string(argv[1])=="--hp-sample") {
+        int hp,maxDamage;
+        while (std::cin>>hp>>maxDamage)
+            std::cout<<int(tak::sim::retailHpSample(int16_t(hp),maxDamage))<<'\n';
+        return 0;
+    }
+    if (argc==2 && std::string(argv[1])=="--severity") {
+        int kind,hp,maxDamage,previous;
+        while (std::cin>>kind>>hp>>maxDamage>>previous)
+            std::cout<<int(tak::sim::retailDeathSeverity(uint8_t(kind),int16_t(hp),maxDamage,uint8_t(previous)))<<'\n';
+        return 0;
+    }
     // tools/re/check_kill_credit.py: tick height(16.16) sea canhover enabled
     // amount -> the deadly water's damage this tick (0 for none).
     if (argc==2 && std::string(argv[1])=="--deadly-water") {

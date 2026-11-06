@@ -1096,6 +1096,18 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
   damage only while it lives and is not dying (+0x130 & 0x1000). A shot
   still in flight when its shooter fell lands unscaled; ours kept the dead
   shooter's veterancy, auras and scenario weapon percentage.
+- **The severity** (gap hunt 9, E: `check_kill_credit.py` hp sample,
+  severity and death sample). Once a second (tick % 30 == 0) the unit update
+  samples HP at `51e07c..51e0cf`: the HP word x 100 over maxdamage, an
+  unsigned division, kept in 0..100, into +0x110, the old value moving to
+  +0x111. `512610` (`51267f..512739`) gives severity 0 for kinds 0, 6-11, 14
+  and 15, 1 for self-destruct, 0 while the HP word is above 0, and otherwise
+  (overkill x 100 over maxdamage + +0x111) / 2 in 1..100; only that last case
+  runs Killed. The update ends with its death (`51e36c`), after the sample, so
+  a unit dying on a sample tick reads the sample of the second before. Ours
+  ran the death before the sample (reading the one of two seconds before
+  there) and used floats (53 of 100 HP sampled as 52); now `retailHpSample`
+  and `retailDeathSeverity`, sampled ahead of the death (`kill_credit_test`).
 - **The death.** `512610` sends the death packet with the killer's id only
   when it lives (`5127a9`) and `512860` writes +0xf8 from it (0 otherwise),
   keeping +0xfc. Then Killed and Dying run; retirement `512ae0` comes at

@@ -18294,18 +18294,15 @@ void World::sweepDeath(Unit& u) {
     if (!retailHitter(u.lastHitBy,u.lastHitPlayer)) u.lastHitBy=0;
     if (mission_ || scenario_) justDied_.push_back(u.id);
     killPassengers(u);
-    const bool selfDestruct=u.deathType==Unit::kDeathSelfDestruct;
     // Killed decides corpse admission; Dying controls when the original
     // body retires. Only then does decomposition or water sinking begin.
     {
         // Retail severity (icd 0x512610): ((overkill% + HP% one second
-        // before death) / 2), clamped 1..100. Passed to the COB Killed.
-        float okPct = u.overkill.toFloat() * 100.0f / std::max(float(u.maximumHp()), 1.0f);
-        u.severity = uint8_t(std::clamp((okPct + float(u.hpPct1s)) * 0.5f,
-                                        1.0f, 100.0f));
-        if (selfDestruct) u.severity=1;
-        else if (u.deathType==0 || (u.deathType>=6 && u.deathType<=11) || u.deathType>=14)
-            u.severity=0;
+        // before death) / 2), clamped 1..100, in whole numbers
+        // (retailDeathSeverity); 1 for self-destruct and 0 for the kinds no
+        // attack causes. Passed to the COB Killed.
+        u.severity = retailDeathSeverity(u.deathType, retailHpWord(-u.overkill.floorInt()), u.maximumHp(),
+                                         u.hpPct1s);
         // Dying while petrified/frozen leaves the FBI stone=/frozen=
         // STATUE feature instead of the corpse (retail deathType 0xE/0xF
         // path, 0x512d2a) -- blocking, permanent, and resurrectable
@@ -20099,17 +20096,19 @@ void World::tick(float dt) {
                 retireCorpse(u);
             continue;
         }
+        // Retail 1-second HP-percent samples (unit+0x110/+0x111, 51e07c, in
+        // whole numbers: retailHpSample): the Killed severity reads the
+        // PREVIOUS sample, i.e. your health ~1s before death. The update takes
+        // it before its death (512610 ends the update, 51e36c), so a unit
+        // dying on a sample tick reads the sample of the second before it,
+        // not of two seconds before (E: check_kill_credit.py death sample).
+        if (tickCounter_ % 30 == 0) {
+            u.hpPct1s = u.hpPctCur;
+            u.hpPctCur = retailHpSample(retailHpWord(u.hp.floorInt()), u.maximumHp());
+        }
         if (u.hp <= Fixed() && !(u.retailSite && u.underConstruction)) {
             sweepDeath(u);
             continue;
-        }
-
-        // Retail 1-second HP-percent samples (unit+0x110/+0x111): the Killed
-        // severity reads the PREVIOUS sample, i.e. your health ~1s before death.
-        if (tickCounter_ % 30 == 0) {
-            u.hpPct1s = u.hpPctCur;
-            u.hpPctCur = uint8_t(std::clamp(u.hp.toFloat() / std::max(float(u.maximumHp()), 1.0f)
-                                            * 100.0f, 0.0f, 100.0f));
         }
         // Status timers count down; HP regenerates (healtime); mana recharges.
         if (u.frozenFor > 0) --u.frozenFor;

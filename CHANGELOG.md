@@ -265,6 +265,11 @@ their validation reports; both live in [`docs/`](docs/).
   fades away on the way down. Before, every body in the water vanished after two
   and a half seconds. Bodies on land that rot away last about two seconds longer, as
   in the original game.
+- **How badly a unit is wrecked when it dies follows the original game.** The death
+  animation and body a unit leaves depend on how hard the last blow hit it and on
+  its health a second earlier. That earlier health is now taken in whole numbers and
+  just before the death, as in the original game, so a unit dying on the second
+  reads its health of one second before rather than two.
 - **Campaign objectives ignore units still carrying out their mission orders**, as
   in the original game: a unit the mission is walking somewhere does not count for
   "move a unit to this spot" until its orders are done, and does not count as a

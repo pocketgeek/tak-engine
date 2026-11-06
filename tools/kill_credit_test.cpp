@@ -32,6 +32,28 @@ static void killNow(World& w,int id) {
 int main(int argc,char** argv) try {
     const auto t=fighter();
     {
+        // 51e07c..51e0cf: the once-a-second HP sample is HP x 100 over
+        // maxdamage in whole numbers (53 of 100 is 53). 51e36c: a unit's
+        // update ends with its death, after the sample, so one that dies on a
+        // sample tick reads the sample of a second before as its severity's
+        // "HP a second ago" (the one just moved into +0x111).
+        UnitType hundred=fighter("hundred");hundred.maxHp=100;
+        World w;terrain(w);
+        const int v=w.spawn(&hundred,400,400,0,1);
+        w.unit(v)->hp=Fixed::fromInt(53);
+        int ticks=0;
+        while (w.unit(v)->hpPctCur==0 && ticks<40) { w.tick(1.f/30);++ticks; }
+        check(w.unit(v)->hpPctCur==53,"a 53 of 100 HP sample did not read 53");
+        w.unit(v)->hp=Fixed::fromInt(80);
+        for (int i=0;i<29;++i) w.tick(1.f/30);
+        check(w.unit(v)->hpPctCur==53 && w.unit(v)->alive(),"a sample came early");
+        w.unit(v)->hp=Fixed::fromInt(-1);w.unit(v)->overkill=Fixed::fromInt(1);w.unit(v)->deathType=1;
+        w.tick(1.f/30);
+        check(!w.unit(v)->alive(),"the unit did not die");
+        // (1% overkill + the 53 sampled a second before) / 2.
+        check(w.unit(v)->severity==27,"a death on a sample tick read the sample of two seconds before");
+    }
+    {
         // 51a35a: a hit names its hitter only while the hitter's object lives
         // and is the one that fired; otherwise +0xf8/+0xfc keep the old one.
         World w;terrain(w);

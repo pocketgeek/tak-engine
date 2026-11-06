@@ -20,6 +20,42 @@ inline uint16_t retailDeadlyWaterDamage(uint32_t tick, int32_t height, int seaLe
     return uint16_t(amount);
 }
 
+// The 16-bit HP word (+0x10c) for World's whole hit points, which do not wrap
+// (hurt clamps them; see retail-engine.md, "A dying unit takes no more hits").
+inline int16_t retailHpWord(int32_t whole) {
+    return int16_t(whole < -32768 ? -32768 : whole > 32767 ? 32767 : whole);
+}
+
+// The unit update's HP sample (51e07c..51e0cf), once a second (the game tick
+// a multiple of 30): the HP word (+0x10c) times 100 over the type's
+// maxdamage (+0x1be), an unsigned 32-bit division, then 0 below 0 and 100
+// above 100 (signed compares). The new value goes to +0x110 and the old one
+// to +0x111. A dying unit's negative HP wraps to a large quotient, so it
+// reads 100 (0 over a maxdamage of 1). (E: tools/re/check_kill_credit.py.)
+inline uint8_t retailHpSample(int16_t hp, int32_t maxDamage) {
+    if (maxDamage == 0) return 0;   // retail faults; no shipped type has none
+    const int32_t value = int32_t(uint32_t(int32_t(hp) * 100) / uint32_t(maxDamage));
+    return uint8_t(value < 0 ? 0 : value > 100 ? 100 : value);
+}
+
+// 512610's severity (51267f..512739), Killed's first argument and the death
+// packet's +9: 0 for kinds 0, 6-11, 14 and 15, 1 for self-destruct (5), and
+// for the others (1-4, 12, 13) 0 while the HP word is above 0; otherwise the
+// overkill (-HP x 100 over maxdamage, unsigned) plus the sample of a second
+// before (+0x111), halved toward zero and kept in 1..100. Only that last case
+// runs Killed. (E: tools/re/check_kill_credit.py.)
+inline uint8_t retailDeathSeverity(uint8_t kind, int16_t hp, int32_t maxDamage, uint8_t previousSample) {
+    switch (kind) {
+    case 0: case 6: case 7: case 8: case 9: case 10: case 11: case 14: case 15: return 0;
+    case 5: return 1;
+    default: break;
+    }
+    if (hp > 0 || maxDamage == 0) return 0;
+    const int32_t overkill = int32_t(uint32_t(-int32_t(hp) * 100) / uint32_t(maxDamage));
+    const int32_t severity = (overkill + int32_t(previousSample)) / 2;
+    return uint8_t(severity < 1 ? 1 : severity > 100 ? 100 : severity);
+}
+
 // A corpse on land, as the feature update 4959c0 (495aaf..495af1) runs it
 // after 513027..513034 loaded its decomposition +0x3c (the feature type's
 // +0x130: decomposetime x 30, truncated, low 16 bits): each update counts

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Who gets the credit for a hit and a kill in retail, natively.
 
-Ten pieces, each run on synthetic units:
+Eleven pieces, each run on synthetic units:
 
   * the hitter gate of the damage routine 51a140 -> 51a240: a hitter whose
     object lives (+0x130 & 0x1000000, a dying one too) is stored at +0xf8 and
@@ -41,6 +41,14 @@ Ten pieces, each run on synthetic units:
 
   * a carrier's passengers: 512860 retires each at once with kind 8 and the
     carrier's hitter, before the carrier's own Killed.
+
+  * the HP sample 51e07c..51e0cf (once a second: HP x 100 over maxdamage,
+    unsigned, clamped to 0..100; the old one moves to +0x111) and 512610's
+    severity (the packet's +9: by death kind, the HP word and the sample of
+    a second before), against `retail_script_test --hp-sample` and
+    `--severity`; and the order inside the update: a unit that is dying
+    takes its sample before 512610 ends the update (51e36c), so on a sample
+    tick the severity reads the sample just moved into +0x111.
 
 The deadly-water rows are answered by `retail_script_test --deadly-water`
 and `--carried-water`.
@@ -610,11 +618,128 @@ def cargo():
             'carrier that changed sides (kind 6)')
 
 
+def hp_sample(binary):
+    """51e07c..51e0d5 natively for HP words and maxdamages, against the port."""
+    import random
+    f = Fixture()
+    rng = random.Random(9)
+    cases = [(hp, m) for hp in (-32768, -100, -1, 0, 1, 52, 53, 59, 99, 100, 101, 32767) for m in (1, 2, 3, 100, 651, 32767)]
+    cases += [(rng.randint(-32768, 32767), rng.randint(1, 32767)) for _ in range(3000)]
+    cases += [(hp, m) for m in (100, 200, 300, 700, 1300) for hp in range(0, m + 1, max(1, m // 100))]
+    rows, expected = [], []
+    for frame in (0, 30, 31):
+        for hp, maximum in (cases if frame == 0 else cases[:40]):
+            u = f.unit(1)
+            f.put(u + 0x10c, hp & 0xffff, 'H'); f.put(f.victim_type + 0x1be, maximum)
+            f.put(u + 0x110, 77, 'B'); f.put(u + 0x111, 66, 'B')
+            f.put(f.game + 0x19f44, frame)
+            f.p.uc.reg_write(UC_X86_REG_ESI, u); f.p.uc.reg_write(UC_X86_REG_EBX, f.game)
+            f.p.uc.reg_write(UC_X86_REG_EDI, 0)
+            f.p.uc.reg_write(UC_X86_REG_ESP, STACK_TOP); f.p.uc.reg_write(UC_X86_REG_EBP, STACK_TOP + 0x100)
+            f.p.uc.emu_start(0x51e07c, 0x51e0d5, count=200)
+            now, before = f.get(u + 0x110, 'B'), f.get(u + 0x111, 'B')
+            if frame % 30:
+                assert (now, before) == (77, 66), (frame, hp, maximum)
+                continue
+            assert before == 77, (hp, maximum)
+            rows.append('%d %d' % (hp, maximum)); expected.append('%d' % now)
+    output = subprocess.run([binary, '--hp-sample'], input='\n'.join(rows) + '\n',
+                            text=True, capture_output=True, check=True)
+    actual = output.stdout.splitlines()
+    assert len(actual) == len(expected), (len(actual), len(expected))
+    for row, got, want in zip(rows, actual, expected):
+        if got != want:
+            raise AssertionError('hp sample %s\n  port   %s\n  native %s' % (row, got, want))
+    return 'hp sample: %d rows match; the old sample moves to +0x111; no sample off the second' % len(rows)
+
+
+def severity(binary):
+    """512610(u, kind) natively: the severity it puts in the packet (+9) and
+    whether it runs Killed, against the port."""
+    f = Fixture()
+    opts, inner = f.flags, f.flags + 0x100
+    f.put(0x62d558, opts); f.put(opts + 8, inner); f.put(inner + 8, 0); f.put(opts + 0x18, opts + 0x300)
+    f.put(f.game + 0x175dc, f.flags + 0x200)
+    packets = []
+    def death_packet(uc, sp):
+        packet = struct.unpack('<I', uc.mem_read(sp, 4))[0]
+        packets.append(bytes(uc.mem_read(packet, 11)))
+        return 2, 0
+    f.p.hooks[0x512860] = death_packet
+    for name, n in (('5131b0', 1), ('4e8030', 3), ('56c720', 5)):
+        f.record(name, n)
+    f.p.hooks[0x4e6860] = lambda uc, sp: (1, 0)
+    rows, expected, killed = [], [], 0
+    for kind in range(16):
+        for hp in (-32768, -3000, -651, -100, -99, -50, -1, 0, 1, 30):
+            for maximum in (1, 3, 100, 651, 32767):
+                for previous in (0, 1, 50, 53, 99, 100, 255):
+                    u = f.unit(1, player=2)
+                    f.put(u + 0x10c, hp & 0xffff, 'H'); f.put(u + 0x111, previous, 'B')
+                    f.put(u + 0x108, 0.0, 'f'); f.put(f.victim_type + 0x1be, maximum)
+                    f.put(u + 0xbc, f.units + 0x6000)
+                    packets.clear(); f.calls.clear()
+                    f.call(0x512610, (u, kind))
+                    assert len(packets) == 1 and packets[0][10] >> 4 == kind, (kind, packets)
+                    ran = any(c[0] == '56c720' for c in f.calls)
+                    assert ran == (kind in (1, 2, 3, 4, 12, 13) and hp <= 0), (kind, hp, ran)
+                    killed += ran
+                    rows.append('%d %d %d %d' % (kind, hp, maximum, previous))
+                    expected.append('%d' % packets[0][9])
+    output = subprocess.run([binary, '--severity'], input='\n'.join(rows) + '\n',
+                            text=True, capture_output=True, check=True)
+    actual = output.stdout.splitlines()
+    assert len(actual) == len(expected), (len(actual), len(expected))
+    for row, got, want in zip(rows, actual, expected):
+        if got != want:
+            raise AssertionError('severity %s\n  port   %s\n  native %s' % (row, got, want))
+    return 'severity: %d rows match (Killed in %d: kinds 1-4, 12 and 13 at HP 0 or less)' % (len(rows), killed)
+
+
+def death_sample():
+    """51e01f..51e371 natively for a unit already dying when its update runs:
+    the sample (51e07c) comes before the update's 512610 (51e36c), so on a
+    sample tick 512610 finds the sample of a second before in +0x111."""
+    from unicorn import UC_HOOK_CODE
+    f = Fixture()
+    for name, n in (('429d90', 4), ('401160', 1), ('4d8450', 1), ('4d85e0', 1), ('4dc800', 1),
+                    ('51b2a0', 1), ('5195e0', 1), ('512060', 9), ('409a50', 3)):
+        f.record(name, n)
+    seen = []
+    def death(uc, sp):
+        unit, kind = struct.unpack('<2I', uc.mem_read(sp, 8))
+        seen.append((kind, f.get(unit + 0x111, 'B'), f.get(unit + 0x110, 'B')))
+        return 2, 0
+    f.p.hooks[0x512610] = death
+    f.p.uc.hook_add(UC_HOOK_CODE, lambda uc, *_: uc.emu_stop(), begin=0x51e371, end=0x51e371)
+    rows = []
+    for frame in (0, 1, 29, 30, 31, 60):
+        u = f.unit(1, flags=ALIVE | DYING); f.put(u + 8, f.units + 0x1000)
+        f.put(u + 0x10c, -20 & 0xffff, 'H'); f.put(u + 0x10f, 1, 'B')
+        f.put(u + 0x110, 50, 'B'); f.put(u + 0x111, 100, 'B')
+        f.put(f.victim_type + 0x260, 0); f.put(f.victim_type + 0x268, 0); f.put(f.victim_type + 0x21e, 0.0, 'f')
+        f.put(u + 0x6c, (2 << 16) | 0x8000)
+        f.put(f.game + 0x19f44, frame); f.put(f.game + 0x175dc, f.map); f.put(f.map + 0xd41, 0)
+        seen.clear()
+        f.p.uc.reg_write(UC_X86_REG_ESI, u); f.p.uc.reg_write(UC_X86_REG_EBX, f.game)
+        f.p.uc.reg_write(UC_X86_REG_EDI, 0)
+        f.p.uc.reg_write(UC_X86_REG_ESP, STACK_TOP); f.p.uc.reg_write(UC_X86_REG_EBP, STACK_TOP + 0x100)
+        f.p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
+        f.p.uc.emu_start(0x51e01f, 0x51e371, count=4000)
+        assert len(seen) == 1 and seen[0][0] == 1, (frame, seen)
+        want = (50, 100) if frame % 30 == 0 else (100, 50)
+        assert seen[0][1:] == want, (frame, seen)
+        rows.append(frame)
+    return ('death sample: a dying unit\'s update takes its sample before 512610; on a sample tick '
+            '+0x111 holds the sample of a second before (frames %s)' % rows)
+
+
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else 'build-o2/retail_script_test'
     for line in (hitter_gate(), attack_multiplier(), death_weapon_shot(), retirement(), mission_kill(),
                  water_hit(), water_death(), deadly_water(binary), carried_water(binary),
-                 self_destruct(), self_destruct_hit(), self_destruct_death(), commander(), cargo()):
+                 self_destruct(), self_destruct_hit(), self_destruct_death(), commander(), cargo(),
+                 hp_sample(binary), severity(binary), death_sample()):
         print(line)
 
 
