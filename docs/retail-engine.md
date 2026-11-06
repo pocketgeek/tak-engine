@@ -1196,6 +1196,25 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
     (`retailCorpseDecayHold`). Not modelled: such a reload on a water grave
     still sinking or fading, which would start a decay there; the 60-update
     sink is not drawn.
+- **A site unconjured away** (gap hunt 10, E: `check_kill_credit.py`
+  unconjure). Every site, a factory's and a mobile builder's alike, carries
+  GetBuilt (`401f95`, `405a2b`: the mission named "getbuilt", `604ab4`).
+  Left unworked it waits (300 ticks at first, then 30 after each work event)
+  and then calls `429d70(site, 1)` every tick: `429af0(site, site, -0.5)`,
+  which adds `0.5 / buildtime` to the remaining work, sets the HP word from
+  it and refunds the cost to the owner's pool (`429d26..429d5d`). The step
+  that takes the remaining work to 1 or more zeroes the HP word and hits the
+  site with `51a140(site, site, 30000, 11, 0)` (`429cd4..429cea`): its own
+  last hitter, kind 11, severity 0, so it retires at once with no Killed,
+  corpse, death weapon, credit or loss, and its retirement reaches the
+  conditions (`523510`), the mission's `UnitDestroyed` and a CRT game's lost
+  tally. Ours (`World::decayConstruction`) retired it silently until gap
+  hunt 10; it now dies that way (`scenario_outcome_test`). Not ported, and
+  a question for the owner: World's own decay, for every site outside the
+  retail-resources games, takes HP at the rate the site was last built, from
+  the first tick it is not worked, and refunds nothing; retail's pace is
+  `0.5 / buildtime` of the work a tick after a 30-tick wait (300 for a site
+  never worked) and gives the mana back as the site shrinks.
 - **Mission Kill** (`513130`): ignores its arguments. For every unit this
   machine runs (owner +0xea 1 or 2; lockstep runs them all): `52ae30(u, 1)`
   removes every shot it fired (`529af0`, no impact); a unit whose Dying runs

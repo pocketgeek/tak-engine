@@ -39,6 +39,9 @@ int main() try {
     const std::string fbi = "[UNITINFO]{\nunitname=monarch;\nobjectname=monarch;\n"
         "maxdamage=100;\nfootprintx=1;\nfootprintz=1;\ncommander=1;\n}";
     (*files)["units/monarch.fbi"] = {fbi.begin(),fbi.end()};
+    const std::string hutFbi = "[UNITINFO]{\nunitname=hut;\nobjectname=hut;\n"
+        "maxdamage=100;\nfootprintx=1;\nfootprintz=1;\nbuildtime=100;\n}";
+    (*files)["units/hut.fbi"] = {hutFbi.begin(),hutFbi.end()};
     hpi::Vfs vfs;vfs.setMapFiles(files);
     sim::TypeRegistry registry;registry.loadDir(vfs,"units");
     const auto* monarch=registry.find("monarch");
@@ -147,6 +150,29 @@ int main() try {
         world->forceDefeat(0);ticks(*world,60);
         check(world->player(0).losses==0 && world->unit(enemy)->alive(),
               "repeated defeat duplicated losses or removed another owner's unit");
+    }
+    {
+        // A site left to unconjure away dies (429cea: 51a140(site, site, 30000,
+        // 11, 0), check_kill_credit.py unconjure): its own last hitter, kind
+        // 11, no loss, and its retirement reaches the scenario's lost tally.
+        const auto* hut=registry.find("hut");check(hut,"synthetic hut missing");
+        auto world=makeWorld(2);
+        const int site=world->spawn(hut,128,128,0,0);world->spawn(monarch,320,320,0,1);
+        world->unit(site)->underConstruction=true;world->unit(site)->beingBuilt=false;
+        world->unit(site)->hp=sim::Fixed::fromFloat(0.5f);
+        crt::Scenario scene;scene.players.resize(3);
+        scene.players[1].push_back({{{9,{"0","hut"}}},{{13,{"All Players","decayed"}}}});
+        attach(*world,registry,scene);
+        // 0.5 HP at 100 x 0.95 / (100 x 30) a tick: gone in 16 ticks.
+        for (int i=0;i<60 && world->unit(site) && world->unit(site)->alive();++i) ticks(*world,1);
+        const auto* u=world->unit(site);
+        check(u && !u->alive(),"the unattended site did not unconjure away");
+        check(u->deathType==11 && u->lastHitBy==site && u->lastHitPlayer==0,
+              "an unconjured site was not its own kind-11 hitter");
+        check(world->player(0).losses==0,"an unconjured site counted as a loss");
+        ticks(*world,30);   // the rules' next pass
+        const auto messages=world->scenario()->drainMessages();
+        check(messages.size()==1 && messages[0].text=="decayed","an unconjured site was not counted as lost");
     }
     {
         // Closed holes are not recipients or phantom opponents. Bank3 belongs to owner2.

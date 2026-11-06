@@ -350,6 +350,10 @@ their validation reports; both live in [`docs/`](docs/).
   scenario's removals and defeats, and a factory's unfinished unit lost when the
   factory dies or its order is cancelled. A unit removed when its player is defeated
   in a map scenario still counts as killed by the player that last hit it.
+- **A building left unfinished until it fades away counts as destroyed**, as in the
+  original game: missions and map scenarios hear of it (a mission goal to destroy
+  that kind of unit counts it), though it is still nobody's kill and no loss. It
+  used to vanish without a word.
 - **A unit that changes sides starts afresh, as in the original game.** A unit
   converted by an enemy, given to an ally or taken over by a mission or a map
   scenario keeps its health and the way it faces, but is a new unit to its new

@@ -15364,6 +15364,7 @@ void World::decayConstruction(Unit& u, float /*dt*/) {
     // No builder worked this conjure this tick: it "un-conjures", losing HP at the
     // rate it was last built, and vanishes at zero (no corpse -- it was never
     // finished). A site that never materialised falls back to its nominal rate.
+    if (u.hp <= Fixed()) return;   // already killed: the death sweep has it
     const Fixed rate = u.conjureRate > Fixed()
                      ? u.conjureRate
                      : Fixed::fromFloat(u.type->maxHp * 0.95f
@@ -15372,12 +15373,15 @@ void World::decayConstruction(Unit& u, float /*dt*/) {
     // saturated its hp at -INT32_MAX; subtract in 64 bits so this cannot wrap.
     u.hp = Fixed::raw(int32_t(std::clamp<int64_t>(int64_t(u.hp.v) - rate.v, -int64_t(INT32_MAX), INT32_MAX)));
     if (u.hp > Fixed()) return;
-    if (u.type->isStructure()) {
-        blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), false);
-    }
-    u.underConstruction = false;
-    groundRemove(u);
-    u.deadFor = kRetiredTicks;   // fully gone, no death anim
+    // Retail's unconjure ends as a death (429cbb..429cea: the HP word 0, then
+    // 51a140(site, site, 30000, 11, 0)): the site is its own last hitter and
+    // dies with kind 11 and severity 0, so it retires at once (no Killed,
+    // corpse, death weapon, credit or loss) and its retirement reaches the
+    // mission's conditions, UnitDestroyed and a CRT game's lost tally like any
+    // other death (512b40, 512b4e).
+    u.hp = Fixed(); u.overkill = Fixed();
+    u.deathType = 11; u.lastHitBy = u.id; u.lastHitPlayer = u.player;
+    sweepDeath(u);
 }
 
 static void retireProductionItem(Unit& builder,size_t index) {

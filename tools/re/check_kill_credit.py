@@ -893,6 +893,31 @@ def losses():
     return 'losses: 512ae0 counts kinds %s, finished or not, whoever hit it' % sorted(counted)
 
 
+def unconjure():
+    """429af0's unconjure step (negative work, GetBuilt's 429d70(site, 1)
+    = -0.5) natively: while the remaining work stays below 1 the site's HP
+    word follows it; the step that takes it to 1 or more zeroes the word and
+    hits the site with 51a140(site, site, 30000, 11, 0): its own hitter,
+    kind 11."""
+    f = Fixture()
+    f.record('51a140', 5)
+    site_type = f.victim_type
+    f.put(site_type + 0x216, 0.01, 'f'); f.put(site_type + 0x20e, 100.0, 'f'); f.put(site_type + 0x1be, 100)
+    f.put(f.local + 0x10c, f.flags + 0x400)   # the owner's resource object (the refund)
+    deaths = 0
+    for remaining in (0.25, 0.9, 0.994, 0.995, 0.999):
+        u = f.unit(1, player=2); f.put(u + 0x108, remaining, 'f'); f.put(u + 0x10c, 7, 'H')
+        f.calls.clear()
+        f.call(0x429af0, (u, u, struct.unpack('<i', struct.pack('<f', -0.5))[0]))
+        died = remaining + 0.005 >= 1.0
+        if died:
+            assert f.calls == [('51a140', u, u, 30000, 11, 0)] and f.get(u + 0x10c, 'H') == 0, (remaining, f.calls)
+            deaths += 1
+        else:
+            assert not f.calls, (remaining, f.calls)
+    return 'unconjure: the step that leaves no work hits the site itself, 51a140(site, site, 30000, 11, 0) (%d of 5)' % deaths
+
+
 def crt_health():
     """The CRT action cases natively, entered with their own frame: the
     arguments each hands 51a140, for every type/region combination."""
@@ -933,7 +958,7 @@ def main():
                  water_hit(), water_death(), deadly_water(binary), carried_water(binary),
                  self_destruct(), self_destruct_hit(), self_destruct_death(), commander(), cargo(),
                  hp_sample(binary), severity(binary), death_sample(), veteran_reload(),
-                 damage_modifier(binary), bounty(), losses(), crt_health()):
+                 damage_modifier(binary), bounty(), losses(), crt_health(), unconjure()):
         print(line)
 
 
