@@ -2377,6 +2377,11 @@ private:
     // Who hears this player's voice: the diplomacy VOICE column, with chat's defaults and
     // rules (allies only; reset each game; sent with every frame, enforced by the server).
     uint8_t voiceRecipients_ = 0xff;
+    // The Diplomacy SPECTATORS row: whether spectators read this player's chat / hear its
+    // voice (protocol 316). Off at the start of each game. Spectators themselves never
+    // chat or talk in a running game (client and server).
+    bool chatSpectators_ = false, voiceSpectators_ = false;
+    static constexpr int kDiplomacySpectators = 8;   // DiplomacyHot::player of that row
     // How loud each player's voice plays here: the diplomacy VOLUME sliders, 0..100 by
     // slot, 100 by default. Local only (never sent, hashed or recorded); reset each game
     // like the columns above. Only human players other than you get a slider.

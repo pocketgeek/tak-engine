@@ -2125,7 +2125,7 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
     const auto manaMask=requestedManaSharing_.value_or(framePlayer(localPlayer_).manaShareMask);
     const float scale=std::min({1.0f,float(winW)/1080.0f,float(winH)/550.0f});
     const float width=1040*scale,rowH=38*scale;
-    const float height=(172+44*players.size())*scale;
+    const float height=(172+44*(players.size()+1))*scale;   // the players, then SPECTATORS
     const float x=(winW-width)/2,y=(winH-height)/2;
     SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(ren_,0,0,0,160);
@@ -2200,6 +2200,14 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         if(voiceVolumeSlider(p))volumeSlider(by,p);
         if(ally)button("GIVE SELECTED UNITS",{x+738*scale,by,278*scale,rowH},p,DiplomacyAction::Give,eligible[size_t(p)]);
         by+=44*scale;
+    }
+    // SPECTATORS: whether anyone watching reads your chat and hears your voice. Both start
+    // off each game; ticking them in reaches every spectator.
+    {
+        const float ts=1.9f*scale;
+        blockText("SPECTATORS",x+24*scale,by+(rowH-7*ts)/2,ts,{190,196,212,255});
+        checkbox(402,by,kDiplomacySpectators,DiplomacyAction::Chat,chatSpectators_,true);
+        checkbox(468,by,kDiplomacySpectators,DiplomacyAction::Voice,voiceSpectators_,true);
     }
     button("CLOSE",{x+width-164*scale,y+height-56*scale,140*scale,rowH},-1,DiplomacyAction::Close,true);
 }

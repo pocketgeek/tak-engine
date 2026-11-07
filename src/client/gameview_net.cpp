@@ -156,6 +156,9 @@
                     allies|=uint8_t(1u<<i);
         }
         chatRecipients_=allies;voiceRecipients_=allies;requestedManaSharing_.reset();
+        // Spectators: off (the Diplomacy SPECTATORS row ticks them in). A spectator never
+        // chats or talks in a running game at all.
+        chatSpectators_=voiceSpectators_=false;
         voiceVolume_.fill(100);voiceVolumeDrag_=-1;humanSlots_=0;
         for (int i=0;i<tak::net::kMaxSlots && i<8;++i)
             if (room.slots[i].type==1) humanSlots_|=uint8_t(1u<<i);

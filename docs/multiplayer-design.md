@@ -1293,6 +1293,15 @@ refuses the kind). A benchmark room may also run at `kMaxBenchmarkGameSpeed` (11
 +100). Replay format 15 is unchanged. 0.9.21 ships protocol 315; it plays with neither
 0.9.20 nor any earlier version, nor their replays.
 
+Protocol 316 gives spectators their own choice in chat and voice. `Chat` (C->S) carries a
+trailing u8 after the recipients mask: 1 = spectators read it too. `VoiceUp` gains the flag
+`kVoiceSpectators` (8), which the server strips before `VoiceDown`. In a running game the
+server sends a line or frame to the seated players in the mask and to the spectators only
+with that flag (before 316, spectators got it for a mask of 0xff), and a spectator's own
+chat and voice reach nobody. Before the game starts everything still goes to the whole
+room. The client sends the flag from the Diplomacy screen's SPECTATORS row, off at the
+start of each game, and starts the player columns at the player's allies.
+
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
 in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each

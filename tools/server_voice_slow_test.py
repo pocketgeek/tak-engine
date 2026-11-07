@@ -4,7 +4,7 @@
 Alice and Carol are seated on fast links; Bob is seated and Dave spectates, both reading
 their sockets at 1500 bytes a second with a 4 KiB receive buffer -- room for the game's
 tick bundles (~500 B/s) but not for voice (~3.8 kB/s for one talker). Alice talks to
-everyone (mask 0xff) for 12 seconds.
+everyone, the spectators ticked in too (mask 0xff + SPECTATORS, protocol 316), for 12 seconds.
 
 Voice shares each listener's TCP stream with its tick bundles. Before the server's lag
 check, voice filled the slow links and every bundle waited behind it: Bob's delay held
@@ -39,7 +39,7 @@ import time
 import server_net as auth
 from server_net import lobby
 from server_public_test import server, login, options
-from server_voice_test import Listener, up, START
+from server_voice_test import Listener, up, START, SPECTATORS
 
 RATE = 1500.0        # bytes a second each slow listener reads
 TICKS = 30           # the room's nominal tick rate (speed 10)
@@ -176,7 +176,7 @@ def cpuCase(port, h, root, process, peers):
     seconds, lags = 10, []
     t0 = time.monotonic()
     for i in range(seconds * 50):
-        alice.send('VoiceUp', up(i, 0xff, START if i == 0 else 0))
+        alice.send('VoiceUp', up(i, 0xff, (START if i == 0 else 0) | SPECTATORS))
         time.sleep(max(0.0, t0 + (i + 1) * 0.02 - time.monotonic()))
         if i % 10 == 9:
             lags.append(sample()[1])
@@ -262,7 +262,7 @@ def main():
             seconds, worstB, worstD = 12, 0, 0
             t0 = time.monotonic()
             for i in range(seconds * 50):
-                alice.send('VoiceUp', up(i, 0xff, START if i == 0 else 0))
+                alice.send('VoiceUp', up(i, 0xff, (START if i == 0 else 0) | SPECTATORS))
                 time.sleep(max(0.0, t0 + (i + 1) * 0.02 - time.monotonic()))
                 if i % 25 == 24:
                     tick, lagB, lagD = sample()

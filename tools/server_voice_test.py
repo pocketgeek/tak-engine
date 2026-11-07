@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Voice chat through a real local server (protocol 276).
+"""Voice chat through a real local server (protocol 276; spectator rules 316).
 
 Three players and a spectator in one room. Voice frames are opaque to the server, so the
 "stream" is synthetic packets; tools/voice_test.cpp covers the codec and the client.
@@ -7,8 +7,9 @@ Three players and a spectator in one room. Voice frames are opaque to the server
   listen      a connection that never sent VoiceListen 1 receives no voice
   lobby       before the game runs a frame reaches the whole room, whatever the mask
   mask        in a running game the talker's VOICE mask picks the seated recipients,
-              exactly as chat's does: one player, everyone (0xff, spectators included),
-              nobody (0); a spectator talks to everyone; nobody hears themselves
+              exactly as chat's does: one player, everyone (0xff), nobody (0); the
+              spectators only with the SPECTATORS flag (316), and a spectator reaches no
+              player at all; nobody hears themselves
   names       the talker's name rides on START frames (and every 25th), its slot always
   budget      a burst past the per-second budget is cut and logged, the END marker still
               arrives, and the game's tick bundles keep coming throughout
@@ -31,7 +32,7 @@ import server_net as auth
 from server_net import lobby
 from server_public_test import server, login, options
 
-START, END, HAS_NAME = 1, 2, 4
+START, END, HAS_NAME, SPECTATORS = 1, 2, 4, 8
 
 
 class Listener:
@@ -196,20 +197,25 @@ def main():
             assert len(got['Bob']) == 1 and not got['Carol'] and not got['Dave'] and not got['Alice'], \
                 ('mask Bob', {k: len(x) for k, x in got.items()})
             got = heard('Alice', 0xff, 11)
-            assert len(got['Bob']) == 1 and len(got['Carol']) == 1 and len(got['Dave']) == 1 and not got['Alice'], \
-                'mask 0xff must reach every player and the spectator'
+            assert len(got['Bob']) == 1 and len(got['Carol']) == 1 and not got['Dave'] and not got['Alice'], \
+                'mask 0xff must reach every player, and not the spectator without the SPECTATORS flag'
+            got = heard('Alice', 0xff, 111, SPECTATORS)
+            assert len(got['Bob']) == 1 and len(got['Carol']) == 1 and len(got['Dave']) == 1, \
+                'mask 0xff with the SPECTATORS flag must reach the spectator too'
+            assert not (got['Dave'][0]['flags'] & SPECTATORS), 'the SPECTATORS flag must not be relayed'
+            got = heard('Alice', 0x00, 112, SPECTATORS)
+            assert len(got['Dave']) == 1 and not got['Bob'] and not got['Carol'], 'the SPECTATORS flag alone: spectators only'
             got = heard('Alice', 0x00, 12)
             assert not any(got.values()), 'an empty mask delivered voice'
             got = heard('Bob', 0x03, 13, START)
             assert len(got['Alice']) == 1 and not got['Bob'] and not got['Carol'] and not got['Dave'], \
                 'a mask with the talker\'s own bit must not echo, and must not leak'
             assert got['Alice'][0]['slot'] == 1 and got['Alice'][0]['name'] == 'Bob'
-            got = heard('Dave', 0xff, 14, START)
-            assert all(len(got[n]) == 1 for n in ('Alice', 'Bob', 'Carol')) and not got['Dave'], 'spectator voice'
-            assert got['Alice'][0]['slot'] == 0xFF and got['Alice'][0]['name'] == 'Dave', got['Alice'][0]
+            got = heard('Dave', 0xff, 14, START | SPECTATORS)
+            assert not any(got[n] for n in ('Alice', 'Bob', 'Carol', 'Dave')), 'a spectator must reach no player in game'
             got = heard('Alice', 0x04, 15)
             assert got['Carol'][0]['opus'] == bytes([15]) * 60 and got['Carol'][0]['seq'] == 15, 'payload intact'
-            print('mask: one player, everyone, nobody, no echo, spectator -- the chat rules')
+            print('mask: one player, everyone, nobody, no echo, spectators by flag, spectator to no player')
 
             # names: a plain frame repeats the name every 25 frames.
             for i in range(30):

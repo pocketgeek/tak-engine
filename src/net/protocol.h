@@ -19,7 +19,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 315;      // 315: the Benchmark runs on the server's wall clock (Cmd::BenchClock):
+constexpr uint32_t kNetVersion = 316;      // 316: chat and voice reach spectators only when the player ticks them
+                                           // (Chat's trailing spectators byte, VoiceUp's kVoiceSpectators flag)
+                                           // 315: the Benchmark runs on the server's wall clock (Cmd::BenchClock):
                                            // 60 real seconds and spawns per real second at any game speed
                                            // 314: Legion formation flyers circle over the front of their ground instead of
                                            //      creeping at its pace (hashed, 2026-11-06)
@@ -907,6 +909,8 @@ constexpr size_t kVoiceMaxOpus = 400;      // bytes of one frame's packet (24 kb
 constexpr uint8_t kVoiceStart = 1;         // first frame of a transmission (resets the receiver)
 constexpr uint8_t kVoiceEnd = 2;           // the talker released push-to-talk; carries no audio
 constexpr uint8_t kVoiceHasName = 4;       // VoiceDown: the talker's display name follows
+constexpr uint8_t kVoiceSpectators = 8;    // VoiceUp (316): spectators hear it too (the Diplomacy SPECTATORS row);
+                                           // stripped before VoiceDown
 
 // The outcome of a login, as carried by Msg::AuthResult.
 enum class AuthStatus : uint8_t {

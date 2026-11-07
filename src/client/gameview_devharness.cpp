@@ -1851,6 +1851,15 @@
             check(voiceRecipients_==0x03,"the chat column leaves voice alone");
             click(DiplomacyAction::Voice,2);check((voiceRecipients_ & 4) && (voiceRecipients_ & 2),"voice checkbox updates its recipients");
             click(DiplomacyAction::Voice,2);check(voiceRecipients_==0x03,"and back");
+            // SPECTATORS: a row of its own, chat and voice both off by default, each its own box.
+            check(has(DiplomacyAction::Chat,kDiplomacySpectators) && has(DiplomacyAction::Voice,kDiplomacySpectators),
+                  "the SPECTATORS row has chat and voice boxes");
+            check(!chatSpectators_ && !voiceSpectators_,"spectators get neither chat nor voice by default");
+            click(DiplomacyAction::Chat,kDiplomacySpectators);
+            check(chatSpectators_ && !voiceSpectators_ && chatRecipients_==0x07,"ticking SPECTATORS chat leaves voice and the players alone");
+            click(DiplomacyAction::Voice,kDiplomacySpectators);check(voiceSpectators_ && voiceRecipients_==0x03,"SPECTATORS voice");
+            click(DiplomacyAction::Chat,kDiplomacySpectators);click(DiplomacyAction::Voice,kDiplomacySpectators);
+            check(!chatSpectators_ && !voiceSpectators_,"and off again");
             // VOLUME: a slider for each other human (ALLY, DEFEATED), none for yourself or the
             // computer player, every one at 100; greyed and inert while voice chat is off.
             const auto allFull=[&]{return std::all_of(voiceVolume_.begin(),voiceVolume_.end(),[](uint8_t v){return v==100;});};

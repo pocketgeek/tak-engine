@@ -199,7 +199,9 @@ public:
     // Take another OPEN seat in the lobby (Msg::MoveSeat). The server answers with
     // a JoinResult naming the new seat, so mySlot follows it, then the LobbyState.
     void moveSeat(int slot);
-    void chat(const std::string& text, uint8_t recipients = 0xff);
+    // recipients: the seated players (slot bits); spectators: whether spectators read it
+    // too. Before the game starts the server sends every line to the whole room.
+    void chat(const std::string& text, uint8_t recipients = 0xff, bool spectators = true);
     void startGame();
     // START was clicked and the server has neither started the game nor refused.
     bool startPending() const { return startRequested_ || startSent_; }
@@ -445,6 +447,7 @@ private:
     bool voiceHeld_ = false, voiceOpen_ = false, voiceRestart_ = false, voiceSlowRtt_ = false;
     uint16_t voiceSeq_ = 0;
     uint8_t voiceMask_ = 0xff;
+    uint8_t voiceSpectators_ = 0;   // kVoiceSpectators when the open transmission reaches spectators
     uint64_t voiceSlackMs() const;
     void voiceProbe(uint64_t now, int64_t rtt = -1);
     void holdVoice(uint64_t now);

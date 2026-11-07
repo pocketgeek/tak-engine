@@ -29,7 +29,7 @@
         if (settings_ && settings_->voiceActivation) { ptt_.release(); return false; }
         if (e.type == SDL_KEYUP) return hotkeys_.pushToTalkRelease(e.key.keysym.sym) && ptt_.release();
         if (!hotkeys_.pushToTalkPress(e.key.keysym.sym, e.key.keysym.mod)) return false;
-        return ptt_.press(e.key.repeat != 0, voiceRoomActive() && voice_->enabled(), textEntryActive());
+        return ptt_.press(e.key.repeat != 0, voiceRoomActive() && voice_->enabled() && !spectating_, textEntryActive());
     }
 
     void GameView::pumpVoice() {
@@ -59,7 +59,9 @@
         SDL_Window* win = SDL_RenderGetWindow(ren_);
         const bool focused = win && (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS);
         const bool activation = settings_ && settings_->voiceActivation;
-        ptt_.frame(on && !hotkeysScreen_ && !activation, textEntryActive(), focused, down);
+        // A spectator listens but never talks in a running game (the server drops it too).
+        const bool talk = on && !spectating_;
+        ptt_.frame(talk && !hotkeysScreen_ && !activation, textEntryActive(), focused, down);
         // The diplomacy VOLUME sliders, by slot. They belong to the game: in a room the
         // slots may hold other people, so everyone plays at 100 there.
         const bool inGame = mp_ && mp_->state() == tak::net::MpClient::State::InGame;
@@ -67,10 +69,11 @@
         // Before the game runs the server sends to the whole room whatever the mask says,
         // as it does chat.
         const uint8_t mask = voiceRecipients_;
+        const uint8_t spectators = voiceSpectators_ ? tak::net::kVoiceSpectators : 0;
         // Voice activation: allowed whenever voice is on in the room; the engine's gate
         // opens on the microphone's level, typing or not, focused or not.
-        voice_->update(room, activation ? on : ptt_.talking(), [this, mask](const tak::VoiceEngine::Frame& f) {
-            if (mp_) mp_->sendVoice(f.seq, mask, f.flags, f.opus);
+        voice_->update(room, activation ? talk : ptt_.talking(), [this, mask, spectators](const tak::VoiceEngine::Frame& f) {
+            if (mp_) mp_->sendVoice(f.seq, mask, uint8_t(f.flags | spectators), f.opus);
         });
     }
 

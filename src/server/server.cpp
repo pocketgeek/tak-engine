@@ -1233,7 +1233,9 @@ bool Server::voiceBehind(Client& d, const Room& r, uint64_t now) {
 
 // Voice chat: one frame from a talker in room r, to the recipients its VOICE mask picks
 // with exactly the Chat rules -- the whole room (spectators included) while the room is
-// not running or for 0xff, otherwise the seated players whose bit is set -- minus the
+// not running, otherwise the seated players whose bit is set, and the spectators when the
+// frame carries kVoiceSpectators (protocol 316; before, only a mask of 0xff); a spectator
+// in a running game reaches nobody (spectators never talk in game) -- minus the
 // talker, minus anyone who has not asked for voice or is still catching up, and minus
 // anyone lagging the running game (voiceBehind). Sent as low-priority frames
 // (Conn::sendLow), which a backed-up recipient drops.
@@ -1244,7 +1246,7 @@ void Server::relayVoice(Client& c, Room& r, const Frame& f) {
     const uint16_t len = rd.u16();
     // An END marker carries no audio and opens nothing: audio, or START, with END is malformed
     // (the client never sends it), as is an audio frame without audio.
-    if (!rd.ok || len > kVoiceMaxOpus || size_t(rd.end - rd.p) != len || (flags & ~(kVoiceStart | kVoiceEnd)) ||
+    if (!rd.ok || len > kVoiceMaxOpus || size_t(rd.end - rd.p) != len || (flags & ~(kVoiceStart | kVoiceEnd | kVoiceSpectators)) ||
         ((flags & kVoiceEnd) ? (len != 0 || (flags & kVoiceStart)) : len == 0)) {
         c.conn.fail("invalid voice message");
         return;
@@ -1274,7 +1276,8 @@ void Server::relayVoice(Client& c, Room& r, const Frame& f) {
     ++c.voiceOut;
     Writer w;
     w.u32(c.id); w.u8(c.slot >= 0 ? uint8_t(c.slot) : uint8_t(0xFF)); w.u16(seq);
-    w.u8(uint8_t(flags | (named ? kVoiceHasName : 0))); w.u16(len);
+    const bool toSpectators = flags & kVoiceSpectators;
+    w.u8(uint8_t((flags & ~kVoiceSpectators) | (named ? kVoiceHasName : 0))); w.u16(len);
     w.b.insert(w.b.end(), rd.p, rd.p + len);
     if (named) w.str(c.name);
     auto deliver = [&](uint32_t cid) {
@@ -1284,13 +1287,11 @@ void Server::relayVoice(Client& c, Room& r, const Frame& f) {
         if (r.running && voiceBehind(*it->second, r, now)) return;
         it->second->conn.sendLow(Msg::VoiceDown, w.b);
     };
-    if (!r.running || recipients == 0xff) {
-        for (int i = 0; i < kMaxSlots; ++i) if (r.slotClient[i] >= 0) deliver(uint32_t(r.slotClient[i]));
+    if (r.running && c.slot < 0) return;   // spectators never talk in a running game
+    for (int slot = 0; slot < kMaxSlots; ++slot)
+        if ((!r.running || (recipients & (1u << slot))) && r.slotClient[slot] >= 0) deliver(uint32_t(r.slotClient[slot]));
+    if (!r.running || toSpectators)
         for (uint32_t cid : r.spectators) deliver(cid);
-    } else {
-        for (int slot = 0; slot < kMaxSlots; ++slot)
-            if ((recipients & (1u << slot)) && r.slotClient[slot] >= 0) deliver(uint32_t(r.slotClient[slot]));
-    }
 }
 
 void Server::lobbyMsg(Client& c, const Frame& f) {
@@ -2376,13 +2377,23 @@ void Server::gameMsg(Client& c, const Frame& f) {
             Reader rd(f.payload.data(), f.payload.size());
             std::string text = rd.str();
             const uint8_t recipients = rd.u8();
+            // 316: spectators read it only when the player ticks them (the Diplomacy
+            // SPECTATORS row); before the game starts the whole room does, as ever. A
+            // spectator in a running game cannot chat at all.
+            const bool toSpectators = rd.u8() != 0;
             if (!rd.ok || text.size() > 512) return;
             Writer w; w.str(c.name); w.str(text);
-            if (!r->running || recipients == 0xff) broadcastRoom(*r, Msg::Chat, w);
-            else for (int slot=0;slot<kMaxSlots;++slot) {
-                if (!(recipients & (1u<<slot))) continue;
-                auto found=clients_.find(uint32_t(r->slotClient[slot]));
-                if (found!=clients_.end()) found->second->conn.send(Msg::Chat,w.b);
+            if (!r->running) broadcastRoom(*r, Msg::Chat, w);
+            else if (c.slot < 0) break;   // spectators never chat in a running game
+            else {
+                for (int slot=0;slot<kMaxSlots;++slot) {
+                    if (!(recipients & (1u<<slot))) continue;
+                    auto found=clients_.find(uint32_t(r->slotClient[slot]));
+                    if (found!=clients_.end()) found->second->conn.send(Msg::Chat,w.b);
+                }
+                if (toSpectators)
+                    for (uint32_t cid : r->spectators)
+                        if (auto found=clients_.find(cid); found!=clients_.end()) found->second->conn.send(Msg::Chat,w.b);
             }
             break;
         }

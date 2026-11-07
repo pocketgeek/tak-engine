@@ -149,8 +149,14 @@
                         e.button.y < r.y || e.button.y >= r.y+r.h) continue;
                     switch (hot.action) {
                         case DiplomacyAction::Give: giveSelectedUnits(hot.player); break;
-                        case DiplomacyAction::Chat: chatRecipients_ ^= uint8_t(1u<<hot.player); break;
-                        case DiplomacyAction::Voice: voiceRecipients_ ^= uint8_t(1u<<hot.player); break;
+                        case DiplomacyAction::Chat:
+                            if (hot.player==kDiplomacySpectators) chatSpectators_=!chatSpectators_;
+                            else chatRecipients_ ^= uint8_t(1u<<hot.player);
+                            break;
+                        case DiplomacyAction::Voice:
+                            if (hot.player==kDiplomacySpectators) voiceSpectators_=!voiceSpectators_;
+                            else voiceRecipients_ ^= uint8_t(1u<<hot.player);
+                            break;
                         case DiplomacyAction::Volume: break;   // set on the press (above)
                         case DiplomacyAction::Mana: {
                             uint8_t mask=requestedManaSharing_.value_or(framePlayer(localPlayer_).manaShareMask);
@@ -193,8 +199,9 @@
             }
         }
         // Enter opens the chat composer (net games only -- there's no one to
-        // talk to offline or in a recording).
-        if (mp_ && e.type == SDL_KEYDOWN &&
+        // talk to offline or in a recording). A spectator never chats in a running game
+        // (the server drops it too).
+        if (mp_ && !spectating_ && e.type == SDL_KEYDOWN &&
             (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER)) {
             chatTyping_ = true; chatDraft_.clear(); SDL_StartTextInput();
             return;

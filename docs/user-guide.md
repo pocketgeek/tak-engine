@@ -2277,7 +2277,8 @@ Press **D** for the **Diplomacy** screen:
   first to the ally whose storage is least full. Sharing starts on for
   teammates.
 - **Chat recipients**: choose who receives your chat messages. Each game starts
-  with your allies only.
+  with your allies only. The **Spectators** line at the bottom lets anyone watching
+  read your chat (and, in its Voice column, hear you); both start off.
 - **Voice**: choose who hears you on [voice chat](#voice-chat). Also allies only at
   the start of each game.
 - **Volume**: how loud each other player's voice plays for you.
@@ -2524,15 +2525,16 @@ In the game, the **Diplomacy** screen (**D**) chooses, like chat:
 - The **Voice** column says who hears you. Your allies (your team) are ticked at
   the start of each game, as in the **Chat** column; tick other players to talk
   to them too. Your own box cannot be changed: you never hear yourself.
-  Spectators hear you only while every player is ticked.
+  Spectators hear you only when you tick the **Spectators** line, which starts
+  off each game.
 - The **Volume** column sets how loud each other player's voice plays for you,
   0 to 100% (click or drag along the slider). Each game starts with every slider
   at 100%. Only other human players have one; computer players have no voice.
   The sliders are greyed out while voice chat is off, and they change only what
   you hear: nobody else is told.
 
-Spectators cannot open the Diplomacy screen, so a spectator always talks to
-everyone, as their chat does.
+Spectators cannot chat or talk once the game is running: they only listen to,
+and read, the players who tick them in.
 
 ### What is sent
 
