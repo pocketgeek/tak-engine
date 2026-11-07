@@ -18,7 +18,7 @@
 // exhausting an 8 GB card behind a 7680x2160 desktop (the NVKMS allocation storm that
 // starves the compositor: whole-screen flicker, frozen present). Those pages and the
 // window-sized AA targets are gone. What bounds VRAM now is each subsystem's own ceiling:
-//   terrain chunks 256 MiB LRU (terrainchunks.cpp)   map sections: those the view needs while
+//   terrain chunks 40% of the limit, 256 MiB-2 GiB  map sections: those the view needs while
 //                                                    chunks bake, 64 MiB idle (mapview.cpp)
 //   palette pages 16 x 16 MiB                         shadow silhouettes 4 x 16 MiB (+12
 //                                                    extended pages, only within 3/4 of

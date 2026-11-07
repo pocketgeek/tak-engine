@@ -1978,12 +1978,14 @@ original game drew neither. Zoomed far out, small units standing still may be
 drawn from a cached picture of themselves to save time; moving, selected and
 special-effect units are always drawn in full.
 
-**GPU Memory Limit** is a safety net, not a quality setting. At the default 1.25
-GB a typical game uses 0.4–0.7 GB of it and even a huge map with a big battle
-stays under about 0.75 GB, so on most machines it never comes into play. Each
-part of the game (terrain, building shading, shadows) also has its own fixed
-allowance, so **raising** the limit or picking **Unlimited** changes nothing
-unless the game actually needs more. **Lowering** it takes effect immediately:
+**GPU Memory Limit** is mostly a safety net, not a quality setting. At the default
+1.25 GB a typical game uses 0.4–0.7 GB of it and even a huge map with a big battle
+stays under about 0.75 GB, so on most machines it never comes into play. The
+terrain the game keeps ready grows with the limit: 40% of it, from 256 MB up to
+2 GB (2 GB with **Unlimited**), so **raising** the limit lets the game keep more of
+a big map ready at more zoom levels and re-draw less of it as you pan and zoom
+back. The other parts (building shading, shadows) have their own fixed allowances,
+so for them raising the limit changes nothing unless the game actually needs more. **Lowering** it takes effect immediately:
 the game drops the terrain it keeps ready off-screen and stops caching extra
 building shading and shadows. You may see the map look blurry for a moment more
 often after you pan or click the minimap before it sharpens, and very large

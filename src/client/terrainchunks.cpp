@@ -9,11 +9,18 @@
 
 namespace tak {
 namespace {
-// Resident images plus free texture slots. 512 MiB: a typical game tracks 0.4-0.7 GiB
-// against the 1.25 GiB default GPU limit, and at 256 MiB a camera that pans and zooms
-// about a big map evicted and re-baked images it came back to (room() still yields to
-// the GPU cap and to everything else resident).
-constexpr size_t budget=size_t(512)<<20;
+// Resident images plus free texture slots: 40% of the player's GPU MEMORY LIMIT, from
+// 256 MiB up to 2 GiB (UNLIMITED: 2 GiB) -- 512 MiB at the 1.25 GiB default. A typical
+// game tracks 0.4-0.7 GiB against that default, and at a fixed 256 MiB a camera that
+// pans and zooms about a big map evicted and re-baked images it came back to; a higher
+// limit now buys fewer re-bakes. It follows the setting, not the cap a failed allocation
+// tightens for a while: room() yields to that cap and to everything else resident.
+size_t budget() {
+    constexpr size_t floor=size_t(256)<<20,ceiling=size_t(2048)<<20;
+    const size_t limit=gpuvram::limit();
+    if(limit==gpuvram::kUnlimited)return ceiling;
+    return std::clamp(limit/5*2,floor,ceiling);
+}
 uint64_t nowNs() {
     return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -24,7 +31,7 @@ uint64_t nowNs() {
 size_t room(size_t own) {
     const size_t others=gpuvram::bytes()-std::min(own,gpuvram::bytes());
     const size_t cap=gpuvram::cap();
-    return cap<=others?0:std::min(budget,cap-others);
+    return cap<=others?0:std::min(budget(),cap-others);
 }
 }
 TerrainChunks::TerrainChunks(terrain::Compositor& c):compositor_(c) {worker_=std::thread([this]{work();});}
@@ -244,7 +251,7 @@ bool TerrainChunks::makeRoom(size_t size,const Key& cell,bool coldOnly) {
     // slots of other levels go first, then images, whose slots join the free lists (one
     // of this level ends the search).
     const auto room=[&]{return !free_[cellLevel].empty() ||
-                               (bytes_+pooledBytes_+size<=budget && gpuvram::wouldFit(size));};
+                               (bytes_+pooledBytes_+size<=budget() && gpuvram::wouldFit(size));};
     while(!room()) {
         if(dropFreeSlot(cellLevel))continue;
         auto victim=cache_.end();int victimRank=INT_MAX;
@@ -432,6 +439,9 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
     // A lowered GPU limit takes effect now: give back off-screen chunks until the
     // total is under the cap again, rather than waiting for the next upload.
     if(gpuvram::overCap())shed(0);
+    // A lowered GPU MEMORY LIMIT lowers the budget: free slots go at once; resident
+    // images past it are evicted as uploads make room.
+    while(bytes_+pooledBytes_>budget() && dropFreeSlot(-1)) {}
     if(linear!=linear_)for(auto& [key,e]:cache_)
         SDL_SetTextureScaleMode(e.texture,linear?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
     linear_=linear;
@@ -497,7 +507,7 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
             nearbyPending_-=worst->second.nearby;pending_.erase(worst);++jobsObsolete_;displaced=true;
         }
         const size_t size=imageBytes(key,map);
-        if((bytes_+size>budget || !gpuvram::wouldFit(size)) &&
+        if((bytes_+size>budget() || !gpuvram::wouldFit(size)) &&
            std::none_of(cache_.begin(),cache_.end(),[&](const auto& entry){return entry.second.used!=frame_;}))
             continue; // wait for space instead of repeatedly composing unusable images
         queue(key,priority,false);
