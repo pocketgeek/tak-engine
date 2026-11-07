@@ -1,6 +1,13 @@
 # README and user-guide screenshots
 
-**Retaken for 0.9.21** (2026-11-07): `title.jpg` only, by the 0.9.21 build (Debug of
+**Retaken for 0.9.22** (2026-11-07): `title.jpg` only, by the 0.9.22 build (Debug of
+`main` at `ac1f9dac` with the 0.9.22 version line), with the 0.9.1 title capture (script
+`title.sh` in `~/tak-tmp/scratch/release-0922/shots/`), cropped to the artwork as before;
+it reads VERSION 0.9.22. Nothing else was retaken. The Diplomacy picture (`diplomacy.jpg`)
+predates the SPECTATORS line and the allies-only defaults, and the Voice Chat pictures
+predate MICROPHONE and MIC GAIN.
+
+**Earlier: retaken for 0.9.21** (2026-11-07): `title.jpg` only, by the 0.9.21 build (Debug of
 `main` at `b95091e7` with the 0.9.21 version line), with the 0.9.1 title capture (script
 `title.sh` in `~/tak-tmp/scratch/release-0921/shots/`), cropped to the artwork as before;
 it reads VERSION 0.9.21. Nothing else was retaken: no other picture here is about

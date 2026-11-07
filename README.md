@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.21-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.22-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,15 +26,15 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.21
+## What's new in 0.9.22
 
-- Legion columns keep their files round corridor corners; Legion formation flyers circle over the front.
-- The Benchmark runs 60 real seconds at any speed, with a Speed choice: +10, Normal or +100.
-- Sound options: how many sounds play at once, and quiet sounds evened out.
-- A flyer's group number, health bar and countdown stay with it in the air.
+- Chat and voice start with your allies only; a Spectators line lets you include anyone watching.
+- Spectators can no longer chat or talk during a game.
+- Voice chat: a Microphone on/off switch and Mic gain up to 400%.
+- GPU memory is reused instead of reallocated, and the terrain cache grows with the GPU memory limit.
 
-Protocol 315: does not play with 0.9.20 or earlier, nor their replays; servers must update too.
-Details in the [CHANGELOG](CHANGELOG.md#0921).
+Protocol 316: does not play with 0.9.21 or earlier, nor their replays; servers must update too.
+Details in the [CHANGELOG](CHANGELOG.md#0922).
 
 ## Features
 

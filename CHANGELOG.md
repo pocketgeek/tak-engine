@@ -19,6 +19,39 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.22
+*2026-11-07 · protocol 316 · replay format 15 · does not play with 0.9.21 or earlier, nor their replays*
+
+- **Chat and voice start with your allies only.** Each game, the Diplomacy screen's
+  **Chat** and **Voice** columns now start ticked for your team only, instead of
+  everyone; tick other players to reach them too.
+- **Spectators get a line of their own on the Diplomacy screen**, with **Chat** and
+  **Voice** boxes that start off. Tick them to let anyone watching read your chat or
+  hear you. Before, spectators got your chat and voice only while every player was
+  ticked.
+- **Spectators can no longer chat or talk once a game is running.** They still read and
+  hear the players who tick them in. Before the game starts the whole room chats and
+  talks as before.
+- **Voice chat has a Microphone switch and a Mic gain slider.** **Microphone** (on by
+  default) turns your microphone off: nothing is sent, and you still hear the others;
+  holding push to talk with it off shows **MIC OFF**. **Mic gain** replaces Mic volume
+  and goes up to 400%, so a quiet microphone can be boosted (100% sends it as it is).
+- **Smoother GPU memory use.** Terrain, the stand-in map pieces and shadow pages now
+  reuse their video memory instead of freeing and allocating it as you pan and zoom.
+  The terrain the game keeps ready now grows with **GPU Memory Limit**: 40% of it,
+  from 256 MB to 2 GB (512 MB at the 1.25 GB default, as before), so a higher limit
+  re-draws less of a big map as you move about it.
+- **Under the hood:** protocol 316 carries the spectators choice in chat (a trailing
+  byte) and voice (a frame flag), and the server enforces the spectator rules. Render
+  telemetry reports texture reuse (`terrain_slot_*`, `terrain_section_reuses`,
+  `shadow_page_reuses`).
+
+**Upgrading (server operators):** update `takserver` together with your
+players.
+
+Full notes: [release-0.9.22-notes.md](docs/release-0.9.22-notes.md) ·
+validation: [release-0.9.22-validation.md](docs/release-0.9.22-validation.md)
+
 ## 0.9.21
 *2026-11-07 · protocol 315 · replay format 15 · does not play with 0.9.20 or earlier, nor their replays*
 
