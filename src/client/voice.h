@@ -88,7 +88,7 @@ public:
     bool enabled() const;
     bool transmitting() const;               // sending right now
     std::vector<Talker> speaking() const;    // others heard in the last moment
-    float micLevel() const;                  // 0..1 peak, after MIC VOLUME, decaying
+    float micLevel() const;                  // 0..1 peak, after MIC GAIN, decaying
     Device micState() const;
     Device outState() const;
     // The note the VOICE CHAT screen shows beside a device ("" when there is nothing to say).

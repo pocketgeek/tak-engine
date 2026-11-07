@@ -296,6 +296,7 @@ static void testSettings(const fs::path& dir) {
     check(!d.voiceEnabled && d.voiceOutputSameAsGame && d.voiceMicVolume == 100 && d.voiceOutputVolume == 100 &&
           d.voiceMicDevice.empty() && d.voiceOutputDevice.empty(), "voice chat is OFF by default");
     check(!d.voiceActivation && d.voiceActivationLevel == 15, "TALK MODE defaults to push to talk");
+    check(d.voiceMicEnabled, "the MICROPHONE is on by default");
     const fs::path file = dir / "settings.ini";
     setSettingsPath(file.string());
     {   // a file from before voice chat: still off.
@@ -308,6 +309,7 @@ static void testSettings(const fs::path& dir) {
     s.voiceEnabled = true; s.voiceMicDevice = "USB Mic"; s.voiceOutputSameAsGame = false;
     s.voiceOutputDevice = "Headset"; s.voiceMicVolume = 35; s.voiceOutputVolume = 70;
     s.voiceActivation = true; s.voiceActivationLevel = 42;
+    s.voiceMicEnabled = false;
     s.hotkeys["voice.ptt"] = "Ctrl+V";
     check(saveSettings(s), "save");
     const Settings back = loadSettings();
@@ -315,8 +317,10 @@ static void testSettings(const fs::path& dir) {
     check(serializeSettings(Settings{}).find("voiceEnabled = 0") != std::string::npos, "the file says voiceEnabled = 0");
     { std::ofstream f(file); f << "voiceMicVolume = 900\nvoiceOutputVolume = -4\nvoiceActivationLevel = 300\n"; }
     const Settings clamp = loadSettings();
-    check(clamp.voiceMicVolume == 100 && clamp.voiceOutputVolume == 0 && clamp.voiceActivationLevel == 100,
-          "volumes and the activation level clamp to 0..100");
+    check(clamp.voiceMicVolume == 400 && clamp.voiceOutputVolume == 0 && clamp.voiceActivationLevel == 100,
+          "MIC GAIN clamps to 0..400 %, the output volume and the activation level to 0..100");
+    { std::ofstream f(file); f << "voiceMicVolume = 250\n"; }
+    check(loadSettings().voiceMicVolume == 250, "a MIC GAIN boost (250 %) is kept");
     Settings va = s;
     va.voiceActivation = true;
     check(!voiceDefaults(va).voiceActivation && voiceDefaults(va).voiceActivationLevel == 15,
@@ -504,6 +508,30 @@ static void testEngine(const fs::path& dir) {
     check(!v.transmitting(), "voice activation sends nothing where talking is not allowed");
     s.voiceActivation = false; s.voiceActivationLevel = 15;
 
+    // MICROPHONE off: the mic closes and nothing is sent, key held or voice activation;
+    // the output stays open for the other players.
+    s.voiceMicEnabled = false;
+    sent.clear();
+    pump(300, true, true);
+    check(v.micState() == VoiceEngine::Device::Off && v.outState() != VoiceEngine::Device::Off && sent.empty() &&
+          !v.transmitting(), "MICROPHONE off closes the mic, sends nothing, keeps the output");
+    s.voiceActivation = true; s.voiceActivationLevel = 0;
+    pump(300, true, true);
+    check(sent.empty(), "...voice activation included");
+    s.voiceActivation = false; s.voiceActivationLevel = 15;
+    s.voiceMicEnabled = true;
+    pump(300, true, true);
+    check(!sent.empty(), "MICROPHONE on again: talking resumes");
+    pump(60, true, false);
+    // MIC GAIN above 100 % boosts: the 0.5 tone reads ~1.0 at 200 %.
+    s.voiceMicVolume = 200;
+    v.setMonitoring(true);
+    pump(300, false, false);
+    check(v.micLevel() > 0.9f, "MIC GAIN 200 % doubles the level: " + std::to_string(v.micLevel()));
+    v.setMonitoring(false);
+    s.voiceMicVolume = 100;
+    pump(30, false, false);
+
     // Switched off mid-game: everything closes at once.
     s.voiceEnabled = false;
     sent.clear();
@@ -553,12 +581,12 @@ static void testPage() {
             page.input(u, W, H);
             page.render(W, H);
         };
-        const char* rows[] = {"TALK MODE", "MIC DEVICE", "MIC VOLUME", "MIC LEVEL", "OUTPUT DEVICE", "OUTPUT VOLUME", "PUSH TO TALK"};
+        const char* rows[] = {"TALK MODE", "MICROPHONE", "MIC DEVICE", "MIC GAIN", "MIC LEVEL", "OUTPUT DEVICE", "OUTPUT VOLUME", "PUSH TO TALK"};
         shot("voice-off.png");
         check(page.rowEnabled("VOICE CHAT"), "the switch is live while off");
         for (const char* r : rows) check(!page.rowEnabled(r), std::string(r) + " is greyed while voice chat is off");
         // Greyed rows ignore input.
-        click("MIC VOLUME", 0.25f);
+        click("MIC GAIN", 0.25f);
         click("OUTPUT VOLUME", 0.25f);
         click("PUSH TO TALK", 0.98f);
         click("OUTPUT DEVICE", 0.9f);
@@ -568,8 +596,8 @@ static void testPage() {
         click("VOICE CHAT", 0.95f);
         check(s.voiceEnabled && changes == 1 && saves == 1, "the switch turns voice chat on, saved at once");
         for (const char* r : rows) check(page.rowEnabled(r), std::string(r) + " is live once on");
-        click("MIC VOLUME", 0.25f);
-        check(s.voiceMicVolume >= 23 && s.voiceMicVolume <= 27, "MIC VOLUME 0..100: " + std::to_string(s.voiceMicVolume));
+        click("MIC GAIN", 0.5f);
+        check(s.voiceMicVolume >= 195 && s.voiceMicVolume <= 205, "MIC GAIN 0..400 %: " + std::to_string(s.voiceMicVolume));
         check(saves == 2, "a slider click saves once, on release: " + std::to_string(saves));
         click("OUTPUT VOLUME", 0.75f);
         check(s.voiceOutputVolume >= 73 && s.voiceOutputVolume <= 77, "OUTPUT VOLUME 0..100");
@@ -578,6 +606,16 @@ static void testPage() {
         check(!s.voiceActivation && !page.rowEnabled("ACTIVATION LEVEL"),
               "push to talk is the TALK MODE once on; ACTIVATION LEVEL is greyed");
         shot("voice-on.png");
+        // MICROPHONE off greys the microphone's rows (not the output's); on again revives them.
+        const int savesBefore = saves;
+        click("MICROPHONE", 0.95f);
+        check(!s.voiceMicEnabled && saves == savesBefore + 1, "the MICROPHONE switch turns the mic off, saved at once");
+        for (const char* r : {"MIC DEVICE", "MIC GAIN", "MIC LEVEL"})
+            check(!page.rowEnabled(r), std::string(r) + " is greyed while the microphone is off");
+        check(page.rowEnabled("OUTPUT VOLUME") && page.rowEnabled("MICROPHONE"), "...the output and the switch stay live");
+        click("MICROPHONE", 0.95f);
+        check(s.voiceMicEnabled && page.rowEnabled("MIC GAIN"), "MICROPHONE on again");
+        saves -= 2;   // the counts below are the rest of the page's own
         // TALK MODE: pick Voice Activation (index 1) from its list.
         click("TALK MODE", 0.9f);
         {

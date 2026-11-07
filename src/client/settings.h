@@ -129,13 +129,15 @@ struct Settings {
     // Act::PushToTalk, Space), stored with the other hotkeys.
     bool  voiceEnabled = false;
     // TALK MODE: push to talk (the default), or voice activation -- the microphone sends
-    // by itself while its level (after MIC VOLUME) reaches voiceActivationLevel.
+    // by itself while its level (after MIC GAIN) reaches voiceActivationLevel.
     bool  voiceActivation = false;
     int   voiceActivationLevel = 15;   // 0..100, on the MIC LEVEL meter's scale
     std::string voiceMicDevice;    // capture device NAME; "" = system default
     bool  voiceOutputSameAsGame = true;   // play voice on whatever device the game uses
     std::string voiceOutputDevice; // when not same as game: device NAME, "" = system default
-    int   voiceMicVolume = 100;    // microphone gain, 0..100 (100 = as captured)
+    int   voiceMicVolume = 100;    // MIC GAIN in percent, 0..400 (100 = as captured; above boosts)
+    // MICROPHONE: off closes the microphone -- nothing is sent, other players are still heard.
+    bool  voiceMicEnabled = true;
     int   voiceOutputVolume = 100; // voice playback volume, 0..100, one value for all speakers
 
     // ---- camera / input ----
@@ -270,6 +272,7 @@ struct Settings {
             && a.voiceActivation == b.voiceActivation && a.voiceActivationLevel == b.voiceActivationLevel
             && a.voiceOutputSameAsGame == b.voiceOutputSameAsGame && a.voiceOutputDevice == b.voiceOutputDevice
             && a.voiceMicVolume == b.voiceMicVolume && a.voiceOutputVolume == b.voiceOutputVolume
+            && a.voiceMicEnabled == b.voiceMicEnabled
             && a.ignoreDpiScaling == b.ignoreDpiScaling && a.dpiMigrated == b.dpiMigrated
             && a.nativeWayland == b.nativeWayland
             && a.displayMode == b.displayMode && a.displayScale == b.displayScale
@@ -371,6 +374,7 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.voiceOutputSameAsGame = cur.voiceOutputSameAsGame;
     d.voiceOutputDevice = cur.voiceOutputDevice;
     d.voiceMicVolume = cur.voiceMicVolume;
+    d.voiceMicEnabled = cur.voiceMicEnabled;
     d.voiceOutputVolume = cur.voiceOutputVolume;
     return d;
 }
@@ -388,6 +392,7 @@ inline Settings voiceDefaults(const Settings& cur) {
     d.voiceOutputSameAsGame = fresh.voiceOutputSameAsGame;
     d.voiceOutputDevice = fresh.voiceOutputDevice;
     d.voiceMicVolume = fresh.voiceMicVolume;
+    d.voiceMicEnabled = fresh.voiceMicEnabled;
     d.voiceOutputVolume = fresh.voiceOutputVolume;
     return d;
 }

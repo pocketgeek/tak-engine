@@ -2465,9 +2465,10 @@ While **Voice chat** is off, every other row is greyed out and ignores clicks.
 | **Voice chat** | Off | Turns voice chat on or off. |
 | **Talk mode** | Push to Talk | **Push to Talk** sends you while you hold the push-to-talk key. **Voice Activation** sends you by itself whenever the **Mic level** reaches the **Activation level**; no key is needed. |
 | **Push to talk** | Space | The key you hold to talk. Click the row to open **Controls** and change it. Greyed out under **Voice Activation**. |
+| **Microphone** | On | Off turns your microphone off: nothing is sent, by push to talk or voice activation, and you still hear the other players. Holding the push-to-talk key with it off shows **MIC OFF** where **YOU** would appear. |
 | **Mic device** | System Default | The microphone: **System Default**, or any input device by name. |
-| **Mic volume** | 100 | How loud you are sent, 0 to 100. 100 sends the microphone as it is; lower values make you quieter. |
-| **Mic level** | | A live meter of what the microphone hears, after **Mic volume**. Speak to test it. Under **Voice Activation** a white tick marks the **Activation level**. |
+| **Mic gain** | 100% | How loud you are sent, 0% to 400%. 100% sends the microphone as it is; lower makes you quieter, higher boosts a quiet microphone. Keep the **Mic level** out of the very top while you speak, or your voice distorts. |
+| **Mic level** | | A live meter of what the microphone hears, after **Mic gain**. Speak to test it. Under **Voice Activation** a white tick marks the **Activation level**. |
 | **Activation level** | 15 | Under **Voice Activation**: you are sent while the **Mic level** reaches this, 0 to 100, on the meter's scale (the tick). Sending carries on for 0.4 seconds after you go quiet, so pauses between words are kept, and starts with the moment just before, so the first word is not cut. Raise it if background noise sets it off; lower it if your words are cut. 0 sends all the time. Greyed out under **Push to Talk**. |
 | **Output device** | Same as Game Output | Where other players' voices play. **Same as Game Output** follows the game's own **Sound device**, also when you change it. You can instead choose **System Default** or any output device by name, for example a headset while the game plays on speakers. |
 | **Output volume** | 100 | How loud voices play, 0 to 100: one value for every speaker, stereo or surround. It is separate from the game's own volumes. |
@@ -2561,8 +2562,8 @@ everyone, as their chat does.
   room's background noise reaches, or lower it if your quiet words stay under
   it.
 - **Nobody hears me.** Speak on the Voice Chat page: if **Mic level** stays
-  still, the game is getting no sound from the microphone. Check **Mic device**
-  and **Mic volume**, that the microphone is not muted in your system's sound
+  still, the game is getting no sound from the microphone. Check that
+  **Microphone** is on, **Mic device** and **Mic gain**, that the microphone is not muted in your system's sound
   settings, and that the system allows the game to use it (below). If the meter
   moves, check the **Voice** column in Diplomacy, and that the other players
   have voice chat on.

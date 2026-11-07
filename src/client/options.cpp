@@ -213,7 +213,7 @@ void OptionsScreen::buildVoice() {
     auto section = [&](const char* label) { ctls_.push_back({Control::Section, label, 0, 0, {}, {}, {}, {}, {}}); };
     auto on = [this] { return s_.voiceEnabled; };
     auto ptt = [this] { return s_.voiceEnabled && !s_.voiceActivation; };
-    auto activation = [this] { return s_.voiceEnabled && s_.voiceActivation; };
+    auto activation = [this] { return s_.voiceEnabled && s_.voiceMicEnabled && s_.voiceActivation; };
 
     section("GENERAL");
     ctls_.push_back({Control::Toggle, "VOICE CHAT", 0, 1, [this] { return s_.voiceEnabled ? 1.0f : 0.0f; },
@@ -246,6 +246,15 @@ void OptionsScreen::buildVoice() {
             "HOLD IT TO TALK. CHANGE IT IN CONTROLS (CLICK HERE). NEVER WHILE TYPING IN A TEXT BOX."};
     };
     section("MICROPHONE");
+    auto micOn = [this] { return s_.voiceEnabled && s_.voiceMicEnabled; };
+    ctls_.push_back({Control::Toggle, "MICROPHONE", 0, 1, [this] { return s_.voiceMicEnabled ? 1.0f : 0.0f; },
+                     [this](float v) { s_.voiceMicEnabled = v > 0.5f; }, {}, {}, {}});
+    ctls_.back().enabled = on;
+    ctls_.back().help = [] {
+        return std::vector<std::string>{
+            "OFF TURNS YOUR MICROPHONE OFF: NOTHING IS SENT, BY PUSH TO TALK OR VOICE ACTIVATION.",
+            "YOU STILL HEAR THE OTHER PLAYERS."};
+    };
     // A saved device that is not plugged in stays in the list (so the choice still shows)
     // and is noted; the engine meanwhile uses the system default.
     auto micValues = [this] {
@@ -268,22 +277,27 @@ void OptionsScreen::buildVoice() {
             for (auto& v : micValues()) labels.push_back(v.empty() ? "System Default" : v);
             return labels;
         }});
-    ctls_.back().enabled = on;
+    ctls_.back().enabled = micOn;
     ctls_.back().note = [this] {
         if (!s_.voiceMicDevice.empty() &&
             std::find(capSnapshot_.begin(), capSnapshot_.end(), s_.voiceMicDevice) == capSnapshot_.end())
             return std::string("NOT FOUND - USING DEFAULT");
         return voice_.micNote ? voice_.micNote() : std::string();
     };
-    ctls_.push_back({Control::Slider, "MIC VOLUME", 0, 100, [this] { return float(s_.voiceMicVolume); },
-                     [this](float v) { s_.voiceMicVolume = std::clamp(int(v + 0.5f), 0, 100); },
-                     [](float v) { return std::to_string(int(v + 0.5f)); }, {}, {}});
-    ctls_.back().enabled = on;
+    ctls_.push_back({Control::Slider, "MIC GAIN", 0, 400, [this] { return float(s_.voiceMicVolume); },
+                     [this](float v) { s_.voiceMicVolume = std::clamp(int(v + 0.5f), 0, 400); },
+                     [](float v) { return std::to_string(int(v + 0.5f)) + "%"; }, {}, {}});
+    ctls_.back().enabled = micOn;
+    ctls_.back().help = [] {
+        return std::vector<std::string>{
+            "HOW LOUD YOUR MICROPHONE IS SENT: 100% AS IT RECORDS, LOWER QUIETER, UP TO 400% LOUDER.",
+            "RAISE IT IF OTHERS HEAR YOU TOO QUIETLY; WATCH THE MIC LEVEL STAY OUT OF THE TOP."};
+    };
     ctls_.push_back({Control::Meter, "MIC LEVEL", 0, 1, [this] { return voice_.micLevel ? voice_.micLevel() : 0.0f; },
                      {}, {}, {}, {}});
-    ctls_.back().enabled = on;
+    ctls_.back().enabled = micOn;
     ctls_.back().help = [] {
-        return std::vector<std::string>{"WHAT THE MICROPHONE HEARS NOW, AFTER MIC VOLUME. SPEAK TO TEST IT.",
+        return std::vector<std::string>{"WHAT THE MICROPHONE HEARS NOW, AFTER MIC GAIN. SPEAK TO TEST IT.",
                                         "IN VOICE ACTIVATION THE TICK IS THE ACTIVATION LEVEL."};
     };
     ctls_.back().mark = [this] { return s_.voiceActivation ? float(s_.voiceActivationLevel) / 100.0f : -1.0f; };

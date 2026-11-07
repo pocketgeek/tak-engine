@@ -49,7 +49,7 @@ class VoiceGate {
 public:
     static constexpr int kHoldFrames = 20;   // 400 ms
     static constexpr int kPreFrames = 2;     // 40 ms
-    // One frame's peak (0..1, after MIC VOLUME). Returns whether this frame is sent.
+    // One frame's peak (0..1, after MIC GAIN). Returns whether this frame is sent.
     bool frame(float peak, float threshold) {
         if (peak >= threshold) hold_ = kHoldFrames;
         else if (hold_ > 0) --hold_;

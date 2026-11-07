@@ -121,7 +121,8 @@ struct VoiceEngine::Impl {
     struct Config {
         bool enabled = false;
         std::string mic, out;          // effective names ("" = system default)
-        int micVol = 100, outVol = 100;
+        int micVol = 100, outVol = 100;   // MIC GAIN 0..400 %, OUTPUT VOLUME 0..100
+        bool micOn = true;                // MICROPHONE: off = no capture, nothing sent
         bool activation = false;       // TALK MODE voice activation (else push to talk)
         int activationLevel = 15;      // 0..100 of the level meter
         bool operator==(const Config&) const = default;
@@ -169,7 +170,8 @@ void VoiceEngine::configure(const Settings& s, const std::string& gameOutput) {
     c.enabled = s.voiceEnabled;
     c.mic = s.voiceMicDevice;
     c.out = s.voiceOutputSameAsGame ? gameOutput : s.voiceOutputDevice;
-    c.micVol = std::clamp(s.voiceMicVolume, 0, 100);
+    c.micVol = std::clamp(s.voiceMicVolume, 0, 400);
+    c.micOn = s.voiceMicEnabled;
     c.outVol = std::clamp(s.voiceOutputVolume, 0, 100);
     c.activation = s.voiceActivation;
     c.activationLevel = std::clamp(s.voiceActivationLevel, 0, 100);
@@ -196,9 +198,11 @@ void VoiceEngine::update(bool inRoom, bool transmit, const Sender& send) {
     const uint64_t now = p.now();
     if (inRoom != p.inRoom) { p.inRoom = inRoom; if (!inRoom) p.talkers.clear(); }
     const bool on = p.cfg.enabled;
-    const bool wantCap = on && (inRoom || p.monitoring);
+    // MICROPHONE off: the capture device is closed (the system's mic-in-use light goes
+    // out) and nothing is sent; others are still heard.
+    const bool wantCap = on && p.cfg.micOn && (inRoom || p.monitoring);
     const bool wantOut = on && inRoom;
-    transmit = transmit && on && inRoom;
+    transmit = transmit && on && p.cfg.micOn && inRoom;
 
     // ---- devices: open what is needed, close what is not, follow loss and return ----
     if (wantCap && !p.cap.dev && p.cap.state == Device::Off) { p.cap.open(false, now); p.capRunning = false; }

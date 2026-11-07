@@ -99,14 +99,17 @@
             [this] { tak::saveSettings(*settings_); }, std::move(hooks), [this] { openHotkeys(); });
     }
 
-    // Who is talking, top-left, in the HUD's own block style: YOU while you transmit, then
-    // each player heard in the last moment in their colour, with a small speaker glyph.
+    // Who is talking, top-left, in the HUD's own block style: YOU while you transmit (MIC
+    // OFF while you hold push to talk with the MICROPHONE switched off), then each player
+    // heard in the last moment in their colour, with a small speaker glyph.
     void GameView::drawVoiceIndicator(int winW, int winH) {
         (void)winH;
         if (!voice_ || !voice_->enabled() || !voiceRoomActive()) return;
         struct Row { std::string text; SDL_Color color; };
         std::vector<Row> rows;
         if (voice_->transmitting()) rows.push_back({"YOU", {255, 200, 110, 255}});
+        else if (settings_ && !settings_->voiceMicEnabled && !settings_->voiceActivation && ptt_.talking())
+            rows.push_back({"MIC OFF", {150, 155, 165, 255}});
         for (const auto& t : voice_->speaking()) {
             std::string name = t.name;
             if (name.empty() && t.slot < 8) name = playerName_[t.slot];

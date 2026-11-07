@@ -97,6 +97,7 @@ int main() {
     flips("voiceOutputSameAsGame", [](Settings& s) { s.voiceOutputSameAsGame = !s.voiceOutputSameAsGame; });
     flips("voiceOutputDevice", [](Settings& s) { s.voiceOutputDevice = "headset"; });
     flips("voiceMicVolume",  [](Settings& s) { s.voiceMicVolume -= 11; });
+    flips("voiceMicEnabled", [](Settings& s) { s.voiceMicEnabled = !s.voiceMicEnabled; });
     flips("voiceOutputVolume", [](Settings& s) { s.voiceOutputVolume -= 11; });
 
     // camera / input
@@ -203,6 +204,7 @@ int main() {
         cur.voiceOutputSameAsGame = false;
         cur.voiceOutputDevice = "headset";
         cur.voiceMicVolume = 40;
+        cur.voiceMicEnabled = false;
         cur.voiceOutputVolume = 60;
         // Preferences that must be RESET.
         cur.unitShadows = false;
@@ -248,7 +250,7 @@ int main() {
         keep("hotkeys",           d.hotkeys == cur.hotkeys);
         keep("voice chat",        d.voiceEnabled && d.voiceMicDevice == "a-mic" && !d.voiceOutputSameAsGame &&
                                   d.voiceOutputDevice == "headset" && d.voiceMicVolume == 40 &&
-                                  d.voiceOutputVolume == 60);
+                                  !d.voiceMicEnabled && d.voiceOutputVolume == 60);
 
         // ...and the VOICE CHAT screen's DEFAULTS resets exactly the voice fields: voice
         // off (the default), system devices, full volumes; everything else untouched.
@@ -256,7 +258,7 @@ int main() {
         const Settings fresh0{};
         reset("voice (own page)", !v.voiceEnabled && !fresh0.voiceEnabled && v.voiceMicDevice.empty() &&
                                   v.voiceOutputSameAsGame && v.voiceOutputDevice.empty() &&
-                                  v.voiceMicVolume == 100 && v.voiceOutputVolume == 100);
+                                  v.voiceMicVolume == 100 && v.voiceMicEnabled && v.voiceOutputVolume == 100);
         keep("non-voice on voice DEFAULTS", v.masterVol == cur.masterVol && v.uiScale == cur.uiScale &&
                                   v.hotkeys == cur.hotkeys && v.campaignCompleted == cur.campaignCompleted);
 

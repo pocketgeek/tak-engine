@@ -204,7 +204,8 @@ Settings loadSettings() {
         else if (key == "voiceMicDevice")  s.voiceMicDevice = val;
         else if (key == "voiceOutputSameAsGame") s.voiceOutputSameAsGame = asBool();
         else if (key == "voiceOutputDevice") s.voiceOutputDevice = val;
-        else if (key == "voiceMicVolume")  s.voiceMicVolume = asInt(0, 100);
+        else if (key == "voiceMicVolume")  s.voiceMicVolume = asInt(0, 400);   // MIC GAIN %
+        else if (key == "voiceMicEnabled") s.voiceMicEnabled = asBool();
         else if (key == "voiceOutputVolume") s.voiceOutputVolume = asInt(0, 100);
         else if (key == "gameCreate.crusades") s.gameCreate.crusades = asBool();
         else if (key == "gameCreate.pathfindingMode") s.gameCreate.pathfindingMode = asPathMode();
@@ -319,7 +320,8 @@ std::string serializeSettings(const Settings& s) {
     o << "voiceMicDevice = " << s.voiceMicDevice << "\n";
     o << "voiceOutputSameAsGame = " << (s.voiceOutputSameAsGame ? 1 : 0) << "\n";
     o << "voiceOutputDevice = " << s.voiceOutputDevice << "\n";
-    o << "voiceMicVolume = " << std::clamp(s.voiceMicVolume, 0, 100) << "\n";
+    o << "voiceMicVolume = " << std::clamp(s.voiceMicVolume, 0, 400) << "\n";
+    o << "voiceMicEnabled = " << (s.voiceMicEnabled ? 1 : 0) << "\n";
     o << "voiceOutputVolume = " << std::clamp(s.voiceOutputVolume, 0, 100) << "\n";
     o << "gameCreate.crusades = " << s.gameCreate.crusades << "\n";
     o << "gameCreate.pathfindingMode = " << int(s.gameCreate.pathfindingMode) << "\n";
