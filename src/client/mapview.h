@@ -124,6 +124,8 @@ public:
     struct SectionStats {
         uint64_t uploads = 0, uploadBytes = 0, uploadNs = 0, decodes = 0, decodeNs = 0;
         uint64_t prefetchSkipped = 0;   // load-time prefetches refused: the budget was full
+        uint64_t reuses = 0;            // uploads into a kept texture (no allocation)
+        size_t pooledBytes = 0;         // kept textures now (gauge)
         tak::terrain::Compositor::Stats cpu;   // decoded images: bytes, pins, peak, evictions
     };
     SectionStats sectionStats() {
@@ -131,6 +133,7 @@ public:
         s.decodes = sectionDecodes_.load(std::memory_order_relaxed);
         s.decodeNs = sectionDecodeNs_.load(std::memory_order_relaxed);
         s.prefetchSkipped = prefetchSkipped_.load(std::memory_order_relaxed);
+        s.pooledBytes = freeSectionBytes_;
         s.cpu = comp_.stats();
         return s;
     }
@@ -202,7 +205,16 @@ private:
     bool clockSet_ = false;
     uint64_t nowMs() const;
     static constexpr int kSectionUploadsPerFrame = 32;   // 32 MiB: a 4K jump in one frame
-    void evictSection(std::map<uint32_t, Section>::iterator);
+    // pool: keep the texture for the next section of its size (while the idle budget
+    // has room), rather than destroying it; GPU pressure passes false.
+    void evictSection(std::map<uint32_t, Section>::iterator, bool pool = true);
+    // Released section textures kept for reuse, by size: a section the fallback needs
+    // again refills one instead of allocating. They count as idle in kSectionBudget and
+    // go first under GPU pressure.
+    std::map<std::pair<int, int>, std::vector<SDL_Texture*>> freeSections_;
+    size_t freeSectionBytes_ = 0;
+    bool dropFreeSection();   // destroy one; false when none
+    void dropFreeSections();
     // The resident section not drawn this frame that was used longest ago (end() = none).
     std::map<uint32_t, Section>::iterator oldestIdleSection();
 

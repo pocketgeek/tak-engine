@@ -110,6 +110,7 @@ MapView::~MapView() {
     // this leaked the map's terrain textures (and gpuvram budget) on every
     // menu->game->menu loop.
     for (auto& [k, s] : sections_) if (s.tex) gpuvram::destroy(s.tex);
+    dropFreeSections();
 }
 
 void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
@@ -119,6 +120,7 @@ void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
     for (auto& [k, s] : sections_) if (s.tex) gpuvram::destroy(s.tex);
     sections_.clear();
     sectionBytes_ = 0;
+    dropFreeSections();
     wanted_.clear();
     batchKeys_.clear();
     tileBatch_.clear();
@@ -223,11 +225,16 @@ void MapView::finishChunks() {
 
 size_t MapView::shedGpu(size_t need) {
     size_t freed = 0;
-    while (!gpuvram::wouldFit(need)) {   // duplicates of chunk terrain go first
+    while (!gpuvram::wouldFit(need) && freeSectionBytes_) {   // kept textures first
+        const size_t before = freeSectionBytes_;
+        dropFreeSection();
+        freed += before - freeSectionBytes_;
+    }
+    while (!gpuvram::wouldFit(need)) {   // duplicates of chunk terrain go next
         auto oldest = oldestIdleSection();
         if (oldest == sections_.end()) break;
         freed += size_t(oldest->second.w) * oldest->second.h * 4;
-        evictSection(oldest);
+        evictSection(oldest, false);
     }
     return freed + chunks_.shed(need);
 }
@@ -488,19 +495,31 @@ bool MapView::uploadWantedSections() {
         // shared with the chunk images (finishChunks frames: unlimited). The rest waits
         // for the next frame; the underlay shows meanwhile.
         if (!uploadBudget_.admit(tak::terrainwork::UploadBudget::Section, true, size)) continue;
-        // Idle sections make room first; the budget never refuses one needed now. Under
-        // the GPU cap, off-screen chunks go next: terrain on screen comes first.
-        while (sectionBytes_ + size > budget || !gpuvram::wouldFit(size)) {
-            auto oldest = oldestIdleSection();
-            if (oldest == sections_.end()) break;
-            evictSection(oldest);
+        // A kept texture of this size takes it with no new GPU memory. Otherwise kept
+        // textures, then idle sections, make room; the budget never refuses one needed
+        // now. Under the GPU cap, off-screen chunks go next: terrain on screen comes first.
+        SDL_Texture* t = nullptr;
+        auto spare = freeSections_.find({img->width, img->height});
+        if (spare != freeSections_.end() && !spare->second.empty()) {
+            t = spare->second.back();
+            spare->second.pop_back();
+            freeSectionBytes_ -= size;
+            ++sectionStats_.reuses;
+        } else {
+            while (sectionBytes_ + freeSectionBytes_ + size > budget || !gpuvram::wouldFit(size)) {
+                if (dropFreeSection()) continue;
+                auto oldest = oldestIdleSection();
+                if (oldest == sections_.end()) break;
+                evictSection(oldest, false);
+            }
+            if (!gpuvram::wouldFit(size)) chunks_.shed(size);
+            if (!gpuvram::wouldFit(size) || gpuvram::blocked()) continue;
         }
-        if (!gpuvram::wouldFit(size)) chunks_.shed(size);
-        if (!gpuvram::wouldFit(size) || gpuvram::blocked()) continue;
         const uint64_t uploadStart = steadyNs();
-        SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
-                                           SDL_TEXTUREACCESS_STATIC, img->width, img->height);
-        if (!t) { gpuvram::noteFail(); continue; }
+        if (!t) {
+            t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, img->width, img->height);
+            if (!t) { gpuvram::noteFail(); continue; }
+        }
         SDL_UpdateTexture(t, nullptr, img->rgba.data(), img->width * 4);
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);   // opaque texels; the aprons fade by vertex alpha
         SDL_SetTextureScaleMode(t, bilinear_ ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
@@ -547,16 +566,39 @@ std::map<uint32_t, MapView::Section>::iterator MapView::oldestIdleSection() {
     return oldest;
 }
 
-void MapView::evictSection(std::map<uint32_t, Section>::iterator it) {
-    sectionBytes_ -= size_t(it->second.w) * it->second.h * 4;
+void MapView::evictSection(std::map<uint32_t, Section>::iterator it, bool pool) {
+    const size_t size = size_t(it->second.w) * it->second.h * 4;
+    sectionBytes_ -= size;
     tileBatch_.erase(it->second.tex);    // emptied per-texture slots (kept for capacity)
     apronBatch_.erase(it->second.tex);
-    gpuvram::destroy(it->second.tex);
+    const size_t budget = chunksEnabled_ ? kSectionBudget : SIZE_MAX;
+    if (pool && sectionBytes_ + freeSectionBytes_ + size <= budget && !gpuvram::overCap()) {
+        freeSections_[{it->second.w, it->second.h}].push_back(it->second.tex);
+        freeSectionBytes_ += size;
+    } else {
+        gpuvram::destroy(it->second.tex);
+    }
     sections_.erase(it);
 }
 
+bool MapView::dropFreeSection() {
+    for (auto& [dims, textures] : freeSections_)
+        if (!textures.empty()) {
+            gpuvram::destroy(textures.back());
+            textures.pop_back();
+            freeSectionBytes_ -= size_t(dims.first) * dims.second * 4;
+            return true;
+        }
+    return false;
+}
+
+void MapView::dropFreeSections() {
+    while (dropFreeSection()) {}
+    freeSections_.clear();
+}
+
 void MapView::trimSections() {
-    if (pinning_ || !sectionBytes_) return;
+    if (pinning_ || (!sectionBytes_ && !freeSectionBytes_)) return;
     const uint64_t now = nowMs();
     for (auto i = sections_.begin(); i != sections_.end();) {
         auto next = std::next(i);
@@ -564,12 +606,14 @@ void MapView::trimSections() {
             evictSection(i);
         i = next;
     }
-    // Over the idle budget or a lowered GPU limit: anything not drawn this frame, oldest first.
+    // Over the idle budget or a lowered GPU limit: kept textures, then anything not
+    // drawn this frame, oldest first.
     const size_t budget = chunksEnabled_ ? kSectionBudget : SIZE_MAX;
-    while (sectionBytes_ > budget || gpuvram::overCap()) {
+    while (sectionBytes_ + freeSectionBytes_ > budget || gpuvram::overCap()) {
+        if (dropFreeSection()) continue;
         auto oldest = oldestIdleSection();
         if (oldest == sections_.end()) break;
-        evictSection(oldest);
+        evictSection(oldest, false);
     }
 }
 

@@ -648,7 +648,7 @@
             return true;
         };
         const auto destroyPage=[&](size_t p) {
-            gpuvram::destroy(shadowSilhouettePages_[p].texture);
+            spareShadowPage(shadowSilhouettePages_[p].texture,shadowSilhouetteWidth_,shadowSilhouetteHeight_);
             shadowSilhouettePages_[p]={};
             atlas.releasePage(p);
             shadowSilhouettePages_.resize(atlas.pageSlots());
@@ -663,8 +663,10 @@
             // Extended pages yield when the GPU budget comes under pressure: the whole
             // atlas goes (cells and stamps with it) and is rebuilt on base pages only
             // -- or falls back -- until the cooldown ends.
+            if (!shadowSparePages_.empty() &&
+                (gpuvram::overCap() || tak::render::shadowExtendedPressure(gpuBudget()))) dropShadowSpares();
             if (atlas.livePages()>basePages && tak::render::shadowExtendedPressure(gpuBudget())) {
-                resetShadowAtlas();
+                resetShadowAtlas(false);
                 pol.extendedAfterFrame=pol.frame+atlasTimes.cooldownFrames;
                 pol.extendedAfterMs=atlasNowMs+atlasTimes.cooldownMs;
                 ++atlasCounts.sheds;
@@ -888,11 +890,14 @@
                 for (size_t p=0;p<atlas.pageSlots() && pendingPages;++p) {
                     if (!atlas.pageLive(p) || shadowSilhouettePages_[p].texture) continue;
                     if (!atlas.pageCells(p)) { atlas.releasePage(p); --pendingPages; continue; }
-                    SDL_Texture* texture=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
-                        SDL_TEXTUREACCESS_TARGET,pageW,pageH);
-                    if (!texture) { noteGpuAllocFail(); budgetRefused=true; return false; }
-                    renderStats_.add(RS::ShadowPageAllocs);
-                    ++atlasCounts.pageAllocs;
+                    SDL_Texture* texture=takeShadowSpare(pageW,pageH);
+                    if (texture) ++shadowPageReuses_;
+                    else {
+                        texture=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,pageW,pageH);
+                        if (!texture) { noteGpuAllocFail(); budgetRefused=true; return false; }
+                        renderStats_.add(RS::ShadowPageAllocs);
+                        ++atlasCounts.pageAllocs;
+                    }
                     SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
                     SDL_SetTextureColorMod(texture,0,0,0);
                     SDL_SetTextureAlphaMod(texture,255-kShadowLevel);
@@ -4118,6 +4123,10 @@
         stats.set(RS::TerrainSlotCreates, chunks.slotCreates);
         stats.set(RS::TerrainSlotReuses, chunks.slotReuses);
         stats.set(RS::TerrainSlotPooledBytes, chunks.pooledBytes);
+        stats.set(RS::TerrainSectionReuses, sections.reuses);
+        stats.set(RS::TerrainSectionPooledBytes, sections.pooledBytes);
+        stats.set(RS::ShadowPageReuses, shadowPageReuses_);
+        stats.set(RS::ShadowSparePageBytes, shadowSpareBytes());
         stats.set(RS::TerrainChunkPending, chunks.pending);
         stats.set(RS::TerrainChunkVisible, chunks.visible);
         stats.set(RS::TerrainChunkReady, chunks.ready);
@@ -4723,8 +4732,34 @@
     // Every silhouette page and cell goes (renderer reset, page size change, last
     // page released). Cell handles keep counting generations, so an entry's stale
     // shadowTile never names a later cell; every stamp is dropped with its cell.
-    void GameView::resetShadowAtlas() {
-        for (auto& page:shadowSilhouettePages_) if (page.texture) gpuvram::destroy(page.texture);
+    void GameView::spareShadowPage(SDL_Texture* texture,int w,int h) {
+        if (!texture) return;
+        if (shadowSparePages_.size()>=tak::render::kShadowBasePages || w<=0 || h<=0) { gpuvram::destroy(texture); return; }
+        shadowSparePages_.push_back({texture,w,h});
+    }
+
+    SDL_Texture* GameView::takeShadowSpare(int w,int h) {
+        for (size_t i=0;i<shadowSparePages_.size();++i)
+            if (shadowSparePages_[i].w==w && shadowSparePages_[i].h==h) {
+                SDL_Texture* t=shadowSparePages_[i].texture;
+                shadowSparePages_.erase(shadowSparePages_.begin()+std::ptrdiff_t(i));
+                return t;
+            }
+        dropShadowSpares();   // another page size: these will not be wanted again soon
+        return nullptr;
+    }
+
+    void GameView::dropShadowSpares() {
+        for (auto& s:shadowSparePages_) gpuvram::destroy(s.texture);
+        shadowSparePages_.clear();
+    }
+
+    void GameView::resetShadowAtlas(bool spare) {
+        for (auto& page:shadowSilhouettePages_) if (page.texture) {
+            if (spare) spareShadowPage(page.texture,shadowSilhouetteWidth_,shadowSilhouetteHeight_);
+            else gpuvram::destroy(page.texture);
+        }
+        if (!spare) dropShadowSpares();
         shadowSilhouettePages_.clear();
         shadowSilhouetteWidth_=shadowSilhouetteHeight_=0;
         shadowAtlas_.reset(0,0);
@@ -4852,7 +4887,7 @@
         geomEntries_.makeAllCold();   // owners stay; every entry rebuilds against the new targets
         for (SDL_Texture* t : atlasTex_) if (t) gpuvram::destroy(t);
         atlasTex_.clear();
-        resetShadowAtlas();
+        resetShadowAtlas(false);
         shadowAtlasOpaqueScratch_.clear();
         shadowAtlasMaskScratch_.clear();
         shadowTileStamps_.clear();shadowTileChecks_.clear();

@@ -2190,6 +2190,18 @@ private:
         uint64_t emptySinceFrame=0, emptySinceMs=0;   // 0 = holds cells
     };
     std::vector<ShadowSilhouettePage> shadowSilhouettePages_;
+    // Emptied page textures kept for the next page of their size (at most
+    // kShadowBasePages): a page that empties and a page that is needed again a little
+    // later share one allocation. Given back under GPU pressure and on a renderer reset.
+    struct ShadowSparePage { SDL_Texture* texture=nullptr; int w=0, h=0; };
+    std::vector<ShadowSparePage> shadowSparePages_;
+    uint64_t shadowPageReuses_=0;   // cumulative (render telemetry)
+    void spareShadowPage(SDL_Texture*, int w, int h);
+    SDL_Texture* takeShadowSpare(int w, int h);   // nullptr: none of that size (others are freed)
+    void dropShadowSpares();
+    size_t shadowSpareBytes() const {
+        size_t n=0; for (const auto& s:shadowSparePages_) n+=size_t(s.w)*s.h*4; return n;
+    }
     int shadowSilhouetteWidth_=0,shadowSilhouetteHeight_=0;
     bool shadowSilhouetteAtlasActive_ = false;
     std::vector<SDL_FPoint> shadowAtlasOpaqueScratch_;
@@ -2205,7 +2217,8 @@ private:
         uint64_t failFrame=0;                            // last frame whose full repack did not fit
         uint64_t extendedAfterFrame=0, extendedAfterMs=0; // no extended page before (pressure shed cooldown)
     } shadowAtlasPolicy_;
-    void resetShadowAtlas();
+    // spare: keep the page textures for reuse (not under GPU pressure or a renderer reset).
+    void resetShadowAtlas(bool spare=true);
     // Tile decision scratch (render thread): this frame's stamp per packed unit,
     // the stamp it is compared with (carried across reallocation), the tiles
     // that need the point check, and the tiles that need a cell.

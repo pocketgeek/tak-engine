@@ -509,6 +509,12 @@ enum class Counter : uint8_t {
     TerrainSlotCreates,
     TerrainSlotReuses,
     TerrainSlotPooledBytes,
+    // Section fallback textures and shadow pages kept for reuse: reuses (cumulative)
+    // and kept bytes (gauge).
+    TerrainSectionReuses,
+    TerrainSectionPooledBytes,
+    ShadowPageReuses,
+    ShadowSparePageBytes,
     Count
 };
 
@@ -598,7 +604,9 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "shadow_demand_px", "ghost_draws", "ghost_culled", "ghost_collects", "ghost_cache_hits", "ghost_tris",
     "ghost_cache_bytes", "hidden_cover_visits", "hidden_cover_reaches", "shadow_composite_runs",
     "shadow_page_limit", "shadow_extended_pages", "shadow_pressure_sheds",
-    "terrain_slot_creates", "terrain_slot_reuses", "terrain_slot_pooled_bytes"};
+    "terrain_slot_creates", "terrain_slot_reuses", "terrain_slot_pooled_bytes",
+    "terrain_section_reuses", "terrain_section_pooled_bytes", "shadow_page_reuses",
+    "shadow_spare_page_bytes"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};
