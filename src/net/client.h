@@ -201,7 +201,8 @@ public:
     void moveSeat(int slot);
     // recipients: the seated players (slot bits); spectators: whether spectators read it
     // too. Before the game starts the server sends every line to the whole room.
-    void chat(const std::string& text, uint8_t recipients = 0xff, bool spectators = true);
+    void chat(const std::string& text, uint8_t recipients, bool spectators = false);
+    void chat(const std::string& text) { chat(text, 0xff, true); }   // everyone
     void startGame();
     // START was clicked and the server has neither started the game nor refused.
     bool startPending() const { return startRequested_ || startSent_; }
