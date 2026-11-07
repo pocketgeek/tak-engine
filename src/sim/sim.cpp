@@ -3491,6 +3491,8 @@ void World::planLegionFlightStations() {
     constexpr int32_t kLead=160;      // px ahead of the station the flyer steers at
     constexpr int64_t kCatchUp=192;   // px behind the station at which it flies at full speed
     constexpr int64_t kBrake=128;     // px ahead of the station at which it stops
+    constexpr int64_t kOrbit=64;      // px: the ring a flyer circles on station (2026-11-06) ...
+    constexpr int64_t kOrbitAhead=48; // ... centred this far ahead of the station along the way
     const auto near=[](Fixed ax,Fixed az,Fixed bx,Fixed bz,int64_t pixels) {
         const int64_t dx=int64_t(ax.v)-bx.v,dz=int64_t(az.v)-bz.v,r=pixels<<16;
         return dx*dx+dz*dz<=r*r;
@@ -3644,7 +3646,7 @@ void World::planLegionFlightStations() {
         const bool bound=last.stationFree==3;
         const int slot=b->slots++,landing=b->landings++;
         Fixed cx,cz;
-        centre(g,*b,cx,cz);
+        const int64_t radius=centre(g,*b,cx,cz);
         const int spacing=16*g.foot+16;
         // Unit direction of travel (16.16), zero when the ground has none.
         int64_t dx=0,dz=0;
@@ -3761,6 +3763,47 @@ void World::planLegionFlightStations() {
             continue;
         }
         station.steer=station.hold=station.capped=true;
+        // On station (within kCatchUp of it) the flyer circles it (user request
+        // 2026-11-06): held to the ground's pace behind a lead point it crept at
+        // a fraction of a pixel a tick and read as hovering, more so as a wide
+        // front moved its stations about. Retail's in-slot flyer of a moving
+        // group loiters too (VTOL_Move_FormationStandby 41797e: a point off its
+        // heading, radius 64). Its ring: kOrbit px about a point kOrbitAhead
+        // ahead of the station (a ring about the station itself trailed it,
+        // the wing's mean 46 px ahead of the ground's centroid against 80 on
+        // the old stations). It steers at the ring's point 30 degrees on from
+        // where it stands, the way round it is already flying (clockwise on
+        // the screen from a standstill: a flyer told to circle against its
+        // own way braked to turn and hung there; the chord to a point 60
+        // degrees on lay 30 degrees inside its course, and it flew skewed to
+        // its own heading), a flyer at the centre starting from behind it, at
+        // half its own speed or 1.5 times the ground's, whichever is more; the
+        // station carries the ring forward with the front. Neighbouring rings
+        // overlap: the wing wheels over the front as a swarm. (A 96 px ring
+        // reached 311 px from a ground body near the map's edge and sat behind
+        // the middle of a narrow column; 64 keeps to the stations' bounds.)
+        // Within twice the formation radius of the ground's goals the wing forms up
+        // over the front again for its landing: breaking off a ring wherever it
+        // stood, ahead at cruising speed, it landed up to 306 px from its point
+        // (on the stations 200).
+        const bool forming=b->cls!=ConvoyClass::Patrol &&
+            near(cx,cz,Fixed::raw(int32_t(b->gx/b->busy)),Fixed::raw(int32_t(b->gz/b->busy)),2*radius);
+        if (!forming && near(u.x,u.z,sx,sz,kCatchUp)) {
+            sx=sx+Fixed::raw(int32_t(dx*kOrbitAhead));sz=sz+Fixed::raw(int32_t(dz*kOrbitAhead));
+            int64_t rx=(int64_t(u.x.v)-sx.v)>>8,rz=(int64_t(u.z.v)-sz.v)>>8;   // 1/256 px
+            int64_t l=int64_t(isqrt64(uint64_t(rx*rx+rz*rz)));
+            if (l<256) { rx=-dx;rz=-dz;l=int64_t(isqrt64(uint64_t(rx*rx+rz*rz))); }
+            if (l<=0) { rx=-65536;rz=0;l=65536; }
+            // Unit radial (16.16) and its tangent; cos 30 ~ 56756/65536, sin 30 = 1/2.
+            const int64_t ux=(rx<<16)/l,uz=(rz<<16)/l;
+            const bool against=(-uz)*int64_t(u.flightVelocity.x)+ux*int64_t(u.flightVelocity.z)<0;
+            const int64_t tx=against?uz:-uz,tz=against?-ux:ux;
+            const int64_t ox=(ux*56756+tx*32768)>>16,oz=(uz*56756+tz*32768)>>16;
+            station.x=sx+Fixed::raw(int32_t(ox*kOrbit));
+            station.z=sz+Fixed::raw(int32_t(oz*kOrbit));
+            station.cap=Fixed::raw(int32_t(std::clamp<int64_t>(std::max(base/2,pace*3/2),0,base)));
+            continue;
+        }
         station.x=sx+Fixed::raw(int32_t((dx*kLead)));
         station.z=sz+Fixed::raw(int32_t((dz*kLead)));
     }

@@ -1278,6 +1278,9 @@ EdgeRun edgeRun(int squad,tak::scn::Verb verb,int clickCell,bool serial=true) {
     EdgeRun r;
     std::set<int> moved;std::map<int,int> reach;
     std::map<int,std::pair<float,float>> windowStart;float windowCx=0,windowCz=0;
+    // The way each flyer has flown (px, summed tick by tick): a formation flyer circling its station (2026-11-06)
+    // can end a window where it began, so a stall is judged on the way flown, not the displacement.
+    std::map<int,float> path,pathAt;std::map<int,std::pair<float,float>> lastAt;
     auto centroid=[&](float& cx,float& cz) {
         double ax=0,az=0;for(int id:ground){ax+=f.world.unit(id)->x.toFloat();az+=f.world.unit(id)->z.toFloat();}
         cx=float(ax/ground.size());cz=float(az/ground.size());
@@ -1293,6 +1296,9 @@ EdgeRun edgeRun(int squad,tak::scn::Verb verb,int clickCell,bool serial=true) {
         for(int id:flyers) {
             const auto& u=*f.world.unit(id);
             const auto [px,pz]=point[id];
+            if(const auto at=lastAt.find(id);at!=lastAt.end())
+                path[id]+=std::hypot(u.x.toFloat()-at->second.first,u.z.toFloat()-at->second.second);
+            lastAt[id]={u.x.toFloat(),u.z.toFloat()};
             r.stationTicks+=RetailReplayProbe::station(f.world,u)>0;
             if(const float cap=RetailReplayProbe::stationCap(f.world,u);cap>=0&&cap<u.baseSpeed.toFloat()-0.01f) {
                 ++r.cappedTicks;r.minCap=r.minCap<0?cap:std::min(r.minCap,cap);
@@ -1315,9 +1321,9 @@ EdgeRun edgeRun(int squad,tak::scn::Verb verb,int clickCell,bool serial=true) {
                 const bool travelling=!u.orders.empty()&&dist(u,point[id].first,point[id].second)>300.f;
                 if(groundBusy&&it!=windowStart.end()&&travelling&&marched>=9.f) {
                     const float flown=std::hypot(u.x.toFloat()-it->second.first,u.z.toFloat()-it->second.second);
-                    ++r.windows;r.stalls+=flown<0.4f*marched;r.flown+=flown;r.marched+=marched;
+                    ++r.windows;r.stalls+=path[id]-pathAt[id]<0.4f*marched;r.flown+=flown;r.marched+=marched;
                 }
-                windowStart[id]={u.x.toFloat(),u.z.toFloat()};
+                windowStart[id]={u.x.toFloat(),u.z.toFloat()};pathAt[id]=path[id];
             }
             windowCx=cx;windowCz=cz;
         }

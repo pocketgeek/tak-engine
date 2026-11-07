@@ -792,6 +792,34 @@ station: a known limit.
   therefore cruises facing its way and turns and banks with the formation.
   Its script animation is untouched; the Zhon bat's `FlightControl`, for
   example, flaps regardless of speed.
+- **Circling (2026-11-06, protocol 314, user request).** Held to the
+  ground's pace behind its lead point, a flyer on station crept at about the
+  ground's speed (1 px/tick against its own 4) and read as hovering, more so
+  when a wide front moved its stations about. Within `kCatchUp` (192 px) of its
+  station it now circles instead: a 64 px ring (`kOrbit`) about a point 48 px
+  (`kOrbitAhead`) ahead of the station along the way, steering at the ring's
+  point 30 degrees on from where it stands, the way round it is already flying
+  (clockwise from a standstill), at half its own speed or 1.5 times the
+  ground's, whichever is more. The station carries the ring forward; the
+  neighbouring rings overlap, so the wing wheels over the front as a swarm.
+  Retail's in-slot flyer of a moving group loiters too
+  (VTOL_Move_FormationStandby `41797e`: a point off its heading, radius 64).
+  Within twice the formation radius of the ground's goals the wing forms up on
+  its stations again for the landing (broken off a ring wherever it stood it
+  landed up to 306 px from its point). Rejected on the way: a 96 px ring (311
+  px from a ground body by the map's edge, behind a narrow column's middle), a
+  ring about the station itself (the wing's mean 46 px ahead of the ground's
+  centroid against 80 on the stations), a lead point 60 degrees on (the chord
+  lay 30 degrees inside the course: flyers flew skewed), and one fixed way
+  round (a flyer told to circle against its own way braked to turn). In
+  `mixedformation` (move / fight / patrol): flyers below half their speed on
+  their way 13 / 20 / 26% of the ticks (on the stations 96 / 92 / 94%), the
+  wing's mean 103 / 103 / 142 px ahead of the ground's centroid (80 / 104 /
+  101), at most 190 px from a ground body (185), ground and flyers done as
+  before; 8.5 / 8.3 / 8.3% of moving ticks face more than 30 degrees off the
+  way (3.3 / 4.8 / 3.1; Retail's re-forming flyers 10.7). The pace windows
+  below judge the way flown since: a circling flyer can end a window where it
+  began.
 - **Speed.** `tickFlightBody` caps the flyer's maximum at the busy ground
   members' mean speed:
   - rising linearly to the flyer's own speed when it is 192 px behind its

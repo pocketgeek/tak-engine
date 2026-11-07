@@ -3247,7 +3247,7 @@ bool landedBehind(World& w,const Unit& u,const std::vector<int>& ground,float dx
 // with a ground body ahead of it in its lane (they land in front of the ground, not among its slots).
 struct MixedRun {int groundDone=-1,flyersDone=-1;float maxAway=0,meanAway=0,endAway=0;uint64_t hash=0;int landedAhead=0;
     int windows=0,stalls=0,moving=0,misaligned=0,maxHover=0,maxLandDelay=0,landed=0;double flown=0,marched=0;
-    double leadTop=0,leadAll=0;int frontWindows=0,landedBehind=0;float maxOff=0;};
+    double leadTop=0,leadAll=0;int frontWindows=0,landedBehind=0;float maxOff=0;int cruising=0,crawling=0;};
 MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
     Fixture f(260,100,serial);
     // A wall across the straight line: the ground detours through the gap
@@ -3285,6 +3285,9 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
     }
     MixedRun r;Watch motion;double sum=0;int samples=0;
     std::map<int,std::pair<float,float>> windowStart;float windowCx=0,windowCz=0,dirX=1,dirZ=0;
+    // The way each flyer has flown (px, summed tick by tick): a formation flyer circling its station (2026-11-06)
+    // can end a window where it began, so a stall is judged on the way flown, not the displacement.
+    std::map<int,float> path,pathAt;std::map<int,std::pair<float,float>> lastAt;
     std::vector<std::pair<float,float>> groundAt;   // the ground's positions at the window's start
     std::map<int,int> hover,idleAt,hoverRun;
     const int ticks=kind==tak::net::Cmd::Patrol?3000:6000;
@@ -3316,6 +3319,18 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
         for(int id:flyers)flyersBusy|=!f.world.unit(id)->orders.empty();
         if(!groundBusy&&r.groundDone<0)r.groundDone=t;
         if(!flyersBusy&&r.flyersDone<0)r.flyersDone=t;
+        for(int id:flyers) {
+            const auto& u=*f.world.unit(id);
+            if(const auto at=lastAt.find(id);at!=lastAt.end())
+                path[id]+=std::hypot(u.x.toFloat()-at->second.first,u.z.toFloat()-at->second.second);
+            lastAt[id]={u.x.toFloat(),u.z.toFloat()};
+            // Crawling: airborne on its way (beyond 300 px of its point) while the ground marches, under half its
+            // own speed -- held to the ground's pace, as the stations held it until 2026-11-06.
+            if(t>=300&&groundBusy&&u.flightGroundMode==2&&!u.orders.empty()&&
+               std::hypot(u.x.toFloat()-u.orders.back().x.toFloat(),u.z.toFloat()-u.orders.back().z.toFloat())>300.f) {
+                ++r.cruising;r.crawling+=u.speed.v<u.baseSpeed.v/2;
+            }
+        }
         if(t%30==0) {
             // Keeping up: over each 30-tick window in which the ground's
             // centroid moved at least 12 px, a travelling flyer covers at least
@@ -3349,9 +3364,9 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
                     u.z.toFloat()-u.orders.back().z.toFloat())>300.f;
                 if(t>=300&&groundBusy&&it!=windowStart.end()&&travelling&&marched>=12.f) {
                     const float flown=std::hypot(u.x.toFloat()-it->second.first,u.z.toFloat()-it->second.second);
-                    ++r.windows;r.stalls+=flown<0.4f*std::max(advance,0.f);r.flown+=flown;r.marched+=marched;
+                    ++r.windows;r.stalls+=path[id]-pathAt[id]<0.4f*std::max(advance,0.f);r.flown+=flown;r.marched+=marched;
                 }
-                windowStart[id]={u.x.toFloat(),u.z.toFloat()};
+                windowStart[id]={u.x.toFloat(),u.z.toFloat()};pathAt[id]=path[id];
             }
             if(t>=300&&groundBusy&&marched>=9.f) {
                 dirX=(cx-windowCx)/marched;dirZ=(cz-windowCz)/marched;
@@ -3425,10 +3440,10 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
     const char* name=kind==tak::net::Cmd::Move?"move":kind==tak::net::Cmd::AttackMove?"fight":"patrol";
     std::printf("mixedformation %s %s ground_done=%d flyers_done=%d away_max=%.0f away_mean=%.0f end_away=%.0f landed_ahead=%d "
         "pace=%.2f stalls=%d/%d misaligned=%d/%d max_hover=%d land_delay=%d landed=%d spins=%llu lead_top=%.0f lead_all=%.0f "
-        "max_off=%.0f landed_behind=%d hash=%016llx\n",
+        "max_off=%.0f landed_behind=%d crawling=%d/%d hash=%016llx\n",
         legion?"legion":"retail",name,r.groundDone,r.flyersDone,r.maxAway,r.meanAway,r.endAway,r.landedAhead,
         r.marched>0?r.flown/r.marched:0.0,r.stalls,r.windows,r.misaligned,r.moving,r.maxHover,r.maxLandDelay,r.landed,
-        (unsigned long long)motion.spins(),r.leadTop,r.leadAll,r.maxOff,r.landedBehind,(unsigned long long)r.hash);
+        (unsigned long long)motion.spins(),r.leadTop,r.leadAll,r.maxOff,r.landedBehind,r.crawling,r.cruising,(unsigned long long)r.hash);
     return r;
 }
 void mixedformation() {
@@ -3437,7 +3452,8 @@ void mixedformation() {
         const auto r=mixedformationRun(true,kind);
         if(std::getenv("MIXED_REPORT"))continue;   // measurement only
         // Flyers stay with the ground: an airborne flyer within 240 px of a ground body (the
-        // old centroid station strayed to 185, the front stations and landing points to 186).
+        // old centroid station strayed to 185, the front stations and landing points to 186,
+        // the rings over the front, 2026-11-06, to 190).
         check(r.maxOff<=240.f,"a formation flyer strayed from the ground");
         check(r.landedAhead==0,"a formation flyer landed ahead of the ground");
         // Over the front, not the middle: the 3 leading flyers within 80 px of the ground's
@@ -3447,12 +3463,21 @@ void mixedformation() {
         check(r.frontWindows>0&&r.leadTop>=-80,"formation flyers did not ride over the front of the ground");
         check(r.leadAll>=60,"formation flyers rode over the middle of the ground");
         // Flying with the formation, not parked over it: they keep the
-        // ground's pace in every window and face the way they move.
+        // ground's pace in every window (the way flown: circling, a flyer can
+        // end a window where it began) and face the way they move. Circling
+        // over the front (2026-11-06) they turn all the while: 8.5 / 8.3 / 8.3%
+        // of their moving ticks face more than 30 degrees off their way (on the
+        // old stations 3.3 / 4.8 / 3.1; Retail's re-forming flyers here 10.7).
         check(r.windows>0&&r.stalls==0,"a formation flyer stalled behind the ground");
         check(r.flown>=0.8*r.marched&&r.flown<=1.5*r.marched,"formation flyers did not keep the ground's pace");
-        check(r.moving>0&&r.misaligned*20<=r.moving,"formation flyers did not face the way they flew");
+        check(r.moving>0&&r.misaligned*10<=r.moving,"formation flyers did not face the way they flew");
         // Never hovering in place: at most the arrival's own brake.
         check(r.maxHover<=60,"a formation flyer hovered");
+        // Flying, not crawling (user request 2026-11-06): on their way they circle over the front at half their
+        // own speed or more, not held to the ground's pace (crawling 1,725 / 2,672 / 5,513 of 13,212 / 13,487 /
+        // 21,600 ticks: forming up near the goal, a patrol turning at its points; on the stations before, 13,021 /
+        // 12,186 / 20,237 of 13,540 / 13,189 / 21,600).
+        check(r.cruising>0&&r.crawling*3<=r.cruising,"formation flyers crawled at the ground's pace");
         if(kind!=tak::net::Cmd::Patrol) {
             check(r.groundDone>=0&&r.flyersDone>=0,"the mixed formation never finished");
             check(r.endAway<=300.f,"formation flyers settled away from the ground");
@@ -3660,16 +3685,18 @@ NarrowRun flyerfrontNarrow(int cols,int rows) {
 }
 void flyerfront() {
     const auto r=flyerfrontRun();
-    // The leading flyers over the ground's leading body on both headings, neither behind nor ahead of it
-    // (measured: east -2, south -20; the old centroid station's spiral: east +77, wider than a 3-deep block is
-    // deep, south -120).
+    // The leading flyers over the ground's leading body on both headings, neither behind it nor beyond the
+    // ring they circle (measured on the stations: east -2, south -20; the old centroid station's spiral: east
+    // +77, wider than a 3-deep block is deep, south -120; circling since 2026-11-06, a ring reaching
+    // kOrbitAhead + kOrbit = 112 px beyond its station: east 56, south 23).
     for(const auto* ph:{&r.east,&r.south}) {
         check(ph->n>0,"flyerfront: no window measured");
         check(ph->top>=-80,"flyerfront: the leading flyers did not ride over the ground's leading body");
-        check(ph->top<=60,"flyerfront: the leading flyers rode ahead of the ground");
+        check(ph->top<=120,"flyerfront: the leading flyers rode ahead of the ground");
     }
-    // East the front is 10 bodies wide: the flyers spread across all of it (span 1.01; the spiral 0.34), half of
-    // them on the front line (a row of 7 lanes) and the rest in the next row, not deeper (83 px; 2 rows = 128).
+    // East the front is 10 bodies wide: the flyers spread across all of it (span 1.01; circling 1.22; the spiral
+    // 0.34), half of them on the front line (a row of 7 lanes; circling 7.8) and the rest in the next row, not
+    // deeper (83 px, circling 114; 2 rows = 128).
     check(r.east.span>=0.85,"flyerfront: the flyers did not spread across the front");
     check(r.east.row>=6,"flyerfront: the front row was not filled first");
     check(r.east.depth<=200,"flyerfront: flyers sat deeper than the second row");
@@ -3682,7 +3709,7 @@ void flyerfront() {
     for(auto [cols,rows]:{std::pair{1,1},std::pair{1,10},std::pair{2,10}}) {
         const auto n=flyerfrontNarrow(cols,rows);
         check(n.n>0,"flyerfront narrow: no window measured");
-        check(n.top>=-80&&n.top<=60,"flyerfront narrow: the leading flyers were not over the ground's leading body");
+        check(n.top>=-80&&n.top<=120,"flyerfront narrow: the leading flyers were not over the ground's leading body");
         check(n.depth<=260,"flyerfront narrow: the flyers trailed in a file behind narrow ground");
         if(rows>1)check(n.behind<=0.5,"flyerfront narrow: flyers sat behind the middle of a column");
     }
@@ -3694,7 +3721,7 @@ void flyerfront() {
     const auto c=flyerfrontRun(true,true);
     for(const auto* ph:{&c.east,&c.south}) {
         check(ph->n>0,"flyerfront cold: no window measured");
-        check(ph->top>=-80&&ph->top<=60,"flyerfront cold: the leading flyers were not over the ground's leading body");
+        check(ph->top>=-80&&ph->top<=120,"flyerfront cold: the leading flyers were not over the ground's leading body");
     }
     check(c.east.depth<=200,"flyerfront cold: flyers sat deeper than the second row");
     check(c.done>=0&&c.landed==12&&c.behind==0,"flyerfront cold: the formation did not finish and land in front of the ground");
