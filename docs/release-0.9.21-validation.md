@@ -1,14 +1,10 @@
 # 0.9.21 release validation
 
-**DRAFT.** Scope, compatibility and the local test results on the cut are written;
-every part marked **TODO-LEAD** is filled in by the release lead from the remaining
-CI, signing and publication runs.
-
 Protocol **315** (0.9.20 used 312; 313 and 314 were never released), replay format
 **15** (unchanged), generator version **9** (unchanged).
 
-Tag `v0.9.21` -> **TODO-LEAD** (the preparation commit); annotated tag object
-**TODO-LEAD**. Published **TODO-LEAD** UTC as the Latest release.
+Tag `v0.9.21` -> `c1523095` (the preparation commit); annotated tag object
+`df764b6a`. Published 2026-11-07 09:43:14 UTC as the Latest release.
 
 ## Scope and compatibility
 
@@ -78,18 +74,46 @@ Windows and macOS local suites; tag CI builds and tests all three platforms.
 
 ## CI and packages
 
-**TODO-LEAD**: main and tag CI run ids (Determinism, Linux packages, Windows, macOS),
-asset count, digests, build ids (`build v0.9.21`), `TITLE-FONT-LICENSE.txt` in each
-package.
+Tag CI on `v0.9.21`, all green at the first attempt: Determinism (sim) 42357645107
+(dispatched), Linux packages 42357637762, Windows build 42357637730, macOS build
+42357637741 (with its sign and notarize jobs). Main's runs for `c1523095` were cancelled
+in favour of the tag's. The last main Windows run before the cut (`eec60b1b`,
+42349680590) failed only at the arm64 MSYS2 package download ("Operation too slow"
+from the mirror); its macOS and Linux runs passed, as did every workflow on
+`c69d446e`.
+
+31 assets, as 0.9.20. All 31 downloaded and match the release's SHA-256 digests.
+`TITLE-FONT-LICENSE.txt` is in every package: the ten .debs, six RPMs, the Arch and
+Slackware packages, both Linux debug tarballs and the four takclient zips (Windows x64
+and arm64, macOS x64 and arm64). The build string is `v0.9.21` in the Arch package's
+`takclient` and `takserver` and in the Windows x64 `takclient.exe` (the Arch binaries
+need glibc 2.44, newer than the Fedora 44 checking host, so they were read rather than
+run).
 
 ## Signing
 
-**TODO-LEAD**: Windows Authenticode, macOS notarization and stapling.
+Windows: on oden-win, no `takserver.exe` or `takclient.exe` was running before or after
+the check, which ran in `C:/tak/w/rel0921` (removed afterwards). `Get-AuthenticodeSignature`
+reports **Valid** (timestamped, "Curtis Edge") for the same 7 files as 0.9.20: the x64
+setup program and `takclient`, `takserver` and `cartographer` in both zips. The x64
+`takclient.exe` and `takserver.exe` report `0.9.21 (build v0.9.21)`.
+
+macOS: on the MacBook, both DMGs and all eight app copies (two in each DMG, two in each
+zip) pass `stapler validate`, and `spctl -a -vv` accepts them as "Notarized Developer
+ID"; every app passes `codesign --verify --strict --deep` and has version 0.9.21. The
+arm64 zip's `takclient` reports `0.9.21 (build v0.9.21)`. The scratch folder was
+removed.
 
 ## Publication
 
-**TODO-LEAD**: draft, tag, publish time, links checked.
+The draft was created with the notes (the validation link rewritten to its `blob`
+`v0.9.21` URL) before tag CI uploaded into it; published on 2026-11-07 09:43:14 UTC as
+the Latest release, 31 assets; 0.9.20 and earlier releases are kept. The notes'
+validation link answers 200.
 
 ## Known limits
 
-**TODO-LEAD**: anything accepted at the cut.
+- Only the Linux suite ran locally (the testing tiers); Windows and macOS were covered by
+  tag CI.
+- No mixed-version game was played: 0.9.21 changes the protocol, so it plays with no
+  earlier release by construction (the server's Hello refuses a protocol mismatch).
