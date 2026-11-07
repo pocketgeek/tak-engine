@@ -3145,6 +3145,12 @@
         // Squad markers sit below the unit by a footprint-dependent offset: their
         // band covers every type's footprint depth.
         const auto [footMin, footMax] = unitFootZRange();
+        // The bar, the countdown and the squad number ride a flyer at its altitude
+        // (altLift, as the unit and its ring are drawn), so a band also takes the
+        // ground anchors up to the highest flyer altitude below it.
+        const float airLift = front().flyerUnits.empty() ? 0.0f
+                            : (std::max(flyerAltitudeSeen_, pickBounds().cruiseAlt) * kProjY + 1.0f) * zm;
+        const auto withAir = [&](tak::render::ScreenBand b) { b.bottom += airLift; return b; };
 
         // Health bars -- viewport-culled and batched into one draw call (each was two
         // state-changing FillRects, so a damaged crowd used to break the render batch
@@ -3161,14 +3167,14 @@
         // damaged units (default), 2 = every unit, full HP included. (Retail has one
         // toggle, off by default, that bars every own unit on screen.)
         if (!dotsFrame_ && healthBars_ != 0)
-            overlayPass(0, unitpass::healthBarBand(overlayView), [&](const UnitR& u, bool draw) {
+            overlayPass(0, withAir(unitpass::healthBarBand(overlayView)), [&](const UnitR& u, bool draw) {
             if (!u.alive() || u.embarked() || !u.type) return false;
             if (u.underConstruction && !u.buildBegun) return false;   // ghost: no bar
             if (!unitShownR(u)) return false;
             float frac = std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f);
             if (healthBars_ == 1 && frac >= 1.0f) return false;
             float bw = 26 * zm, bh = std::max(2.0f, 3 * zm);
-            const auto [bx, by] = unitpass::healthBar(u.x, u.z, uLiftX(u), uLiftY(u), overlayView);
+            const auto [bx, by] = unitpass::healthBar(u.x, u.z, uLiftX(u), uLiftY(u) + altLift(u), overlayView);
             if (!unitpass::healthBarInView({bx, by}, overlayView)) return false;
             if (!draw) return true;
 #ifndef NDEBUG
@@ -3190,10 +3196,10 @@
         // Self-destruct countdown: a pulsing red number over each armed unit. This and
         // the squad numbers below are UI, left out of a poster.
         if (hudFont_.ok() && !posterFrame_)
-            overlayPass(1, unitpass::selfDestructBand(overlayView), [&](const UnitR& u, bool draw) {
+            overlayPass(1, withAir(unitpass::selfDestructBand(overlayView)), [&](const UnitR& u, bool draw) {
                 if (!u.alive() || u.embarked() || !u.type || u.selfDestructT < 0) return false;
                 if (!unitShownR(u)) return false;
-                const auto [sx, sy] = unitpass::selfDestruct(u.x, u.z, uLiftX(u), uLiftY(u), overlayView);
+                const auto [sx, sy] = unitpass::selfDestruct(u.x, u.z, uLiftX(u), uLiftY(u) + altLift(u), overlayView);
                 if (!unitpass::selfDestructInView({sx, sy}, overlayView)) return false;
                 if (!draw) return true;
                 char b[8];
@@ -3210,12 +3216,12 @@
         // far out so it doesn't clutter the field. Drawn in FLAT green: tinting the
         // shaded tan glyph art gave a dark, mottled outline that was hard to read.
         if (hudFont_.ok() && zm > 0.55f && !posterFrame_)
-            overlayPass(2, unitpass::squadMarkerBand(overlayView, footMin, footMax), [&](const UnitR& u, bool draw) {
+            overlayPass(2, withAir(unitpass::squadMarkerBand(overlayView, footMin, footMax)), [&](const UnitR& u, bool draw) {
                 if (!u.alive() || u.embarked() || !u.type || u.player != hudOwner ||
                     u.squad == 0)
                     return false;
                 if (u.underConstruction && !u.buildBegun) return false;
-                const auto [cx, cy] = unitpass::squadMarker(u.x, u.z, uLiftX(u), uLiftY(u), u.type->footZ, overlayView);
+                const auto [cx, cy] = unitpass::squadMarker(u.x, u.z, uLiftX(u), uLiftY(u) + altLift(u), u.type->footZ, overlayView);
                 if (!unitpass::squadMarkerInView({cx, cy}, overlayView)) return false;
                 if (!draw) return true;
                 int num = std::abs(int(u.squad));
