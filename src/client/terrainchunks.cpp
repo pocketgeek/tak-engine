@@ -9,7 +9,11 @@
 
 namespace tak {
 namespace {
-constexpr size_t budget=size_t(256)<<20;
+// Resident images plus free texture slots. 512 MiB: a typical game tracks 0.4-0.7 GiB
+// against the 1.25 GiB default GPU limit, and at 256 MiB a camera that pans and zooms
+// about a big map evicted and re-baked images it came back to (room() still yields to
+// the GPU cap and to everything else resident).
+constexpr size_t budget=size_t(512)<<20;
 uint64_t nowNs() {
     return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -35,6 +39,30 @@ void TerrainChunks::clear() {
     cv_.notify_all();pending_.clear();nearbyPending_=0;visible_.clear();drawn_.clear();
     for(auto& [key,e]:cache_)gpuvram::destroy(e.texture);
     cache_.clear();bytes_=0;++revision_;
+    dropAllFreeSlots();
+}
+void TerrainChunks::releaseSlot(int level,SDL_Texture* texture) {
+    free_[level].push_back(texture);pooledBytes_+=slotBytes(level);
+}
+bool TerrainChunks::dropFreeSlot(int keepLevel) {
+    // The coarsest other level first: its slots are the cheapest to make again.
+    for(int level=5;level>=0;--level)
+        if(level!=keepLevel && !free_[level].empty()) {
+            gpuvram::destroy(free_[level].back());free_[level].pop_back();
+            pooledBytes_-=slotBytes(level);return true;
+        }
+    return false;
+}
+void TerrainChunks::dropAllFreeSlots() {
+    for(auto& slots:free_) {for(SDL_Texture* t:slots)gpuvram::destroy(t);slots.clear();}
+    pooledBytes_=0;
+}
+void TerrainChunks::evict(std::map<Key,Entry>::iterator i,bool pool) {
+    const int level=std::get<0>(i->first);
+    bytes_-=slotBytes(level);
+    if(pool)releaseSlot(level,i->second.texture);
+    else gpuvram::destroy(i->second.texture);
+    cache_.erase(i);++revision_;
 }
 void TerrainChunks::invalidate(int bx0,int by0,int bx1,int by1) {
     if(bx0>=bx1 || by0>=by1)return;
@@ -59,10 +87,8 @@ void TerrainChunks::invalidate(int bx0,int by0,int bx1,int by1) {
     }
     cv_.notify_all();
     for(auto i=cache_.begin();i!=cache_.end();) {
-        if(affected(i->first)) {
-            bytes_-=size_t(i->second.w+2)*(i->second.h+2)*4;
-            gpuvram::destroy(i->second.texture);i=cache_.erase(i);
-        } else ++i;
+        if(affected(i->first))evict(i++,true);
+        else ++i;
     }
     ++revision_;
 }
@@ -209,15 +235,18 @@ bool TerrainChunks::anyImage(int cx,int cy) const {
     for(int level=0;level<=5;++level)if(cache_.count({level,cx,cy}))return true;
     return false;
 }
-size_t TerrainChunks::imageBytes(const Key& key,const tnt::Map& map) const {
-    const auto [level,cx,cy]=key;
-    const int mapW=map.blocksX*(32>>level),mapH=map.blocksY*(32>>level);
-    const int w=std::min(span>>level,mapW-(cx*span>>level)),h=std::min(span>>level,mapH-(cy*span>>level));
-    return size_t(std::max(w,0)+2)*(std::max(h,0)+2)*4;
+size_t TerrainChunks::imageBytes(const Key& key,const tnt::Map&) const {
+    return slotBytes(std::get<0>(key));   // a whole slot, whatever part of it the image fills
 }
 bool TerrainChunks::makeRoom(size_t size,const Key& cell,bool coldOnly) {
-    const auto [cellLevel,cellX,cellY]=cell;(void)cellLevel;
-    while(bytes_+size>budget || !gpuvram::wouldFit(size)) {
+    const auto [cellLevel,cellX,cellY]=cell;
+    // A free slot of the level holds the image with no new GPU memory. Otherwise free
+    // slots of other levels go first, then images, whose slots join the free lists (one
+    // of this level ends the search).
+    const auto room=[&]{return !free_[cellLevel].empty() ||
+                               (bytes_+pooledBytes_+size<=budget && gpuvram::wouldFit(size));};
+    while(!room()) {
+        if(dropFreeSlot(cellLevel))continue;
         auto victim=cache_.end();int victimRank=INT_MAX;
         for(auto i=cache_.begin();i!=cache_.end();++i) {
             const auto [level,cx,cy]=i->first;(void)level;
@@ -227,10 +256,9 @@ bool TerrainChunks::makeRoom(size_t size,const Key& cell,bool coldOnly) {
             if(rank && (rank<victimRank || (rank==victimRank && i->second.used<victim->second.used))) {victim=i;victimRank=rank;}
         }
         if(victim==cache_.end())break;
-        bytes_-=size_t(victim->second.w+2)*(victim->second.h+2)*4;
-        gpuvram::destroy(victim->second.texture);cache_.erase(victim);++revision_;
+        evict(victim,true);
     }
-    return bytes_+size<=budget && gpuvram::wouldFit(size);
+    return room();
 }
 void TerrainChunks::releasePending(const Job& job) {
     if(auto i=pending_.find(job.key);i!=pending_.end() && i->second.control==job.control) {
@@ -247,12 +275,13 @@ size_t TerrainChunks::offviewRoom() {
     if(!coldValid_) {
         coldBytes_=0;coldValid_=true;
         for(const auto& [key,e]:cache_) {
-            const auto [level,cx,cy]=key;(void)level;
+            const auto [level,cx,cy]=key;
             if(terrainwork::evictionRank(e.used==frame_,e.standin==frame_,false,params_)==1 && !demand_.keep().contains(cx,cy))
-                coldBytes_+=size_t(e.w+2)*(e.h+2)*4;
+                coldBytes_+=slotBytes(level);
         }
     }
-    const size_t limit=room(bytes_);
+    // Free slots are room: an off-view image reuses one.
+    const size_t limit=room(bytes_+pooledBytes_);
     return (limit>bytes_ ? limit-bytes_ : 0)+coldBytes_;
 }
 void TerrainChunks::rankPending(const tnt::Map& map) {
@@ -315,19 +344,29 @@ void TerrainChunks::uploadReady(SDL_Renderer* renderer,terrainwork::UploadBudget
         releasePending(job);++handled;
         // A visible image makes room (stand-ins last); an off-view one only free room or
         // cold images (not visible, no stand-in, outside the keep band).
-        const bool fits=makeRoom(size,job.key,!visible);
+        const bool fits=makeRoom(slotBytes(std::get<0>(job.key)),job.key,!visible);
         if(!fits || gpuvram::blocked()) {discard(job);continue;}
         const uint64_t uploadStart=nowNs();
-        auto* texture=gpuvram::create(renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,job.w+2,job.h+2);
-        if(!texture){gpuvram::noteFail();discard(job);continue;}
-        if(SDL_UpdateTexture(texture,nullptr,job.pixels.data(),(job.w+2)*4)!=0){gpuvram::destroy(texture);discard(job);continue;}
+        const int side=(span>>level)+2;
+        SDL_Texture* texture=nullptr;
+        if(!free_[level].empty()) {
+            texture=free_[level].back();free_[level].pop_back();pooledBytes_-=slotBytes(level);++slotReuses_;
+        } else {
+            texture=gpuvram::create(renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,side,side);
+            if(!texture){gpuvram::noteFail();discard(job);continue;}
+            ++slotCreates_;
+        }
+        // The image (with its one-texel border) fills the slot's top-left; draw() reads
+        // only that part.
+        const SDL_Rect area{0,0,job.w+2,job.h+2};
+        if(SDL_UpdateTexture(texture,&area,job.pixels.data(),(job.w+2)*4)!=0){releaseSlot(level,texture);discard(job);continue;}
         SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
         SDL_SetTextureScaleMode(texture,linear_?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
         const uint64_t uploadNs=nowNs()-uploadStart;   // CPU submission only: no GPU synchronization
         uploadNs_+=uploadNs;ub.record(UploadBudget::Chunk,size,uploadNs);
         render::countTextureUpload(size);
         cache_.emplace(job.key,Entry{texture,job.w,job.h,visible ? frame_ : 0});
-        bytes_+=size;++uploads_;++revision_;
+        bytes_+=slotBytes(level);++uploads_;++revision_;
         ++jobsUsed_;uploadBytes_+=size;jobsOffview_+=!visible;
         job.pixels=std::vector<uint8_t>();
     }
@@ -371,7 +410,7 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
     const int x1=std::clamp(int(std::floor((x+w/zoom)/span)),0,nx-1),y1=std::clamp(int(std::floor((y+h/zoom)/span)),0,ny-1);
     // If supersampling would exceed the cache, preserve logical-pixel detail
     // first. Never cycle visible chunks through an undersized cache each frame.
-    const size_t limit=room(bytes_);
+    const size_t limit=room(bytes_+pooledBytes_);
     while(level_<5 && (1.f/float(2<<level_))>=zoom &&
           size_t(x1-x0+1)*(y1-y0+1)*size_t((span>>level_)+2)*((span>>level_)+2)*4>limit)
         ++level_;
@@ -487,6 +526,10 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
 }
 size_t TerrainChunks::shed(size_t need) {
     size_t freed=0;
+    // GPU pressure: free slots are destroyed first, then evicted images' textures too.
+    while(!gpuvram::wouldFit(need) && pooledBytes_) {
+        const size_t before=pooledBytes_;dropFreeSlot(-1);freed+=before-pooledBytes_;
+    }
     while(!gpuvram::wouldFit(need)) {
         auto oldest=cache_.end();int oldestRank=INT_MAX;
         for(auto i=cache_.begin();i!=cache_.end();++i) {
@@ -494,9 +537,8 @@ size_t TerrainChunks::shed(size_t need) {
             if(rank && (rank<oldestRank || (rank==oldestRank && i->second.used<oldest->second.used))) {oldest=i;oldestRank=rank;}
         }
         if(oldest==cache_.end())break;
-        const size_t size=size_t(oldest->second.w+2)*(oldest->second.h+2)*4;
-        bytes_-=size;freed+=size;
-        gpuvram::destroy(oldest->second.texture);cache_.erase(oldest);++revision_;
+        freed+=slotBytes(std::get<0>(oldest->first));
+        evict(oldest,false);
     }
     return freed;
 }

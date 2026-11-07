@@ -51,6 +51,9 @@ public:
         // uploads the frame budget postponed (counted once per job and frame).
         uint64_t jobsObsolete=0,jobsAborted=0,jobsNearby=0,jobsOffview=0,uploadsDeferred=0;
         uint64_t framesGated=0;   // frames the calm gate queued no new work
+        // The texture slot pool: textures created / reused from the pool (cumulative),
+        // and the free slots' bytes now (held for reuse, counted in the budget).
+        uint64_t slotCreates=0,slotReuses=0;size_t pooledBytes=0;
     };
     explicit TerrainChunks(terrain::Compositor& compositor);
     ~TerrainChunks();
@@ -104,6 +107,7 @@ public:
         s.wastedNs=wastedNs_+wastedAbortNs_.load(std::memory_order_relaxed);
         s.jobsObsolete=jobsObsolete_;s.jobsAborted=jobsAborted_.load(std::memory_order_relaxed);
         s.jobsNearby=jobsNearby_;s.jobsOffview=jobsOffview_;s.uploadsDeferred=uploadsDeferred_;s.framesGated=framesGated_;
+        s.slotCreates=slotCreates_;s.slotReuses=slotReuses_;s.pooledBytes=pooledBytes_;
         return s;
     }
 private:
@@ -136,6 +140,17 @@ private:
     // Bytes off-view work may use: free cache room plus cold images.
     size_t offviewRoom();
     size_t imageBytes(const Key&,const tnt::Map&) const;
+    // Texture slots. Every image of a level gets a texture of that level's full size
+    // ((span>>level)+2 square; a map-edge image fills its top-left part), so any slot of
+    // a level holds any of its images. An evicted image's texture goes back to the
+    // level's free list instead of being destroyed, and the next upload of that level
+    // reuses it: after the cache has filled, panning and zooming re-fill textures rather
+    // than freeing and allocating GPU memory. Free slots count in the cache's budget.
+    static size_t slotBytes(int level) {const size_t side=size_t(span>>level)+2;return side*side*4;}
+    void releaseSlot(int level,SDL_Texture*);       // to the free list
+    bool dropFreeSlot(int keepLevel);               // destroy one free slot of another level (any if keepLevel<0)
+    void dropAllFreeSlots();
+    void evict(std::map<Key,Entry>::iterator,bool pool);
     // Re-rank pending jobs for this frame's demand; cancel the obsolete ones.
     void rankPending(const tnt::Map&);
     // Upload completed results: urgent ones (holes) only, or everything left.
@@ -191,6 +206,9 @@ private:
     uint64_t jobsObsolete_=0,jobsNearby_=0,jobsOffview_=0,uploadsDeferred_=0,framesGated_=0;
     std::atomic<uint64_t> jobsAborted_{0};
     std::map<Key,Entry> cache_;
+    std::vector<SDL_Texture*> free_[6];   // free texture slots per level
+    size_t pooledBytes_=0;
+    uint64_t slotCreates_=0,slotReuses_=0;
     std::vector<Key> visible_;
     std::vector<std::pair<int,int>> drawn_;   // chunk cells the last draw() covered (any level), sorted
     size_t drawnStandin_=0,drawnHoles_=0;     // the last draw(): visible cells shown by another level / not at all

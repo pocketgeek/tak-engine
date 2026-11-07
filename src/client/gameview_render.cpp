@@ -4115,6 +4115,9 @@
         stats.set(RS::TerrainChunkBytes, chunks.bytes);
         stats.set(RS::TerrainChunkImages, chunks.images);
         stats.set(RS::TerrainChunkUploads, chunks.uploads);
+        stats.set(RS::TerrainSlotCreates, chunks.slotCreates);
+        stats.set(RS::TerrainSlotReuses, chunks.slotReuses);
+        stats.set(RS::TerrainSlotPooledBytes, chunks.pooledBytes);
         stats.set(RS::TerrainChunkPending, chunks.pending);
         stats.set(RS::TerrainChunkVisible, chunks.visible);
         stats.set(RS::TerrainChunkReady, chunks.ready);

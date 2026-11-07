@@ -504,6 +504,11 @@ enum class Counter : uint8_t {
     // atlas resets that gave them back under GPU pressure (per frame).
     ShadowExtendedPages,
     ShadowPressureSheds,
+    // Terrain chunk texture slots (client/terrainchunks.h): textures created and slots
+    // reused (cumulative), and the free slots' bytes (gauge).
+    TerrainSlotCreates,
+    TerrainSlotReuses,
+    TerrainSlotPooledBytes,
     Count
 };
 
@@ -592,7 +597,8 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "cursor_evals", "cursor_pick_tests", "cursor_pick_hits", "ghosts_queued", "ghost_preps", "hidden_cover_tests",
     "shadow_demand_px", "ghost_draws", "ghost_culled", "ghost_collects", "ghost_cache_hits", "ghost_tris",
     "ghost_cache_bytes", "hidden_cover_visits", "hidden_cover_reaches", "shadow_composite_runs",
-    "shadow_page_limit", "shadow_extended_pages", "shadow_pressure_sheds"};
+    "shadow_page_limit", "shadow_extended_pages", "shadow_pressure_sheds",
+    "terrain_slot_creates", "terrain_slot_reuses", "terrain_slot_pooled_bytes"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};
