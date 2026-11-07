@@ -87,6 +87,8 @@ int main() {
     flips("masterVol",       [](Settings& s) { s.masterVol -= 11; });
     flips("bgmVol",          [](Settings& s) { s.bgmVol -= 11; });
     flips("sfxVol",          [](Settings& s) { s.sfxVol -= 11; });
+    flips("soundVoices",     [](Settings& s) { s.soundVoices = 64; });
+    flips("evenSoundLevels", [](Settings& s) { s.evenSoundLevels = !s.evenSoundLevels; });
     flips("chanGain[0]",     [](Settings& s) { s.chanGain[0] = 0.5f; });
     flips("chanGain[7]",     [](Settings& s) { s.chanGain[7] = 0.5f; });
     flips("audioDevice",     [](Settings& s) { s.audioDevice = "some-device"; });
@@ -603,6 +605,35 @@ int main() {
         const Settings s = tak::loadSettings();
         check("campaignAi: loads", s.lastMap == "Inner Circle" && s.masterVol == 7);
         check("campaignAi: dropped", tak::serializeSettings(s).find("campaignAi") == std::string::npos);
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
+    // SOUND VOICES: 128 by default (retail's pool is 32), saved on its own key, clamped to
+    // 8..256; EVEN OUT SOUND LEVELS on by default.
+    {
+        auto check = [&](const char* what, bool ok) {
+            std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++g_fail;
+        };
+        const auto path = std::filesystem::temp_directory_path() /
+                          ("settings_test_voices_" + std::to_string(std::random_device{}()) + ".ini");
+        tak::setSettingsPath(path.string());
+        auto voicesFrom = [&](const std::string& body) {
+            { std::ofstream(path) << body; }
+            return tak::loadSettings().soundVoices;
+        };
+        check("voices: default 128", tak::Settings{}.soundVoices == 128 && voicesFrom("masterVol = 7\n") == 128);
+        Settings saved;
+        saved.soundVoices = 96;
+        check("voices: save", tak::saveSettings(saved));
+        check("voices: 96 kept", tak::loadSettings().soundVoices == 96);
+        check("voices: 2 -> 8", voicesFrom("soundVoices = 2\n") == 8);
+        check("voices: 999 -> 256", voicesFrom("soundVoices = 999\n") == 256);
+        check("voices: 256 kept", voicesFrom("soundVoices = 256\n") == 256);
+        check("even: default on", tak::Settings{}.evenSoundLevels);
+        saved.evenSoundLevels = false;
+        check("even: save", tak::saveSettings(saved));
+        check("even: off kept", !tak::loadSettings().evenSoundLevels);
         std::error_code ec;
         std::filesystem::remove(path, ec);
     }

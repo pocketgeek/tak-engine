@@ -418,6 +418,26 @@ void OptionsScreen::build(int channels) {
            [&](float v) { s_.bgmVol = int(v + 0.5f); }, [](float v) { return pctOf(v, 256); });
     slider("SOUND EFFECTS", 0, 256, [&] { return float(s_.sfxVol); },
            [&](float v) { s_.sfxVol = int(v + 0.5f); }, [](float v) { return pctOf(v, 256); });
+    // How many sound effects can play at once; past it a new sound replaces a
+    // quieter class or is not heard. 32 is retail's voice pool; 128 the default.
+    slider("SOUND VOICES", 8, 256, [&] { return float(s_.soundVoices); },
+           [&](float v) { s_.soundVoices = int(v + 0.5f); },
+           [](float v) { const int n = int(v + 0.5f); return std::to_string(n) + (n == 32 ? " (RETAIL)" : n == 128 ? " (DEFAULT)" : ""); });
+    ctls_.back().help = [] {
+        return std::vector<std::string>{
+            "HOW MANY SOUND EFFECTS CAN PLAY AT ONCE. WHEN ALL ARE BUSY, A NEW SOUND REPLACES A LESS IMPORTANT ONE OR IS NOT HEARD.",
+            "THE ORIGINAL GAME HAD 32. MORE LETS EVERY SOUND OF A BIG FIGHT BE HEARD."};
+    };
+    // Raise quiet effects (the expansion's Creon cries were mastered 4-12 dB under the
+    // rest) toward one loudness, capped so none clips; off plays every file as retail.
+    toggle("EVEN OUT SOUND LEVELS", [&] { return s_.evenSoundLevels ? 1.0f : 0.0f; },
+           [&](float v) { s_.evenSoundLevels = v > 0.5f; });
+    ctls_.back().help = [] {
+        return std::vector<std::string>{
+            "RAISES QUIET SOUND EFFECTS TO MATCH THE REST, WITHOUT DISTORTING THEM. LOUD SOUNDS ARE LEFT AS THEY ARE.",
+            "SOME SOUNDS, SUCH AS THE CREON DEATH CRIES, WERE RECORDED MUCH QUIETER THAN THE REST AND GET LOST IN A FIGHT.",
+            "OFF PLAYS EVERY SOUND AT ITS ORIGINAL LEVEL, AS THE ORIGINAL GAME DID."};
+    };
     for (int i = 0; i < channels && i < 8; ++i) {
         std::string label = std::string("SPEAKER ") + role(channels, i);
         slider(label.c_str(), 0, 1, [this, i] { return s_.chanGain[i]; },

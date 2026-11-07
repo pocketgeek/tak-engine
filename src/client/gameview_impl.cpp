@@ -212,6 +212,8 @@
         sounds_.setMasterVolume(s.masterVol);
         sounds_.setMusicVolume(s.bgmVol);
         sounds_.setSfxVolume(s.sfxVol);
+        sounds_.setVoiceLimit(s.soundVoices);
+        sounds_.setEvenOut(s.evenSoundLevels);
         for (int i = 0; i < sounds_.channelCount(); ++i) sounds_.setChannelGain(i, s.chanGain[i]);
         mapView_.setZoomSpeed(s.mouseZoomSpeed);
         edgeScrollSpeed_ = s.edgeScrollSpeed;

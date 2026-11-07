@@ -117,6 +117,10 @@ struct Settings {
     int   bgmVol      = 128;       // background music (SoundBank music + MenuMusic); 50%
     int   sfxVol      = 256;       // unit / world / UI sound effects
     float chanGain[8] = {1, 1, 1, 1, 1, 1, 1, 1};   // per-output-speaker trim, 0..1
+    int   soundVoices = 128;       // sound effects playing at once (SoundBank::setVoiceLimit,
+                                   // 8..256); 32 is retail's voice pool (owner: 128 by default)
+    bool  evenSoundLevels = true;  // raise quiet effects (client/soundlevel.h); off = retail
+                                   // (owner: on by default)
     std::string audioDevice;       // output device NAME; "" = system default. Falls back
                                    // to system default if the saved name is gone at startup.
 
@@ -245,7 +249,7 @@ struct Settings {
             && a.gpuMemoryLimit == b.gpuMemoryLimit
             && a.videoDeblock == b.videoDeblock
             && a.healthBars == b.healthBars && a.statsPanel == b.statsPanel
-            && a.masterVol == b.masterVol && a.bgmVol == b.bgmVol && a.sfxVol == b.sfxVol
+            && a.masterVol == b.masterVol && a.bgmVol == b.bgmVol && a.sfxVol == b.sfxVol && a.soundVoices == b.soundVoices && a.evenSoundLevels == b.evenSoundLevels
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
             && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale
             && a.hardwareCursor == b.hardwareCursor && a.smoothMotion == b.smoothMotion

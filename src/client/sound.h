@@ -1,7 +1,9 @@
 #pragma once
 #include "util/virtualpath.h"
+#include "client/soundlevel.h"
 
-// 32-voice positional WAV mixer + music player, and the soundclasses TDF map.
+// Positional WAV mixer (retail's 32 voices by default, SOUND VOICES in Options) + music
+// player, and the soundclasses TDF map.
 // Script sound classes control voice admission; output-channel panning remains
 // independent of the number of simultaneous voices. PCM mixing is also exercised
 // with a paused dummy device by death_sound_test.
@@ -29,7 +31,7 @@
 #include <string>
 #include <vector>
 
-// Minimal 32-voice WAV mixer over an SDL audio device. It mixes at 44100 Hz (retail's
+// Minimal WAV mixer over an SDL audio device (32 voices as retail, up to kMaxVoices). It mixes at 44100 Hz (retail's
 // Miles ran at 22050/16/stereo) so a mod may ship sounds and music up to 44.1 kHz and
 // keep that quality. Every WAV is cached at its own rate and channel count (S16; only
 // a rate above 44100 is converted down): the 11025 Hz 8-bit mono unit sounds, the
@@ -101,6 +103,7 @@ public:
         std::vector<int16_t> samples;
         int rate = kMixRate;
         int channels = 1;
+        float evenGain = 1.0f;   // EVEN OUT SOUND LEVELS' boost (client/soundlevel.h), set at load
         size_t frames() const { return samples.size() / size_t(std::max(channels, 1)); }
     };
     const tak::hpi::Vfs* vfs_ = nullptr;   // runtime read-path (owned by main)
@@ -514,9 +517,10 @@ public:
         const auto* samples = load(n, it->second);
         if (!samples || samples->frames() == 0 || !dev_) return;
         SDL_LockAudioDevice(dev_);
-        std::array<tak::SoundVoice,32> voices;
+        std::array<tak::SoundVoice,kMaxVoices> voices;
         bool free=false;
-        for (size_t i=0;i<voices.size();++i) {
+        const size_t limit=size_t(voiceLimit_);
+        for (size_t i=0;i<limit;++i) {
             const auto& c=channels_[i];
             const bool active=c.data && (c.looping || c.pos<c.data->frames());
             voices[i]={active,c.looping,c.priority,c.started};
@@ -524,11 +528,11 @@ public:
         }
         // Retail class 0/1 chatter requires a free voice, even if it could
         // otherwise preempt a lower class. Classes 2..7 use priority eviction.
-        const int slot=(priority<=1 && !free) ? -1 : tak::retailSoundVoice(voices,priority);
+        const int slot=(priority<=1 && !free) ? -1 : tak::retailSoundVoice(std::span(voices).first(limit),priority);
         if (slot>=0) {
             auto& c=channels_[size_t(slot)];
             c.data=samples;c.pos=0;c.pan=pan;c.depth=depth;
-            c.positional=positional;c.wx=wx;c.wz=wz;c.gain=gain;
+            c.positional=positional;c.wx=wx;c.wz=wz;c.gain=gain*(evenOut_ ? samples->evenGain : 1.f);
             c.distanceGain=positional ? worldSoundGain(wx,wz) : 1.f;
             c.fpos=0;c.step=stepFor(std::clamp(rate,0.25f,4.f)*double(samples->rate)/kMixRate);
             c.wrapped=false;
@@ -723,6 +727,7 @@ private:
         try { bytes = vfs_->read(path); } catch (const std::exception&) { return nullptr; }
         auto pcm = decodeWav(bytes.data(), bytes.size());
         if (!pcm) return nullptr;
+        pcm->evenGain = tak::evenOutGain(pcm->samples.data(), pcm->samples.size(), pcm->rate, pcm->channels);
         return &cache_.emplace(key, std::move(*pcm)).first->second;
     }
 
@@ -918,6 +923,22 @@ public:
     void setMusicVolume(int v) { musicVol_ = std::clamp(v, 0, 256); }
     void setMasterVolume(int v) { masterVol_ = std::clamp(v, 0, 256); }
     void setSfxVolume(int v) { sfxVol_ = std::clamp(v, 0, 256); }
+    // How many sound effects play at once (Options: SOUND VOICES). Retail's voice
+    // manager (56ed40) holds 32; past the pool a new sound replaces a strictly lower
+    // class or is not played. Lowering it stops the voices past the new limit.
+    void setVoiceLimit(int n) {
+        n = std::clamp(n, kMinVoices, kMaxVoices);
+        if (n == voiceLimit_) return;
+        if (dev_) SDL_LockAudioDevice(dev_);
+        for (int i = n; i < kMaxVoices; ++i) channels_[i] = Channel{};
+        voiceLimit_ = n;
+        if (dev_) SDL_UnlockAudioDevice(dev_);
+    }
+    int voiceLimit() const { return voiceLimit_; }
+    // EVEN OUT SOUND LEVELS (Options; ours): quiet effects play raised by their
+    // evenGain (client/soundlevel.h). Off is retail. Applies to sounds started after.
+    void setEvenOut(bool on) { evenOut_ = on; }
+    static constexpr int kMinVoices = 8, kMaxVoices = 256, kRetailVoices = 32;
     // New effects stop starting (a replay running too fast to follow); music plays on.
     void setEffectsMuted(bool muted) { effectsMuted_ = muted; }
     void setChannelGain(int i, float g) { if (i >= 0 && i < 8) chanGain_[i] = std::clamp(g, 0.0f, 1.0f); }
@@ -951,7 +972,9 @@ private:
     std::map<std::string, std::string> index_;
     std::map<std::string, Pcm> cache_;
     std::map<std::string, float> peaks_;   // per-sound peak (UI normalization)
-    Channel channels_[32];
+    Channel channels_[kMaxVoices];
+    int voiceLimit_ = kRetailVoices;   // channels_[0, voiceLimit_) take new sounds
+    bool evenOut_ = false;             // EVEN OUT SOUND LEVELS
     uint64_t soundSequence_=0;
     std::vector<std::string> playlist_;
     Pcm music_;                    // the current track, at its own rate and channels
