@@ -2377,7 +2377,13 @@ int main(int argc, char** argv) {
             }
             sim::World w;
             sim::setupMatch(w, reg, cfg);
-            for (int i = 0; i < 1800; ++i) w.tick(1.0f / 30.0f);
+            // The server's BenchClock, as at NORMAL speed: the ramp's stages fall due
+            // evenly over the 60 seconds, then the run ends.
+            const uint32_t stages = uint32_t(sim::benchmarkSpawns(cfg.benchmark));
+            for (int i = 0; i < 1800; ++i) {
+                w.benchmarkClock(uint32_t(uint64_t(stages) * uint32_t(i + 1) / 1800u), i == 1799);
+                w.tick(1.0f / 30.0f);
+            }
             int total = 0, bad = 0;
             for (const auto& u : w.units()) {
                 if (!u.alive() || !u.type || u.type->canFly) continue;
