@@ -1,6 +1,12 @@
 # README and user-guide screenshots
 
-**Retaken for 0.9.20** (2026-11-06): `title.jpg` only, by the 0.9.20 build (Debug
+**Retaken for 0.9.21** (2026-11-07): `title.jpg` only, by the 0.9.21 build (Debug of
+`main` at `b95091e7` with the 0.9.21 version line), with the 0.9.1 title capture (script
+`title.sh` in `~/tak-tmp/scratch/release-0921/shots/`), cropped to the artwork as before;
+it reads VERSION 0.9.21. Nothing else was retaken: no other picture here is about
+something 0.9.21 changed.
+
+**Earlier: retaken for 0.9.20** (2026-11-06): `title.jpg` only, by the 0.9.20 build (Debug
 `-O2 -g` of `land-0920c` at `2910a7ef` with the 0.9.20 version line), with the 0.9.1
 title capture (script `title.sh` in `~/tak-tmp/scratch/release-0920/shots/`), cropped to
 the artwork as before; it reads VERSION 0.9.20. Nothing else was retaken: no

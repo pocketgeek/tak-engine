@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.20-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.21-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,17 +26,15 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.20
+## What's new in 0.9.21
 
-- Groups and formations as in the original game: a Ctrl group is a saved selection, a formation keeps together (flyers too), and a factory's new unit joins its group as it leaves.
-- Legion formations re-form: idle members walk back to their places, the computer's squads too.
-- A skirmish opens with 5000 mana; new units start with an empty mana pool.
-- Losing your Monarch loses your whole army (Monarch Expendable off); a transport's passengers die with it.
-- Abandoned building sites fade away and give their mana back; bodies and statues in water sink and stay.
-- Original-game clicks, target search, fire at a point, allied sight, kill credit and veterancy; mission 4 fixed.
+- Legion columns keep their files round corridor corners; Legion formation flyers circle over the front.
+- The Benchmark runs 60 real seconds at any speed, with a Speed choice: +10, Normal or +100.
+- Sound options: how many sounds play at once, and quiet sounds evened out.
+- A flyer's group number, health bar and countdown stay with it in the air.
 
-Protocol 312: does not play with 0.9.19 or earlier, nor their replays; servers must update too.
-Details in the [CHANGELOG](CHANGELOG.md#0920).
+Protocol 315: does not play with 0.9.20 or earlier, nor their replays; servers must update too.
+Details in the [CHANGELOG](CHANGELOG.md#0921).
 
 ## Features
 

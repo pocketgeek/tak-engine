@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Quick start](quick-start.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Changelog](../CHANGELOG.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.9.20**. Which versions it plays with, and whose
+This guide covers **TAK Engine 0.9.21**. Which versions it plays with, and whose
 replays it plays: see [Versions](#versions). What changed in each release: see
 the [CHANGELOG](../CHANGELOG.md). It is written for three kinds of reader:
 
@@ -1897,6 +1897,8 @@ is the one both use next time.
 | **Music volume** | 50% | Soundtrack volume. |
 | **Sound effects** | 100% | Unit, world and interface sounds. |
 | **Speaker** sliders | 100% | One per speaker channel on your device, for surround setups. |
+| **Sound voices** | 128 | How many sound effects can play at once, 8 to 256. The original game played 32. When all are busy, a new sound replaces a less important one, as in the original. |
+| **Even out sound levels** | On | Raises sound effects recorded much quieter than the rest (by at most 10 dB, never to clipping), such as the Creon units' cries, so they are not lost in a fight. Off plays every sound at its own level, as the original game did. |
 
 World sounds are full volume inside the view and fade with distance outside
 it, falling silent once a sound is as far beyond the nearest edge of the view as
@@ -2381,15 +2383,15 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-TAK Engine 0.9.20 uses network protocol **312** and replay format **15**. No earlier
-release uses protocol 312 (0.9.19 used 311), so:
+TAK Engine 0.9.21 uses network protocol **315** and replay format **15**. No earlier
+release uses protocol 315 (0.9.20 used 312), so:
 
-- **Multiplayer:** 0.9.20 plays only with 0.9.20. A server turns away a client whose
-  protocol differs from its own, so a 0.9.19 or older player cannot join a 0.9.20
-  server, nor a 0.9.20 player an older one; the connection fails with a *protocol
+- **Multiplayer:** 0.9.21 plays only with 0.9.21. A server turns away a client whose
+  protocol differs from its own, so a 0.9.20 or older player cannot join a 0.9.21
+  server, nor a 0.9.21 player an older one; the connection fails with a *protocol
   version mismatch* message. When a release changes the protocol, a server and all of
   its players update together.
-- **Replays:** 0.9.20 plays replays recorded by 0.9.20. A replay recorded by 0.9.19
+- **Replays:** 0.9.21 plays replays recorded by 0.9.21. A replay recorded by 0.9.20
   or earlier needs a version with that replay's protocol; keep an old copy of the
   engine (built from its tag, see the [development guide](development.md)) if you want
   to keep watching old replays.

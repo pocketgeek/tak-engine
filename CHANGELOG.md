@@ -19,6 +19,48 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.21
+*2026-11-07 · protocol 315 · replay format 15 · does not play with 0.9.20 or earlier, nor their replays*
+
+- **Legion columns keep their files round corridor corners.** In Legion pathfinding a
+  column turning from one narrow corridor into another used to cut the inner corner
+  and squeeze into one or two files along the inner wall; it now wheels round the
+  corner with every file in its lane, so it keeps moving at full width.
+- **Legion formation flyers circle over the front.** Held to the ground army's pace,
+  the flyers of a moving Legion formation crept along and seemed to hover; they now
+  circle in a loose swarm over the front of the formation, as the original game's
+  flyers loiter over a moving group, and form up on their places again to land.
+- **The Benchmark runs on the clock.** A run lasts 60 real seconds at any game speed
+  and spawns its units per real second, so a computer that cannot keep up gets
+  through less of the battle rather than taking longer. The Benchmark screen has a
+  **Speed** choice, **+10** (the default), **Normal** or **+100**, which the game
+  remembers, and the results list the speed. The screen stays up until the battle
+  loads instead of flashing the title screen, and the Load Replay picker does the
+  same. "Extra Absurd" has lost its "+WTH".
+- **Two new sound options.** **Sound voices** (8 to 256, default 128) sets how many
+  sound effects can play at once; the original game played 32. **Even out sound
+  levels** (on by default) raises effects that were recorded much quieter than the
+  rest, such as the Creon units' cries, so they are not lost in a fight; off plays
+  every sound at its own level, as the original game did. Both explain themselves
+  when you hover over them in Options.
+- **A flyer's group number, health bar and self-destruct countdown stay with it in
+  the air** instead of on the ground beneath it.
+- **The game speed above +10 shows as a level** (+100) rather than a multiplier, and
+  the SIM row of the stats panel starts at the speed asked for instead of climbing
+  from zero at the start of a game.
+- **With Shift held, a queued lodestone or area-clear box sits where you dragged it**
+  on raised ground instead of sliding below it.
+- **Under the hood:** the Benchmark's clock is a server command (`Cmd::BenchClock`)
+  in the tick stream, so replays of a run stay exact. Protocol 313 is the Legion
+  corner lanes and 314 the formation flyers. Packages ship
+  `TITLE-FONT-LICENSE.txt` (SIL Open Font License 1.1) for an embedded font.
+
+**Upgrading (server operators):** update `takserver` together with your
+players.
+
+Full notes: [release-0.9.21-notes.md](docs/release-0.9.21-notes.md) ·
+validation: [release-0.9.21-validation.md](docs/release-0.9.21-validation.md)
+
 ## 0.9.20
 *2026-11-06 · protocol 312 · replay format 15 · does not play with 0.9.19 or earlier, nor their replays*
 

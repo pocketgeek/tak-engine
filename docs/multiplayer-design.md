@@ -1279,6 +1279,20 @@ replays are refused (a 311 peer would desync, and a 311 replay would play differ
 0.9.20 ships protocol 312; it plays with neither 0.9.19 nor any earlier version, nor
 their replays.
 
+Protocols 313 and 314 change hashed Legion behaviour only: 313 keeps a column's files in
+their lanes round a corner from one narrow corridor into another (`cornerCommit`), 314
+circles a moving Legion formation's flyers over its front instead of holding them to the
+ground's pace. Protocol 315 runs the menu Benchmark on the server's wall clock: in a
+benchmark room the server adds `Cmd::BenchClock` to a tick's bundle whenever more of the
+spawn ramp's stages are due (`targetId`, out of `benchmarkSpawns(level)` spread over
+60 real seconds from the first tick) and once more when the 60 seconds are up
+(`queue` = 1); every sim fires the due stages in order and ends the run on it, so the
+run's length no longer depends on the game speed or on keeping up with it, and a replay
+reproduces it from the recorded commands. A client never sends `BenchClock` (its parser
+refuses the kind). A benchmark room may also run at `kMaxBenchmarkGameSpeed` (110,
++100). Replay format 15 is unchanged. 0.9.21 ships protocol 315; it plays with neither
+0.9.20 nor any earlier version, nor their replays.
+
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
 in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each
@@ -1568,6 +1582,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.9.20 (peers and server) requires protocol 312; version 0.9.19 (peers and server) requires protocol 311 (310, Legion steering of 2026-11-02, was never released on its own); versions 0.9.18, 0.9.17 and 0.9.16 (peers and server) require protocol 309; 0.9.15 and 0.9.14 required 308; 0.9.13 required 307; 0.9.12 required 305 (306 was never released); 0.9.11 required 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.9.21 (peers and server) requires protocol 315 (313 and 314 were never released on their own); version 0.9.20 requires protocol 312; version 0.9.19 (peers and server) requires protocol 311 (310, Legion steering of 2026-11-02, was never released on its own); versions 0.9.18, 0.9.17 and 0.9.16 (peers and server) require protocol 309; 0.9.15 and 0.9.14 required 308; 0.9.13 required 307; 0.9.12 required 305 (306 was never released); 0.9.11 required 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions remain fixed to Retail.
