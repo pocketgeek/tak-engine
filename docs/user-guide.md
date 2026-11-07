@@ -2276,8 +2276,10 @@ Press **D** for the **Diplomacy** screen:
 - **Share mana**: choose which teammates receive your surplus mana. Surplus goes
   first to the ally whose storage is least full. Sharing starts on for
   teammates.
-- **Chat recipients**: choose who receives your chat messages.
-- **Voice**: choose who hears you on [voice chat](#voice-chat).
+- **Chat recipients**: choose who receives your chat messages. Each game starts
+  with your allies only.
+- **Voice**: choose who hears you on [voice chat](#voice-chat). Also allies only at
+  the start of each game.
 - **Volume**: how loud each other player's voice plays for you.
 
 ![The Diplomacy screen listing four players with Share Mana, Chat and Voice checkboxes, Volume sliders at 50% and 25% for the two other human players, and a Give Selected Units button](img/diplomacy.jpg)
@@ -2285,7 +2287,8 @@ Press **D** for the **Diplomacy** screen:
 *The Diplomacy screen (**D**), from the engine's built-in input test, with voice chat on. The computer player (ENEMY) has no Volume slider.*
 
 The screen lists every player; the gift buttons and mana boxes appear only for
-allies, and chat starts on for everyone. A gift button is greyed while none of
+allies, and chat and voice start on for your allies only (tick the others to
+reach them too). A gift button is greyed while none of
 your selected units can be given. Giving units keeps the screen open: units that
 cannot be given stay yours, the recipient's unit cap is respected, and the given
 units leave your groups and take the recipient's colour. Campaigns have no
@@ -2518,8 +2521,9 @@ Before the game starts, everyone in the room who has voice chat on hears you.
 
 In the game, the **Diplomacy** screen (**D**) chooses, like chat:
 
-- The **Voice** column says who hears you. Everyone is ticked at the start of
-  each game. Your own box cannot be changed: you never hear yourself.
+- The **Voice** column says who hears you. Your allies (your team) are ticked at
+  the start of each game, as in the **Chat** column; tick other players to talk
+  to them too. Your own box cannot be changed: you never hear yourself.
   Spectators hear you only while every player is ticked.
 - The **Volume** column sets how loud each other player's voice plays for you,
   0 to 100% (click or drag along the slider). Each game starts with every slider

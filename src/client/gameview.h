@@ -2371,9 +2371,11 @@ private:
     enum class DiplomacyAction { Give, Mana, Chat, Voice, Volume, Close };
     struct DiplomacyHot { SDL_FRect rect; int player; DiplomacyAction action; };
     std::vector<DiplomacyHot> giveUnitsHots_;
+    // Who reads this player's chat: the diplomacy CHAT column. Each game starts with your
+    // allies only (your team's slots; everyone for a spectator) -- resetDiplomacy.
     uint8_t chatRecipients_ = 0xff;
     // Who hears this player's voice: the diplomacy VOICE column, with chat's defaults and
-    // rules (everyone; reset each game; sent with every frame, enforced by the server).
+    // rules (allies only; reset each game; sent with every frame, enforced by the server).
     uint8_t voiceRecipients_ = 0xff;
     // How loud each player's voice plays here: the diplomacy VOLUME sliders, 0..100 by
     // slot, 100 by default. Local only (never sent, hashed or recorded); reset each game

@@ -1806,9 +1806,11 @@
             resultParticipants_=uint8_t((1u<<0)|(1u<<1)|(1u<<2)|(1u<<7));
             playerName_[0]="PLAYER";playerName_[1]="ALLY";playerName_[2]="ENEMY";playerName_[7]="DEFEATED";
             {   // Humans in slots 0 (you), 1 and 7; the ENEMY in slot 2 is a computer player.
+                // You and ALLY are team 0; ENEMY and DEFEATED have teams of their own.
                 tak::net::RoomView room;
                 for(int i:{0,1,7})room.slots[i].type=1;
                 room.slots[2].type=2;
+                room.slots[2].team=1;room.slots[7].team=2;room.mySlot=0;
                 resetDiplomacy(room);
             }
             writableWorld().player(7).defeated=true;hotkeys_.load({});
@@ -1839,16 +1841,16 @@
             check(has(DiplomacyAction::Mana,1) && !has(DiplomacyAction::Mana,2) && !has(DiplomacyAction::Mana,0),"only teammates can receive mana");
             for(int p:{0,1,2,7})check(has(DiplomacyAction::Chat,p),"all participants need chat controls");
             check(!has(DiplomacyAction::Chat,3),"empty slots must not appear as players");
-            check(chatRecipients_==0xff && framePlayer(0).manaShareMask==0xff,"default sharing/chat preferences");
-            // VOICE: chat's column again, same defaults (everyone) and the same players; your
+            check(chatRecipients_==0x03 && framePlayer(0).manaShareMask==0xff,"default sharing; chat to allies only");
+            // VOICE: chat's column again, same defaults (allies only) and the same players; your
             // own box is shown but inert (your voice never comes back to you).
-            check(voiceRecipients_==chatRecipients_ && voiceRecipients_==0xff,"voice defaults equal chat's");
+            check(voiceRecipients_==chatRecipients_ && voiceRecipients_==0x03,"voice defaults equal chat's: allies only");
             for(int p:{1,2,7})check(has(DiplomacyAction::Voice,p),"every other participant needs a voice control");
             check(!has(DiplomacyAction::Voice,0) && !has(DiplomacyAction::Voice,3),"no voice control for yourself or an empty slot");
-            click(DiplomacyAction::Chat,2);check(!(chatRecipients_ & 4),"chat checkbox updates recipients");
-            check(voiceRecipients_==0xff,"the chat column leaves voice alone");
-            click(DiplomacyAction::Voice,2);check(!(voiceRecipients_ & 4) && (voiceRecipients_ & 2),"voice checkbox updates its recipients");
-            click(DiplomacyAction::Voice,2);check(voiceRecipients_==0xff,"and back");
+            click(DiplomacyAction::Chat,2);check(chatRecipients_ & 4,"chat checkbox adds the enemy");
+            check(voiceRecipients_==0x03,"the chat column leaves voice alone");
+            click(DiplomacyAction::Voice,2);check((voiceRecipients_ & 4) && (voiceRecipients_ & 2),"voice checkbox updates its recipients");
+            click(DiplomacyAction::Voice,2);check(voiceRecipients_==0x03,"and back");
             // VOLUME: a slider for each other human (ALLY, DEFEATED), none for yourself or the
             // computer player, every one at 100; greyed and inert while voice chat is off.
             const auto allFull=[&]{return std::all_of(voiceVolume_.begin(),voiceVolume_.end(),[](uint8_t v){return v==100;});};

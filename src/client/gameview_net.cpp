@@ -146,7 +146,16 @@
     }
 
     void GameView::resetDiplomacy(const tak::net::RoomView& room) {
-        chatRecipients_=0xff;voiceRecipients_=0xff;requestedManaSharing_.reset();
+        // Chat and voice start with your allies only: the occupied slots on your team
+        // (you included). A spectator has no team and keeps everyone.
+        uint8_t allies=0xff;
+        if (room.mySlot>=0 && room.mySlot<tak::net::kMaxSlots && room.mySlot<8) {
+            allies=0;
+            for (int i=0;i<tak::net::kMaxSlots && i<8;++i)
+                if ((room.slots[i].type==1 || room.slots[i].type==2) && room.slots[i].team==room.slots[room.mySlot].team)
+                    allies|=uint8_t(1u<<i);
+        }
+        chatRecipients_=allies;voiceRecipients_=allies;requestedManaSharing_.reset();
         voiceVolume_.fill(100);voiceVolumeDrag_=-1;humanSlots_=0;
         for (int i=0;i<tak::net::kMaxSlots && i<8;++i)
             if (room.slots[i].type==1) humanSlots_|=uint8_t(1u<<i);
