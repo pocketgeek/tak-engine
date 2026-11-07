@@ -1439,6 +1439,9 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
             // TAK_SPEED: set the game speed in tenths (10 = 1x) for headless timing
             // tests -- re-cadences the server without touching the (deterministic) sim.
             if (const char* sp = tak::devEnv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, tak::net::kMaxDevGameSpeed));
+            // The menu Benchmark runs at +10 (2x, retail's fastest): the sim must keep up
+            // with twice normal speed, and the results show where it falls short.
+            else if (benchmarkMode_) o.speed = uint8_t(tak::net::kMaxGameSpeed);
             // TAK_SPEED_AT schedules in-game speed changes (see mpStep), so the room must
             // allow them.
             if (tak::devEnv("TAK_SPEED_AT")) o.speedUnlock = 1;

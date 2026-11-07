@@ -2985,7 +2985,8 @@ only accepts clients of the same protocol version; see [Versions](#versions).
 ## Benchmark
 
 **Settings → Benchmark** runs a repeatable stress test: an eight-AI battle on
-Ulasem Arena for 60 seconds of game time.
+Ulasem Arena for 60 seconds of game time, at game speed **+10** (twice normal
+speed), so a computer that keeps up finishes in about 30 real seconds.
 
 **Pathfinding**, at the top of the screen, picks the
 [pathfinder](#pathfinding-retail-and-legion) the battle uses: **Retail** (the
@@ -3004,14 +3005,15 @@ Then choose an **intensity**, which starts the run:
 | Extra Absurd | every 0.03125 s |
 
 The results screen shows, every ten seconds, frame rate, simulation speed (as
-a game-speed level, like the stats panel), processor use, memory, GPU use and video memory, together with the display
+a game-speed level, like the stats panel: **+10** means it kept up), processor use, memory, GPU use and video memory, together with the display
 settings used, and lists the **Pathfinding** the battle ran with. The stats
 panel shows it as **PATHFINDER** during a run. Compare only runs with the same
 pathfinder. Client and server processor use are each a share of the whole
 computer's capacity, 0–100%, and GPU use is measured as in the
 [stats panel](#interface); a measurement the system cannot give shows **N/A**.
 Unit limits still apply, so the highest intensities may not reach their
-requested unit counts. A slow machine can take longer than 60 real seconds.
+requested unit counts. A computer that cannot keep up at +10 runs slower and
+takes longer than 30 real seconds.
 
 The Benchmark always plays the original game with **no mods**: it leaves out
 every cosmetic and game mod pack, ticked or in `always_enabled`, so results
