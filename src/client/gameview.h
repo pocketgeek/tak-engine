@@ -377,8 +377,9 @@ public:
     // plan (see MatchConfig::benchmark). Drives the createGame/seat path in mpAutoStep.
     // It runs with no mod packs of any kind (applyBenchmarkMods), so call it after
     // setMpClient and before the room is created. `path` is the room's pathfinder.
-    void setBenchmark(int level, tak::sim::PathfindingMode path) {
+    void setBenchmark(int level, tak::sim::PathfindingMode path, int speed) {
         benchmarkLevel_ = level; benchmarkMode_ = level > 0; benchmarkPathfinding_ = path;
+        benchmarkSpeed_ = speed >= 100 ? 100 : speed > 0 ? 10 : 0;
         if (benchmarkMode_) tak::applyBenchmarkMods(mods_, mp_);
     }
     bool benchmarkMode() const { return benchmarkMode_; }
@@ -386,6 +387,7 @@ public:
     bool benchmarkStatsShown() const { return benchStatsShown_; }
     // Establish the t=0 baseline for the CPU% deltas (called once when the run starts).
     void benchmarkBaseline();
+    int benchmarkElapsedSec() const;   // the run's real seconds so far (0 before its first tick)
 #ifndef NDEBUG
     // Dev-harness ctor branches (gameview_devharness.cpp).
     void setupPatrolPerf();
@@ -3173,7 +3175,7 @@ private:
     }
     // No lock, so ONLY for what match setup fixes and the sim never changes afterwards:
     // featureTypes(), numPlayers(), allied() (teams), pathfindingMode(), manaSpots(),
-    // buildAllowed(), isWater() (terrain), benchmarkMode()/benchmarkEndTick(), and the atomic
+    // buildAllowed(), isWater() (terrain), benchmarkMode(), and the atomic
     // featGeneration().
     // Units, features, players' economy, nav and fog are live: snapshot or liveWorld().
     const tak::sim::World& worldTables() const { return simWorld_; }
@@ -3210,6 +3212,7 @@ private:
     float patrolPerfAccum_ = -1.0f;     // developer fixture only; negative disables it
     int benchmarkLevel_ = 0;            // benchmark intensity 1..5 (for the plan + results label)
     tak::sim::PathfindingMode benchmarkPathfinding_ = tak::sim::PathfindingMode::Retail;   // menu Benchmark's pick
+    int benchmarkSpeed_ = 10;   // menu Benchmark's SPEED pick: game-speed level 0 (NORMAL), 10 (+10) or 100 (+100)
     // Benchmark metrics: one sample per 5s milestone (the 7 spawn stages + the 40s end).
     struct BenchSample {
         int gameSec = 0, liveUnits = 0;
@@ -3225,7 +3228,8 @@ private:
     std::vector<BenchSample> benchSamples_;
     tak::proc::Sample benchCliPrev_, benchSrvPrev_;
     uint64_t benchPrevWallMs_ = 0;
-    uint32_t benchNextTick_ = 300;      // next milestone tick (300,600,...,1800)
+    uint64_t benchStartMs_ = 0;         // wall clock at the run's first tick (0 = not started)
+    int benchNextSec_ = 10;             // next sample, in the run's real seconds (10, 20, ..., 50)
     long localServerPid_ = 0;           // local takserver pid (0 = N/A, e.g. headless)
     bool benchStatsShown_ = false;      // the benchmark stats overlay is up
     SDL_FRect benchDoneRect_{};          // the stats overlay's DONE button (set each render)

@@ -1302,6 +1302,7 @@
         }
         fb.winningTeam = world_.winningTeam();
         fb.gameTick = world_.tickCount();
+        fb.benchEnded = world_.benchmarkEnded();
         fb.scenarioClock = writableWorld().scenario() && writableWorld().scenario()->showClock();
         fb.wind = world_.wind();
         if (effectVisibility_ && !noFog_) {

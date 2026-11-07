@@ -119,6 +119,7 @@ int main() {
     flips("gameCreate.crusades", [](Settings& s) { s.gameCreate.crusades = !s.gameCreate.crusades; });
     flips("gameCreate.pathfindingMode", [](Settings& s) { s.gameCreate.pathfindingMode = tak::sim::PathfindingMode::Legion; });
     flips("benchmarkPathfinding", [](Settings& s) { s.benchmarkPathfinding = tak::sim::PathfindingMode::Legion; });
+    flips("benchmarkSpeed",  [](Settings& s) { s.benchmarkSpeed = 0; });
     flips("gameCreate.doubleSight", [](Settings& s) { s.gameCreate.doubleSight = !s.gameCreate.doubleSight; });
     flips("gameCreate.speedUnlock", [](Settings& s) { s.gameCreate.speedUnlock = !s.gameCreate.speedUnlock; });
     flips("gameCreate.monarchExpendable", [](Settings& s) { s.gameCreate.monarchExpendable = !s.gameCreate.monarchExpendable; });
@@ -194,6 +195,7 @@ int main() {
         cur.gameCreate.crusades = true;
         cur.gameCreate.generator = "saved recipe";
         cur.benchmarkPathfinding = tak::sim::PathfindingMode::Legion;
+        cur.benchmarkSpeed = 0;
         cur.hotkeys["selectAll"] = "ctrl+a";
         // Voice chat has its own screen and DEFAULTS: the Options reset leaves it alone.
         cur.voiceEnabled = true;
@@ -231,6 +233,7 @@ int main() {
                                   d.missionCompleted("aramon", 4));
         keep("known servers",     d.knownServers == cur.knownServers);
         keep("benchmarkPathfinding", d.benchmarkPathfinding == tak::sim::PathfindingMode::Legion);
+        keep("benchmarkSpeed",    d.benchmarkSpeed == 0);
         keep("dataDir",           d.dataDir == cur.dataDir);
         keep("dataManifest",      d.dataManifest == cur.dataManifest);
         keep("playerName",        d.playerName == cur.playerName);
@@ -653,6 +656,12 @@ int main() {
             return tak::loadSettings().benchmarkPathfinding;
         };
         check("benchPath: default", tak::Settings{}.benchmarkPathfinding == Mode::Retail);
+        check("benchSpeed: default +10", tak::Settings{}.benchmarkSpeed == 10);
+        { { std::ofstream(path) << "benchmarkSpeed = 0\n"; } check("benchSpeed: 0 is NORMAL", tak::loadSettings().benchmarkSpeed == 0); }
+        { { std::ofstream(path) << "benchmarkSpeed = 7\n"; } check("benchSpeed: 7 -> +10", tak::loadSettings().benchmarkSpeed == 10); }
+        { { std::ofstream(path) << "benchmarkSpeed = 100\n"; } check("benchSpeed: 100 is +100", tak::loadSettings().benchmarkSpeed == 100); }
+        { { std::ofstream(path) << "benchmarkSpeed = 999\n"; } check("benchSpeed: 999 -> +100", tak::loadSettings().benchmarkSpeed == 100); }
+        { { std::ofstream(path) << "benchmarkSpeed = -3\n"; } check("benchSpeed: -3 -> NORMAL", tak::loadSettings().benchmarkSpeed == 0); }
         check("benchPath: absent", modeFrom("masterVol = 7\n") == Mode::Retail);
         Settings saved;
         saved.benchmarkPathfinding = Mode::Legion;

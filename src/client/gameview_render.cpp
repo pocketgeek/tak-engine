@@ -3418,9 +3418,8 @@
         if (spectating_) {
             std::string m = "SPECTATING";
             if (benchmarkMode_) {   // append a countdown from the benchmark duration to 0
-                uint32_t end = worldTables().benchmarkEndTick(), gt = front().gameTick;
-                int rem = (end == 0) ? int(end) : (gt < end ? int((end - gt + 29) / 30) : 0);
-                if (end == 0) rem = 60;   // not started yet -> full duration
+                // Real seconds left of the run (the server ends it on its own clock).
+                int rem = front().benchEnded ? 0 : std::max(0, tak::sim::kBenchmarkSeconds - benchmarkElapsedSec());
                 char buf[40];
                 std::snprintf(buf, sizeof buf, "BENCHMARKING  %d:%02d", rem / 60, rem % 60);
                 m = buf;

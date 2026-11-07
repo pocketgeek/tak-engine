@@ -19,7 +19,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 314;      // 314: Legion formation flyers circle over the front of their ground instead of
+constexpr uint32_t kNetVersion = 315;      // 315: the Benchmark runs on the server's wall clock (Cmd::BenchClock):
+                                           // 60 real seconds and spawns per real second at any game speed
+                                           // 314: Legion formation flyers circle over the front of their ground instead of
                                            //      creeping at its pace (hashed, 2026-11-06)
                                            // 313: Legion corner lanes: a column turning from one corridor into another keeps
                                            //      its files across the corner and down the new corridor (hashed, 2026-11-06)
@@ -641,6 +643,8 @@ constexpr uint32_t kResurrectProtocol = 305;
 // Cmd::AttackGround and Cmd::AiGroup: the first protocol that carries them (a
 // strict replay read refuses them before).
 constexpr uint32_t kAttackGroundProtocol = 312;
+// Cmd::BenchClock: the first protocol that carries it.
+constexpr uint32_t kBenchClockProtocol = 315;
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)
 constexpr int kServerHz = 30;              // sim/tick rate
 constexpr int kHashPeriod = 30;            // ticks between StateHash reports; the
@@ -942,8 +946,9 @@ struct GameInfo {
 // Live game speed, in tenths (10 = 1x). Retail's -10..+10 setting is linear:
 // level d runs (d+10)/10 x normal, 0.1x steps up to 2x (multiplayer floors at
 // 0.1x). The UI shows d = speed - 10. kMaxDevGameSpeed is only for the headless
-// timing harnesses (TAK_SPEED) on a test/loopback server.
-inline constexpr int kMinGameSpeed = 1, kMaxGameSpeed = 20, kMaxDevGameSpeed = 80;
+// timing harnesses (TAK_SPEED) on a test/loopback server. kMaxBenchmarkGameSpeed is the
+// menu Benchmark's +100 (11x), allowed only in a benchmark room (private, local only).
+inline constexpr int kMinGameSpeed = 1, kMaxGameSpeed = 20, kMaxDevGameSpeed = 80, kMaxBenchmarkGameSpeed = 110;
 
 // Per-game settings chosen by the host.
 constexpr uint8_t kStressImmediate = 1, kStressStaged = 2;

@@ -194,7 +194,7 @@ jobs:
         run: |
           APPDIR="dist-dmg/Total Annihilation - Kingdoms.app"
           mkdir -p "$APPDIR/Contents/MacOS" "$APPDIR/Contents/Resources"
-          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt "$APPDIR/Contents/Resources/"
+          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt TITLE-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt "$APPDIR/Contents/Resources/"
           cp res/icons/takclient.icns "$APPDIR/Contents/Resources/"
           iconutil -c iconset "$APPDIR/Contents/Resources/takclient.icns" -o /tmp/takclient.iconset
           cp build/takclient build/takserver "$APPDIR/Contents/MacOS/"
@@ -291,7 +291,7 @@ jobs:
       - name: Bundle + zip (debug)
         run: |
           mkdir -p dist-macos-debug
-          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt dist-macos-debug/
+          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt TITLE-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt dist-macos-debug/
           cp build-debug/takclient build-debug/takserver build-debug/cartographer dist-macos-debug/
           (cd dist-macos-debug && zip -r ../takclient-macos-${{ matrix.arch }}-debug.zip .)
 

@@ -19421,16 +19421,19 @@ void World::tick(float dt) {
         tickFeatureDeaths();   // destroyed features finish seqnamedie (495ef7)
         tickFeatureFades();   // reclaimed features leave the plane (494ce0)
     }
-    // Benchmark: fire the staged spawn plan at its scheduled ticks. Deterministic -- both
-    // the client sim and the referee run the identical plan (built in setupMatch), so
-    // lockstep holds. It IS hashed (real sim state), which is fine: every peer agrees.
-    while (benchCursor_ < benchPlan_.size() && benchPlan_[benchCursor_].tick <= tickCounter_) {
-        for (const auto& bs : benchPlan_[benchCursor_].units)
+    // Stress fill: fire the staged plan at its scheduled ticks; the benchmark ramp: the
+    // stages the server's BenchClock has made due. Deterministic -- every peer runs the
+    // identical plan (built in setupMatch) and gets the same commands, so lockstep holds.
+    // It IS hashed (real sim state), which is fine: every peer agrees.
+    auto fire = [&](const BenchStage& stage) {
+        for (const auto& bs : stage.units)
             // A player/AI may have conjured this limited type since planning.
             // Recheck live counts; dead units release their slot normally.
             if (!atTypeCap(bs.player,bs.type)) spawn(bs.type, bs.x, bs.z, 0, bs.player);
-        ++benchCursor_;
-    }
+    };
+    while (benchCursor_ < benchPlan_.size() && benchPlan_[benchCursor_].tick <= tickCounter_)
+        fire(benchPlan_[benchCursor_++]);
+    while (benchFired_ < benchDue_) fire(benchStages_[benchFired_++]);
     // Cap repaths per tick: a big group that jams while moving can trip the
     // blocked/stuck watchdogs en masse, and hundreds of path searches in one tick
     // stall the sim. Deferred units retry a later tick. Deterministic (fixed budget,

@@ -209,6 +209,7 @@ Settings loadSettings() {
         else if (key == "gameCreate.crusades") s.gameCreate.crusades = asBool();
         else if (key == "gameCreate.pathfindingMode") s.gameCreate.pathfindingMode = asPathMode();
         else if (key == "benchmarkPathfinding") s.benchmarkPathfinding = asPathMode();
+        else if (key == "benchmarkSpeed")  { const int v = asInt(0, 1000); s.benchmarkSpeed = v >= 100 ? 100 : v > 0 ? 10 : 0; }   // NORMAL, +10 or +100
         else if (key == "gameCreate.doubleSight") s.gameCreate.doubleSight = asBool();
         else if (key == "gameCreate.speedUnlock") s.gameCreate.speedUnlock = asBool();
         else if (key == "gameCreate.monarchExpendable") s.gameCreate.monarchExpendable = asBool();
@@ -323,6 +324,7 @@ std::string serializeSettings(const Settings& s) {
     o << "gameCreate.crusades = " << s.gameCreate.crusades << "\n";
     o << "gameCreate.pathfindingMode = " << int(s.gameCreate.pathfindingMode) << "\n";
     o << "benchmarkPathfinding = " << int(s.benchmarkPathfinding) << "\n";
+    o << "benchmarkSpeed = " << s.benchmarkSpeed << "\n";
     o << "gameCreate.doubleSight = " << s.gameCreate.doubleSight << "\n";
     o << "gameCreate.speedUnlock = " << s.gameCreate.speedUnlock << "\n";
     o << "gameCreate.monarchExpendable = " << s.gameCreate.monarchExpendable << "\n";

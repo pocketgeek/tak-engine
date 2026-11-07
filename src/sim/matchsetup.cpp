@@ -104,6 +104,7 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
     // and blocked output positions do not briefly unlock the producer.
     // The classic AI's squads: no unit order, so no producer gate below.
     if (c.kind == Cmd::AiGroup) { world.setAiGroup(int(c.player), c.unitId, c.targetId, c.queue != 0); return; }
+    if (c.kind == Cmd::BenchClock) { world.benchmarkClock(uint32_t(std::max(0, c.targetId)), c.queue != 0); return; }
     const auto* producer=world.unit(c.unitId);
     const bool repeatingMobile = producer && producer->type &&
         !producer->type->isStructure() && producer->repeatType;
@@ -323,6 +324,7 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
             break;
         case Cmd::Order:   // applied by applySelectionOrder() above
         case Cmd::AiGroup: // applied above
+        case Cmd::BenchClock:
             break;
         case Cmd::PowerCode:   // the World checks the room's option and ownership
             if (simPowerCode(c.targetId) && c.queue <= uint8_t(PowerArg::Invalid))
@@ -1020,8 +1022,9 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     const std::vector<int> slotSpot = startSpotsFor(cfg.slots, starts.size(), startMode);
     std::vector<std::pair<float, float>> assigned;
     // Benchmark: a gradual ramp -- each faction spawns 1 unit every 1/spawnsPerSec seconds
-    // for 60s (=1800 ticks). Intensity level (cfg.benchmark 1..5) sets the count; stage k
-    // fires at tick (k+1)*1800/N via integer math so every peer agrees. Units filled below.
+    // for 60 real seconds. The intensity sets the count N; the stages fire in order as the
+    // server's Cmd::BenchClock says they are due (stage k at (k+1)/N of the run), so every
+    // peer and the replay agree whatever the game speed. Units filled below.
     // Both block layouts below are BLIND grids -- a fixed lattice centred on the start
     // spot -- and World::spawn does no terrain check at all, so a unit whose lattice
     // point lands in a lake, on a cliff face or inside a blocked footprint is simply
@@ -1219,6 +1222,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     if (kBenchSpawns > 0) {
         benchPlan.resize(size_t(kBenchSpawns));
         for (int s = 0; s < kBenchSpawns; ++s)
+            // Nominal only (where it falls at NORMAL speed): BenchClock fires it.
             benchPlan[size_t(s)].tick = uint32_t((uint64_t(s + 1) * 1800) / uint64_t(kBenchSpawns));
     }
     // Build the process-wide ground-support rotation table now (retailRotationCoefficients:
@@ -1406,23 +1410,9 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
             }
         }
     }
-    if (stressStaged && cfg.benchmark) {
-        // Both on: one tick-ordered plan for the single executor cursor. Stable, and the
-        // stress stage goes first on a tie.
-        std::vector<BenchStage> merged;
-        merged.reserve(stressPlan.size() + benchPlan.size());
-        size_t a = 0, b = 0;
-        while (a < stressPlan.size() || b < benchPlan.size()) {
-            if (b == benchPlan.size() || (a < stressPlan.size() && stressPlan[a].tick <= benchPlan[b].tick))
-                merged.push_back(std::move(stressPlan[a++]));
-            else
-                merged.push_back(std::move(benchPlan[b++]));
-        }
-        benchPlan = std::move(merged);
-    } else if (stressStaged) {
-        world.setStagedSpawns(std::move(stressPlan));
-    }
-    if (cfg.benchmark) world.setBenchmarkPlan(std::move(benchPlan), 1800);   // end at tick 1800 (60s)
+    // Two executors: the stress fill by tick, the benchmark ramp by the server's BenchClock.
+    if (stressStaged) world.setStagedSpawns(std::move(stressPlan));
+    if (cfg.benchmark) world.setBenchmarkPlan(std::move(benchPlan));
     // Block the (structure) footprints just spawned. Monarchs move, so this is a
     // no-op today, but it mirrors the client and covers any non-mover spawns.
     for (auto& u : world.units()) {

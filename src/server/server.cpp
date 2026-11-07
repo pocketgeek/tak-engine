@@ -343,6 +343,11 @@ struct Room {
     // (the per-tick order budget goes round the room, so no client starves).
     uint32_t orderSerialFloor[kMaxSlots] = {};
     int orderRotor = 0;
+    // A Benchmark room's wall clock (Cmd::BenchClock): when its first tick closed, the
+    // spawn stages it has told the sims are due, and whether it has ended the run.
+    uint64_t benchStartUs = 0;
+    uint32_t benchDueSent = 0;
+    bool benchEndSent = false;
     std::map<uint32_t, std::vector<Command>> pendingAt;  // server input-delay: cmds bucketed by future tick
     std::vector<Event> pendingEvents;           // sequenced events for the next tick
     // Tick pacing (server wall clock only; never sim state): see server/tickpacer.h.
@@ -485,6 +490,11 @@ private:
         if (testWork_ || (loopbackOnly_ && !requireAuth_)) return tak::net::kMaxDevGameSpeed;
 #endif
         return tak::net::kMaxGameSpeed;
+    }
+    // A benchmark room may also run at the Benchmark's +100 (benchmark rooms are only
+    // accepted from a local, unauthenticated client; see CreateGame).
+    int maxGameSpeed(const tak::net::GameOptions& o) const {
+        return o.benchmark ? std::max(maxGameSpeed(), tak::net::kMaxBenchmarkGameSpeed) : maxGameSpeed();
     }
     tak::srv::Limits limits_;
     std::shared_ptr<tak::net::TlsContext> tlsContext_;
@@ -1330,7 +1340,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             if(!(testWork_ || (loopbackOnly_ && !requireAuth_)) && (o.stressTest || o.benchmark || !mission.empty())) {
                 sendReject(c,"public servers do not accept benchmark, stress or campaign mission requests");return;
             }
-            o.speed=uint8_t(std::clamp<int>(o.speed,kMinGameSpeed,maxGameSpeed()));
+            o.speed=uint8_t(std::clamp<int>(o.speed,kMinGameSpeed,maxGameSpeed(o)));
             if (cap < 2 || cap > kMaxSlots) cap = kMaxSlots;   // sane default
             Room& room = rooms_[nextRoomId_];
             room.id = nextRoomId_++;
@@ -2293,7 +2303,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             if (!r->mission.empty()) o.doubleSight = 0;
             if (!rd.ok || rd.p!=rd.end) return;
             if(!(testWork_ || (loopbackOnly_ && !requireAuth_)) && (o.stressTest || o.benchmark)) {sendReject(c,"public benchmark/stress requests disabled");return;}
-            o.speed = uint8_t(std::clamp<int>(o.speed, kMinGameSpeed, maxGameSpeed()));   // 0.1x .. 2x
+            o.speed = uint8_t(std::clamp<int>(o.speed, kMinGameSpeed, maxGameSpeed(o)));   // 0.1x .. 2x (a benchmark 11x)
             if (!r->running) {
                 // The unit limit is fixed when the room is created.
                 o.unitCap = r->opts.unitCap;
@@ -2630,6 +2640,27 @@ void Server::closeTick(Room& r, bool multipleGames) {
         }
     }
     r.orderRotor = (r.orderRotor + 1) % kMaxSlots;
+    // Benchmark: the run is 60 REAL seconds whatever the game speed, and its spawn stages
+    // fall due evenly across them. The wall clock is the server's alone, so it reaches the
+    // sims (and the replay) as a command in this tick's bundle.
+    if (r.opts.benchmark && !r.benchEndSent) {
+        const uint64_t now = nowUs();
+        if (r.tick == 0) r.benchStartUs = now;
+        const uint64_t runUs = uint64_t(tak::sim::kBenchmarkSeconds) * 1000000u;
+        const uint64_t elapsed = now - r.benchStartUs;
+        const uint64_t stages = uint64_t(tak::sim::benchmarkSpawns(r.opts.benchmark));
+        const uint32_t due = uint32_t(std::min(stages, stages * std::min(elapsed, runUs) / runUs));
+        const bool ended = elapsed >= runUs;
+        if (due > r.benchDueSent || ended) {
+            Command c;
+            c.kind = tak::net::Cmd::BenchClock;
+            c.targetId = int32_t(ended ? stages : due);
+            c.queue = ended ? 1 : 0;
+            r.pending.push_back(c);
+            r.benchDueSent = uint32_t(c.targetId);
+            r.benchEndSent = ended;
+        }
+    }
     tak::srv::TickInput input;
     input.tick=r.tick;input.roomId=r.id;input.multipleGames=multipleGames;
     // The referee's hash is read only by checkHashes, against the reports of

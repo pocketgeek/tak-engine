@@ -2437,6 +2437,17 @@ if(TAK_BUILD_CLIENT)
     target_include_directories(tak-uifont SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/vendor/stb")
     target_link_libraries(tak-uifont PUBLIC tak-formats ${_tak_sdl2})
     target_link_libraries(takclient PRIVATE tak-uifont)
+    # The title lettering: Cinzel Bold (res/title-font, TITLE-FONT-LICENSE.txt), embedded
+    # the same way for the front end.
+    set(TAK_TITLEFONT_INC "${CMAKE_BINARY_DIR}/generated/titlefont.inc")
+    set(_tak_titlefont_ttf "${CMAKE_SOURCE_DIR}/res/title-font/Cinzel-Bold.ttf")
+    add_custom_command(OUTPUT "${TAK_TITLEFONT_INC}"
+        COMMAND ${CMAKE_COMMAND} "-DOUT=${TAK_TITLEFONT_INC}" "-DFILES=kCinzelBold=${_tak_titlefont_ttf}"
+                -P "${CMAKE_SOURCE_DIR}/cmake/EmbedFiles.cmake"
+        DEPENDS "${_tak_titlefont_ttf}" "${CMAKE_SOURCE_DIR}/cmake/EmbedFiles.cmake"
+        COMMENT "Embedding the title font" VERBATIM)
+    target_sources(takclient PRIVATE "${TAK_TITLEFONT_INC}")
+    target_include_directories(takclient PRIVATE "${CMAKE_BINARY_DIR}/generated")
     # The interface font: metrics, measuring, wrapping with it, UTF-8 (invalid bytes too),
     # glyph sheets built once per pixel size and bounded (on SDL's software renderer),
     # and the text API in both UI FONT styles (measure and draw agree, fit, wrap).
@@ -3930,7 +3941,7 @@ if(UNIX AND NOT APPLE)
   install(FILES packaging/systemd/takserver-acme.conf packaging/systemd/takserver-settings.conf
                 packaging/systemd/README.md
           DESTINATION share/doc/tak-engine/systemd)
-  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt DESTINATION share/licenses/tak-engine)
+  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt TITLE-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt DESTINATION share/licenses/tak-engine)
   install(TARGETS takserver RUNTIME DESTINATION bin)
   if(TARGET takclient)
     install(TARGETS takclient RUNTIME DESTINATION bin)
@@ -3984,7 +3995,7 @@ if(UNIX AND NOT APPLE)
 
   include(CPack)
 elseif(WIN32)
-  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt DESTINATION .)
+  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt TITLE-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt DESTINATION .)
   # Windows installer (NSIS via CPack; the CI's MSYS2 job runs `cpack -G NSIS`).
   # Binaries install into the chosen folder root (no bin/), with Start-menu
   # shortcuts and an uninstaller. The static build has no DLLs to carry.

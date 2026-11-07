@@ -45,7 +45,14 @@ using namespace tak;
 
 namespace tak::sim {
 struct RetailReplayProbe {
-    static const std::vector<BenchStage>& plan(const World& world) { return world.benchPlan_; }
+    // Both executors' stages (the stress fill's, the benchmark ramp's at its nominal ticks),
+    // in tick order, the stress stage first on a tie.
+    static std::vector<BenchStage> plan(const World& world) {
+        std::vector<BenchStage> all = world.benchPlan_;
+        all.insert(all.end(), world.benchStages_.begin(), world.benchStages_.end());
+        std::stable_sort(all.begin(), all.end(), [](const BenchStage& a, const BenchStage& b) { return a.tick < b.tick; });
+        return all;
+    }
 };
 }
 
@@ -166,7 +173,7 @@ void stagedStressCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, int ben
     setup(staged, false, benchmark);
     const auto want = bodies(now);
     const size_t opening = bodies(staged).size();
-    const auto& plan = sim::RetailReplayProbe::plan(staged);
+    const auto plan = sim::RetailReplayProbe::plan(staged);
     size_t planned = 0, peak = 0;
     bool ordered = true;
     uint32_t prev = 0, lastStress = 0;

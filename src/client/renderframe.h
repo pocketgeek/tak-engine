@@ -323,6 +323,7 @@ struct Frame {
     int winningTeam = -1;                // world_.winningTeam() (victory overlay)
     tak::sim::RetailWind wind;
     uint32_t gameTick = 0;               // world_.tickCount() (benchmark timing)
+    bool benchEnded = false;             // world_.benchmarkEnded(): the server ended the run
     bool scenarioClock = false;         // CRT Display gameclock action
     uint64_t tickMs = 0;                 // wall-clock of this tick (for interpolation)
     float tickDurMs = 1000.0f / 30.0f;

@@ -8,11 +8,10 @@ namespace tak {
 
 // Retail shows game speed as a level, never a multiplier: level d runs at
 // (d+10)/10 x normal (-9 = 0.1x, NORMAL, +10 = 2x; KINGDOMS.icd 0x4999b0 prints
-// "Game Speed Normal" or "Game Speed +5"). Speeds past +10 exist only in debug
-// builds (TAK_FAST_SPEED) and show the multiplier instead.
+// "Game Speed Normal" or "Game Speed +5"). Levels past +10 (the Benchmark's +100,
+// debug TAK_FAST_SPEED) show the same way.
 inline std::string speedLevelText(int d) {
     if (d == 0) return "NORMAL";
-    if (d > 10) { char b[16]; std::snprintf(b, sizeof b, "%.1fX", (d + 10) / 10.0); return b; }
     return (d > 0 ? "+" : "") + std::to_string(d);
 }
 

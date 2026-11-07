@@ -894,7 +894,16 @@
         // it reads lower. Shown on the F4 board next to the requested speed.
         {
             uint64_t na = SDL_GetTicks64();
-            if (actualSpeedT0_ == 0) { actualSpeedT0_ = na; actualSpeedTick0_ = netTick_; }
+            // The window opens at the game's first tick: one that spanned the loading
+            // read near zero and the average then climbed from it. Until a window has
+            // closed the row shows the requested speed.
+            if (actualSpeedT0_ == 0 || netTick_ == 0) {
+                actualSpeedT0_ = netTick_ ? na : 0; actualSpeedTick0_ = netTick_;
+                if (netTick_ && actualSpeed_ <= 0.0f) {
+                    actualSpeedReq_ = std::max(1, int(mp_->gameSpeed())) / 10.0f;
+                    actualSpeed_ = actualSpeedReq_;
+                }
+            }
             else if (na - actualSpeedT0_ >= 500) {
                 float ips = float(int64_t(netTick_) - int64_t(actualSpeedTick0_)) * 1000.0f
                             / float(na - actualSpeedT0_);
@@ -920,18 +929,17 @@
                 // the last two seconds still drops promptly when a client genuinely
                 // cannot keep up, which is the only thing this readout is for.
                 //
-                // Seeded from the first sample rather than ramping up from zero, so the
-                // display is honest immediately instead of climbing for two seconds.
+                // Seeded at the requested speed rather than ramping up from zero, so the
+                // display starts where the game was asked to run and only drops if it
+                // cannot keep up.
                 // A CHANGE OF REQUESTED SPEED IS A DISCONTINUITY, NOT NOISE. Smoothing
                 // across it is wrong in both directions, and badly so downwards: after
                 // a host drops 4x to 1x the stored average is still ~4, and capping only
                 // the incoming sample leaves the row reading 3.2x for several seconds
                 // while playback is already sustaining exactly 1x. Restart the average
-                // from the first sample at the new speed instead. (Found by review.)
-                if (reqSp != actualSpeedReq_) { actualSpeed_ = 0.0f; actualSpeedReq_ = reqSp; }
-                actualSpeed_ = actualSpeed_ > 0.0f
-                                   ? actualSpeed_ + (sample - actualSpeed_) * 0.25f
-                                   : sample;
+                // at the new speed instead. (Found by review.)
+                if (reqSp != actualSpeedReq_) { actualSpeed_ = reqSp; actualSpeedReq_ = reqSp; }
+                actualSpeed_ = actualSpeed_ + (sample - actualSpeed_) * 0.25f;
                 // Belt and braces: the average can only ever sit at or below the speed
                 // that was asked for, whatever route it took to get here.
                 actualSpeed_ = std::min(actualSpeed_, reqSp);
@@ -1439,9 +1447,10 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
             // TAK_SPEED: set the game speed in tenths (10 = 1x) for headless timing
             // tests -- re-cadences the server without touching the (deterministic) sim.
             if (const char* sp = tak::devEnv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, tak::net::kMaxDevGameSpeed));
-            // The menu Benchmark runs at +10 (2x, retail's fastest): the sim must keep up
-            // with twice normal speed, and the results show where it falls short.
-            else if (benchmarkMode_) o.speed = uint8_t(tak::net::kMaxGameSpeed);
+            // The menu Benchmark runs at its SPEED pick: NORMAL, +10 (2x, retail's fastest,
+            // the default) or +100 (11x, a benchmark room only), for 60 real seconds either
+            // way; the results show where the sim falls short.
+            else if (benchmarkMode_) o.speed = uint8_t(10 + benchmarkSpeed_);
             // TAK_SPEED_AT schedules in-game speed changes (see mpStep), so the room must
             // allow them.
             if (tak::devEnv("TAK_SPEED_AT")) o.speedUnlock = 1;

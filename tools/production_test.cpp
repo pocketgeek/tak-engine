@@ -1793,7 +1793,8 @@ int main(int argc,char** argv) {
         world.unit(existing)->underConstruction=true;
         world.setBenchmarkPlan({{1,{{&limited,200,100,0},{&limited,300,100,1},
                                     {&limited,400,100,1},{&ordinary,500,100,0}}},
-                                {2,{{&limited,200,200,0},{&limited,300,200,0}}}},3);
+                                {2,{{&limited,200,200,0},{&limited,300,200,0}}}});
+        world.benchmarkClock(1,false);   // the server's clock: the first stage is due
         world.tick(1.0f/30);
         auto count=[&](int player,const UnitType* type) {
             int n=0;for (const auto& u:world.units())
@@ -1803,6 +1804,7 @@ int main(int argc,char** argv) {
         check(count(0,&limited)==1 && count(1,&limited)==1 && count(0,&ordinary)==1,
               "benchmark caps are per player, count construction, and preserve ordinary spawns");
         world.unit(existing)->deadFor=0;
+        world.benchmarkClock(2,false);
         world.tick(1.0f/30);
         check(count(0,&limited)==1 && count(1,&limited)==1,
               "benchmark can replace a dead limited unit without exceeding its cap");

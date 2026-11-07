@@ -107,9 +107,12 @@ constexpr int kBenchLevels = 6;
 constexpr int kStressStageTicks = 30;
 inline int benchmarkSpawnsPerSec(int level) { return (level >= 1 && level <= kBenchLevels) ? (1 << (level - 1)) : 0; }
 inline int benchmarkSpawns(int level) { return benchmarkSpawnsPerSec(level) * 60; }
+// A run lasts kBenchmarkSeconds of REAL time at any game speed: the server sends the sims
+// Cmd::BenchClock from its wall clock (stages due, and the end).
+constexpr int kBenchmarkSeconds = 60;
 inline const char* benchmarkLevelName(int level) {
     static const char* n[kBenchLevels + 1] = {"", "LOW", "MEDIUM", "HIGH", "VERY HIGH", "ABSURD",
-                                              "EXTRA ABSURD +WTH"};
+                                              "EXTRA ABSURD"};
     return (level >= 1 && level <= kBenchLevels) ? n[level] : "";
 }
 inline const char* benchmarkLevelInterval(int level) {

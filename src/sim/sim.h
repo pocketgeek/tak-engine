@@ -2292,14 +2292,21 @@ public:
     // The CRT's Heal / Damage actions (4cb131 / 4cb1e3): 51a140(0, unit,
     // amount, 12 / 13, 0) for each of the player's units in the region.
     void scenarioAdjustHealth(int unitId,int32_t amount,bool heal);
-    // Benchmark: install the staged spawn plan (see BenchStage). endTick marks when the
-    // benchmark run finishes; benchmarkMode() is true while a plan is installed.
-    void setBenchmarkPlan(std::vector<BenchStage> plan, uint32_t endTick) {
-        benchPlan_ = std::move(plan); benchCursor_ = 0; benchEndTick_ = endTick;
+    // Benchmark: install the spawn ramp (see BenchStage; a stage's tick is nominal only).
+    // Its stages fire in order as Cmd::BenchClock says they are due, and the same command
+    // ends the run; benchmarkMode() is true once a plan is installed.
+    void setBenchmarkPlan(std::vector<BenchStage> plan) {
+        benchStages_ = std::move(plan); benchDue_ = 0; benchFired_ = 0; benchmark_ = true; benchEnded_ = false;
     }
-    // Stress fill: the same staged executor, without making this a benchmark run (no
-    // end tick, Monarchs stay mortal). setupMatch merges it with a benchmark plan when
-    // both are on and installs the merge with setBenchmarkPlan instead.
+    // Cmd::BenchClock: `due` stages are due by the server's wall clock (never goes back);
+    // `ended` = the run's 60 real seconds are over.
+    void benchmarkClock(uint32_t due, bool ended) {
+        if (!benchmark_) return;
+        benchDue_ = std::max(benchDue_, std::min<uint32_t>(due, uint32_t(benchStages_.size())));
+        if (ended) benchEnded_ = true;
+    }
+    // Stress fill: a staged executor by tick, without making this a benchmark run
+    // (Monarchs stay mortal).
     void setStagedSpawns(std::vector<BenchStage> plan) {
         size_t n = 0;
         for (const auto& stage : plan) n += stage.units.size();
@@ -2309,8 +2316,8 @@ public:
         units_.reserve(units_.size() + n + n / 4);
         benchPlan_ = std::move(plan); benchCursor_ = 0;
     }
-    bool benchmarkMode() const { return benchEndTick_ > 0; }
-    uint32_t benchmarkEndTick() const { return benchEndTick_; }
+    bool benchmarkMode() const { return benchmark_; }
+    bool benchmarkEnded() const { return benchEnded_; }
     uint32_t tickCount() const { return tickCounter_; }   // ticks elapsed (benchmark timing)
     // Situation tools only (client/situation.h, tools/legion_scn.h): the game RNG state, and a way to start a rebuilt
     // world on the clocks of the recording it was cut from. Per-tick cadences key on the tick counter and every dice
@@ -4533,9 +4540,12 @@ private:
         burningMarks_.clear(); fadingMarks_.clear(); dyingMarks_.clear();
         burningMarked_ = dyingMarked_ = 0;
     }
-    std::vector<BenchStage> benchPlan_;   // benchmark staged spawns (executed in tick)
+    std::vector<BenchStage> benchPlan_;   // stress-fill staged spawns (executed in tick, by tick)
     size_t benchCursor_ = 0;              // next unexecuted stage
-    uint32_t benchEndTick_ = 0;           // 0 = not a benchmark run
+    std::vector<BenchStage> benchStages_; // benchmark ramp, fired as Cmd::BenchClock makes them due
+    uint32_t benchDue_ = 0, benchFired_ = 0;
+    bool benchmark_ = false;              // a benchmark run
+    bool benchEnded_ = false;             // its 60 real seconds are over (Cmd::BenchClock)
     PathService paths_;          // retail's request queue + budget scheduler
     // Per-player entity pools for live matches (5121d8 placement, retirement
     // frees). Restored retail fixtures use retailEntityPools_ instead.

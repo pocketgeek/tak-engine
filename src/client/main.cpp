@@ -1645,7 +1645,7 @@ int main(int argc, char** argv) {
                 if (!campaignStem.empty()) gameView->setMissionStem(campaignStem);   // autoMode 8 hosts this mission
                 else if (menuInteractive) gameView->setSinglePlayer();  // menu SP: SP-flavoured lobby, Create-first
                 else if (benchmarkLaunch) {   // menu Benchmark: all-AI watch run + metrics
-                    gameView->setBenchmark(benchmarkLevel, settings.benchmarkPathfinding);
+                    gameView->setBenchmark(benchmarkLevel, settings.benchmarkPathfinding, settings.benchmarkSpeed);
                 }
             }
             if (lobbyLoading) {

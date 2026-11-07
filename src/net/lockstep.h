@@ -64,6 +64,11 @@ enum class Cmd : uint8_t {
     // none); unitId == 0 sets squad targetId's formation flag to queue != 0.
     // Applied only for a computer-owned player; never accepted from a client.
     AiGroup,
+    // Protocol 315: the server's wall clock for a Benchmark run (World::benchmarkClock):
+    // targetId = how many of the spawn plan's stages are due by now, queue != 0 = the run's
+    // 60 real seconds are over. Sent only by the server, in a benchmark room; never
+    // accepted from a client.
+    BenchClock,
 };
 
 struct SelectionOrder;

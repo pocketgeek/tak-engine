@@ -190,9 +190,11 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 314, "replay format 11 is kept under protocol 314");
-    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 314");
-    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 314");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 315, "replay format 11 is kept under protocol 315");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 315");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 315");
+    // 315 runs the Benchmark on the server's wall clock (Cmd::BenchClock).
+    check(!supportedReplayProtocol(15, 314), "previous protocol (Benchmark on game time) is refused");
     // 314 circles Legion formation flyers over the front (hashed).
     check(!supportedReplayProtocol(15, 313), "previous protocol (formation flyers held to the ground's pace) is refused");
     // 313 keeps a Legion column's files through a corridor corner (hashed).

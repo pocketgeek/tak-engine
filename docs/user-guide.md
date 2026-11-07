@@ -2985,13 +2985,19 @@ only accepts clients of the same protocol version; see [Versions](#versions).
 ## Benchmark
 
 **Settings → Benchmark** runs a repeatable stress test: an eight-AI battle on
-Ulasem Arena for 60 seconds of game time, at game speed **+10** (twice normal
-speed), so a computer that keeps up finishes in about 30 real seconds.
+Ulasem Arena for 60 seconds of game time.
 
 **Pathfinding**, at the top of the screen, picks the
 [pathfinder](#pathfinding-retail-and-legion) the battle uses: **Retail** (the
 default) or **Legion**. The game remembers your last pick for the next
 Benchmark. It is separate from the Pathfinding choice for games you create.
+
+**Speed**, below it, picks the game speed: **+10** (twice normal speed, the
+default), **Normal**, or **+100** (eleven times normal speed), a stress test of how
+fast the computer can run the battle. This choice is remembered too. A run always
+lasts 60 real seconds and spawns its units per real second, whatever the speed; a
+faster speed asks for more game time in those 60 seconds, and a computer that falls
+behind simply gets through less of it.
 
 Then choose an **intensity**, which starts the run:
 
@@ -3005,15 +3011,16 @@ Then choose an **intensity**, which starts the run:
 | Extra Absurd | every 0.03125 s |
 
 The results screen shows, every ten seconds, frame rate, simulation speed (as
-a game-speed level, like the stats panel: **+10** means it kept up), processor use, memory, GPU use and video memory, together with the display
+a game-speed level, like the stats panel: the chosen speed means it kept up), processor use, memory, GPU use and video memory, together with the display
 settings used, and lists the **Pathfinding** the battle ran with. The stats
 panel shows it as **PATHFINDER** during a run. Compare only runs with the same
 pathfinder. Client and server processor use are each a share of the whole
 computer's capacity, 0–100%, and GPU use is measured as in the
 [stats panel](#interface); a measurement the system cannot give shows **N/A**.
 Unit limits still apply, so the highest intensities may not reach their
-requested unit counts. A computer that cannot keep up at +10 runs slower and
-takes longer than 30 real seconds.
+requested unit counts. A computer that cannot keep up runs slower than the
+chosen speed and takes longer. The results list the **Speed** the run used;
+compare only runs at the same speed.
 
 The Benchmark always plays the original game with **no mods**: it leaves out
 every cosmetic and game mod pack, ticked or in `always_enabled`, so results

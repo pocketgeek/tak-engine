@@ -12,7 +12,11 @@
         benchPrevWallMs_ = SDL_GetTicks64();
         benchCliPrev_ = tak::proc::sample(0);
         benchSrvPrev_ = localServerPid_ ? tak::proc::sample(localServerPid_) : tak::proc::Sample{};
-        benchNextTick_ = 300; benchSamples_.clear(); benchStatsShown_ = false;
+        benchStartMs_ = 0; benchNextSec_ = 10; benchSamples_.clear(); benchStatsShown_ = false;
+    }
+
+    int GameView::benchmarkElapsedSec() const {
+        return benchStartMs_ ? int((SDL_GetTicks64() - benchStartMs_) / 1000) : 0;
     }
 
     void GameView::pushBenchSample(int gameSec) {
@@ -46,12 +50,19 @@
 
     void GameView::benchmarkSample() {
         if (!benchmarkMode_ || !worldTables().benchmarkMode() || benchStatsShown_) return;
-        uint32_t gt = front().gameTick, end = worldTables().benchmarkEndTick();
-        while (benchNextTick_ <= gt && benchNextTick_ <= end) {
-            pushBenchSample(int(benchNextTick_ / 30));
-            benchNextTick_ += 300;
+        // A sample every 10 real seconds of the run, from its first tick; the last when the
+        // server ends it (Cmd::BenchClock, 60 real seconds in), whatever the game speed.
+        const uint32_t gt = front().gameTick;
+        if (gt > 0 && !benchStartMs_) benchStartMs_ = SDL_GetTicks64();
+        if (front().benchEnded) {
+            pushBenchSample(tak::sim::kBenchmarkSeconds);
+            benchStatsShown_ = true;   // run complete -> show the stats overlay
+            return;
         }
-        if (gt >= end) benchStatsShown_ = true;   // run complete -> show the stats overlay
+        while (benchStartMs_ && benchNextSec_ < tak::sim::kBenchmarkSeconds && benchmarkElapsedSec() >= benchNextSec_) {
+            pushBenchSample(benchNextSec_);
+            benchNextSec_ += 10;
+        }
 #ifndef NDEBUG
         // TAK_BENCH_STOP_TICK=N: Esc at tick N, with the results filled out to a full run's
         // size (all six samples, every row), so a short run lays out the tallest panel.
@@ -68,14 +79,14 @@
     void GameView::stopBenchmark() {
         if (benchStatsShown_ || !benchmarkMode_) return;
         if (!worldTables().benchmarkMode()) { menuRequested_ = true; return; }   // still in setup -> abort
-        int sec = int(front().gameTick / 30);
+        const int sec = benchmarkElapsedSec();   // the run's real seconds
         if (benchSamples_.empty() || benchSamples_.back().gameSec != sec) pushBenchSample(sec);
         benchStatsShown_ = true;
     }
 
     void GameView::benchmarkCamera(float dt, int winW, int winH) {
         if (!benchmarkMode_ || benchStatsShown_ || !worldTables().benchmarkMode()) return;
-        int leg = int(front().gameTick / 225);   // 0..7, one per faction / 7.5s leg (60s / 8)
+        int leg = benchmarkElapsedSec() * 8 / tak::sim::kBenchmarkSeconds;   // 0..7, one per faction / 7.5 s leg (60 s / 8)
         if (leg < 0) leg = 0;
         if (leg > 7) leg = 7;
         if (leg != benchCamLeg_) { benchCamLeg_ = leg; benchLegT_ = 0.0f; }   // new leg -> reset
@@ -103,6 +114,8 @@
         char b[64];
         // What the run's world really used, not what was asked for.
         settings.push_back(std::string("PATHFINDING ") + tak::benchmarkPathLabel(worldTables().pathfindingMode()));
+        // The room's game speed, as the run was paced.
+        if (mp_) settings.push_back(std::string("SPEED       ") + tak::speedLevelText(int(mp_->gameSpeed()) - 10));
         std::snprintf(b, sizeof b, "RESOLUTION  %d X %d", winW, winH); settings.push_back(b);
         if (!benchGpuName_.empty()) settings.push_back(std::string("GPU         ") + benchGpuName_);
         {   // the backend that produced these numbers, and whether it was AUTO's pick
