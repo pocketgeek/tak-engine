@@ -31,6 +31,9 @@ struct RenderOrder {
     // Bit-fields, so the record stays within its 64 bytes. revive: a
     // RESURRECT leg (Order::reviveKind; reclaimFeat is the body).
     bool areaExploring:1=false,areaApproached:1=false,trailPreview:1=false,revive:1=false;
+    // A factory output's PARK and a flyer's landing (VTOL_LandIfCan): neither is work, so
+    // the IDLE BUILDERS strip counts a unit holding only these as idle (as ai::idle does).
+    bool park:1=false,landing:1=false;
     RenderOrder()=default;
     RenderOrder(const tak::sim::Order& o)
         :x(o.x),z(o.z),clickX(o.clickX),clickZ(o.clickZ),buildX(o.buildX),buildZ(o.buildZ),
@@ -38,6 +41,7 @@ struct RenderOrder {
          issuedTick(o.issuedTick),load(o.load),unload(o.unload),attackMove(o.attackMove),patrol(o.patrol),
          guard(o.guard),goal(o.goal),reclaimArea(bool(o.reclaimArea)),buildRectangle(bool(o.buildRectangle)) {
         revive=o.reviveKind!=0;
+        park=bool(o.park);landing=o.landing;
         if (o.reclaimArea) {
             x=tak::sim::Fixed::raw(o.reclaimArea->minX);z=tak::sim::Fixed::raw(o.reclaimArea->minZ);
             buildX=tak::sim::Fixed::raw(o.reclaimArea->maxX);buildZ=tak::sim::Fixed::raw(o.reclaimArea->maxZ);

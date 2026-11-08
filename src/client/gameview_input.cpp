@@ -273,6 +273,9 @@
             }
             if (dragging_) { dragX1_ = float(e.motion.x); dragY1_ = float(e.motion.y); }
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
+                   idleBuilderClick(float(e.button.x), float(e.button.y), e.button.button == SDL_BUTTON_LEFT)) {
+            // IDLE BUILDERS portrait: select the next idle one of that type (Shift: all)
+        } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    buildIconClick(float(e.button.x), float(e.button.y),
                                   e.button.button == SDL_BUTTON_LEFT,
                                   e.button.button == SDL_BUTTON_RIGHT)) {

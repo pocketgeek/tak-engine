@@ -150,6 +150,7 @@ Settings loadSettings() {
         // went to 400%, so 300-400% survived until the next restart and then silently
         // snapped back to 200%.
         else if (key == "buildBarScale")   s.buildBarScale = asFloat(0.75f, 4.0f);
+        else if (key == "idleBuilders")    s.idleBuilders = asInt(0, 3);
         else if (key == "chatScale")       s.chatScale = asFloat(0.5f, 3.0f);
         else if (key == "chatAlign")       s.chatAlign = asInt(0, 1);
         else if (key == "uiFont")          s.uiFont = val == "classic" ? 1 : 0;
@@ -278,6 +279,7 @@ std::string serializeSettings(const Settings& s) {
     o << "textureFilter = " << std::clamp(s.textureFilter, 0, 2) << "\n";
     o << "buildBarAlign = " << s.buildBarAlign << "\n";
     o << "buildBarScale = " << s.buildBarScale << "\n";
+    o << "idleBuilders = " << s.idleBuilders << "\n";
     o << "chatScale = " << std::clamp(s.chatScale, 0.5f, 3.0f) << "\n";
     o << "chatAlign = " << std::clamp(s.chatAlign, 0, 1) << "\n";
     o << "uiFont = " << (s.uiFont == 1 ? "classic" : "modern") << "\n";

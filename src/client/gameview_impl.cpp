@@ -222,6 +222,7 @@
         screenShake_ = s.screenShake;                     // Options: camera shake
         buildBarAlign_ = std::clamp(s.buildBarAlign, 0, 2);   // Options: build-menu row
         buildBarScale_ = std::clamp(s.buildBarScale, 0.75f, 4.0f);
+        idleBuilders_ = std::clamp(s.idleBuilders, 0, 3);   // Options: IDLE BUILDERS
         chatScale_ = std::clamp(s.chatScale, tak::chatbox::kMinScale, tak::chatbox::kMaxScale);   // Options: chat box
         chatAlign_ = std::clamp(s.chatAlign, 0, 1);
         setTextureFilter(s.textureFilter);

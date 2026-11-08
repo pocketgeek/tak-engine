@@ -2837,6 +2837,64 @@
             std::fprintf(stderr,"PASS: self-destruct notice follows the countdown\n");
             return;
         }
+        if (tak::devFlag("TAK_IDLE_BUILDERS_TEST")) {
+            // IDLE BUILDERS: one portrait per type of idle builder or factory of the local
+            // player, a click selects the next one and goes to it, Shift selects them all,
+            // TOP / MIDDLE / BOTTOM stack in that order, OFF and a watcher show none.
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("idle builders: "+what);
+                std::fprintf(stderr,"PASS: idle builders: %s\n",what.c_str());
+            };
+            noFog_=true;edgeScrollOn_=false;
+            constexpr int W=1280,H=960;
+            const float cx=float(mapView_.map().blocksX)*16.0f,cz=float(mapView_.map().blocksY)*16.0f;
+            const int me=localPlayer_;
+            const int monarch=spawn("araking",cx-200,cz,0,me);
+            const int idleFactory=spawn("tarcastl",cx+100,cz-150,0,me);
+            const int busyFactory=spawn("tarcastl",cx+100,cz+150,0,me);
+            const int other=spawn("araking",cx-200,cz+200,0,(me+1)%2);
+            check(monarch>=0 && idleFactory>=0 && busyFactory>=0 && other>=0,"fixture spawned");
+            const auto& menu=registry_.buildable("tarcastl");
+            check(!menu.empty() && registry_.find(menu.front()),"the castle has something to train");
+            writableWorld().train(busyFactory,registry_.find(menu.front()),5);
+            for (int i=0;i<3;++i) writableWorld().tick(1.f/30);
+            const auto frame=[&] {captureFrame();beginFrame();cosmeticStep(0);prepare(W,H);draw(W,H);endFrame();};
+            mapView_.setZoom(1.0f);
+            selection_.clear();idleBuilders_=2;
+            frame();frame();
+            const auto iconOf=[&](const char* id) -> const IdleBuilderIcon* {
+                for (const auto& i:idleRects_) if (i.type && i.type->id==id) return &i;
+                return nullptr;
+            };
+            check(idleRects_.size()==2,"two portraits (the Monarch and the idle castle): "+std::to_string(idleRects_.size()));
+            const auto has=[](const IdleBuilderIcon* i,int id){return i && std::find(i->ids.begin(),i->ids.end(),id)!=i->ids.end();};
+            check(has(iconOf("araking"),monarch) && !has(iconOf("araking"),other),"the Monarch is in, the other player's is not");
+            check(iconOf("tarcastl") && iconOf("tarcastl")->ids==std::vector<int>{idleFactory},"only the idle castle, not the training one");
+            check(!idleRects_.front().type->isStructure(),"mobile builders come first");
+            const SDL_FRect mid=idleRects_.front().r;
+            check(mid.x+mid.w<=float(mapViewW(W)) && mid.x>float(mapViewW(W))/2,"the column sits at the right of the play area");
+            const std::vector<int> kings=iconOf("araking")->ids;
+            check(idleBuilderClick(mid.x+mid.w/2,mid.y+mid.h/2,true) && selection_==std::vector<int>{kings.front()},
+                  "a click selects the first idle Monarch");
+            if (kings.size()>1)
+                check(idleBuilderClick(mid.x+mid.w/2,mid.y+mid.h/2,true) && selection_==std::vector<int>{kings[1]},
+                      "the next click the next one");
+            const SDL_FRect castle=iconOf("tarcastl")->r;
+            SDL_SetModState(KMOD_SHIFT);
+            check(idleBuilderClick(castle.x+castle.w/2,castle.y+castle.h/2,true) && selection_==std::vector<int>{idleFactory},
+                  "Shift+click selects every idle castle");
+            SDL_SetModState(KMOD_NONE);
+            check(!idleBuilderClick(mid.x-50,mid.y+mid.h/2,true),"a click beside the column is not taken");
+            idleBuilders_=1;frame();const float top=idleRects_.front().r.y;
+            idleBuilders_=3;frame();const float bottom=idleRects_.front().r.y;
+            check(top<mid.y && mid.y<bottom,"TOP, MIDDLE and BOTTOM stack in that order");
+            idleBuilders_=0;frame();
+            check(idleRects_.empty(),"OFF shows no column");
+            idleBuilders_=2;beginSpectating();frame();
+            check(idleRects_.empty(),"a watcher sees no column");
+            std::fprintf(stderr,"PASS: idle builders strip\n");
+            return;
+        }
         if (tak::devFlag("TAK_AREA_DRAG_TEST")) {
             // Map drags through the real input() and draw(): a small right-drag with a
             // reclaimer is the ordinary order, only a deliberate box clears an area,

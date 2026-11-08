@@ -2112,6 +2112,7 @@ your system appear.
 | **Stats Panel** | On | Live statistics in the space under the minimap. |
 | **Build Menu** | Center | Where the build icons sit: left, centre or right. |
 | **Build Menu Scale** | 100% | Extra size for the build icons (75–400%). Lowered automatically when the window is too small to fit the menu at that size. |
+| **Idle Builders** | Middle | A column at the right of the map with a portrait for each kind of builder or factory of yours that has nothing to do (a number shows how many). Click one to select the next idle one and go to it; Shift+click selects them all. **Top**, **Middle** or **Bottom** places the column; **Off** hides it. A flying builder that is only landing counts as idle. |
 | **Chat Position** | Centered | Where the in-game chat box sits: left, or centred over the battlefield. |
 | **Chat Scale** | 100% | Size of the in-game chat box, on top of UI Scale (50–300%, in 10% steps). |
 

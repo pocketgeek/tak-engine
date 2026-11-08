@@ -1927,6 +1927,15 @@ public:
 private:
     int buildBarAlign_ = 1;     // conjure/build row: 0=left 1=center 2=right (Options)
     float buildBarScale_ = 1.0f;   // extra row scale on top of uiScale_ (Options)
+    int idleBuilders_ = 2;         // IDLE BUILDERS strip: 0 off, 1 top, 2 middle, 3 bottom (Options)
+    // The strip as drawn this frame: one portrait per type, the idle units of that type
+    // in live order; idleCycle_ = the type's last unit a click went to.
+    struct IdleBuilderIcon { SDL_FRect r; const tak::sim::UnitType* type; std::vector<int> ids; };
+    std::vector<IdleBuilderIcon> idleRects_;
+    std::map<const tak::sim::UnitType*, int> idleCycle_;
+    bool idleBuilder(const UnitR& u) const;
+    void drawIdleBuilders(int winW, int winH, float barTop);
+    bool idleBuilderClick(float mx, float my, bool lmb);
     float chatScale_ = 1.0f;       // chat box scale on top of uiScale_ (Options)
     int chatAlign_ = 1;            // chat box: 0=left 1=centered (Options)
     // TEXTURE FILTERING (Options; client/texturefilter.h). Units and above = retail's

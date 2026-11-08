@@ -98,6 +98,7 @@ int main() {
     flips("voiceOutputDevice", [](Settings& s) { s.voiceOutputDevice = "headset"; });
     flips("voiceMicVolume",  [](Settings& s) { s.voiceMicVolume -= 11; });
     flips("voiceMicEnabled", [](Settings& s) { s.voiceMicEnabled = !s.voiceMicEnabled; });
+    flips("idleBuilders",    [](Settings& s) { s.idleBuilders = 3; });
     flips("voiceOutputVolume", [](Settings& s) { s.voiceOutputVolume -= 11; });
 
     // camera / input

@@ -1931,6 +1931,13 @@ if(TAK_TEST_DATA)
     # The Release client intentionally strips the local game/dev command path.
     # Keep this headless client integration fixture in Debug configurations.
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        add_test(NAME idle_builders COMMAND takclient game "Ulasem Arena"
+            --data "${TAK_TEST_DATA}" --testbuild --time 0
+            --shot "${CMAKE_CURRENT_BINARY_DIR}/idle-builders-test.png")
+        set_tests_properties(idle_builders PROPERTIES
+            ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_IDLE_BUILDERS_TEST=1"
+            PASS_REGULAR_EXPRESSION "PASS: idle builders strip"
+            TIMEOUT 60)
         add_test(NAME diplomacy_ui COMMAND takclient game "Ulasem Arena"
             --data "${TAK_TEST_DATA}" --testbuild --time 0
             --shot "${CMAKE_CURRENT_BINARY_DIR}/diplomacy-test.png")

@@ -2100,6 +2100,8 @@ namespace {
             }
         }
 
+        drawIdleBuilders(winW, winH, bar.y);
+
         // Bottom-RIGHT: mana -- only on our own bar. The retail GUI bar draws the mana
         // readout at the command-panel foot around the orb (renderGui) instead.
         if (!guiBar) {
@@ -2115,6 +2117,137 @@ namespace {
             blockText(buf, manaX, bar.y + 52, 1.8f, txt);
         }
     }
+
+// A builder of yours with nothing to do: a mobile builder with no work order, site,
+// production, reclaim or repair (a factory output's PARK and a flyer's landing are not
+// work), or a factory with an empty queue and no repeat production.
+bool GameView::idleBuilder(const UnitR& u) const {
+    if (!u.alive() || !u.type || u.underConstruction || u.embarked()) return false;
+    if (u.type->isStructure()) {
+        return u.type->producesUnits() && u.buildQueue.empty() && !u.repeatType;
+    }
+    if (!u.type->isBuilder || u.repeatType) return false;
+    if (u.buildSiteId || u.productionSiteId || u.reclaimId || u.repairId) return false;
+    for (const auto& o : u.orders) {
+        if (o.park || o.landing) continue;
+        if (o.goal || o.buildType || o.targetId || o.reclaimFeat || o.reclaimArea || o.repairTarget ||
+            o.patrol || o.guard || o.load || o.unload || o.attackMove || o.manaBuildArea) return false;
+    }
+    return true;
+}
+
+// IDLE BUILDERS (Options > Interface): a column at the right edge of the play area,
+// one portrait per type of idle builder or factory of yours (a count when there are
+// several), sized like the build menu's icons (bottom bar height, 4:3, times BUILD
+// MENU SCALE) and shrunk to fit the column's height. Top, middle or bottom of the
+// play area; at the bottom it stays above a build menu that reaches under it.
+void GameView::drawIdleBuilders(int winW, int winH, float barTop) {
+    idleRects_.clear();
+    if (!idleBuilders_ || watchOnly() || !hudShown()) return;
+    const int me = localPlayer_;
+    for (const UnitR* up : front().live) {
+        const UnitR& u = *up;
+        if (u.player != me || !idleBuilder(u)) continue;
+        auto it = std::find_if(idleRects_.begin(), idleRects_.end(),
+                               [&](const IdleBuilderIcon& i) { return i.type == u.type; });
+        if (it == idleRects_.end()) idleRects_.push_back({{}, u.type, {u.id}});
+        else it->ids.push_back(u.id);
+    }
+    if (idleRects_.empty()) return;
+    // Mobile builders first (the Monarch and its kin), then factories, each by name.
+    std::stable_sort(idleRects_.begin(), idleRects_.end(), [](const IdleBuilderIcon& a, const IdleBuilderIcon& b) {
+        const bool sa = a.type->isStructure(), sb = b.type->isStructure();
+        if (sa != sb) return !sa;
+        return a.type->name < b.type->name;
+    });
+    const float edge = tak::buildrow::kEdge;
+    const float unitH = float(barH()) - 10.0f, unitW = unitH * (4.0f / 3.0f), unitGap = 6.0f;
+    // The column's room: the play area's height, above any build menu whose box
+    // reaches under the column.
+    const float right = float(mapViewW(winW)) - edge;
+    float bottom = barTop - edge;
+    const float wantW = unitW * buildBarScale_;
+    if (buildMenuRect_.w > 0 && buildMenuRect_.x + buildMenuRect_.w > right - wantW)
+        bottom = std::min(bottom, buildRowTop_ - edge);
+    const float top = edge + 30.0f;   // under the top notices
+    const float room = std::max(bottom - top, unitH * 0.4f);
+    const int n = int(idleRects_.size());
+    const float scale = std::min(buildBarScale_, room / (n * unitH + (n - 1) * unitGap));
+    const float iw = unitW * scale, ih = unitH * scale, gap = unitGap * scale;
+    const float colH = n * ih + (n - 1) * gap;
+    const float y0 = idleBuilders_ == 1 ? top : idleBuilders_ == 3 ? bottom - colH : top + (room - colH) / 2;
+    const float x = right - iw;
+    SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+    SDL_FRect box{x - 4, y0 - 4, iw + 8, colH + 8};
+    SDL_SetRenderDrawColor(ren_, 14, 12, 10, 200);
+    SDL_RenderFillRectF(ren_, &box);
+    SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
+    SDL_RenderDrawRectF(ren_, &box);
+    (void)winH;
+    for (int i = 0; i < n; ++i) {
+        auto& icon = idleRects_[size_t(i)];
+        SDL_FRect r{x, y0 + float(i) * (ih + gap), iw, ih};
+        icon.r = r;
+        SDL_Texture* tex = iconFor(icon.type->id);
+        if (!tex) tex = modelIconTex(icon.type->id, playerColorSlot(me), !isStructure(icon.type));
+        if (tex) {
+            int tw = 0, th = 0;
+            if (SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th) == 0 && tw > 0 && th > 0) {
+                const float fit = std::min(r.w / float(tw), r.h / float(th));
+                SDL_FRect dst{r.x + (r.w - float(tw) * fit) / 2, r.y + (r.h - float(th) * fit) / 2,
+                              float(tw) * fit, float(th) * fit};
+                SDL_RenderCopyF(ren_, tex, nullptr, &dst);
+            }
+        } else {
+            SDL_SetRenderDrawColor(ren_, 60, 55, 50, 255);
+            SDL_RenderFillRectF(ren_, &r);
+        }
+        const bool hot = mouseX_ >= r.x && mouseX_ <= r.x + r.w && mouseY_ >= r.y && mouseY_ <= r.y + r.h;
+        SDL_SetRenderDrawColor(ren_, hot ? 255 : 110, hot ? 230 : 100, hot ? 120 : 70, 255);
+        SDL_RenderDrawRectF(ren_, &r);
+        if (icon.ids.size() > 1) {   // how many of this type are idle, bottom right
+            const std::string num = std::to_string(icon.ids.size());
+            const float px = 2.2f * scale, nw = blockWidth(num, px);
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 205);
+            SDL_FRect nb{r.x + r.w - nw - 7 * scale, r.y + r.h - 21 * scale, nw + 7 * scale, 20 * scale};
+            SDL_RenderFillRectF(ren_, &nb);
+            blockText(num, r.x + r.w - nw - 4 * scale, r.y + r.h - 18 * scale, px, {255, 235, 140, 255});
+        }
+        if (hot) {   // the name, to the left of the column
+            const std::string tip = icon.type->name;
+            const float px = 2.0f * scale, tw = blockWidth(tip, px);
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 210);
+            SDL_FRect tb{r.x - tw - 22, r.y + r.h / 2 - 13 * scale, tw + 12, 26 * scale};
+            SDL_RenderFillRectF(ren_, &tb);
+            blockText(tip, r.x - tw - 16, r.y + r.h / 2 - 9 * scale, px, {255, 240, 190, 255});
+        }
+    }
+}
+
+// A click on an IDLE BUILDERS portrait: the next idle unit of that type is selected and
+// the camera goes to it (each click the next); Shift selects every one of them.
+bool GameView::idleBuilderClick(float mx, float my, bool lmb) {
+    for (const auto& icon : idleRects_) {
+        const SDL_FRect& r = icon.r;
+        if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
+        if (!lmb || icon.ids.empty()) return true;   // a right press on it is swallowed
+        playClickTone();
+        if (SDL_GetModState() & KMOD_SHIFT) {
+            selection_ = icon.ids;
+            centerOnSelection();
+        } else {
+            int& last = idleCycle_[icon.type];
+            auto it = std::find(icon.ids.begin(), icon.ids.end(), last);
+            const int next = (it == icon.ids.end() || it + 1 == icon.ids.end()) ? icon.ids.front() : *(it + 1);
+            last = next;
+            selection_ = {next};
+            centerOn(next);
+            voice(next, "select");
+        }
+        return true;
+    }
+    return false;
+}
 
 void GameView::drawGiveUnitsMenu(int winW, int winH) {
     giveUnitsHots_.clear();
