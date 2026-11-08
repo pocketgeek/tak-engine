@@ -2215,7 +2215,9 @@ host's game mods are sent automatically.
 *Signing in to a server.*
 
 1. Click the **Multiplayer** door. The **CONNECT TO SERVER** panel opens.
-2. Click a server in the list, or **CUSTOM...** to type its address.
+2. Click a server in the list, or **CUSTOM...** to type its address. Under
+   them are the servers you have signed in to before (up to 64, most recent
+   first; the mouse wheel scrolls them); **DELETE** forgets one.
 3. Enter an **account name** and **password** and click **CONNECT**. A name the
    server has not seen before is registered the first time you sign in; there
    is no separate sign-up.

@@ -666,6 +666,17 @@ int main() {
         { { std::ofstream(path) << "benchmarkSpeed = 100\n"; } check("benchSpeed: 100 is +100", tak::loadSettings().benchmarkSpeed == 100); }
         { { std::ofstream(path) << "benchmarkSpeed = 999\n"; } check("benchSpeed: 999 -> +100", tak::loadSettings().benchmarkSpeed == 100); }
         { { std::ofstream(path) << "benchmarkSpeed = -3\n"; } check("benchSpeed: -3 -> NORMAL", tak::loadSettings().benchmarkSpeed == 0); }
+        {   // up to 64 remembered servers load, most recent first; the rest are dropped
+            std::ofstream o(path);
+            o << "knownServers = ";
+            for (int i = 0; i < 70; ++i) o << (i ? "," : "") << "host" << i << ":7677";
+            o << "\n";
+        }
+        {
+            const auto ks = tak::loadSettings().knownServers;
+            check("servers: 64 of 70 kept", ks.size() == Settings::kMaxKnownServers && ks.front() == "host0:7677"
+                                            && ks.back() == "host63:7677");
+        }
         check("benchPath: absent", modeFrom("masterVol = 7\n") == Mode::Retail);
         Settings saved;
         saved.benchmarkPathfinding = Mode::Legion;

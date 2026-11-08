@@ -1559,7 +1559,7 @@ int main(int argc, char** argv) {
                                     [&](const std::string& s) { return ieq(s, rememberServer); }),
                      ks.end());
             ks.insert(ks.begin(), rememberServer);
-            if (ks.size() > 8) ks.resize(8);
+            if (ks.size() > tak::Settings::kMaxKnownServers) ks.resize(tak::Settings::kMaxKnownServers);
             tak::saveSettings(settings);
         }
     }

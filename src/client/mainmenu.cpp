@@ -799,15 +799,21 @@ struct MainMenu::Impl {
     }
 
     // ---- minimal block font + multiplayer server-select overlay ---------------
-    // A dropdown: the default server on top, then every server that has connected
-    // successfully before (Settings::knownServers), then CUSTOM with a text field.
+    // A dropdown: the default server on top, then CUSTOM (with a text field under it),
+    // then every server that has connected successfully before (Settings::knownServers,
+    // up to 64, most recent first) in a list that scrolls past kServerRowsShown rows.
     static constexpr const char* kDefaultServer = "tak.pgnet.us";
     bool serverSelect = false;
-    std::vector<std::string> serverItems;   // dropdown rows (default + remembered)
-    int serverSel = 0;                      // selected row; == serverItems.size() -> CUSTOM
+    std::vector<std::string> serverItems;   // the default server, then the remembered ones
+    // The selected row in display order: 0 the default server, 1 CUSTOM, 2+k the
+    // remembered server serverItems[1+k].
+    int serverSel = 0;
+    static constexpr int kServerRowsShown = 6;   // remembered rows on show at once
+    int serverScroll = 0;                        // first remembered row on show
+    SDL_FRect serverListRect{};                  // the remembered rows (the wheel's target)
     std::string serverText = "127.0.0.1";   // custom-entry text
-    std::vector<SDL_FRect> serverRects;     // row hit-rects (rebuilt each render)
-    std::vector<SDL_FRect> serverDeleteRects;   // DELETE per remembered row (none on the default)
+    std::vector<SDL_FRect> serverRects;     // row hit-rects by display row (rebuilt each render; empty off screen)
+    std::vector<SDL_FRect> serverDeleteRects;   // DELETE per display row (remembered rows only)
     SDL_FRect serverBoxRect{};              // custom text-box hit-rect
     SDL_FRect serverConnectRect{}, serverBackRect{};   // button hit-rects
     std::string serverError;                // shown in red after a failed connect
@@ -895,9 +901,10 @@ struct MainMenu::Impl {
             for (const auto& sv : settings->knownServers) {
                 bool dup = false;
                 for (const auto& it : serverItems) if (ieq(it, sv)) { dup = true; break; }
-                if (!dup && serverItems.size() < 7) serverItems.push_back(sv);
+                if (!dup) serverItems.push_back(sv);
             }
         serverSel = 0;
+        serverScroll = 0;
         serverError.clear();
         // The name is remembered between sessions; the password never is.
         if (settings && loginUser.empty()) loginUser = settings->accountName;
@@ -906,10 +913,17 @@ struct MainMenu::Impl {
         serverSelect = true;
         SDL_StartTextInput();
     }
-    bool serverCustom() const { return serverSel == int(serverItems.size()); }
+    int serverRows() const { return int(serverItems.size()) + 1; }   // + CUSTOM
+    bool serverCustom() const { return serverSel == 1; }
     void setServerSel(int i) {
         bool wasCustom = serverCustom();
-        serverSel = std::clamp(i, 0, int(serverItems.size()));
+        serverSel = std::clamp(i, 0, serverRows() - 1);
+        // Keep a remembered row picked by the keyboard in view.
+        if (serverSel >= 2) {
+            const int k = serverSel - 2;
+            if (k < serverScroll) serverScroll = k;
+            if (k >= serverScroll + kServerRowsShown) serverScroll = k - kServerRowsShown + 1;
+        }
         // Picking CUSTOM puts the caret in the address box; leaving it hands the
         // caret back to the account fields rather than dropping it entirely.
         if (serverCustom() && !wasCustom) field = 1;
@@ -929,38 +943,29 @@ struct MainMenu::Impl {
             default: return nullptr;
         }
     }
-    // DELETE on a remembered row: drop it from the list and from Settings::knownServers
-    // (saved at once), keeping the selection on the same row where one is left.
-    void deleteServer(int i, Settings* settings) {
-        if (i <= 0 || i >= int(serverItems.size())) return;   // never the default server
+    // DELETE on a remembered row (display row `row`): drop it from the list and from
+    // Settings::knownServers (saved at once), keeping the selection on the same row
+    // where one is left.
+    void deleteServer(int row, Settings* settings) {
+        const int i = row - 1;   // its serverItems index
+        if (row < 2 || i >= int(serverItems.size())) return;   // never the default or CUSTOM
         const std::string gone = serverItems[size_t(i)];
-        const bool wasCustom = serverCustom();
         serverItems.erase(serverItems.begin() + i);
         if (settings) {
-            auto& ks = settings->knownServers;
-            std::erase_if(ks, [&](const std::string& sv) {
+            std::erase_if(settings->knownServers, [&](const std::string& sv) {
                 if (sv.size() != gone.size()) return false;
                 for (size_t k = 0; k < sv.size(); ++k)
                     if (std::tolower((unsigned char)sv[k]) != std::tolower((unsigned char)gone[k])) return false;
                 return true;
             });
             saveSettings(*settings);
-            // A remembered server beyond the rows on show moves up into the freed one.
-            for (const auto& sv : ks) {
-                if (serverItems.size() >= 7) break;
-                bool dup = false;
-                for (const auto& it : serverItems)
-                    if (it.size() == sv.size() && std::equal(it.begin(), it.end(), sv.begin(), [](char x, char y) {
-                            return std::tolower((unsigned char)x) == std::tolower((unsigned char)y); })) { dup = true; break; }
-                if (!dup) serverItems.push_back(sv);
-            }
         }
-        if (wasCustom) serverSel = int(serverItems.size());   // stay on CUSTOM
-        else if (serverSel > i) --serverSel;
-        serverSel = std::min(serverSel, int(serverItems.size()));
+        if (serverSel > row) --serverSel;
+        else if (serverSel == row && serverSel >= serverRows())   // the last row went
+            serverSel = serverRows() > 2 ? serverRows() - 1 : 0;
     }
     std::string serverChoice() const {
-        return serverCustom() ? serverText : serverItems[size_t(serverSel)];
+        return serverCustom() ? serverText : serverItems[size_t(serverSel == 0 ? 0 : serverSel - 1)];
     }
 
     // Plain text in the chosen UI FONT (client/uitext.h), and with a dark drop shadow
@@ -972,11 +977,15 @@ struct MainMenu::Impl {
         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 160);
         SDL_FRect dim{0, 0, float(winW), float(winH)}; SDL_RenderFillRectF(ren, &dim);
-        const int rows = int(serverItems.size()) + 1;   // + CUSTOM
-        const float rowH = 40, pw = 560;
+        const int remembered = int(serverItems.size()) - 1;
+        const int shownRows = std::min(remembered, kServerRowsShown);
+        serverScroll = std::clamp(serverScroll, 0, std::max(0, remembered - kServerRowsShown));
+        const float rowH = 40, pw = 640;
         const float errH = serverError.empty() ? 0 : 26;
-        // + the two account fields (label + box each) and the sign-up hint line.
-        float ph = 78 + errH + rows * rowH + (serverCustom() ? 56 : 0) + 152 + 64;
+        // The default and CUSTOM rows, the address box under CUSTOM when it is picked,
+        // the remembered rows on show (+ a gap before them), then the two account
+        // fields (label + box each) and the sign-up hint line.
+        float ph = 78 + errH + 2 * rowH + (serverCustom() ? 56 : 0) + (shownRows ? shownRows * rowH + 8 : 0) + 152 + 64;
         float x0 = (winW - pw) / 2, y0 = (winH - ph) / 2;
         SDL_SetRenderDrawColor(ren, 28, 30, 40, 245);
         SDL_FRect panel{x0, y0, pw, ph}; SDL_RenderFillRectF(ren, &panel);
@@ -993,42 +1002,43 @@ struct MainMenu::Impl {
             for (size_t k = 0; k < lines.size() && k < 2; ++k)
                 blockText(lines[k], x0 + 30, y0 + 50 + step * float(k), 1.8f, {235, 120, 110, 255});
         }
-        // Dropdown rows: the default server, remembered servers, then CUSTOM.
-        serverRects.clear();
-        serverDeleteRects.clear();
+        // Dropdown rows: the default server, CUSTOM (its address box under it when
+        // picked), then the remembered servers, scrolling.
+        serverRects.assign(size_t(serverRows()), SDL_FRect{0, 0, 0, 0});
+        serverDeleteRects.assign(size_t(serverRows()), SDL_FRect{0, 0, 0, 0});
         float ry = y0 + 66 + errH;
-        for (int i = 0; i < rows; ++i) {
-            SDL_FRect r{x0 + 30, ry, pw - 60, rowH - 6};
+        auto drawRow = [&](int i, float rw) {
+            SDL_FRect r{x0 + 30, ry, rw, rowH - 6};
             bool sel = (i == serverSel);
             SDL_SetRenderDrawColor(ren, sel ? 52 : 16, sel ? 66 : 18, sel ? 96 : 26, 255);
             SDL_RenderFillRectF(ren, &r);
             SDL_SetRenderDrawColor(ren, sel ? 160 : 90, sel ? 185 : 100, sel ? 235 : 130, 255);
             SDL_RenderDrawRectF(ren, &r);
-            std::string label = i < int(serverItems.size()) ? serverItems[size_t(i)]
-                                                            : std::string("CUSTOM...");
-            const bool remembered = i > 0 && i < int(serverItems.size());
-            blockText(uiTextFit(label, 2.4f, r.w - (i == 0 || remembered ? 140 : 28)), r.x + 14, r.y + 9, 2.4f,
+            const std::string label = i == 0 ? serverItems[0] : i == 1 ? std::string("CUSTOM...") : serverItems[size_t(i - 1)];
+            const bool rememberedRow = i >= 2;
+            blockText(uiTextFit(label, 2.4f, r.w - (i == 1 ? 28 : 140)), r.x + 14, r.y + 9, 2.4f,
                       sel ? SDL_Color{235, 240, 250, 255} : SDL_Color{175, 180, 195, 255});
             if (i == 0)   // mark the official default server
                 blockText("DEFAULT", r.x + r.w - 110, r.y + 13, 1.6f, {150, 165, 145, 255});
-            SDL_FRect del{0, 0, 0, 0};
-            if (remembered) {   // a remembered server can be forgotten
-                del = {r.x + r.w - 104, r.y + 5, 96, r.h - 10};
+            if (rememberedRow) {   // a remembered server can be forgotten
+                SDL_FRect del{r.x + r.w - 104, r.y + 5, 96, r.h - 10};
                 SDL_SetRenderDrawColor(ren, 70, 34, 38, 255); SDL_RenderFillRectF(ren, &del);
                 SDL_SetRenderDrawColor(ren, 190, 120, 125, 255); SDL_RenderDrawRectF(ren, &del);
                 const float tw = uiTextWidth("DELETE", 1.6f);
                 blockText("DELETE", del.x + (del.w - tw) / 2, del.y + (del.h - 7 * 1.6f - uiTextDescent(1.6f)) / 2, 1.6f,
                           {240, 215, 215, 255});
+                serverDeleteRects[size_t(i)] = del;
             }
-            serverDeleteRects.push_back(del);
-            serverRects.push_back(r);
+            serverRects[size_t(i)] = r;
             ry += rowH;
-        }
-        // CUSTOM selected: the address entry field below the list.
+        };
+        drawRow(0, pw - 60);
+        drawRow(1, pw - 60);
+        // CUSTOM selected: the address entry field under it.
         serverBoxRect = {0, 0, 0, 0};
         if (serverCustom()) {
             SDL_SetRenderDrawColor(ren, 16, 18, 26, 255);
-            SDL_FRect box{x0 + 30, ry + 4, pw - 60, 46}; SDL_RenderFillRectF(ren, &box);
+            SDL_FRect box{x0 + 30, ry, pw - 60, 46}; SDL_RenderFillRectF(ren, &box);
             SDL_SetRenderDrawColor(ren, 120, 140, 180, 255); SDL_RenderDrawRectF(ren, &box);
             const std::string shown = uiTextFitStart(serverText, 3.0f, box.w - 30);
             blockText(shown, box.x + 12, box.y + 14, 3.0f, {230, 235, 245, 255});
@@ -1039,6 +1049,24 @@ struct MainMenu::Impl {
             }
             serverBoxRect = box;
             ry += 56;
+        }
+        // The remembered servers: kServerRowsShown at a time, the mouse wheel scrolling
+        // them, with a scroll bar beside them once there are more.
+        serverListRect = {0, 0, 0, 0};
+        if (shownRows) {
+            ry += 8;
+            const bool scrolls = remembered > kServerRowsShown;
+            const float listY = ry, rw = pw - 60 - (scrolls ? 16 : 0);
+            for (int k = serverScroll; k < serverScroll + shownRows; ++k) drawRow(2 + k, rw);
+            serverListRect = {x0 + 30, listY, pw - 60, float(shownRows) * rowH};
+            if (scrolls) {
+                SDL_FRect track{x0 + pw - 30 - 10, listY, 10, float(shownRows) * rowH - 6};
+                SDL_SetRenderDrawColor(ren, 16, 18, 26, 255); SDL_RenderFillRectF(ren, &track);
+                const float th = std::max(20.0f, track.h * float(kServerRowsShown) / float(remembered));
+                const float ty = track.y + (track.h - th) * float(serverScroll) / float(remembered - kServerRowsShown);
+                SDL_FRect thumb{track.x, ty, track.w, th};
+                SDL_SetRenderDrawColor(ren, 110, 125, 165, 255); SDL_RenderFillRectF(ren, &thumb);
+            }
         }
         // ---- account: name + password -------------------------------------
         // One pair of fields does both jobs. A name the server has never seen is
@@ -1484,7 +1512,10 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
     if (std::exchange(d_->reopenPending_, false)) {
         d_->openServerSelect(settings);
         const auto at = std::find(d_->serverItems.begin(), d_->serverItems.end(), d_->reopenConnect_);
-        if (at != d_->serverItems.end()) d_->serverSel = int(at - d_->serverItems.begin());
+        if (at != d_->serverItems.end()) {   // its display row (CUSTOM sits second)
+            const int i = int(at - d_->serverItems.begin());
+            d_->setServerSel(i == 0 ? 0 : i + 1);
+        }
     }
 
     if (!shotPath.empty()) {
@@ -1516,7 +1547,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 tmp.knownServers = {"192.168.1.50:7677", "example.dyndns.org"};
             d_->openServerSelect(&tmp);
             int m = std::atoi(tak::devEnv("TAK_SHOT_SERVER"));
-            if (m == 2) d_->setServerSel(int(d_->serverItems.size()));   // CUSTOM view
+            if (m == 2) d_->setServerSel(1);   // CUSTOM view
             if (m == 3) d_->serverError = "COULD NOT CONNECT TO TAK.PGNET.US";
             if (m == 4) {   // signed-in state: name filled, password part-typed
                 d_->loginUser = "curtis";
@@ -1704,6 +1735,12 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     if (k == SDLK_BACKSPACE) {
                         if (std::string* f = d_->activeField(); f && !f->empty()) f->pop_back();
                     }
+                } else if (e.type == SDL_MOUSEWHEEL) {   // scroll the remembered servers
+                    int mx = 0, my = 0;
+                    SDL_GetMouseState(&mx, &my);
+                    const auto& r = d_->serverListRect;
+                    if (r.w > 0 && mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h)
+                        d_->serverScroll -= e.wheel.y;   // clamped as it draws
                 } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                     float mx = float(e.button.x), my = float(e.button.y);
                     auto in = [&](const SDL_FRect& r) {
@@ -1724,7 +1761,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         for (size_t i = 0; i < d_->serverRects.size(); ++i)
                             if (in(d_->serverRects[i])) { d_->setServerSel(int(i)); break; }
                     if (in(d_->serverBoxRect)) {
-                        d_->setServerSel(int(d_->serverItems.size()));   // focus the field
+                        d_->setServerSel(1);   // focus the field
                         d_->field = 1;
                     }
                     if (in(d_->loginUserRect)) d_->field = 2;

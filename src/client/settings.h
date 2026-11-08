@@ -205,8 +205,10 @@ struct Settings {
     // key, its multiplayer GAME MODS toggle, is gone: skipped on load, never saved.)
     std::vector<std::string> gameModPacks, cosmeticModPacks;
     std::string lastMap;           // last map picked in the create/SP lobby (remembered)
-    // Servers that connected successfully (most recent first, capped at 8). The
-    // menu's CONNECT dropdown lists these under the default server.
+    // Servers that connected successfully (most recent first, capped at
+    // kMaxKnownServers). The menu's CONNECT dropdown lists these under the default
+    // server and CUSTOM, scrolling.
+    static constexpr size_t kMaxKnownServers = 64;
     std::vector<std::string> knownServers;
 
     // ---- data / install location ----

@@ -231,7 +231,7 @@ Settings loadSettings() {
         else if (key == "knownServers") {  // comma-joined, most recent first
             std::stringstream ks(val);
             std::string tok;
-            while (std::getline(ks, tok, ',') && s.knownServers.size() < 8)
+            while (std::getline(ks, tok, ',') && s.knownServers.size() < Settings::kMaxKnownServers)
                 if (!tok.empty()) s.knownServers.push_back(tok);
         }
         else if (key == "dataDir")         s.dataDir = val;
