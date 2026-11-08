@@ -961,10 +961,14 @@ float createOptionPx(float maxW) {
 
     void GameView::drawRoom(int winW, int winH) {
         const auto& room = mp_->room();
-        float x = 40, y = 78;
-        if (!singlePlayer_) blockText(room.name, x, y, 2.2f, {210, 210, 220, 255});
-        blockText(std::string("MAP  ") + mapTitle(room.mapId), x, y - 24, 1.8f, {180, 185, 195, 255});
-        y += 34;
+        // The slot table starts just under the page title (multiplayer: under the room's
+        // name). The map's name heads the right column, right-justified above its preview.
+        float x = 40, y = 54;
+        if (!singlePlayer_) { blockText(room.name, x, y, 2.2f, {210, 210, 220, 255}); y += 34; }
+        {
+            const std::string title = tak::uiTextFit("MAP  " + mapTitle(room.mapId), 1.8f, 280.0f);
+            blockText(title, winW - 20.0f - blockWidth(title, 1.8f), 62, 1.8f, {180, 185, 195, 255});
+        }
         bool host = (room.hostId == mp_->myClientId());
         // MAP SCENARIO (259): the room plays its map's scenario when the option is on, or
         // for a Test Map copy, read from the verified package (the host's own until then).
@@ -1157,11 +1161,14 @@ float createOptionPx(float maxW) {
                     const auto& s2 = mpRoom().slots[i];
                     mp_->setSlot(i, nt, s2.faction, s2.color, s2.team, 0, s2.aiLevel); }});
             }
-            if (s.type == 1) cell(s.name, x + 100, y + 8, 1.8f, 154, {225, 228, 236, 255});
+            // Single player has no READY column, so the side / colour / team columns move up
+            // to the MOVE HERE / KICK column (row.w - 94) and the name takes the room.
+            const float wide = singlePlayer_ ? 72.0f : 0.0f;
+            if (s.type == 1) cell(s.name, x + 100, y + 8, 1.8f, 154 + wide, {225, 228, 236, 255});
             else if ((s.type == 0 || s.type == 3) && (needSeats >> i & 1))
                 blockText("NEEDED BY SCENARIO", x + 100, y + 9, 1.4f, {235, 205, 120, 255});
             else if (s.type == 2) {
-                cell(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.6f, 74, {210, 200, 150, 255});
+                cell(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.6f, 74 + wide, {210, 200, 150, 255});
                 // AI difficulty (host cycles PASSIVE -> EASY -> NORMAL -> HARD -> ABSURD ->
                 // DEFENSIVE -> ABSURDLY DEFENSIVE -> RETAIL: kCycle, which is not the wire
                 // aiLevel order that diffName and diffCol follow). RETAIL is level 6, internally Classic: the 1999 game's own AI, driven by its
@@ -1182,11 +1189,11 @@ float createOptionPx(float maxW) {
                 const uint8_t lvl = uint8_t(s.aiLevel % kLevels);
                 // Two words that overrun the 82 px column stack in two smaller lines.
                 if (const char* gap = std::strchr(diffName[lvl], ' ')) {
-                    blockText(std::string(diffName[lvl], gap), x + 178, y + 3, 1.1f, diffCol[lvl]);
-                    blockText(gap + 1, x + 178, y + 13, 1.1f, diffCol[lvl]);
+                    blockText(std::string(diffName[lvl], gap), x + 178 + wide, y + 3, 1.1f, diffCol[lvl]);
+                    blockText(gap + 1, x + 178 + wide, y + 13, 1.1f, diffCol[lvl]);
                 } else
-                    blockText(diffName[lvl], x + 178, y + 9, 1.4f, diffCol[lvl]);
-                if (host) { SDL_FRect db{x + 176, y + 2, 82, 26};
+                    blockText(diffName[lvl], x + 178 + wide, y + 9, 1.4f, diffCol[lvl]);
+                if (host) { SDL_FRect db{x + 176 + wide, y + 2, 82, 26};
                     lobbyHots_.push_back({db, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
                         const int at = int(std::find(kCycle, kCycle + kLevels, s2.aiLevel) - kCycle);
                         mp_->setSlot(i, s2.type, s2.faction, s2.color, s2.team, s2.ready,
@@ -1200,11 +1207,11 @@ float createOptionPx(float maxW) {
             }
             // faction / color / team edit: your own row, or (host) any AI row.
             bool canEdit = (mine || (host && s.type == 2));
-            cell(factionName(s.faction), x + 260, y + 8, 1.6f, 94, {200, 205, 215, 255});
-            if (canEdit) { SDL_FRect fb{x + 260, y + 6, 90, 18};
+            cell(factionName(s.faction), x + 260 + wide, y + 8, 1.6f, 94, {200, 205, 215, 255});
+            if (canEdit) { SDL_FRect fb{x + 260 + wide, y + 6, 90, 18};
                 lobbyHots_.push_back({fb, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
                     mp_->setSlot(i, s2.type, (s2.faction + direction + 5) % 5, s2.color, s2.team, s2.ready, s2.aiLevel); }}); }
-            colorSwatch(x + 360, y + 5, 20, s.color, canEdit ? std::function<void(int)>([this, i](int direction) {
+            colorSwatch(x + 360 + wide, y + 5, 20, s.color, canEdit ? std::function<void(int)>([this, i](int direction) {
                 // Cycle to the next colour NOT already held by another used slot --
                 // landing on a taken colour just blocked READY, which was a trap.
                 const auto& r2 = mpRoom();
@@ -1220,8 +1227,8 @@ float createOptionPx(float maxW) {
                 }
                 mp_->setSlot(i, s2.type, s2.faction, next, s2.team, s2.ready, s2.aiLevel); }) : nullptr);
             char tm[8]; std::snprintf(tm, sizeof tm, "T%d", s.team + 1);
-            blockText(tm, x + 392, y + 8, 1.8f, {200, 205, 215, 255});
-            if (canEdit) { SDL_FRect teb{x + 392, y + 6, 34, 18};
+            blockText(tm, x + 392 + wide, y + 8, 1.8f, {200, 205, 215, 255});
+            if (canEdit) { SDL_FRect teb{x + 392 + wide, y + 6, 34, 18};
                 lobbyHots_.push_back({teb, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
                     mp_->setSlot(i, s2.type, s2.faction, s2.color, uint8_t((s2.team + direction + tak::net::kMaxSlots) % tak::net::kMaxSlots), s2.ready, s2.aiLevel); }}); }
             if (s.type == 1 && !singlePlayer_) {   // SP: the player is always ready, no column
