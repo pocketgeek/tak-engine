@@ -1,14 +1,10 @@
 # 0.9.22 release validation
 
-**DRAFT.** Scope, compatibility and the local test results on the cut are written;
-every part marked **TODO-LEAD** is filled in by the release lead from the remaining
-CI, signing and publication runs.
-
 Protocol **316** (0.9.21 used 315), replay format **15** (unchanged), generator version
 **9** (unchanged).
 
-Tag `v0.9.22` -> **TODO-LEAD** (the preparation commit); annotated tag object
-**TODO-LEAD**. Published **TODO-LEAD** UTC as the Latest release.
+Tag `v0.9.22` -> `faaeb222` (the preparation commit); annotated tag object
+`3990894f`. Published 2026-11-08 03:07:18 UTC as the Latest release.
 
 ## Scope and compatibility
 
@@ -74,17 +70,41 @@ Windows and macOS local suites; tag CI builds and tests all three platforms.
 
 ## CI and packages
 
-**TODO-LEAD**: main and tag CI run ids, asset count, digests, build ids
-(`build v0.9.22`).
+Tag CI on `v0.9.22`: Determinism (sim) 42417216399 (dispatched), Linux packages
+42417215445 and Windows build 42417215418 green at the first attempt. macOS build
+42417215425: both builds and the arm64 Sign + notarize passed at once; the x64 Sign +
+notarize waited on Apple's notary service for 5 hours until the job limit cancelled it
+(as in 0.9.16), and `gh run rerun --failed` finished it in under 3 minutes, replacing
+the x64 macOS assets. Main's runs for `faaeb222` and `ac1f9dac` were cancelled in favour
+of the tag's (main's Determinism on `ac1f9dac` had passed).
+
+31 assets, as 0.9.21; all 31 downloaded and match the release's SHA-256 digests. The
+build string is `v0.9.22` in the Arch package's `takclient` and `takserver`.
 
 ## Signing
 
-**TODO-LEAD**: Windows Authenticode, macOS notarization and stapling.
+Windows: on oden-win (scratch `C:/tak/w/rel0922`, removed afterwards; no TAK process
+running before or after), `Get-AuthenticodeSignature` reports **Valid** (timestamped,
+"Curtis Edge") for the x64 setup program and `takclient`, `takserver` and `cartographer`
+in both zips; the x64 `takclient.exe` and `takserver.exe` report `0.9.22 (build v0.9.22)`.
+
+macOS: on the MacBook, both DMGs and all eight app copies pass `stapler validate`, and
+`spctl -a -vv` accepts them as "Notarized Developer ID"; every app passes
+`codesign --verify --strict --deep` and has version 0.9.22. The arm64 zip's `takclient`
+reports `0.9.22 (build v0.9.22)`. The scratch folder was removed.
 
 ## Publication
 
-**TODO-LEAD**: draft, tag, publish time, links checked.
+The draft was created with the notes (the validation link rewritten to its `blob`
+`v0.9.22` URL) before tag CI uploaded into it; published on 2026-11-08 03:07:18 UTC as
+the Latest release, 31 assets; 0.9.21 and earlier releases are kept. The notes'
+validation link answers 200.
 
 ## Known limits
 
-**TODO-LEAD**: anything accepted at the cut.
+- Only the Linux suite ran locally (the testing tiers); Windows and macOS were covered by
+  tag CI.
+- The user guide's Diplomacy and Voice Chat pictures predate the SPECTATORS line and the
+  MICROPHONE / MIC GAIN rows (noted in `docs/img/README.md`).
+- No mixed-version game was played: the protocol changed, so 0.9.22 plays with no earlier
+  release by construction.
