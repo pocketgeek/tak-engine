@@ -2283,9 +2283,9 @@ Press **D** for the **Diplomacy** screen:
   the start of each game.
 - **Volume**: how loud each other player's voice plays for you.
 
-![The Diplomacy screen listing four players with Share Mana, Chat and Voice checkboxes, Volume sliders at 50% and 25% for the two other human players, and a Give Selected Units button](img/diplomacy.jpg)
+![The Diplomacy screen listing four players with Share Mana, Chat and Voice checkboxes: Chat and Voice ticked for you and your ally only, as each game starts, Volume sliders at 50% and 25% for the two other human players, a Give Selected Units button, and a Spectators line with its Chat and Voice boxes off](img/diplomacy.jpg)
 
-*The Diplomacy screen (**D**), from the engine's built-in input test, with voice chat on. The computer player (ENEMY) has no Volume slider.*
+*The Diplomacy screen (**D**), from the engine's built-in input test, with voice chat on, as a game starts: chat and voice reach your ally only, and the Spectators line is off. The computer player (ENEMY) has no Volume slider.*
 
 The screen lists every player; the gift buttons and mana boxes appear only for
 allies, and chat and voice start on for your allies only (tick the others to
@@ -2462,7 +2462,7 @@ player with it off cannot talk and is sent no voice at all.
 
 While **Voice chat** is off, every other row is greyed out and ignores clicks.
 
-![The Voice Chat page with voice chat on, Talk mode Push to Talk on Space, System Default microphone at volume 100 with an empty level meter, Activation level 15 greyed out, and output Same as Game Output at volume 100](img/guide/voice-chat.jpg)
+![The Voice Chat page with voice chat on, Talk mode Push to Talk on Space, Microphone on, System Default microphone at Mic gain 100% with an empty level meter, Activation level 15 greyed out, and output Same as Game Output at volume 100](img/guide/voice-chat.jpg)
 
 | Option | Default | What it does |
 | --- | --- | --- |
