@@ -1393,7 +1393,7 @@ int main(int argc, char** argv) {
     if (fromMenu && menuInteractive && campaignStem.empty() && !benchmarkLaunch) {
         // Titled as the door that opened it: PlayComputer, captioned "Play the Machine".
         lobbyLoading=std::make_unique<tak::LoadScreen>(ren,vfs,"Play the Machine",&settings);
-        lobbyLoading->step("Starting",5);
+        lobbyLoading->step("Starting...",5);
     }
 
     std::string serverBin;
