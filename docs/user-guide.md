@@ -1768,7 +1768,12 @@ measurements](legion-pathfinding.md)):
   round a gatehouse, fill the corridor from its far end, as in Retail:
   the first units walk on past the first place they could fire from instead
   of stopping in the gate and shutting it, so at least as many units fire at once
-  as in Retail.
+  as in Retail. A group of ranged units too big for one ring at the edge of its
+  reach fires from several rings, three or more deep where its reach leaves
+  room: the first units walk on past the edge to places closer to the target,
+  and the rest come into reach behind them instead of waiting outside the
+  first ring.
+  Melee units still go round to reach the target.
 - **Narrow crossings take turns.** At a bridge or other narrow crossing, the
   time each group is let through grows with the length of the crossing, and a
   small group waits its turn instead of pushing in among a big one. Two armies

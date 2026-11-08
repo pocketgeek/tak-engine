@@ -304,6 +304,13 @@ constexpr uint32_t kPressRouteEvery=16;
 constexpr int kWalkOn=10;
 constexpr uint32_t kWalkOnEvery=30;
 constexpr uint8_t kWalkOnMax=6;
+// Deep firing rings (2026-11-08, see buildRing): a ranged ring whose reach
+// edge holds fewer spots than the group has members fires from at least this
+// many bodies deep inside reach (deeper while still short), never nearer the
+// target than its touch distance; a member walking in to an inner spot
+// (walkInRing) is braked after this many ticks held.
+constexpr int kRingThick=3;
+constexpr uint32_t kWalkInHeld=30;
 // Members a reach group needs when its first field starts to plan to a ring
 // (PLAN 3.4; its exit raises it to 8 if the battles' field quota pegs).
 constexpr size_t kRingMembers=2;
@@ -914,6 +921,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             // Round 6 (2026-10-21, see ringDeep): spots lie deep through a
             // narrow approach; the ring fills back to front (ringDeepClaim).
             bool deep=false;
+            // Thick (2026-11-08, see buildRing): band 0 reaches this far in
+            // (px from the target's centre) instead of a body and a half
+            // inside the reach edge; 0: the default band. Its inner spots
+            // (ringInner) are walked in to past the shot (walkInRing).
+            int thick=0;
         } ring;
     };
     // Engaged (AR-06, PLAN 3.4): tickCombat braked this attacker in reach (or a
@@ -9098,6 +9110,34 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         ++stats.reachPressRoutes;
         return true;
     }
+    // Deep firing rings (2026-11-08, see buildRing): the walk in to an inner
+    // spot of a thick ring. Combat brakes an attacker the moment it has the
+    // shot, so the first ring stood on the reach edge and the bodies behind it
+    // never came into reach (attackring-mob-100: 47 of 100 in reach). The
+    // owner of an inner spot is not braked while it walks in to it: it is in
+    // reach all the way and fires as it goes if its weapons aim. Braked (and
+    // its spot let go, see engaged) once its own centre is as deep as its
+    // spot, or held kWalkInHeld ticks, or its last crowd window found it still:
+    // a body walled off from its spot shoots from where it stands.
+    bool walkInRing(const Unit& u,Member& m,int here) {
+        if(m.kind!=Kind::Attack||m.slot<0||here==m.goal||m.pressX!=kNoPress)return false;
+        const auto group=groups.find(m.group);
+        if(group==groups.end())return false;
+        const Group& g=group->second;
+        const Group::Ring& r=g.ring;
+        if(!r.thick||r.deep||g.plane<0||!ringMember(g,m)||r.owner[size_t(m.slot)]!=u.id)return false;
+        const Plane& p=planes[size_t(g.plane)];
+        if(!ringInner(r,p,size_t(m.slot)))return false;
+        if(m.state==Holding&&heldFor(m)>=kWalkInHeld)return false;
+        if(m.stillSince!=kNoTick)return false;
+        if(!stillTarget(m)||u.orders.empty()||u.orders.front().targetId!=g.reachTarget)return false;
+        const int W=width(),c=m.goal;
+        const int64_t sx=int64_t(c%W)*16+p.footX*8-r.tx,sz=int64_t(c/W)*16+p.footZ*8-r.tz;
+        const int64_t ux=(u.x.v>>16)-r.tx,uz=(u.z.v>>16)-r.tz;
+        if(ux*ux+uz*uz<=sx*sx+sz*sz)return false;
+        ++stats.walkIns;
+        return true;
+    }
     // Round 6 (2026-10-21, Legion ~100): the walk on past the shot. Combat
     // brakes an attacker the moment it has the shot; where that is in a
     // narrow approach (attackring-gatehouse-40: a 3-cell corridor round a
@@ -9128,6 +9168,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(!m.route.empty()&&m.route.back()==m.walkOnEnd&&here!=m.walkOnEnd)return true;
             m.walkOnEnd=-1;
         }
+        if(walkInRing(u,m,here))return true;
         if(m.walkOns>=kWalkOnMax||(m.walkOnAt==here&&w.tickCounter_-m.walkOnTick<kWalkOnEvery))return false;
         const auto group=groups.find(m.group);
         if(group==groups.end())return false;
@@ -10738,7 +10779,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     std::vector<Corridor> fieldAvoid(const Group& g) const {
         if(g.ring.band0==0||g.plane<0)return g.avoidSeg;
         const Plane& p=planes[size_t(g.plane)];
-        const int64_t inner=int64_t(g.ring.R)-3*16*std::max(p.footX,p.footZ)/2-1;
+        const int64_t inner=(g.ring.thick?int64_t(g.ring.thick):int64_t(g.ring.R)-3*16*std::max(p.footX,p.footZ)/2)-1;
         if(inner<=0)return g.avoidSeg;
         std::vector<Corridor> avoid=g.avoidSeg;
         Corridor c;c.x0=c.x1=g.ring.tx;c.z0=c.z1=g.ring.tz;c.r=inner;
@@ -10775,6 +10816,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         std::vector<int> cells;std::vector<uint8_t> band;
         std::set<int> used;
         uint64_t scanned=0;
+        bool sightTest=los;
         // The bands (2026-10-19). Band 0, the field's seeds, lies from a
         // body and a half inside reach out to the reach edge itself: combat
         // brakes a body the moment it is in reach, so bodies on their way to
@@ -10789,55 +10831,110 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // planned without the sight test (pass 1): one point seed piled the
         // army against one face, and an unreachable target dropped the order
         // there. The waiting bands keep to the half facing the members.
-        for(int pass=0;pass<2;++pass) {
-            if(pass==1) {
-                if(!los||!cells.empty())break;
-                los=false;blind=true;used.clear();
-            }
-            for(int b=0;b<8&&cells.size()<want;++b) {
-                if(b==1&&!los)continue;
-                const int64_t edge=int64_t(R)+1;
-                const int64_t lo=std::max<int64_t>(touch,b>=2?edge+int64_t(b-2)*body:b==1||pass?0:int64_t(R)-3*body/2);
-                const int64_t hi=b>=2?edge+int64_t(b-1)*body:edge;
-                if(hi<=lo)continue;
-                const int span=int(hi/16)+foot+1;
-                const int cx=int(tx/16),cz=int(tz/16);
-                std::vector<std::pair<int64_t,int>> order;
-                for(int z=std::max(0,cz-span);z<=std::min(H-1,cz+span);++z)for(int x=std::max(0,cx-span);x<=std::min(W-1,cx+span);++x) {
-                    ++scanned;
-                    const int64_t dx=int64_t(x)*16+fx*8-tx,dz=int64_t(z)*16+fz*8-tz,d2=dx*dx+dz*dz;
-                    if(d2<lo*lo||d2>=hi*hi||!legal(p,x,z)||compAt(p,z*W+x)!=comp)continue;
-                    if(b<2&&los&&sight.losBetween(float(x*16+fx*8),float(z*16+fz*8),t->x.toFloat(),t->z.toFloat(),foot/2,
-                                                 std::max(t->type->footX,t->type->footZ)/2)!=(b==0))continue;
-                    const int64_t angle=pseudoAngle(dx*ax+dz*az,dx*az-dz*ax);
-                    // The waiting bands keep to the approach side: waiting
-                    // round the far side, they stood across the lanes to the
-                    // band-0 spots there.
-                    if(b>=2&&std::abs(angle)>kQuarterTurn)continue;
-                    order.push_back({angle,z*W+x});
+        auto plan=[&](int64_t inner) {
+            cells.clear();band.clear();used.clear();los=sightTest;blind=false;
+            for(int pass=0;pass<2;++pass) {
+                if(pass==1) {
+                    if(!los||!cells.empty())break;
+                    los=false;blind=true;used.clear();
                 }
-                std::sort(order.begin(),order.end());
-                for(const auto& [angle,cell]:order) {
-                    if(cells.size()>=kRingCells)break;
-                    const int x=cell%W,z=cell/W;
-                    bool clear=true;
-                    for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!used.count((z+j)*W+x+i);
-                    if(!clear)continue;
-                    for(int j=0;j<fz;++j)for(int i=0;i<fx;++i)used.insert((z+j)*W+x+i);
-                    cells.push_back(cell);band.push_back(uint8_t(b));
+                for(int b=0;b<8&&cells.size()<want;++b) {
+                    if(b==1&&!los)continue;
+                    const int64_t edge=int64_t(R)+1;
+                    const int64_t lo=std::max<int64_t>(touch,b>=2?edge+int64_t(b-2)*body:b==1||pass?0:inner);
+                    const int64_t hi=b>=2?edge+int64_t(b-1)*body:edge;
+                    if(hi<=lo)continue;
+                    const int span=int(hi/16)+foot+1;
+                    const int cx=int(tx/16),cz=int(tz/16);
+                    std::vector<std::pair<int64_t,int>> order;
+                    for(int z=std::max(0,cz-span);z<=std::min(H-1,cz+span);++z)for(int x=std::max(0,cx-span);x<=std::min(W-1,cx+span);++x) {
+                        ++scanned;
+                        const int64_t dx=int64_t(x)*16+fx*8-tx,dz=int64_t(z)*16+fz*8-tz,d2=dx*dx+dz*dz;
+                        if(d2<lo*lo||d2>=hi*hi||!legal(p,x,z)||compAt(p,z*W+x)!=comp)continue;
+                        if(b<2&&los&&sight.losBetween(float(x*16+fx*8),float(z*16+fz*8),t->x.toFloat(),t->z.toFloat(),foot/2,
+                                                     std::max(t->type->footX,t->type->footZ)/2)!=(b==0))continue;
+                        const int64_t angle=pseudoAngle(dx*ax+dz*az,dx*az-dz*ax);
+                        // The waiting bands keep to the approach side: waiting
+                        // round the far side, they stood across the lanes to the
+                        // band-0 spots there.
+                        if(b>=2&&std::abs(angle)>kQuarterTurn)continue;
+                        order.push_back({angle,z*W+x});
+                    }
+                    std::sort(order.begin(),order.end());
+                    for(const auto& [angle,cell]:order) {
+                        if(cells.size()>=kRingCells)break;
+                        const int x=cell%W,z=cell/W;
+                        bool clear=true;
+                        for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!used.count((z+j)*W+x+i);
+                        if(!clear)continue;
+                        for(int j=0;j<fz;++j)for(int i=0;i<fx;++i)used.insert((z+j)*W+x+i);
+                        cells.push_back(cell);band.push_back(uint8_t(b));
+                    }
+                    if(b==0&&cells.empty())break;
                 }
-                if(b==0&&cells.empty())break;
             }
+        };
+        const int64_t thin=int64_t(R)-3*body/2;
+        plan(thin);
+        // Deep firing rings (2026-11-08, owner: "when a ring of ranged
+        // units is attacking something, the ranged units in the back can't
+        // shoot the target; the inner ring should get closer, at least 3
+        // rings deep"). Combat brakes a body the moment it is in reach, so
+        // band 0 above is one body and a half deep and holds one ring of
+        // shooters; the rest of a big group waited outside reach for good
+        // (attackring-mob-100: 53 of 100 out of reach for the last 600 ticks,
+        // Retail 44). When band 0 holds fewer spots than the group has
+        // members, it reaches kRingThick bodies in (one more at a time while
+        // it is still short), never nearer the target than its touch distance;
+        // its inner spots are walked in to past the shot (walkInRing). With
+        // the floor a body out from touch (to keep that ground for a melee
+        // ring), attackring-f2-64's 2x2 bodies at 96 px had no room for a
+        // deeper band (15 in reach); at touch 27 (Retail 14), and a melee
+        // group sent in after 80 archers had formed still got all 20 bodies
+        // to the target (a scratch mixmelee fixture, t50 1122 against 1140:
+        // the inner layers fill only as far as the count needs). Not a
+        // melee ring (reach at touch: no room), not a blind one (the whole of
+        // reach is band 0 already), not round a target on the move (a chase
+        // re-seeds its ring in place: chase-50 planned a thick ring once for
+        // nothing, its spot search doubled), and not a narrow approach
+        // (ringDeep, below: its corridor fills back to front).
+        // Only a depth that adds spots is kept (the shallowest of those with
+        // the most): round a walled target the deeper ground is often all
+        // behind the walls, and a band thick in name only (no spot more, but
+        // its spots read as inner) cost attackring-wall-mixed-56 five bodies
+        // in reach at offset 1 (38 -> 33).
+        int thick=0;
+        if(!blind&&t->speed<=Fixed()) {
+            auto count=[&] {int n=0;for(const uint8_t b:band)n+=b==0;return n;};
+            int most=count(),planned=0;
+            for(int d=kRingThick;most>0&&size_t(most)<g.reachIds.size();++d) {
+                const int64_t inner=std::max<int64_t>(touch,int64_t(R)-int64_t(d)*body);
+                if(inner>=thin||inner==planned)break;
+                plan(inner);planned=int(inner);
+                if(blind)break;
+                if(const int n=count();n>most) {most=n;thick=int(inner);}
+            }
+            if(planned!=thick)plan(thick?thick:thin);
         }
+        int band0=0;
+        auto commit=[&] {
+            band0=0;for(const uint8_t b:band)band0+=b==0;
+            if(!band0)return false;
+            r.R=R;r.band0=band0;r.tx=tx;r.tz=tz;r.ax=ax;r.az=az;r.sight=los;r.blind=blind;r.thick=thick;
+            r.shadow=blind||std::find(band.begin(),band.end(),uint8_t(1))!=band.end();
+            r.naval=naval;r.tskip=std::max(t->type->footX,t->type->footZ)/2;r.tfx=t->x.toFloat();r.tfz=t->z.toFloat();
+            r.cells=std::move(cells);r.band=std::move(band);r.owner.assign(r.cells.size(),0);
+            ringDeep(g,p);
+            return true;
+        };
+        bool built=commit();
+        // A narrow approach (ringDeep) keeps the default band: its corridor
+        // fills back to front by walk, and inner spots behind the corridor's
+        // braked bodies are no way on.
+        if(built&&thick&&r.deep) {plan(thin);thick=0;built=commit();}
         stats.slotSearchCells+=scanned;navc.ringCells+=scanned;
-        int band0=0;for(const uint8_t b:band)band0+=b==0;
-        if(!band0)return false;
-        r.R=R;r.band0=band0;r.tx=tx;r.tz=tz;r.ax=ax;r.az=az;r.sight=los;r.blind=blind;
-        r.shadow=blind||std::find(band.begin(),band.end(),uint8_t(1))!=band.end();
-        r.naval=naval;r.tskip=std::max(t->type->footX,t->type->footZ)/2;r.tfx=t->x.toFloat();r.tfz=t->z.toFloat();
-        r.cells=std::move(cells);r.band=std::move(band);r.owner.assign(r.cells.size(),0);
+        if(!built)return false;
         stats.reachSlotsBuilt+=r.cells.size();
-        ringDeep(g,p);
         g.seeds.assign(r.cells.begin(),r.cells.begin()+band0);
         std::sort(g.seeds.begin(),g.seeds.end());
         for(const int c:g.seeds) {
@@ -10845,13 +10942,23 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         return true;
     }
+    // An inner spot of a thick ring (2026-11-08, see buildRing): band 0, more
+    // than half a body inside the reach edge. Its owner walks in to it past
+    // the shot (walkInRing), so it is where that body stops.
+    bool ringInner(const Group::Ring& r,const Plane& p,size_t i) const {
+        if(!r.thick||r.band[i]!=0)return false;
+        const int W=width(),c=r.cells[i];
+        const int64_t dx=int64_t(c%W)*16+p.footX*8-r.tx,dz=int64_t(c/W)*16+p.footZ*8-r.tz;
+        const int64_t edge=int64_t(r.R)-8*std::max(p.footX,p.footZ);
+        return dx*dx+dz*dz<edge*edge;
+    }
     // The origin where a body walking in to ring spot i stops, as ringScan's
     // flood test reads it: for band 0 of a ring planned with sight, the reach
     // edge radially out from the spot (where combat brakes it), when that
     // origin is legal in the members' component; else the spot.
     int ringStop(const Group::Ring& r,const Plane& p,int comp,size_t i) const {
         const int W=width(),fx=p.footX,fz=p.footZ,c=r.cells[i],x=c%W,z=c/W;
-        if(r.band[i]!=0||!r.sight)return c;
+        if(r.band[i]!=0||!r.sight||ringInner(r,p,i))return c;
         const int64_t sx=int64_t(x)*16+fx*8,sz=int64_t(z)*16+fz*8;
         const int64_t rx=sx-r.tx,rz=sz-r.tz,d=std::max<int64_t>(1,isqrtFloor(uint64_t(rx*rx+rz*rz)));
         const int64_t ex=sx+rx*(r.R-d)/d,ez=sz+rz*(r.R-d)/d;
@@ -10990,10 +11097,22 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             list.push_back({dx*dx+dz*dz,id,v,mm});
         }
         std::sort(list.begin(),list.end(),[](const auto& a,const auto& b) {return std::tie(std::get<0>(a),std::get<1>(a))<std::tie(std::get<0>(b),std::get<1>(b));});
+        // A thick ring's band 0 (2026-11-08, see buildRing) is handed out by
+        // layers a body deep, the innermost first: the members nearest the
+        // target walk in deepest (walkInRing) and the ground behind them stays
+        // open for the next, as the first ring stopping at the edge would not.
+        const int body=16*std::max(p.footX,p.footZ);
+        auto layer=[&](size_t i) {
+            if(!r.thick||r.band[i]!=0)return 0;
+            const int64_t dx=int64_t(r.cells[i]%width())*16+p.footX*8-r.tx,dz=int64_t(r.cells[i]/width())*16+p.footZ*8-r.tz;
+            return int(std::max<int64_t>(0,int64_t(r.R)-isqrtFloor(uint64_t(dx*dx+dz*dz)))/body);
+        };
+        int layers=0;
+        for(size_t i=0;i<r.cells.size();++i)layers=std::max(layers,layer(i));
         size_t next=0;
-        for(int b=0;b<8&&next<list.size();++b) {
+        for(int b=0,k=layers;b<8&&next<list.size();k>0?--k:(++b,k=0)) {
             std::vector<std::pair<int64_t,int>> spots;   // |angle|, slot
-            for(size_t i=0;i<r.cells.size();++i)if(r.band[i]==b&&ringFree(g,p,int(i))) {
+            for(size_t i=0;i<r.cells.size();++i)if(r.band[i]==b&&layer(i)==k&&ringFree(g,p,int(i))) {
                 const int64_t dx=int64_t(r.cells[i]%width())*16+p.footX*8-r.tx,dz=int64_t(r.cells[i]/width())*16+p.footZ*8-r.tz;
                 spots.push_back({std::abs(pseudoAngle(dx*r.ax+dz*r.az,dx*r.az-dz*r.ax)),int(i)});
             }
@@ -11034,7 +11153,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             // wall (its straight line is no way there).
             if(ringNearestOuter(u,m,g,p))return;
         }
-        ringNearest(u,m,g,p,255);
+        ringNearest(u,m,g,p,255,true);
     }
     // The nearest free spot in a lower band, or in the same band nearer this
     // body than its own (any, if another body now stands on its own: an
@@ -11195,7 +11314,9 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 bool free=true;
                 for(int j=0;j<fz&&free;++j)for(int k=0;k<fx&&free;++k)free=!wallAt(x+k,z+j);
                 if(!free)continue;
-                const bool walk=!r.sight||d2>int64_t(r.R)*r.R||
+                // A thick ring's band (2026-11-08): the bodies bound for its
+                // inner spots walk on through it (walkInRing).
+                const bool walk=!r.sight||d2>int64_t(r.R)*r.R||(r.thick&&d2>=int64_t(r.thick)*r.thick)||
                     !sightGrid.losBetween(float(x*16+fx*8),float(z*16+fz*8),r.tfx,r.tfz,foot/2,r.tskip);
                 open[at]=walk?2:1;
                 if(d2>=(int64_t(r.R)+body)*(int64_t(r.R)+body)) {open[at]|=4;flood.push_back(int(at));}
@@ -11248,12 +11369,15 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 auto still=[&](int ox,int oz) {
                     for(int cz=oz;cz<oz+fz&&!used;++cz)for(int cx=ox;cx<ox+fx&&!used;++cx)used=stillAt(cx,cz);
                 };
-                still(x,z);if(!r.blind)still(eox,eoz);
+                // A thick ring's inner spot (2026-11-08): its owner walks in
+                // past the shot (walkInRing), so it stops on the spot itself.
+                const bool inner=ringInner(r,p,i);
+                still(x,z);if(!r.blind&&!inner)still(eox,eoz);
                 // Flooded: where a body walking in to it stops (on the reach
                 // edge where combat brakes it, else the spot itself).
                 if(!used&&floodTest) {
                     int qx=x,qz=z;
-                    if(r.sight&&legal(p,eox,eoz)&&compAt(p,eoz*W+eox)==comp) {qx=eox;qz=eoz;}
+                    if(r.sight&&!inner&&legal(p,eox,eoz)&&compAt(p,eoz*W+eox)==comp) {qx=eox;qz=eoz;}
                     used=qx<bx0||qx>bx1||qz<bz0||qz>bz1||!(open[size_t(qz-bz0)*size_t(bw)+size_t(qx-bx0)]&4);
                 }
                 spent[i]=used;
@@ -11378,15 +11502,28 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         ringTake(g,u,m,best);
         return true;
     }
-    bool ringNearest(const Unit& u,Member& m,Group& g,const Plane& p,int below) {
+    // deepFirst (a fresh claim, 2026-11-08): a thick ring's band 0 by layers,
+    // the innermost first, as assignRing hands it out; a spot the arc in front
+    // has walled off is spent (ringScan) and so never chosen.
+    bool ringNearest(const Unit& u,Member& m,Group& g,const Plane& p,int below,bool deepFirst=false) {
         const int W=width();
         const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
-        int best=-1;int bestBand=0;int64_t bestD=0;
+        const auto& r=g.ring;
+        const int body=16*std::max(p.footX,p.footZ);
+        auto layer=[&](size_t i) {
+            if(!deepFirst||!r.thick||r.band[i]!=0)return 0;
+            const int64_t dx=int64_t(r.cells[i]%W)*16+p.footX*8-r.tx,dz=int64_t(r.cells[i]/W)*16+p.footZ*8-r.tz;
+            return int(std::max<int64_t>(0,int64_t(r.R)-isqrtFloor(uint64_t(dx*dx+dz*dz)))/body);
+        };
+        int best=-1;int bestBand=0,bestLayer=0;int64_t bestD=0;
         for(size_t i=0;i<g.ring.cells.size();++i) {
             if(g.ring.band[i]>=below||!ringFree(g,p,int(i),u.id))continue;
             const int c=g.ring.cells[i];
             const int64_t dx=int64_t(c%W)*16+u.type->footX*8-ux,dz=int64_t(c/W)*16+u.type->footZ*8-uz,d=dx*dx+dz*dz;
-            if(best<0||g.ring.band[i]<bestBand||(g.ring.band[i]==bestBand&&d<bestD)) {best=int(i);bestBand=g.ring.band[i];bestD=d;}
+            const int k=layer(i);
+            if(best<0||g.ring.band[i]<bestBand||(g.ring.band[i]==bestBand&&(k>bestLayer||(k==bestLayer&&d<bestD)))) {
+                best=int(i);bestBand=g.ring.band[i];bestLayer=k;bestD=d;
+            }
         }
         if(best<0)return false;
         if(m.slot>=0) {ringRelease(g,u.id,m);slotCells(m,u.type->footX,u.type->footZ,false);m.slot=-1;}
@@ -12003,7 +12140,16 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 // from the same origin once the mover had passed (attackring-wall-64 offsets 2 / -1
                 // with the queued attackers' shuffles at travel speed: the in/out shuffle
                 // legion_pressin guards). The wait is bounded by kPressTicks as the walk is.
-                if(m.state==Holding&&!pressWaits(u,px,pz))pressEnd(u,m);
+                if(m.state==Holding&&!pressWaits(u,px,pz)) {
+                    // Dropped before the body left the origin it pressed from: no step in and
+                    // back out (the in/out shuffle Member::pressFrom counts), so a later press
+                    // from here is no repeat (Stats only). Two presses into one gap of a thick
+                    // ring's arc (2026-11-08, attackring-wall-64 offset 2): the second's
+                    // diagonal was cut off at once by a body stopping beside its point.
+                    const bool left=oz*W+ox!=m.pressFrom;
+                    pressEnd(u,m);
+                    if(!left)m.pressFrom=-1;
+                }
                 return;
             }
         }
@@ -15353,6 +15499,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 if(g.ring.late)h=mix(h,0x6c617465ull);
                 if(g.ring.blind)h=mix(h,0x626c696e64ull);
                 if(g.ring.deep)h=mix(h,0x64656570ull);
+                if(g.ring.thick) {h=mix(h,0x746869636bull);h=mix(h,uint64_t(uint32_t(g.ring.thick)));}
                 for(size_t i=0;i<g.ring.cells.size();++i)h=mix(h,uint64_t(uint32_t(g.ring.cells[i]))<<32|uint64_t(uint32_t(g.ring.owner[i]))<<4|g.ring.band[i]);
                 if(g.ring.scanned!=kNoTick) {
                     h=mix(h,0x7370656e74ull);h=mix(h,g.ring.scanned);

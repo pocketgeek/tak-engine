@@ -2024,6 +2024,9 @@ within their seed spread (aware headon contacts, landedflyers, tail wave p90).
   reach out to the reach edge (melee at contact; 0.5-1.5 bodies inside until
   2026-10-19, see "Ring upkeep"), legal, in the members' component and
   in line of sight of the target, and is the field's seeds; outer bands wait.
+  A ranged ring whose band 0 holds fewer spots than the group has members is
+  thick: band 0 reaches three bodies or more inside reach (since protocol 317,
+  see "Deep firing rings").
   A guard group plans to its ward's ring point (`World::guardRing`, since
   protocol 303; the ward's centre and a 70 px stance before) with no reach
   ring: its stance is Follow_Ground's own ring round the ward, and a ring there kept twelve guards re-choosing spots for
@@ -2073,7 +2076,8 @@ no longer be reached. The W5 ring did not know that:
 
 The changes, Legion only (Retail hashes unchanged):
 
-* **Bands.** Band 0 runs from 1.5 bodies inside reach to the reach edge; band 1
+* **Bands.** Band 0 runs from 1.5 bodies inside reach to the reach edge (deeper
+  for a thick ring since protocol 317, "Deep firing rings"); band 1
   is the rest of reach out of the target's sight (behind its walls), where
   nothing brakes a body; bands 2+ wait beyond the edge, only on the half
   facing the members (waiting round the far side, they stood across the lanes
@@ -3275,6 +3279,62 @@ Trades: Legion work on the gatehouse layouts rises, the bodies keep moving inste
 6.12M; gatehouse2-48 3.22M -> 4.53M), and gateB's deep-ring claims raise the busiest tick there (gatehouse-40 max over
 the offsets 229,327 -> 331,673; gatehouse2-48 222,777 -> 295,062; gateyard-36 304,574 -> 314,113). The walled rings'
 busiest ticks move by under 1,000. `tools/legion_cost_baseline.json` does not cover the gatehouse and is unchanged.
+
+### Deep firing rings (2026-11-08, protocol 317)
+
+The owner: "when a ring of ranged units is attacking something, if more ranged units are in the back they can't shoot
+the target. The inner ring should then get closer so at least 3 rings deep of ranged attackers attack. Melee units
+should still try and go around." Combat brakes an attacker the moment it is in reach, and band 0 was 1.5 bodies deep, so
+a ring held one row of shooters: `attackring-mob-100` (100 1x1 bodies, gun 96 px) ended with 47 in reach, 53 out of
+reach for the last 600 ticks and 3,021 damage (Retail 44 / 44 / 2,685).
+
+* **Thick band 0** (`buildRing`, `Ring::thick`, hashed). When band 0 holds fewer spots than the group has members, it
+  is re-planned `kRingThick` (3) bodies deep, then one body deeper at a time while still short, never nearer the target
+  than its touch distance. Only a depth that adds spots is kept (the shallowest of those with the most): round a walled
+  target the deeper ground is often all behind the walls, and a band thick in name only cost `attackring-wall-mixed-56`
+  five bodies at offset 1. Not a melee ring (its reach is at touch: no room), not a blind ring, and not a narrow
+  approach: a thick ring that `ringDeep` finds deep is planned thin again. Not round a target on the move either: a
+  chase re-seeds its ring in place, and `chase-50` planned a thick ring once for nothing (its spot search doubled).
+* **Inner spots** (`ringInner`: band 0 more than half a body inside the reach edge) are where their owner stops: the
+  stop for `ringDeep` and ringScan's spend is the spot itself, not the reach edge out from it, and the flood walks on
+  through the thick band.
+* **Innermost first.** `assignRing` hands band 0 out by layers a body deep, the innermost layer to the members nearest
+  the target, so the first bodies walk deepest and the ground behind them stays open; a fresh claim (`ringClaim`'s
+  `ringNearest(..., deepFirst)`) takes the innermost free unspent layer too.
+* **The walk in** (`walkInRing`, from `walkOnShot`, so in `tickCombat` just before the brake): the owner of an inner
+  spot is not braked while it walks in to it, in reach the whole way (its weapons fire if they aim on the move). It
+  is braked once its centre is as deep as its spot, once held 30 ticks (`kWalkInHeld`), or once a crowd window found it
+  still; `engaged` then lets the spot go for the members behind. A body making a press step (`pressIn`) is braked as
+  before. `work.walk_ins` counts the walking ticks.
+* **The press-repeat count** (`Member::pressFrom`, Stats only): a press dropped blocked before the body left the
+  origin it pressed from no longer marks that origin. At wall-64 offset 2 two bodies pressed into one gap of the
+  thick arc; the second's diagonal was cut off at once by a body stopping beside its point, and its next press from
+  the same spot (to another point) read as the in/out shuffle `legion_pressin` guards. No decision reads the count.
+* `fieldAvoid`'s disc shrinks to the thick band's inner bound.
+
+Before / after, median of offsets 0, 1, -1 (`legion_scenario --mode both`; Retail identical before and after):
+
+| fixture | Retail now / ever / out600 / damage | Legion before | Legion after |
+|---|---|---|---|
+| mob-100 | 44 / 44 / 44 / 2,685 | 47 / 47 / 53 / 3,021 | 89 / 89 / 11 / 5,879 |
+| f1-64, squad-64 | 43 / 45 / 19 / 2,611 | 44 / 44 / 20 / 2,915 | 64 / 64 / 0 / 4,256 |
+| f2-64 (2x2) | 14 / 14 / 37 / 910 | 15 / 15 / 49 / 987 | 27 / 27 / 37 / 1,844 |
+| gatehouse2-48 | 21 / 24 / 19 / 1,214 | 17 / 18 / 21 / 1,002 | 22 / 23 / 19 / 1,331 |
+| gateyard-36 | 16 / 17 / 15 / 796 | 17 / 17 / 18 / 821 | 21 / 21 / 15 / 1,102 |
+| deadcorridor-30 | 4 / 4 / 25 / 181 | 8 / 8 / 21 / 362 | 7 / 7 / 21 / 362 |
+
+The other attackring fixtures (mob-40, f1-16, r200-64, struct-60, fight-60, fight-diag-60, guard-64, wall-64,
+wall-mixed-56, river-64, melee-30, gatehouse-40) read the same: their edge band already holds the group, the deeper
+ground is behind walls, or (fight, guard) no ring is built. f2-64's 2x2 bodies at 96 px have only two bodies of room
+above touch; with the floor a body out from touch (tried first, to leave that ground to melee) they had none (15 in
+reach). deadcorridor-30 trades offset 0 (10 -> 7 in reach) for offset -1 (8 -> 12), damage summed 1,158 -> 1,247.
+wall-64 reads the same at these three offsets, but at the outer gate offsets, where the target sits nearer a corner of
+its box, the ring goes thick: in reach 42 / 40 / 40 / 29 / 37 / 34 / 38 -> 46 / 57 / 64 / 58 / 64 / 60 / 63 at offsets 2,
+3, -3, 4, -4, 5, -5, damage about doubled.
+
+Melee: no fixture sends melee and ranged at one target, so a scratch one did (80 1x1 archers and 20 araknigh): sent
+together, the melee arrive first and take the contact ground, identical before and after; sent 600 ticks after the
+archers formed, all 20 still reach the target (t50 1,140 before, 1,122 after) while the archers in reach went 43 -> 80.
 
 ### Paused first builds (W4 C1, protocol 244)
 

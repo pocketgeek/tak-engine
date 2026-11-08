@@ -190,9 +190,11 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 316, "replay format 11 is kept under protocol 316");
-    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 316");
-    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 316");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 317, "replay format 11 is kept under protocol 317");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 317");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 317");
+    // 317 fires Legion's ranged attack rings up to three bodies deep and more (hashed).
+    check(!supportedReplayProtocol(15, 316), "previous protocol (Legion's one-deep firing rings) is refused");
     // 316 lets a player tick spectators in for chat and voice (Chat / VoiceUp wire change).
     check(!supportedReplayProtocol(15, 315), "previous protocol (spectators by an all-players mask) is refused");
     // 315 runs the Benchmark on the server's wall clock (Cmd::BenchClock).

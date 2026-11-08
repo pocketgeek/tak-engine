@@ -19,7 +19,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 316;      // 316: chat and voice reach spectators only when the player ticks them
+constexpr uint32_t kNetVersion = 317;      // 317: Legion's ranged attack rings fire up to three bodies deep and more
+                                           // (buildRing's thick band 0, walkInRing; hashed Ring::thick)
+                                           // 316: chat and voice reach spectators only when the player ticks them
                                            // (Chat's trailing spectators byte, VoiceUp's kVoiceSpectators flag)
                                            // 315: the Benchmark runs on the server's wall clock (Cmd::BenchClock):
                                            // 60 real seconds and spawns per real second at any game speed
