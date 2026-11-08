@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Quick start](quick-start.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Changelog](../CHANGELOG.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.9.22**. Which versions it plays with, and whose
+This guide covers **TAK Engine 0.9.23**. Which versions it plays with, and whose
 replays it plays: see [Versions](#versions). What changed in each release: see
 the [CHANGELOG](../CHANGELOG.md). It is written for three kinds of reader:
 
@@ -282,7 +282,10 @@ setting says, and any allies and opponents play on.
 
 1. Click the **Single-Player** door.
 2. In the game setup screen, pick a **map**. The preview shows its layout, its
-   numbered start positions and how many players it supports. You can also choose **Generate Random Map**.
+   numbered start positions and how many players it supports. **Name**, **Players** and
+   **Size** sort the list, and typing in **Filter** beside them keeps only the maps
+   whose name contains the text (upper or lower case alike). You can also choose
+   **Generate Random Map**.
 3. Set the match rules (all explained in [Match options](#match-options)). The
    defaults are fine for a first game.
 4. Click **Create**. In the lobby, choose your **side**, **colour** and **team**.
@@ -549,7 +552,7 @@ version 8 still makes exactly the same map; older recipes are not supported. A
 generated map you have saved as a `.kmp` always plays, whatever made it.
 Rebuilding a map from its recipe needs the same game data.
 
-![The single-player screen with Generate Random Map open: Type Aramon, Layout Mainland, Size 12 × 12 and Players 4 on one row, then the Forests, Rock Clusters, Extra Mana Spots, Scattered Mana (at High), Water Amount and Authored Hills sliders and Re-roll Seed. The preview shows four numbered starts and reads MANA: 57 and SCATTERED: 33 NEUTRAL](img/guide/random-map-lobby.jpg)
+![The single-player screen with Generate Random Map open: Type Aramon and Layout Mainland, then Size 12 × 12 and Players 4 on one row, the Forests, Rock Clusters, Extra Mana Spots, Scattered Mana (at High), Water Amount and Authored Hills sliders and Re-roll Seed. The preview shows four numbered starts and reads WATER: 0% MANA: 57](img/guide/random-map-lobby.jpg)
 
 *The random map settings in the single-player lobby, with Scattered Mana at
 High. Size and Players share a row.*
@@ -2101,7 +2104,7 @@ your system appear.
 
 ### Interface
 
-![Options, Interface section: Modern UI Font on, F4 Scorecard Scale and UI Scale 100%, Health Bars Damaged, Stats Panel on, Build Menu Center at 100%, Chat Position Centered and Chat Scale 100%](img/guide/options-interface.jpg)
+![Options, Interface section: Modern UI Font on, F4 Scorecard Scale and UI Scale 100%, Health Bars Damaged, Stats Panel on, Build Menu Center at 100%, Idle Builders Middle at 50%, Chat Position Centered and Chat Scale 100%](img/guide/options-interface.jpg)
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -2210,7 +2213,7 @@ host's game mods are sent automatically.
 
 ### Joining a game
 
-![The Connect to Server panel: the server list with the default server marked, the account name and password fields, the note A NEW NAME IS REGISTERED WHEN YOU SIGN IN, and the CONNECT and BACK buttons](img/mp-connect.jpg)
+![The Connect to Server panel: the default server tak.pgnet.us, CUSTOM..., two remembered servers each with a DELETE button, the account name and password fields, the note A NEW NAME IS REGISTERED WHEN YOU SIGN IN, and the CONNECT and BACK buttons](img/mp-connect.jpg)
 
 *Signing in to a server.*
 
@@ -2393,15 +2396,16 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-TAK Engine 0.9.22 uses network protocol **316** and replay format **15**. No earlier
-release uses protocol 316 (0.9.21 used 315), so:
+TAK Engine 0.9.23 uses network protocol **316** and replay format **15**, the same as
+0.9.22. No earlier release uses protocol 316 (0.9.21 used 315), so:
 
-- **Multiplayer:** 0.9.22 plays only with 0.9.22. A server turns away a client whose
-  protocol differs from its own, so a 0.9.21 or older player cannot join a 0.9.22
-  server, nor a 0.9.22 player an older one; the connection fails with a *protocol
+- **Multiplayer:** 0.9.23 plays with 0.9.23 and 0.9.22, in either direction. A server
+  turns away a client whose protocol differs from its own, so a 0.9.21 or older
+  player cannot join a 0.9.23 server, nor a 0.9.23 player an older one; the connection
+  fails with a *protocol
   version mismatch* message. When a release changes the protocol, a server and all of
   its players update together.
-- **Replays:** 0.9.22 plays replays recorded by 0.9.22. A replay recorded by 0.9.21
+- **Replays:** 0.9.23 plays replays recorded by 0.9.23 and 0.9.22. A replay recorded by 0.9.21
   or earlier needs a version with that replay's protocol; keep an old copy of the
   engine (built from its tag, see the [development guide](development.md)) if you want
   to keep watching old replays.
@@ -2802,7 +2806,9 @@ the room. Only the host ticks game packs; everyone else sees the host's choice. 
 then ticked ones, each in alphabetical order of their folder names; later packs
 win when they change the same file. Game packs load first, then cosmetic packs.
 
-![A single-player room with Power Codes: On among the match rules; below the map, the COSMETIC MODS list with ALWAYS ON: click under its heading and Classic Sounds ticked, and the GAME MODS list with ALWAYS ON: House Rules under its heading, Big Battles ticked and GAME MODS VERIFIED](img/guide/room-mods-power-codes.jpg)
+![A single-player room with Power Codes: On among the match rules; under the map, the MODS summary reads ALWAYS ON: click, House Rules, COSMETIC: Classic Sounds and GAME: Big Battles, with the MODS... button and GAME MODS VERIFIED under it](img/guide/room-mods-power-codes.jpg)
+
+![The MODS screen: COSMETIC MODS and GAME MODS side by side, each with 2 / 64 ON and a FILTER box; click and House Rules are marked ALWAYS ON at the top, Classic Sounds and Big Battles are ticked and Alternate Cursors is not](img/guide/mods-screen.jpg)
 
 - **Cosmetic packs** are each player's own choice, in single player and in
   multiplayer, host or not. They change only what that player sees and hears,

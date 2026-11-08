@@ -1302,6 +1302,7 @@ chat and voice reach nobody. Before the game starts everything still goes to the
 room. The client sends the flag from the Diplomacy screen's SPECTATORS row, off at the
 start of each game, and starts the player columns at the player's allies. 0.9.22 ships
 protocol 316; it plays with neither 0.9.21 nor any earlier version, nor their replays.
+0.9.23 keeps protocol 316 and plays with 0.9.22.
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
@@ -1592,6 +1593,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.9.22 (peers and server) requires protocol 316; version 0.9.21 requires protocol 315 (313 and 314 were never released on their own); version 0.9.20 requires protocol 312; version 0.9.19 (peers and server) requires protocol 311 (310, Legion steering of 2026-11-02, was never released on its own); versions 0.9.18, 0.9.17 and 0.9.16 (peers and server) require protocol 309; 0.9.15 and 0.9.14 required 308; 0.9.13 required 307; 0.9.12 required 305 (306 was never released); 0.9.11 required 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Versions 0.9.23 and 0.9.22 (peers and server) require protocol 316; version 0.9.21 requires protocol 315 (313 and 314 were never released on their own); version 0.9.20 requires protocol 312; version 0.9.19 (peers and server) requires protocol 311 (310, Legion steering of 2026-11-02, was never released on its own); versions 0.9.18, 0.9.17 and 0.9.16 (peers and server) require protocol 309; 0.9.15 and 0.9.14 required 308; 0.9.13 required 307; 0.9.12 required 305 (306 was never released); 0.9.11 required 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions remain fixed to Retail.

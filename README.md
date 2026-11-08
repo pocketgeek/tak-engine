@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.22-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.23-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,15 +26,15 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.22
+## What's new in 0.9.23
 
-- Chat and voice start with your allies only; a Spectators line lets you include anyone watching.
-- Spectators can no longer chat or talk during a game.
-- Voice chat: a Microphone on/off switch and Mic gain up to 400%.
-- GPU memory is reused instead of reallocated, and the terrain cache grows with the GPU memory limit.
+- Idle Builders: a column of portraits of your builders and factories with nothing to do.
+- Shots, spells and explosions are drawn behind the trees and units in front of them.
+- A Mods screen for choosing packs; up to 64 remembered servers, each with Delete.
+- Cleaner game setup and room screens, with a map list Filter.
 
-Protocol 316: does not play with 0.9.21 or earlier, nor their replays; servers must update too.
-Details in the [CHANGELOG](CHANGELOG.md#0922).
+Plays with 0.9.22 and its replays (protocol 316); servers need no update.
+Details in the [CHANGELOG](CHANGELOG.md#0923).
 
 ## Features
 
@@ -76,7 +76,7 @@ Details in the [CHANGELOG](CHANGELOG.md#0922).
     </td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/img/room.jpg"><img src="docs/img/room.jpg" alt="Game room with AI slots, MOVE HERE buttons on the open slots, start markers in the players' colours and the mod lists"></a><br><sub>A game room: seats, start positions and mods</sub>
+    <td width="50%"><a href="docs/img/room.jpg"><img src="docs/img/room.jpg" alt="Game room with AI slots, MOVE HERE buttons on the open slots, start markers in the players' colours and the mods summary"></a><br><sub>A game room: seats, start positions and mods</sub>
     </td>
     <td width="50%"><a href="docs/img/campaign.jpg"><img src="docs/img/campaign.jpg" alt="The Book of Darien campaign book"></a><br><sub>The campaign book</sub>
     </td>

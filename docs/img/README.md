@@ -1,6 +1,42 @@
 # README and user-guide screenshots
 
-**Retaken for 0.9.22** (2026-11-07): `title.jpg` only, by the 0.9.22 build (Debug of
+**Retaken for 0.9.23** (2026-11-08): the pictures of the screens 0.9.23 changed, by a
+Debug `-O2` build of `main` at `72ebf352` with the 0.9.23 version line and capture-only
+hooks in a worktree (not committed; `capture-hooks-0923.diff` in
+`~/tak-tmp/scratch/release-0923/shots/`, which also holds the scripts `menu.py`,
+`drv.py`, `lobjobs.json`, `encode.py` and `build.sh`): offscreen GL, scratch profiles from
+the 0.9.1 capture settings (`hardwareCursor = 1`, `lastMap` per shot), the 0.9.1 scratch
+install (the 0.9.0 `instM` install, which adds House Rules, for the mods pictures). JPEG
+`subsampling=0`, quality 90 (`title.jpg`), 88 (the other root pictures) and 86 (`guide/`).
+
+- `title.jpg`: the 0.9.1 title capture at 1920 x 1080, cropped to (240, 0, 1680, 1080);
+  it reads VERSION 0.9.23.
+- `lobby.jpg`: Play the Machine's create screen, Ulasem Arena, defaults, 1600 x 1000
+  uncropped (the FILTER field, no MAP line or headings, the wider list).
+- `lobby-scenario.jpg`: King of the Hill with MAP SCENARIO: ON, from 1024 x 768 cropped
+  to (0, 93, 1024, 673).
+- `guide/random-map-lobby.jpg`: the random map panel (12 x 12, 4 players, Scattered Mana
+  High; MANA: 57), from 1600 x 1000 cropped to (0, 50, 1600, 950): now the full width,
+  since the even margins put the option column at x 27 (it was cropped from x 100).
+- `room.jpg`: the single-player room on Ulasem Arena with three Normal AIs (Taros,
+  Veruna, Zhon), Crusades, Double Sight and Legion on, the MODS summary with Alternate
+  Cursors and Classic Sounds ticked; 1600 x 1000 uncropped.
+- `guide/room-mods-power-codes.jpg`: the room with POWER CODES: ON and two AIs; the MODS
+  summary reads ALWAYS ON: click, House Rules, COSMETIC: Classic Sounds, GAME: Big Battles,
+  GAME MODS VERIFIED; 1600 x 1000 uncropped. Ticks seeded as hex `mods.cosmeticPack` /
+  `mods.gamePack` lines.
+- `guide/mods-screen.jpg` (new): the MODS screen opened from that room, from 1600 x 1000
+  cropped to (0, 50, 1600, 420), above DONE.
+- `mp-connect.jpg`: `TAK_SHOT_SERVER=4` (its two sample servers, account `aldric`), from
+  1600 x 900 cropped to the 640-wide panel at (480, 219, 1120, 681).
+- `guide/options-interface.jpg`: the Interface section scrolled into view
+  (`TAK_CAP_OPTIONS=40`), from 1600 x 1100 cropped to (388, 246, 1212, 776), 78 px taller
+  for IDLE BUILDERS and IDLE BUILDERS SCALE.
+
+Not retaken: the in-game pictures predate the Idle Builders column and the depth-ordered
+shots and effects.
+
+**Earlier: retaken for 0.9.22** (2026-11-07): `title.jpg` only, by the 0.9.22 build (Debug of
 `main` at `ac1f9dac` with the 0.9.22 version line), with the 0.9.1 title capture (script
 `title.sh` in `~/tak-tmp/scratch/release-0922/shots/`), cropped to the artwork as before;
 it reads VERSION 0.9.22. Then, after the release, `diplomacy.jpg` and

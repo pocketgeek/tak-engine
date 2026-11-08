@@ -19,6 +19,46 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.23
+*2026-11-08 · protocol 316 · replay format 15 · plays with 0.9.22, and its replays*
+
+- **Idle Builders.** A column of portraits at the right of the map shows each kind of
+  builder or factory of yours that has nothing to do, with how many. Click one to select
+  the next idle one and go to it; Shift+click selects them all. The Monarch comes first,
+  then mobile builders and factories, each from basic to advanced. Options → Interface
+  places it (**Top**, **Middle**, the default, or **Bottom**) or turns it **Off**, and
+  **Idle Builders Scale** sizes it (50–400%, default 50%). **Build Menu Scale** also goes
+  down to 50% now.
+- **Shots and effects are drawn at their place in the scene.** Arrows, spells, flames,
+  explosions and smoke now go behind a tree or unit that stands in front of them and over
+  one behind them, instead of over everything on the ground. (The original game drew them
+  over everything.)
+- **A computer player's flying builder no longer waits out its landing** after each
+  building before starting the next one (the Zhon Monarch lost about 4–5 seconds per
+  building). Games against our AI levels change; this lives on the server, so it applies
+  where the server runs 0.9.23.
+- **The mods in a game room** are a short summary under the map: what is always on, the
+  cosmetic packs you ticked and the host's game packs. **MODS...** opens a mods screen
+  with the cosmetic and game packs side by side, each with a **Filter** box and a
+  scrolling list, the always-on packs locked at the top.
+- **Connect to Server** lists the default server, then **Custom...**, then up to 64 servers
+  you have signed in to (was 8), scrolling, each with **Delete**. `localhost`, `127.x.x.x`
+  and `::1` connect without TLS when typed without a prefix, so a local test server works
+  as typed (`tls://` still forces TLS).
+- **Game setup screens:** a map list **Filter** box (single player and multiplayer), a
+  wider map list and even margins; Play the Machine is titled as its door, without
+  repeated headings. The map list no longer shows the cached copies of maps you have
+  installed (a map received from a server, or a Cartographer Test Map snapshot). In
+  multiplayer, **Back** returns to the game browser (the Browser button is gone).
+- **The game room:** the map's name over its preview, the player table higher with
+  wider names in single player, and in multiplayer a taller chat box (no Chat or Say
+  labels) that scrolls back with the mouse wheel.
+- **Loading screens:** Play the Machine's is titled as its door and starts at
+  *Starting...*; connecting to a server shows a loading screen (*Connecting to*,
+  *Signing in to*) instead of the bare title.
+- **Options:** a pick from a list (Idle Builders, Build Menu, Chat Position, Health Bars
+  and the rest) applies at once in a running game, as toggles and sliders do.
+
 ## 0.9.22
 *2026-11-07 · protocol 316 · replay format 15 · does not play with 0.9.21 or earlier, nor their replays*
 
