@@ -190,7 +190,7 @@ struct Stream::Impl {
 #ifdef TAK_STREAM_TESTING
     std::atomic<int> testDelay{0};
     std::atomic<bool> testDelaying{false};
-    std::atomic<int> testCopyFail{-1};
+    std::atomic<int> testCopyFailKeys{-1}, testCopyFail{-1};   // testFailLocalAfter
 #endif
     mutable std::mutex stateMutex;
     StreamStatus state;
@@ -301,7 +301,8 @@ struct Stream::Impl {
         AVStream* out = stream == e.vs ? l.vs : l.as;
         bool ok = av_packet_ref(l.packet, packet) >= 0;
 #ifdef TAK_STREAM_TESTING
-        if (ok && testCopyFail >= 0 && testCopyFail-- == 0) ok = false;
+        if (ok && testCopyFailKeys > 0 && stream == e.vs && (packet->flags & AV_PKT_FLAG_KEY)) --testCopyFailKeys;
+        if (ok && testCopyFailKeys == 0 && testCopyFail >= 0 && testCopyFail-- == 0) ok = false;
 #endif
         if (ok) {
             av_packet_rescale_ts(l.packet, codec->time_base, out->time_base);
@@ -710,7 +711,10 @@ bool Stream::startRecording(const StreamConfig& c, const std::string& path) {
 }
 #ifdef TAK_STREAM_TESTING
 void Stream::testDelayOnce(int milliseconds) { p_->testDelay = milliseconds; }
-void Stream::testFailLocalAfter(int packets) { p_->testCopyFail = packets; }
+void Stream::testFailLocalAfter(int keyframes, int packets) {
+    p_->testCopyFail = packets;
+    p_->testCopyFailKeys = std::max(0, keyframes);
+}
 bool Stream::testDelayInProgress() const { return p_->testDelaying; }
 std::vector<uint8_t> Stream::testLastPicture(int& w, int& h) const {
     std::lock_guard lock(p_->testPictureMutex); w = p_->testPictureW; h = p_->testPictureH; return p_->testPicture;

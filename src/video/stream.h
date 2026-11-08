@@ -51,8 +51,12 @@ public:
     // letterboxed inner picture, before colour conversion). Empty before the first.
     std::vector<uint8_t> testLastPicture(int& w, int& h) const;
     bool startTestEndpoint(const StreamConfig&, const std::string& url, const std::string& caFile);
-    // The local copy's next write after `packets` more fails, as a full disk would.
-    void testFailLocalAfter(int packets);
+    // The local copy's writes fail, as a full disk would, `packets` packets after it has
+    // written its `keyframes`-th video keyframe. Counting keyframes rather than packets
+    // makes what is already saved independent of the machine's speed: past the second
+    // keyframe the copy holds one finished fragment (a GOP, 2 s), however many video
+    // frames a slow encoder dropped meanwhile.
+    void testFailLocalAfter(int keyframes, int packets);
 #endif
     void stop(); // nonblocking; destruction joins after interrupting network I/O
     bool active() const;

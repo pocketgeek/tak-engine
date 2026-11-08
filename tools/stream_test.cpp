@@ -173,7 +173,7 @@ static bool localCopy(tak::video::StreamConfig config) {
         // A full disk mid-stream: the copy stops, the stream does not.
         tak::video::Stream stream;
         require(stream.startRecording(config,flv.string()),"start with a local copy (disk fills)");
-        stream.testFailLocalAfter(180);
+        stream.testFailLocalAfter(2, 20);   // a finished fragment first, whatever the runner's speed
         feed(stream,4000ms);
         auto s=stream.status();
         require(stream.active() && s.state=="RECORDING","a failed local write leaves the stream running");
