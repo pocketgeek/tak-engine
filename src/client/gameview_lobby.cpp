@@ -68,7 +68,7 @@ float createOptionPx(float maxW) {
         lobbyHots_.clear();
         // Map-picker geometry is only live while the create screen is shown; clear it
         // so a stale thumb/list rect can't grab clicks or wheel on the other screens.
-        mapListRect_ = mapThumbRect_ = SDL_FRect{0, 0, 0, 0};
+        mapListRect_ = mapThumbRect_ = chatRect_ = SDL_FRect{0, 0, 0, 0};
         for (auto& rect : genSliderRect_) rect = {};
         // absorb any new chat
         if (mp_) for (auto& m : mp_->takeChat()) chatLog_.push_back(m);
@@ -1535,23 +1535,48 @@ float createOptionPx(float maxW) {
         }
         // chat panel on the right (multiplayer only -- there's no one to chat with in SP)
         if (!singlePlayer_) {
+            // CHAT, small (as the mods status line), over the message box; the box runs down
+            // to the line the text field and SEND share.
             float chx = winW - 300.0f, chy = modBottom, chw = 280;
+            constexpr float kLineH = 16, kSb = 8;
+            const float inputY = winH - 52.0f;
+            blockText("CHAT", chx + 2, chy, 1.2f, {160, 165, 180, 255});
             SDL_SetRenderDrawColor(ren_, 22, 24, 32, 255);
-            SDL_FRect cp{chx, chy, chw, std::max(50.0f,winH - chy - 72.0f)}; SDL_RenderFillRectF(ren_, &cp);
-            blockText("CHAT", chx + 8, chy + 6, 1.8f, {160, 165, 180, 255});
-            // Newest at the bottom; each message wraps to the panel's width (measured,
-            // so it fits in either UI FONT), and the oldest rows go off the top.
-            float ly = chy + cp.h - 20;
-            for (auto it = chatLog_.rbegin(); it != chatLog_.rend() && ly > chy + 26; ++it) {
-                const auto rows = tak::uiTextWrap(it->first + ": " + it->second, 1.4f, chw - 16);
-                for (auto r = rows.rbegin(); r != rows.rend() && ly > chy + 26; ++r) {
-                    blockText(*r, chx + 8, ly, 1.4f, {200, 205, 215, 255});
-                    ly -= 16;
-                }
+            SDL_FRect cp{chx, chy + 16, chw, std::max(40.0f, inputY - 6 - (chy + 16))}; SDL_RenderFillRectF(ren_, &cp);
+            chatRect_ = cp;
+            // Every message wrapped to the box (measured, so it fits in either UI FONT),
+            // oldest first; chatScroll_ is how many rows up from the newest the view sits
+            // (the mouse wheel over the box), with a scroll bar once they overflow.
+            std::vector<std::string> rows;
+            for (const auto& m : chatLog_)
+                for (auto& r : tak::uiTextWrap(m.first + ": " + m.second, 1.4f, chw - 16 - kSb)) rows.push_back(std::move(r));
+            const int visible = std::max(1, int((cp.h - 8) / kLineH));
+            const int total = int(rows.size());
+            chatScroll_ = std::clamp(chatScroll_, 0, std::max(0, total - visible));
+            const int last = total - 1 - chatScroll_;   // the bottom row on show
+            float ly = cp.y + 4 + float(visible - 1) * kLineH;
+            for (int i = last; i >= 0 && i > last - visible; --i, ly -= kLineH)
+                blockText(rows[size_t(i)], chx + 8, ly, 1.4f, {200, 205, 215, 255});
+            if (total > visible) {
+                const float th = std::max(16.0f, cp.h * float(visible) / float(total));
+                const float ty = cp.y + (cp.h - th) * float(total - visible - chatScroll_) / float(total - visible);
+                SDL_FRect thumb{cp.x + cp.w - kSb - 2, ty, kSb, th};
+                SDL_SetRenderDrawColor(ren_, 90, 100, 130, 255); SDL_RenderFillRectF(ren_, &thumb);
             }
-            lbField(chx, winH - 66.0f, chw - 70, "SAY", chatDraft_, 4);
-            lbBtn(chx + chw - 62, winH - 52.0f, 56, 24, "SEND", !chatDraft_.empty(), [this] {
-                mp_->chat(chatDraft_); chatDraft_.clear(); });
+            // The text field (no label): Enter or SEND sends.
+            {
+                const SDL_FRect r{chx, inputY, chw - 70, 24};
+                const bool active = lbField_ == 4;
+                SDL_SetRenderDrawColor(ren_, 24, 26, 34, 255); SDL_RenderFillRectF(ren_, &r);
+                SDL_SetRenderDrawColor(ren_, active ? 200 : 90, active ? 210 : 100, active ? 130 : 130, 255); SDL_RenderDrawRectF(ren_, &r);
+                const float vpx = tak::modernUiText() ? 1.6f : 1.8f;
+                const std::string shown = tak::uiTextFitStart(chatDraft_ + (active ? "_" : ""), vpx, r.w - 12);
+                blockText(shown, r.x + 6, r.y + (r.h - 7 * vpx - (tak::modernUiText() ? tak::uiTextDescent(vpx) : 0)) / 2, vpx,
+                          {225, 230, 240, 255});
+                lobbyHots_.push_back({r, [this] { lbField_ = 4; SDL_StartTextInput(); }});
+            }
+            lbBtn(chx + chw - 62, inputY, 56, 24, "SEND", !chatDraft_.empty(), [this] {
+                mp_->chat(chatDraft_); chatDraft_.clear(); chatScroll_ = 0; });
         }
     }
 
@@ -1679,6 +1704,7 @@ float createOptionPx(float maxW) {
                 mapScroll_ -= e.wheel.y;
                 clampMapScroll();
             }
+            if (ptIn(chatRect_, mx, my)) chatScroll_ = std::max(0, chatScroll_ + e.wheel.y);   // up: older rows
             for (int k = 0; k < 2; ++k)   // the mods screen's two lists (clamped as they draw)
                 if (modsScreen_ && ptIn(modListRect_[k], mx, my)) modScroll_[k] = std::max(0, modScroll_[k] - e.wheel.y);
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&

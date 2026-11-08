@@ -2782,6 +2782,10 @@ private:
     std::string cosmeticModFilter_, gameModFilter_;
     // The room's mods screen (MODS...): open, and its two lists' scroll (rows) and boxes.
     bool modsScreen_ = false;
+    // The room's chat box: where it is (the wheel's target) and how many rows up from the
+    // newest it is scrolled.
+    SDL_FRect chatRect_{};
+    int chatScroll_ = 0;
     int modScroll_[2] = {0, 0};
     SDL_FRect modListRect_[2]{};
     void drawModsScreen(int winW, int winH);
