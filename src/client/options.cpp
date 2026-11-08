@@ -730,7 +730,7 @@ void OptionsScreen::build(int channels) {
 void OptionsScreen::layout(int winW, int winH) {
     u_ = std::clamp(std::min(winW / 1280.0f, winH / 720.0f), 1.0f, 3.0f);
     auto rowH = [&](Control::Kind k) {
-        return k == Control::Section ? 30 * u_ : k == Control::Folder ? 56 * u_ : 36 * u_;
+        return k == Control::Section ? 30 * u_ : k == Control::Folder ? 74 * u_ : 36 * u_;
     };
     float panelW = std::min(660 * u_, winW * 0.72f);
     float titleH = 3.4f * 7 * u_ + 26 * u_;
@@ -1385,6 +1385,14 @@ void OptionsScreen::drawFolderRow(const Control& c) {
     }
     note = uiTextFit(note, npx, c.row.w);
     uiText(ren_, note, c.row.x, c.row.y + 38 * u_, npx, col);
+    // Where this player's own files live: settings.ini, and replays beside it.
+    std::string local = settingsPath();
+    if (const auto cut = local.find_last_of("/\\"); cut != std::string::npos) local.resize(cut + 1);
+    if (!local.empty()) {
+        const std::string head = "SETTINGS AND REPLAYS: ";
+        uiText(ren_, head + fitPath(local, npx, c.row.w - uiTextWidth(head, npx)), c.row.x, c.row.y + 56 * u_, npx,
+               {130, 140, 160, 255});
+    }
 }
 
 void OptionsScreen::drawRestartPrompt(int winW, int winH) {

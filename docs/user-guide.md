@@ -1883,6 +1883,9 @@ to take the new ones.
 | --- | --- | --- |
 | **Data folder** | The folder chosen at first start | The *Total Annihilation: Kingdoms* install the game reads. **Change** opens a folder picker. |
 
+The line **Settings and replays** under it shows the folder that holds your own
+`settings.ini` and replays (see [Where files are kept](#where-files-are-kept)).
+
 The row shows the folder in use; hover over it for the full path. The folder you
 choose is checked first: if it is not an install, the game says what is missing
 and keeps the current one. A good folder is saved at once, then the game offers
