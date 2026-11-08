@@ -1391,7 +1391,8 @@ int main(int argc, char** argv) {
     // first lobby draw discovers and parses the entire map catalogue.
     std::unique_ptr<tak::LoadScreen> lobbyLoading;
     if (fromMenu && menuInteractive && campaignStem.empty() && !benchmarkLaunch) {
-        lobbyLoading=std::make_unique<tak::LoadScreen>(ren,vfs,"Single Player",&settings);
+        // Titled as the door that opened it: PlayComputer, captioned "Play the Machine".
+        lobbyLoading=std::make_unique<tak::LoadScreen>(ren,vfs,"Play the Machine",&settings);
         lobbyLoading->step("Starting single-player",5);
     }
 
