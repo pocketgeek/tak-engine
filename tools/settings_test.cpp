@@ -99,6 +99,7 @@ int main() {
     flips("voiceMicVolume",  [](Settings& s) { s.voiceMicVolume -= 11; });
     flips("voiceMicEnabled", [](Settings& s) { s.voiceMicEnabled = !s.voiceMicEnabled; });
     flips("idleBuilders",    [](Settings& s) { s.idleBuilders = 3; });
+    flips("idleBuildersScale", [](Settings& s) { s.idleBuildersScale = 1.5f; });
     flips("voiceOutputVolume", [](Settings& s) { s.voiceOutputVolume -= 11; });
 
     // camera / input

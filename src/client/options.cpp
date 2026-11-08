@@ -696,6 +696,9 @@ void OptionsScreen::build(int channels) {
             "A PORTRAIT FOR EACH KIND OF BUILDER OR FACTORY OF YOURS WITH NOTHING TO DO, AT THE RIGHT",
             "OF THE MAP. CLICK ONE TO SELECT THE NEXT AND GO TO IT; SHIFT+CLICK SELECTS THEM ALL."};
     };
+    // Extra scale for that column, ON TOP of UI SCALE (as BUILD MENU SCALE).
+    slider("IDLE BUILDERS SCALE", 0.75f, 4.0f, [&] { return s_.idleBuildersScale; },
+           [&](float v) { s_.idleBuildersScale = v; }, [](float v) { return pctOf(v, 1); });
     // The in-game chat box: where it sits over the play area, and its size ON TOP of
     // UI SCALE, in 10% steps (client/chatbox.h).
     dropdown("CHAT POSITION",

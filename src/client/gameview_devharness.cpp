@@ -2853,7 +2853,8 @@
             const int idleFactory=spawn("tarcastl",cx+100,cz-150,0,me);
             const int busyFactory=spawn("tarcastl",cx+100,cz+150,0,me);
             const int other=spawn("araking",cx-200,cz+200,0,(me+1)%2);
-            check(monarch>=0 && idleFactory>=0 && busyFactory>=0 && other>=0,"fixture spawned");
+            const int worker=spawn("zonhand",cx-300,cz-100,0,me);   // a mobile builder, not a Monarch
+            check(monarch>=0 && idleFactory>=0 && busyFactory>=0 && other>=0 && worker>=0,"fixture spawned");
             const auto& menu=registry_.buildable("tarcastl");
             check(!menu.empty() && registry_.find(menu.front()),"the castle has something to train");
             writableWorld().train(busyFactory,registry_.find(menu.front()),5);
@@ -2866,11 +2867,21 @@
                 for (const auto& i:idleRects_) if (i.type && i.type->id==id) return &i;
                 return nullptr;
             };
-            check(idleRects_.size()==2,"two portraits (the Monarch and the idle castle): "+std::to_string(idleRects_.size()));
+            check(idleRects_.size()>=3,"portraits for the Monarch, the worker and the idle castle: "+std::to_string(idleRects_.size()));
             const auto has=[](const IdleBuilderIcon* i,int id){return i && std::find(i->ids.begin(),i->ids.end(),id)!=i->ids.end();};
             check(has(iconOf("araking"),monarch) && !has(iconOf("araking"),other),"the Monarch is in, the other player's is not");
             check(iconOf("tarcastl") && iconOf("tarcastl")->ids==std::vector<int>{idleFactory},"only the idle castle, not the training one");
-            check(!idleRects_.front().type->isStructure(),"mobile builders come first");
+            // The Monarch, then the mobile builders, then the factories; cost rising within each.
+            check(idleRects_.front().type->commander,"the Monarch comes first");
+            check(iconOf("zonhand") && !idleRects_.back().type->commander && idleRects_.back().type->isStructure(),
+                  "factories come last");
+            const auto rank=[](const tak::sim::UnitType* t){return t->commander ? 0 : t->isStructure() ? 2 : 1;};
+            bool ordered=true;
+            for (size_t i=1;i<idleRects_.size();++i) {
+                const auto *a=idleRects_[i-1].type,*b=idleRects_[i].type;
+                if (rank(a)>rank(b) || (rank(a)==rank(b) && a->buildCost>b->buildCost)) ordered=false;
+            }
+            check(ordered,"Monarch, mobile builders, factories, each basic (cheap) to advanced");
             const SDL_FRect mid=idleRects_.front().r;
             check(mid.x+mid.w<=float(mapViewW(W)) && mid.x>float(mapViewW(W))/2,"the column sits at the right of the play area");
             const std::vector<int> kings=iconOf("araking")->ids;
@@ -2885,6 +2896,10 @@
                   "Shift+click selects every idle castle");
             SDL_SetModState(KMOD_NONE);
             check(!idleBuilderClick(mid.x-50,mid.y+mid.h/2,true),"a click beside the column is not taken");
+            const float smallW=mid.w;
+            idleBuildersScale_=1.5f;frame();
+            check(idleRects_.front().r.w>smallW*1.2f,"IDLE BUILDERS SCALE enlarges the portraits");
+            idleBuildersScale_=1.0f;frame();
             idleBuilders_=1;frame();const float top=idleRects_.front().r.y;
             idleBuilders_=3;frame();const float bottom=idleRects_.front().r.y;
             check(top<mid.y && mid.y<bottom,"TOP, MIDDLE and BOTTOM stack in that order");

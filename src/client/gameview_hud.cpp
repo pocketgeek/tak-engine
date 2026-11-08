@@ -2138,8 +2138,8 @@ bool GameView::idleBuilder(const UnitR& u) const {
 
 // IDLE BUILDERS (Options > Interface): a column at the right edge of the play area,
 // one portrait per type of idle builder or factory of yours (a count when there are
-// several), sized like the build menu's icons (bottom bar height, 4:3, times BUILD
-// MENU SCALE) and shrunk to fit the column's height. Top, middle or bottom of the
+// several), sized like the build menu's icons (bottom bar height, 4:3) times its own
+// IDLE BUILDERS SCALE, and shrunk to fit the column's height. Top, middle or bottom of the
 // play area; at the bottom it stays above a build menu that reaches under it.
 void GameView::drawIdleBuilders(int winW, int winH, float barTop) {
     idleRects_.clear();
@@ -2154,10 +2154,13 @@ void GameView::drawIdleBuilders(int winW, int winH, float barTop) {
         else it->ids.push_back(u.id);
     }
     if (idleRects_.empty()) return;
-    // Mobile builders first (the Monarch and its kin), then factories, each by name.
-    std::stable_sort(idleRects_.begin(), idleRects_.end(), [](const IdleBuilderIcon& a, const IdleBuilderIcon& b) {
-        const bool sa = a.type->isStructure(), sb = b.type->isStructure();
-        if (sa != sb) return !sa;
+    // The Monarch, then the mobile builders, then the factories; within each, basic to
+    // advanced, which in TA:K's data is cheapest to dearest (no tech level is
+    // authored), and by name on a tie.
+    const auto rank = [](const tak::sim::UnitType* t) { return t->commander ? 0 : t->isStructure() ? 2 : 1; };
+    std::stable_sort(idleRects_.begin(), idleRects_.end(), [&](const IdleBuilderIcon& a, const IdleBuilderIcon& b) {
+        if (rank(a.type) != rank(b.type)) return rank(a.type) < rank(b.type);
+        if (a.type->buildCost != b.type->buildCost) return a.type->buildCost < b.type->buildCost;
         return a.type->name < b.type->name;
     });
     const float edge = tak::buildrow::kEdge;
@@ -2166,13 +2169,13 @@ void GameView::drawIdleBuilders(int winW, int winH, float barTop) {
     // reaches under the column.
     const float right = float(mapViewW(winW)) - edge;
     float bottom = barTop - edge;
-    const float wantW = unitW * buildBarScale_;
+    const float wantW = unitW * idleBuildersScale_;
     if (buildMenuRect_.w > 0 && buildMenuRect_.x + buildMenuRect_.w > right - wantW)
         bottom = std::min(bottom, buildRowTop_ - edge);
     const float top = edge + 30.0f;   // under the top notices
     const float room = std::max(bottom - top, unitH * 0.4f);
     const int n = int(idleRects_.size());
-    const float scale = std::min(buildBarScale_, room / (n * unitH + (n - 1) * unitGap));
+    const float scale = std::min(idleBuildersScale_, room / (n * unitH + (n - 1) * unitGap));
     const float iw = unitW * scale, ih = unitH * scale, gap = unitGap * scale;
     const float colH = n * ih + (n - 1) * gap;
     const float y0 = idleBuilders_ == 1 ? top : idleBuilders_ == 3 ? bottom - colH : top + (room - colH) / 2;

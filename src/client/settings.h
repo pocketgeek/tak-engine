@@ -63,6 +63,7 @@ struct Settings {
     // IDLE BUILDERS: a column of portraits, one per type of idle mobile builder or
     // factory, at the right edge of the play area: 0 = off, 1 = top, 2 = middle, 3 = bottom.
     int   idleBuilders = 2;
+    float idleBuildersScale = 1.0f;   // IDLE BUILDERS SCALE: on top of uiScale, as BUILD MENU SCALE; 0.75..4.0
     // The in-game chat box (client/chatbox.h): its size, ON TOP of uiScale (0.5..3.0), and
     // where it sits over the play area: 0 = left, 1 = centered.
     float chatScale = 1.0f;
@@ -246,7 +247,7 @@ struct Settings {
         for (int i = 0; i < 8; ++i) if (a.chanGain[i] != b.chanGain[i]) return false;
         return a.fullscreen == b.fullscreen && a.vsync == b.vsync && a.maxFps == b.maxFps
             && a.scorecardScale == b.scorecardScale && a.uiScale == b.uiScale && a.textureFilter == b.textureFilter
-            && a.buildBarAlign == b.buildBarAlign && a.buildBarScale == b.buildBarScale && a.idleBuilders == b.idleBuilders
+            && a.buildBarAlign == b.buildBarAlign && a.buildBarScale == b.buildBarScale && a.idleBuilders == b.idleBuilders && a.idleBuildersScale == b.idleBuildersScale
             && a.chatScale == b.chatScale && a.chatAlign == b.chatAlign && a.uiFont == b.uiFont
             && a.treeSway == b.treeSway && a.tacticalDots == b.tacticalDots
             && a.tacticalDotsZoom == b.tacticalDotsZoom && a.hiddenUnits == b.hiddenUnits

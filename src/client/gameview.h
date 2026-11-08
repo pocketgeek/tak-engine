@@ -1928,6 +1928,7 @@ private:
     int buildBarAlign_ = 1;     // conjure/build row: 0=left 1=center 2=right (Options)
     float buildBarScale_ = 1.0f;   // extra row scale on top of uiScale_ (Options)
     int idleBuilders_ = 2;         // IDLE BUILDERS strip: 0 off, 1 top, 2 middle, 3 bottom (Options)
+    float idleBuildersScale_ = 1.0f;   // its icon scale on top of uiScale_ (Options IDLE BUILDERS SCALE)
     // The strip as drawn this frame: one portrait per type, the idle units of that type
     // in live order; idleCycle_ = the type's last unit a click went to.
     struct IdleBuilderIcon { SDL_FRect r; const tak::sim::UnitType* type; std::vector<int> ids; };
