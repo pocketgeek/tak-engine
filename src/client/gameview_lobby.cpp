@@ -74,7 +74,8 @@ float createOptionPx(float maxW) {
         // already offset to this panel); RenderClear would ignore the viewport.
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         float cx = winW / 2.0f;
-        const char* title = singlePlayer_ ? "SINGLE PLAYER VS AI" : "TA:KINGDOMS  MULTIPLAYER";
+        // Single player is titled as the door that opens it (PlayComputer's caption).
+        const char* title = singlePlayer_ ? "PLAY THE MACHINE" : "TA:KINGDOMS  MULTIPLAYER";
         blockText(title, cx - blockWidth(title, 2.6f) / 2, 24, 2.6f, {210, 200, 150, 255});
         if (!mp_) return;
         auto st = mp_->state();
@@ -520,19 +521,22 @@ float createOptionPx(float maxW) {
         // greyed the same boxes while Use Map Script was ticked). The saved choices stay.
         const bool scenarioOn = createScenarioOn();
         float x = 80, y = 70;
-        blockText(singlePlayer_ ? "SINGLE PLAYER VS AI" : "CREATE GAME", x, y, 2.2f,
-                  {200, 205, 220, 255}); y += 34;
+        // Multiplayer heads its column CREATE GAME; single player has only the page title
+        // (the line's room stays, so the MAP line keeps level with SELECT MAP).
+        if (!singlePlayer_) blockText("CREATE GAME", x, y, 2.2f, {200, 205, 220, 255});
+        y += 34;
         // A private single-player game needs no name or password.
         if (!singlePlayer_) {
             lbField(x, y, 260, "GAME NAME", createName_, 1); y += 44;
             lbField(x, y, 260, "PASSWORD (OPTIONAL)", createPass_, 2); y += 44;
         }
         blockText(std::string("MAP: ") + mapTitle(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 28;
-        // Option rows (26 high at a 27 pitch): multiplayer's ten rows, under the name
-        // and password fields, are 24 high at a 25 pitch to stay clear of the BACK/CREATE
-        // footer. One column: every row kOptW wide (clear of the map list at x 400) and
-        // every label at optPx (createOptionPx), whatever it says.
-        const float kRow = singlePlayer_ ? 27 : 25, kRowH = singlePlayer_ ? 26 : 24;
+        // Option rows: single player's are the map column's rhythm (24 high, 6 apart, as
+        // TYPE / LAYOUT / SIZE). Multiplayer's ten rows, under the name and password
+        // fields, are 24 high at a 25 pitch to stay clear of the BACK/CREATE footer (at
+        // 30 they would reach 14 px into it). One column: every row kOptW wide (clear of
+        // the map list at x 400) and every label at optPx (createOptionPx), whatever it says.
+        const float kRow = singlePlayer_ ? 30 : 25, kRowH = 24;
         constexpr float kOptW = 300;
         const float optPx = createOptionPx(kOptW - 12);
         auto option = [&](const std::string& label, bool enabled, std::function<void(int)> cycle) {
