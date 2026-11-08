@@ -4391,13 +4391,50 @@ it by layer, then by map z:
     when a unit and a tall feature share a row.
   * `kLayerAir` (1): airborne flyers, after everything -- retail's step 5.
     The body replay stops at the first air item (`GameView::airOp_`) and draws
-    the air bodies after the shots and `drawParticles` / `drawEffects` /
-    `drawUnitFx`, before the fog. Before 0.9.12 they were drawn in the body
-    pass, so a ground fight's debris, explosions and shots painted over a
-    flyer passing above. The airborne flyers' shadows stay at the ground ->
-    air boundary of the body pass, under the shots and effects (retail draws a
-    unit's shadow inside its own draw, so a flyer's shadow comes after the
-    effects there). Test: `air_over_fx` (`TAK_AIR_OVER_FX_TEST`).
+    the air bodies after the ground layer's shots and effects, before the fog.
+    Before 0.9.12 they were drawn in the body pass, so a ground fight's debris,
+    explosions and shots painted over a flyer passing above. The airborne
+    flyers' shadows are drained at the ground -> air boundary, after the
+    ground layer and its effects and before the air bodies (as in retail, which
+    draws a unit's shadow inside its own draw, after the effects). Test:
+    `air_over_fx` (`TAK_AIR_OVER_FX_TEST`).
+
+**Shots and effects by depth: a deliberate departure from retail.** Retail's
+step 4 draws every shot and effect over every ground unit and feature, so a
+Hunter's spear thrown behind a tree flew over its crown. At the owner's request
+(2026-11) every world-drawn shot and effect is a painter item of its own
+(`PaintItem::fx` -> `GameView::fxItems_`, gathered by `collectWorldFx`), keyed
+by the map z of the GROUND under it and sorted with the units and the tall
+features, so a shot or explosion behind (north of) a tree is covered by it and
+one in front paints over it:
+
+  * one item each: a projectile (every kind: straight shots and their
+    lightning quads, 3D model shots, sprite shots and the fallback bolts, with
+    its ground shadow and light pool), a hitscan beam, a flame-stream
+    particle, a wandering storm, a ring sprite, an explosion (`effects_`), an
+    explosion glow, a nimbus, a detached debris piece (model and shadow), a
+    blood drop, a particle, and each of a unit's smoke, damage-flame and point
+    sprites and its looping script fire/smoke;
+  * the key is the ground z plus `kFxDepthBias` (16, one retail row), and an
+    effect is pushed after the units and features into the stable sort, so at
+    an equal key it draws last: a hit explosion on the near face of its target,
+    a unit's own smoke and a spear leaving the thrower's hand stay over that
+    unit. A beam or lightning quad is keyed by its southern end;
+  * a unit's own effects (nimbus, smoke, damage flames, point particles,
+    script fire) are never keyed north of the unit, and follow an airborne
+    flyer into `kLayerAir`;
+  * a blood stain lies on the ground, so it joins `kLayerLowFeature`;
+  * consecutive effects make one draw op (`DrawOp::fxCount`, a run of
+    `fxOrder_`); particles in a run share one geometry call. An effect op ends
+    a batched body run and a native pass like a feature does;
+  * only items whose ground point is near the view (a zoom-scaled margin) are
+    queued; the rest -- far outside it -- draw in the late pass after the
+    ground replay, in the old family order, so nothing is dropped;
+  * they are never HIDDEN UNITS covers nor covered, and a Tactical Dots frame
+    collects none (`worldFxFrame()`).
+
+Debug `TAK_FX_RETAIL_ORDER=1` queues none of them: everything draws in the late
+pass, retail's order. Tests: `depth_fx` (`TAK_DEPTH_FX_TEST`), `air_over_fx`.
 
 HIDDEN UNITS (Options > Graphics, default FADE) is a non-retail extra on top
 of this order: a ground unit that a tall feature or a building paints over is

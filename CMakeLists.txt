@@ -3075,6 +3075,16 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1024 768 --shot "${CMAKE_CURRENT_BINARY_DIR}/air-over-fx.png")
       set_tests_properties(air_over_fx PROPERTIES TIMEOUT 120
           PASS_REGULAR_EXPRESSION "PASS: air over fx \\(altitude")
+      # Shots and effects draw in depth order with the ground units and the tall
+      # features (the owner's request, not retail): behind a tree covered, in front over it.
+      add_test(NAME depth_fx COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_DEPTH_FX_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/depth-fx-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/depth-fx-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/depth-fx.png")
+      set_tests_properties(depth_fx PROPERTIES TIMEOUT 120
+          PASS_REGULAR_EXPRESSION "PASS: depth fx \\(behind")
       # Full zoom-out fits the map to the world view (left of the right panel, above
       # the bottom bar), at 1080p and on a 7680x2160 super-ultrawide.
       # Windowed (a fresh profile is fullscreen, i.e. the dummy driver's 1024x768
@@ -3191,7 +3201,7 @@ if(TAK_BUILD_CLIENT)
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
           render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_shadow_atlas_extended render_shadow_atlas_yield render_shadow_atlas_full render_shadow_atlas_off render_distant_lookup render_cpu_budget render_body_arena render_body_arena_still render_body_arena_fail render_unit_index render_unit_index_jump render_pick_index render_pick_index_orders render_pick_index_jump
-          render_build_ghosts render_interactive_cases tactical_dots hidden_units retail_fog spectator_health_bars
+          render_build_ghosts render_interactive_cases tactical_dots depth_fx hidden_units retail_fog spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()

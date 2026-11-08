@@ -1492,15 +1492,18 @@ private:
     std::vector<const UnitGeom*> airShadows_;
     size_t airShadowOp_ = SIZE_MAX;   // drawOps_ index to drain airShadows_ before
     // drawOps_ index of the first AIRBORNE body (SIZE_MAX: none this frame). The
-    // replay stops here and draws the rest after the shots and effects: retail's
+    // replay stops here and draws the rest after the late fx pass: retail's
     // world pass (0x4fc648) draws the airborne units after 52b210 (shots) and
     // 492070 (debris, explosions), so a flyer is never under a ground fight's fx.
+    // (The ground fight's fx themselves are in the ground layer: see PaintItem.)
     size_t airOp_ = SIZE_MAX;
 #ifndef NDEBUG
-    // Draw-order probe (TAK_AIR_OVER_FX_TEST): 'g' ground body replay, 'e' the
-    // effects pass, 'a' the airborne body replay, in the order this frame ran them.
+    // Draw-order probe (TAK_AIR_OVER_FX_TEST): 'g' ground body replay (with the
+    // queued world fx), 'e' the late fx pass, 'a' the airborne body replay, in the
+    // order this frame ran them.
     std::string debugPaintOrder_;
     size_t debugAirOps_ = 0;   // airborne draw ops replayed this frame
+    size_t debugFxReplayed_ = 0, debugFxLate_ = 0;   // world fx drawn in the painter replay / late pass
 #endif
 
     // Reused scratch vertices for order markers, progress bars and minimap dots.
@@ -1523,8 +1526,39 @@ private:
     // Features of TDF height below 10 sit in a layer BEFORE the ground units
     // (tak::hiddenunits::kLayerLowFeature): retail draws them in its cell scan
     // before any unit, so a stump or a mana decal never paints over a unit.
-    struct PaintItem { float z; const UnitR* u; const FeatureInst* f; int layer = 0; };
+    // `fx` (>= 0) makes the item a WORLD EFFECT instead: fxItems_[fx], a shot,
+    // explosion, particle, flame or smoke sprite keyed by the GROUND z under it (plus
+    // kFxDepthBias), so a spear behind a tree is covered by the tree and one in front
+    // paints over it. Not retail (retail draws every shot and effect after all the
+    // ground units and features); the owner asked for it (2026-11). Neither u nor f
+    // is set on such an item: it is never a hidden-units cover and never covered.
+    struct PaintItem { float z; const UnitR* u; const FeatureInst* f; int layer = 0; int32_t fx = -1; };
     std::vector<PaintItem> paintItems_;   // per-frame painter list (capacity reused)
+    // World effects in the painter list (collectWorldFx). One entry per drawable:
+    // a projectile, a beam, a flame-stream particle, a ring sprite, an explosion, a
+    // glow, a nimbus, a debris piece (with its shadow), a blood point, a particle,
+    // or one of a unit's attached smoke / damage-flame / point sprites. `p`, `a` and
+    // `b` locate it in its family's container (valid for this frame only: nothing
+    // mutates them between collection and the draw). `queued`: it went into the
+    // painter list; the rest (far outside the view) draw in the late pass, in the
+    // old family order, so nothing is ever dropped.
+    enum class FxKind : uint8_t { Flame, Storm, Beam, Projectile, Particle, Ring, BloodStain, DebrisBlood,
+                                  Debris, Glow, Nimbus, Effect, Point, Smoke, DamageFlame, UnitFx };
+    struct FxItem { const void* p; uint32_t a, b; FxKind kind; bool queued; };
+    std::vector<FxItem> fxItems_;
+    std::vector<uint32_t> fxOrder_;   // fxItems_ indices in painter order (DrawOp::fxFirst)
+    // An effect sorts as if it stood one retail row (16 world px) south of its ground
+    // point: a hit explosion on the near face of its target, a unit's own smoke and a
+    // spear leaving the thrower's hand stay over that unit; equal keys draw the effect
+    // last (it is pushed after the units and features into a stable sort).
+    static constexpr float kFxDepthBias = 16.0f;
+    void collectWorldFx(int mvw, int winH, bool painter);
+    void drawFxSpan(const uint32_t* order, size_t count);   // a run of fx items, partBatch_ batched
+    void drawFxItem(const FxItem& item);
+    void drawLateFx();   // the items collectWorldFx did not queue, family order
+    std::vector<uint32_t> fxLate_;   // drawLateFx's indices (capacity reused)
+    double fxSpanMs_ = 0;   // drawFxSpan time this frame (reported as the effects phase)
+    int fxOwnerLayer(int owner) const;   // kLayerAir for an airborne flyer's attached effects
     // Parsed COB scripts shared per unit type (see registerUnit).
     struct CobCache {
         std::shared_ptr<const tak::cob::File> file;
@@ -1573,7 +1607,10 @@ private:
                     int32_t passEnd = -1;
                     GLuint spanName = 0;
                     SDL_Texture* passPrime = nullptr;
-                    uint8_t fade = 255; };    // HIDDEN UNITS, FADE: a unit op's body alpha (a faded building)
+                    uint8_t fade = 255;     // HIDDEN UNITS, FADE: a unit op's body alpha (a faded building)
+                    int32_t fxFirst = -1;   // a run of world effects: fxOrder_[fxFirst, +fxCount)
+                    uint32_t fxCount = 0;
+                    bool boundary() const { return f || u || fxCount; } };
     std::vector<BodySource> bodySources_;
     std::vector<BodyRange> bodyRanges_;
     std::vector<GLint> bodyArenaFirsts_;
@@ -4353,18 +4390,15 @@ private:
     void spawnRing(const std::string& anim, float x, float z, float delay,
                    float dur, int sprites, float maxR);
     void updateRings(float dt);
-    void drawRings();
 
-    void drawEffects();
     // Frame a nimbus shows at the current tick (frames.size() once it has played out),
-    // and the lifetime rule drawEffects applies, for frames that skip drawing it.
+    // and the lifetime rule of the effect draws, run once a frame by collectWorldFx.
     size_t nimbusFrame(const NimbusEffect& effect) const;
     void pruneNimbusEffects();
-
-    // Persistent per-unit ambient fire/smoke (emit-sfx). One looping flame/smoke per
-    // unit, cycled off the continuous animClock so it flows smoothly (no restart/gaps
-    // like re-spawned one-shots), kept alive while the unit's emit-loop keeps firing.
-    void drawUnitFx();
+    // Per-family draws of single world effects (drawFxItem).
+    void drawFxStorm(const tak::sim::World::Storm& st);
+    void drawFxBeam(const BeamFx& b);
+    void drawFxProjectile(const tak::sim::Projectile& p);
 
     // Procedural particle for impact explosions, flame, and blood spray.
     struct Particle {
@@ -4394,8 +4428,7 @@ private:
     void spawnBurst(float x, float z, int n, Uint8 r, Uint8 g, Uint8 b,
                     float spread, float sizeMax, int kind, float baseAlt = 0);
     void updateParticles(float dt);
-    void drawParticles();
-    std::vector<SDL_Vertex> partBatch_;   // reused particle-quad batch
+    std::vector<SDL_Vertex> partBatch_;   // reused particle-quad batch (drawFxSpan)
 
     SoundBank sounds_;
     // Worker pool for the per-unit VM ticks and the renderer's parallel passes:

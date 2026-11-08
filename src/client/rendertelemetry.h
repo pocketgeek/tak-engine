@@ -515,6 +515,11 @@ enum class Counter : uint8_t {
     TerrainSectionPooledBytes,
     ShadowPageReuses,
     ShadowSparePageBytes,
+    // World effects in the painter list (collectWorldFx): items collected, of
+    // them queued by depth, and the draw ops (runs) they made in the replay.
+    FxItems,
+    FxQueued,
+    FxOps,
     Count
 };
 
@@ -606,7 +611,7 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "shadow_page_limit", "shadow_extended_pages", "shadow_pressure_sheds",
     "terrain_slot_creates", "terrain_slot_reuses", "terrain_slot_pooled_bytes",
     "terrain_section_reuses", "terrain_section_pooled_bytes", "shadow_page_reuses",
-    "shadow_spare_page_bytes"};
+    "shadow_spare_page_bytes", "fx_items", "fx_queued", "fx_ops"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

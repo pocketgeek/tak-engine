@@ -1213,6 +1213,7 @@
             return;
         }
         if (tak::devFlag("TAK_AIR_OVER_FX_TEST")) {
+            namespace hu = tak::hiddenunits;
             // Retail's world pass (0x4fc648) draws the airborne units after the
             // shots (52b210) and the effect manager (492070: debris, explosions):
             // a ground fight's explosion never paints over a flyer passing above.
@@ -1274,7 +1275,10 @@
             frame(false,capture ? (base+"-glow.png").c_str() : nullptr);
             check(debugGlowDrawCount_==2,"both glows drew");
             check(debugPaintOrder_=="gea" && debugAirOps_>0,
-                  "ground bodies, then effects, then the airborne bodies ("+debugPaintOrder_+")");
+                  "ground bodies, then the late effects, then the airborne bodies ("+debugPaintOrder_+")");
+            // The ground fight's glows are ground-layer painter items now (PaintItem::fx):
+            // drawn in the ground replay, still before every airborne body.
+            check(debugFxReplayed_==2 && debugFxLate_==0,"both glows drew in the ground replay");
             const auto changed=[&](float cx,float cy,int half) {
                 int n=0;
                 for (int y=int(cy)-half;y<=int(cy)+half;++y)
@@ -1288,8 +1292,183 @@
             check(control>=40,"the control glow changes the bare ground ("+std::to_string(control)+" of 49 px)");
             check(body==0,"the glow under the flyer leaves its body untouched ("+std::to_string(body)+" of 49 px)");
             explosionGlows_.clear();
+            {   // An airborne flyer's own effects go up with it: its nimbus is an
+                // air-layer item, drawn in the air replay after its body.
+                const auto* art=effectFor("bigsmoke");
+                check(art && !art->frames.empty(),"fixture effect art");
+                nimbusEffects_[flyer]={art,front().gameTick};
+                frame(false,nullptr);
+                bool air=false;
+                for (const auto& it:paintItems_)
+                    if (it.fx>=0 && fxItems_[size_t(it.fx)].kind==FxKind::Nimbus) air=it.layer==hu::kLayerAir;
+                check(air && debugNimbusDrawCount_==1,"the flyer's nimbus is an air-layer item and draws");
+                nimbusEffects_.erase(flyer);
+            }
             if (settings_) settings_->unitShadows=shadows;
             std::fprintf(stderr,"PASS: air over fx (altitude %.0f)\n",altitude);
+            return;
+        }
+        if (tak::devFlag("TAK_DEPTH_FX_TEST")) {
+            // Shots and effects in depth order (PaintItem::fx; the owner's request,
+            // not retail): an explosion glow and a Hunter's spear BEHIND a tree are
+            // covered by its crown and the same IN FRONT of it paint over it, through
+            // the real draw(): the painter ops around the tree's op, the crown's own
+            // pixels, and the late pass drawing none of them. A shot or effect is
+            // never a HIDDEN UNITS cover or covered (FADE leaves the tree alone).
+            // TAK_DEPTH_FX_CAPTURE=<prefix> writes <prefix>-plain/-behind/-front.png.
+            namespace hu = tak::hiddenunits;
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("depth fx: "+what);
+                std::fprintf(stderr,"PASS: depth fx: %s\n",what.c_str());
+            };
+            constexpr int W=1280,H=960;
+            noFog_=true;edgeScrollOn_=false;tacticalDotsOpt_=false;healthBars_=0;fogStill_=true;
+            hiddenUnitsMode_=hu::kOff;
+            const bool swayWas=settings_ && settings_->treeSway;
+            if (settings_) settings_->treeSway=false;   // a still crown: exact cover points
+            loadFeatureDefs();
+            const int cx0=mapView_.map().blocksX/2,cz0=mapView_.map().blocksY/2;
+            for (auto& f:features_)   // a clear stage
+                if (std::fabs(f.x-float(cx0*16))<700 && std::fabs(f.z-float(cz0*16))<600) f.tex=nullptr;
+            check(addFeature("aratree01",cx0,cz0),"placed a tree");
+            const size_t tree=features_.size()-1;
+            check(!features_[tree].low,"the tree is tall scenery (sorts by depth)");
+            const float x0=features_[tree].x,z0=features_[tree].z;
+            std::vector<uint8_t> px;
+            int ow=0,oh=0;
+            const auto frame=[&](const std::string& capture,float zoom=1.0f) {
+                captureFrame();beginFrame();cosmeticStep(0);
+                mapView_.setZoom(zoom);
+                mapView_.setOffset(x0-float(W-300)*0.5f/zoom,z0-float(H)*0.5f/zoom);
+                prepare(W,H);draw(W,H);
+                SDL_GetRendererOutputSize(ren_,&ow,&oh);
+                px.assign(size_t(ow)*size_t(oh)*4,0);
+                SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px.data(),ow*4);
+                if (!capture.empty()) tak::png::write(capture.c_str(),ow,oh,px);
+                endFrame();
+            };
+            const char* capture=tak::devEnv("TAK_DEPTH_FX_CAPTURE");
+            const auto shot=[&](const char* name) {return capture ? std::string(capture)+"-"+name+".png" : std::string();};
+            explosionGlows_.clear();beams_.clear();effects_.clear();particles_.clear();rings_.clear();
+            frame(shot("plain"));
+            const std::vector<uint8_t> plain=px;
+            // The crown's middle, on screen: the opaque run up the anchor column.
+            const FeatureSprite sp=featureSprite(features_[tree],mapView_.zoom());
+            check(sp.tex && sp.mask && sp.mask->width()>0,"tree sprite with an opacity mask");
+            const auto& mask=*sp.mask;
+            const int col=std::clamp(features_[tree].xoff,0,mask.width()-1);
+            int top=-1,bottom=-1;
+            for (int y=0;y<mask.height();++y) if (mask.opaque(col,y)) { if (top<0) top=y; bottom=y; }
+            check(top>=0,"the crown is opaque in the anchor column");
+            const float cx=sp.dst.x+(float(col)+0.5f)*sp.dst.w/float(mask.width());
+            const float cy=sp.dst.y+(float(top+bottom)*0.5f+0.5f)*sp.dst.h/float(mask.height());
+            bool solid=true;
+            for (int dy=-3;dy<=3;++dy) for (int dx=-3;dx<=3;++dx)
+                solid=solid && hu::spriteCovers(mask,sp.dst.x,sp.dst.y,sp.dst.w,sp.dst.h,sp.shear,cx+float(dx),cy+float(dy));
+            check(solid,"a 7x7 crown window is opaque");
+            const float zm=mapView_.zoom();
+            // Ground points 48 world px north of the trunk (behind) and 32 south (in
+            // front), each lifted on screen onto the crown's middle.
+            const float zBehind=z0-48.0f,zFront=z0+32.0f;
+            const float offY1=mapView_.offY();   // the zoom-1 view the crown point is in
+            const auto altFor=[&](float z) {return z-offY1-terrainLift(x0,z)-cy/zm;};
+            const auto glowAt=[&](float z) {
+                explosionGlows_.push_back({x0,z,altFor(z),front().gameTick,2,std::nullopt});
+            };
+            const auto spearAt=[&](float z) {
+                BeamFx b;b.x1=b.x2=x0+6;b.z1=b.z2=z;b.alt1=b.alt2=altFor(z)-8;
+                b.model="zonterspear";b.life=1000;b.age=0;
+                beams_.push_back(b);
+            };
+            const auto changed=[&] {
+                int n=0;
+                for (int y=int(cy)-3;y<=int(cy)+3;++y) for (int x=int(cx)-3;x<=int(cx)+3;++x) {
+                    const size_t i=(size_t(y)*size_t(ow)+size_t(x))*4;
+                    n+=std::memcmp(&plain[i],&px[i],3)!=0;
+                }
+                return n;
+            };
+            if (capture) {
+                // The picture (not checked): a spear and an explosion behind the tree
+                // on its left, the same in front of it on its right.
+                loadExplosionClasses();
+                std::string anim;int tallest=0;
+                for (const auto& [cls,names]:explosionClasses_)
+                    for (const auto& name:names)
+                        if (const auto* a=effectFor(name); a && a->frames.size()>4) {
+                            const int h=a->frames[a->frames.size()/3].h;
+                            if (h>tallest && h<160) {tallest=h;anim=name;}
+                        }
+                for (const auto& [dx,z,up]:{std::tuple{-16.0f,zBehind,-14.0f},std::tuple{16.0f,zFront,14.0f}}) {
+                    spawnEffectAnim(anim,x0+dx,z,0,0,1,altFor(z)+up+6);
+                    effects_.back().age=effLoopLen(effects_.back())*0.3f;
+                }
+                frame(shot("scene-explosions"),2.0f);
+                effects_.clear();
+                for (const auto& [z,up]:{std::pair{zBehind,-10.0f},std::pair{zFront,10.0f}}) {
+                    BeamFx b;b.x1=x0-60;b.x2=x0+60;b.z1=b.z2=z;   // flying east, head over the trunk
+                    b.alt1=b.alt2=altFor(z)+up-8;
+                    b.model="zonterspear";b.life=1000;b.age=500;
+                    beams_.push_back(b);
+                }
+                frame(shot("scene-spears"),2.0f);
+                effects_.clear();beams_.clear();
+            }
+            // ---- order: both pairs in one frame ----
+            glowAt(zBehind);glowAt(zFront);spearAt(zBehind);spearAt(zFront);
+            frame("");
+            {
+                const auto opOf=[&](const void* p) {
+                    for (size_t i=0;i<drawOps_.size();++i) {
+                        const DrawOp& op=drawOps_[i];
+                        for (uint32_t k=0;k<op.fxCount;++k)
+                            if (fxItems_[fxOrder_[size_t(op.fxFirst)+k]].p==p) return i;
+                    }
+                    return SIZE_MAX;
+                };
+                size_t treeOp=SIZE_MAX;
+                for (size_t i=0;i<drawOps_.size();++i) if (drawOps_[i].f==&features_[tree]) treeOp=i;
+                const size_t gB=opOf(&explosionGlows_[0]),gF=opOf(&explosionGlows_[1]);
+                const size_t sB=opOf(&beams_[0]),sF=opOf(&beams_[1]);
+                check(treeOp!=SIZE_MAX && gB!=SIZE_MAX && gF!=SIZE_MAX && sB!=SIZE_MAX && sF!=SIZE_MAX,
+                      "the tree, both glows and both spears are painter ops");
+                check(gB<treeOp && sB<treeOp,"the glow and the spear behind the tree draw before it");
+                check(gF>treeOp && sF>treeOp,"the glow and the spear in front of it draw after it");
+                check(debugFxLate_==0 && debugFxReplayed_>=4,
+                      "the late pass draws none of them ("+std::to_string(debugFxReplayed_)+" replayed)");
+                check(debugPaintOrder_=="gea","ground replay, late fx pass, air replay ("+debugPaintOrder_+")");
+            }
+            // ---- pixels: behind is covered, in front is not ----
+            explosionGlows_.clear();beams_.clear();
+            glowAt(zBehind);spearAt(zBehind);
+            frame(shot("behind"));
+            check(debugGlowDrawCount_==1,"the glow behind the tree drew");
+            const int behind=changed();
+            check(behind==0,"the crown covers the glow and spear behind it ("+std::to_string(behind)+" of 49 px)");
+            const std::vector<uint8_t> behindOff=px;
+            {   // FADE: an effect behind a tree is no unit to fade it for.
+                hiddenUnitsMode_=hu::kFade;
+                frame("");
+                bool fxCover=false;
+                for (const auto& rec:hiddenRecs_) fxCover=fxCover || paintItems_[rec.item].fx>=0;
+                check(!fxCover,"FADE: no shot or effect is a cover or covered");
+                check(px==behindOff,"FADE: the tree in front of an effect does not fade");
+                hiddenUnitsMode_=hu::kOff;
+            }
+            explosionGlows_.clear();beams_.clear();
+            glowAt(zFront);spearAt(zFront);
+            frame(shot("front"));
+            const int infront=changed();
+            check(infront>=40,"the glow in front paints over the crown ("+std::to_string(infront)+" of 49 px)");
+            // ---- far outside the view: not queued, still drawn by the late pass ----
+            explosionGlows_.clear();beams_.clear();
+            explosionGlows_.push_back({x0+6000,z0,0,front().gameTick,2,std::nullopt});
+            frame("");
+            check(debugFxLate_==1 && debugFxReplayed_==0 && !fxItems_.empty() && !fxItems_[0].queued,
+                  "an effect far outside the view goes to the late pass, not the painter list");
+            explosionGlows_.clear();
+            if (settings_) settings_->treeSway=swayWas;
+            std::fprintf(stderr,"PASS: depth fx (behind %d, front %d px)\n",behind,infront);
             return;
         }
         if (tak::devFlag("TAK_TACTICAL_DOTS_TEST")) {
@@ -1374,6 +1553,8 @@
                 explosionGlows_.push_back({x0,z0,0,front().gameTick,0,std::nullopt});
                 frame(zIn);
                 check(!worldFxFrame() && debugGlowDrawCount_==0,"dots: no explosion glow drawn");
+                check(fxItems_.empty() && std::none_of(paintItems_.begin(),paintItems_.end(),
+                      [](const PaintItem& it) {return it.fx>=0;}),"dots: no effect in the painter list");
                 check(explosionGlows_.size()==1,"dots: the skipped glow is still alive");
                 tacticalDotsOpt_=false;frame(zIn);
                 check(worldFxFrame() && debugGlowDrawCount_==1,"models: the same glow draws again");
@@ -5181,7 +5362,7 @@
             for(bool aboard:{false,true,false}) {
                 writableWorld().unit(passengerId)->inTransport=aboard ? carrierId : 0;
                 captureFrame();beginFrame();endFrame();
-                drawUnitFx();drawEffects();
+                collectWorldFx(mapViewW(width),height,false);drawLateFx();
                 const int expected=aboard ? 0 : 1;
                 if(debugSmokeDrawCount_!=expected || debugPointDrawCount_!=expected ||
                    debugDamageFlameDrawCount_!=expected || debugNimbusDrawCount_!=expected) {

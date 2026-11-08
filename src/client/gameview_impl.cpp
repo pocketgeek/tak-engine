@@ -2562,7 +2562,7 @@
         if (!anim) return;
         const EffectAnim* ea = effectFor(anim);
         if (!ea || ea->frames.empty()) return;
-        // Refresh this unit's persistent flame/smoke; drawUnitFx cycles it smoothly.
+        // Refresh this unit's persistent flame/smoke; drawFxItem (FxKind::UnitFx) cycles it smoothly.
         if (anim[0] == 's') { a.smokeFx = ea; a.smokeT = 0; a.smokePiece = piece; }
         else                { a.fireFx = ea;  a.fireT = 0;  a.firePiece = piece; }
     }

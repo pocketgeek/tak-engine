@@ -96,6 +96,7 @@ namespace hu = tak::hiddenunits;
             const PaintItem& it = items[k];
             if (it.layer == hu::kLayerLowFeature) break;   // sorted first: never over a unit
             if (it.layer != hu::kLayerGround) continue;     // airborne: never covered, never a cover
+            if (it.fx >= 0) continue;                       // a shot or effect: neither either
             if (it.f) {
                 const FeatureSprite sp = featureSprite(*it.f, zm);
                 if (!sp.tex) continue;
