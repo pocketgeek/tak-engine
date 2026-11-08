@@ -1,14 +1,16 @@
 # 0.9.20 release validation
 
-**DRAFT.** Scope, compatibility and the local test results on the cut are written;
-every part marked **TODO-LEAD** is filled in by the release lead from the remaining
-test, CI, signing and publication runs.
+The release was published without this report being completed. Its CI, packages,
+signing and publication sections below were filled in afterwards, on 2026-11-07: from
+GitHub's records of the tag, its CI runs and the release, and by checking the published
+assets again (digests, build ids, Windows signatures, macOS notarization).
 
 Protocol **312** (0.9.19 used 311), replay format **15** (unchanged), generator version
 **9** (unchanged).
 
-Tag `v0.9.20` -> **TODO-LEAD** (the preparation commit); annotated tag object
-**TODO-LEAD**. Published **TODO-LEAD** UTC as the Latest release.
+Tag `v0.9.20` -> `ed4564d2` (`retail_script_test: a 16 MB stack under MinGW`, one commit
+after the preparation commit `04b6cfc9`); annotated tag object `67a4d044`, tagged
+2026-11-06 20:09:50 UTC. Published 2026-11-06 21:39:30 UTC as the Latest release.
 
 ## Scope and compatibility
 
@@ -316,21 +318,44 @@ builds and tests the tagged commit itself.
 
 ## CI and packages
 
-**TODO-LEAD**: main and tag CI run ids (Determinism, Linux packages, Windows, macOS),
-reruns, asset count and names, digests, build ids, NEEDED and `TAK_` checks, the Fedora
-RPM server game.
+Main CI on the preparation commit `04b6cfc9`: Determinism 42276108683, Linux packages
+42276108590 and macOS 42276108581 passed; Windows 42276108505 failed (`retail_script_test`
+overflowed MinGW's default stack). `ed4564d2` gave that test a 16 MB stack under MinGW, and
+main CI on it passed on all four (Windows 42281247348, Determinism 42281247454, Linux
+42281247569, macOS 42281247470). The tag was made on `ed4564d2`.
+
+Tag CI on `v0.9.20`, all green at the first attempt, no reruns: Determinism (sim)
+42286013675 (dispatched), Linux packages 42285977260, Windows build 42285977494, macOS
+build 42285977276 (with its sign and notarize jobs).
+
+31 assets. Checked on 2026-11-07: all 31 downloaded and match the release's SHA-256
+digests; the build string is `v0.9.20` in the Arch package's `takclient` and `takserver`.
+Not recorded at the cut and not re-run afterwards: the NEEDED and `TAK_` checks and the
+Fedora RPM server game.
 
 ## Signing
 
-**TODO-LEAD**: Windows Authenticode, macOS notarization and stapling.
+Checked on 2026-11-07. Windows: on oden-win (scratch folder under `%TEMP%`, removed
+afterwards; no TAK process running), `Get-AuthenticodeSignature` reports **Valid**
+(timestamped, "Curtis Edge") for the x64 setup program and `takclient`, `takserver` and
+`cartographer` in both zips; the x64 `takclient.exe` and `takserver.exe` report
+`0.9.20 (build v0.9.20)`.
+
+macOS: on the MacBook, both DMGs and all eight app copies pass `stapler validate`, and
+`spctl -a -vv` accepts them as "Notarized Developer ID"; every app passes
+`codesign --verify --strict --deep` and has version 0.9.20. The arm64 zip's `takclient`
+reports `0.9.20 (build v0.9.20)`. The scratch folder was removed.
 
 ## Publication
 
-**TODO-LEAD**: draft, tag, publish time, links checked.
+The draft was created at the tag (2026-11-06 20:09:50 UTC) and published on 2026-11-06
+21:39:30 UTC as the Latest release, 31 assets; 0.9.19 and earlier releases are kept. The
+notes' `blob` `v0.9.20` links (CHANGELOG, the 0.9.19 known limits, this report) answer
+200 (checked 2026-11-07).
 
 ## Limits
 
-**TODO-LEAD**: anything accepted at the cut. Known in advance: Kirenna on a Retail
+Nothing further was recorded at the cut. Known in advance: Kirenna on a Retail
 attack-move still often stops after one shot (the original game's own race); a ship
 leaving a shore-facing Navy Yard door sails out slowly (as in the original game); a
 modded `Create` script that can return but in practice never does (say, waiting on a
