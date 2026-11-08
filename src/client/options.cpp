@@ -926,6 +926,10 @@ bool OptionsScreen::handle(const SDL_Event& e, int winW, int winH) {
                 if (i >= 0 && i < int(opts.size())) {
                     if (c.set) c.set(float(i));
                     openDrop_ = -1;
+                    // Applied at once, as a toggle or slider is: without this a pick only
+                    // took effect in a running game when some other control re-applied
+                    // the settings, or at the next game (IDLE BUILDERS, BUILD MENU, ...).
+                    if (onChange_) onChange_();
                     persist();
                     return false;
                 }

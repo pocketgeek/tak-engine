@@ -2905,6 +2905,38 @@
             check(top<mid.y && mid.y<bottom,"TOP, MIDDLE and BOTTOM stack in that order");
             idleBuilders_=0;frame();
             check(idleRects_.empty(),"OFF shows no column");
+            // The same through the in-game Options screen, as a player picks it: the
+            // IDLE BUILDERS list, then TOP -- the column moves to the top.
+            if (settings_) {
+                settings_->idleBuilders=2;applySettings(*settings_);frame();
+                const float before=idleRects_.empty() ? -1 : idleRects_.front().r.y;
+                openOptions();
+                check(options_!=nullptr,"Options opens in game");
+                options_->render(W,H);
+                const auto press=[&](float x,float y) {
+                    SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x);e.button.y=int(y);
+                    options_->input(e,W,H);
+                    SDL_Event u=e;u.type=SDL_MOUSEBUTTONUP;options_->input(u,W,H);
+                    options_->render(W,H);
+                };
+                // Scroll the row into view, then open its list and pick TOP (item 1).
+                const SDL_FRect* row=nullptr;
+                for (int i=0;i<60 && (!(row=options_->rowRect("IDLE BUILDERS")) || row->y+row->h>H*0.85f || row->y<H*0.15f);++i) {
+                    SDL_Event w{};w.type=SDL_MOUSEWHEEL;w.wheel.y=-1;SDL_WarpMouseInWindow(nullptr,W/2,H/2);
+                    options_->input(w,W,H);options_->render(W,H);
+                }
+                check(row!=nullptr,"the IDLE BUILDERS row is on the Options screen");
+                press(row->x+row->w*0.9f,row->y+row->h/2);
+                const SDL_FRect item=options_->dropItemRect(1);
+                check(item.w>0,"its list opens");
+                press(item.x+item.w/2,item.y+item.h/2);
+                check(settings_->idleBuilders==1,"picking TOP sets the setting: "+std::to_string(settings_->idleBuilders));
+                options_.reset();
+                frame();
+                check(idleBuilders_==1 && !idleRects_.empty() && idleRects_.front().r.y<before,
+                      "the game takes it at once: the column moves up");
+                settings_->idleBuilders=2;applySettings(*settings_);
+            }
             idleBuilders_=2;beginSpectating();frame();
             check(idleRects_.empty(),"a watcher sees no column");
             std::fprintf(stderr,"PASS: idle builders strip\n");
