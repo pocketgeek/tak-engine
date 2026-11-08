@@ -520,17 +520,17 @@ float createOptionPx(float maxW) {
         // forces start: those two rows read SCENARIO / FIXED and are not clickable (retail
         // greyed the same boxes while Use Map Script was ticked). The saved choices stay.
         const bool scenarioOn = createScenarioOn();
-        float x = 80, y = 70;
-        // Multiplayer heads its column CREATE GAME; single player has only the page title
-        // (the line's room stays, so the MAP line keeps level with SELECT MAP).
-        if (!singlePlayer_) blockText("CREATE GAME", x, y, 2.2f, {200, 205, 220, 255});
-        y += 34;
+        // Single player has only the page title over its columns, which start just under
+        // it: the option buttons level with the map list's sort buttons. Multiplayer heads
+        // its column CREATE GAME, then the name and password fields and the MAP line.
+        float x = 80, y = singlePlayer_ ? 60 : 70;
+        if (!singlePlayer_) { blockText("CREATE GAME", x, y, 2.2f, {200, 205, 220, 255}); y += 34; }
         // A private single-player game needs no name or password.
         if (!singlePlayer_) {
             lbField(x, y, 260, "GAME NAME", createName_, 1); y += 44;
             lbField(x, y, 260, "PASSWORD (OPTIONAL)", createPass_, 2); y += 44;
         }
-        blockText(std::string("MAP: ") + mapTitle(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 28;
+        if (!singlePlayer_) { blockText(std::string("MAP: ") + mapTitle(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 28; }
         // Option rows: single player's are the map column's rhythm (24 high, 6 apart, as
         // TYPE / LAYOUT / SIZE). Multiplayer's ten rows, under the name and password
         // fields, are 24 high at a 25 pitch to stay clear of the BACK/CREATE footer (at
@@ -651,8 +651,10 @@ float createOptionPx(float maxW) {
             mapPrefApplied_ = true;
             syncCreateScenario();
         }
-        float lx = 400, hy = 90;
-        blockText("SELECT MAP", lx, hy, 1.8f, {200, 205, 220, 255});
+        // hy: the columns' heading line; single player has no headings, so its sort
+        // buttons (hy + 20) sit level with the first option button (y 60).
+        float lx = 400, hy = singlePlayer_ ? 40 : 90;
+        if (!singlePlayer_) blockText("SELECT MAP", lx, hy, 1.8f, {200, 205, 220, 255});
         // Toggle between the map list and the random-map generator.
         bool gen = tak::mapgen::isGeneratedMapId(mpMapId_);
 
@@ -690,7 +692,8 @@ float createOptionPx(float maxW) {
                 }});
             }
         }
-        const float boxX = lx, boxY = hy + 46, boxW = 340, boxH = 344, rowH = 24, sbW = 12;
+        // Single player's list reaches down to y 480, above the BACK/CREATE footer.
+        const float boxX = lx, boxY = hy + 46, boxW = 340, boxH = singlePlayer_ ? 480 - boxY : 344, rowH = 24, sbW = 12;
         const int total = int(mapList_.size());
         mapVisRows_ = int(boxH / rowH);
         mapTotalRows_ = total;
@@ -771,7 +774,9 @@ float createOptionPx(float maxW) {
         const float kRowH = 24, kGap = 6, kBtnW = 300;
         const float kSliderH = 30;   // label (11) + 5 + bar (14)
         const float kHalfW = (kBtnW - kGap) / 2;
-        float px = lx, py = hy + 46;   // aligns with the map list's box top
+        // Multiplayer: level with the map list's box top. Single player, with no headings:
+        // level with the first option button, where the list's sort buttons sit.
+        float px = lx, py = singlePlayer_ ? hy + 20 : hy + 46;
         lbField(px, py, kBtnW, "MAP NAME (OPTIONAL)", genParams_.name, 5); py += 44;
         lbCycle(px, py, kBtnW, kRowH, std::string("TYPE:  ") + kTypeName[genParams_.mapType % tak::mapgen::kMapTypes],
               true, [this](int direction) { genParams_.mapType = uint8_t((genParams_.mapType + direction + tak::mapgen::kMapTypes) % tak::mapgen::kMapTypes);
@@ -847,7 +852,7 @@ float createOptionPx(float maxW) {
         // embedded minimap; a generated map shows a live thumbnail rolled from its
         // seed (both go through buildMapPreview -> mapPreviewTex_).
         const float pvx = lx + 352, pvy = hy + 46, pvW = 192, pvH = 192;
-        blockText("PREVIEW", pvx, hy, 1.8f, {200, 205, 220, 255});
+        if (!singlePlayer_) blockText("PREVIEW", pvx, hy, 1.8f, {200, 205, 220, 255});
         SDL_FRect pbox{pvx, pvy, pvW, pvH};
         SDL_SetRenderDrawColor(ren_, 18, 20, 28, 255); SDL_RenderFillRectF(ren_, &pbox);
         if (mapPreviewFor_ != mapPath_) buildMapPreview(mapPath_);
@@ -869,13 +874,15 @@ float createOptionPx(float maxW) {
                       1.4f, {180, 185, 195, 255});
             if (!genPreviewError_.empty())
                 blockText("CHECK RETAIL DATA", pvx, pvy + pvH + 46, 1.4f, {220, 140, 120, 255});
-            blockText("3 HOME MANA SPOTS EACH", pvx, pvy + pvH + 106, 1.3f, {160, 175, 160, 255});
-            blockText("EXTRAS NEED FREE SPACE", pvx, pvy + pvH + 124, 1.3f, {160, 175, 160, 255});
-            if (genParams_.manaScatter)
-                blockText("SCATTERED: " + std::to_string(genPreviewScattered_) + " NEUTRAL", pvx, pvy + pvH + 160,
-                          1.3f, {160, 175, 160, 255});
-            if (genParams_.layout == tak::mapgen::Islands || genParams_.layout == tak::mapgen::Ports)
-                blockText("SIZE RESERVES SEA LANES", pvx, pvy + pvH + 142, 1.3f, {160, 175, 160, 255});
+            if (!singlePlayer_) {   // the generator's notes (single player shows none)
+                blockText("3 HOME MANA SPOTS EACH", pvx, pvy + pvH + 106, 1.3f, {160, 175, 160, 255});
+                blockText("EXTRAS NEED FREE SPACE", pvx, pvy + pvH + 124, 1.3f, {160, 175, 160, 255});
+                if (genParams_.manaScatter)
+                    blockText("SCATTERED: " + std::to_string(genPreviewScattered_) + " NEUTRAL", pvx, pvy + pvH + 160,
+                              1.3f, {160, 175, 160, 255});
+                if (genParams_.layout == tak::mapgen::Islands || genParams_.layout == tak::mapgen::Ports)
+                    blockText("SIZE RESERVES SEA LANES", pvx, pvy + pvH + 142, 1.3f, {160, 175, 160, 255});
+            }
         }
         // Keep the generator action below the preview and map description.
         lbCycle(pvx, pvy + pvH + (gen ? 68 : 32), pvW, 26, gen ? "PICK AN EXISTING MAP" : "GENERATE RANDOM MAP", true,
