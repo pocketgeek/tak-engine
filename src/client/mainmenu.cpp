@@ -212,11 +212,12 @@ struct MainMenu::Impl {
     // A click that transitions away destroys this MainMenu (closing the SFX
     // device), so let the short click finish first -- keep rendering so the menu
     // doesn't freeze. Bounded well above the longest click (~140ms).
-    // The Replay or Benchmark window a pick came from stays drawn until it closes, so the
+    // The Replay, Benchmark or server window a pick came from stays drawn until it closes, so the
     // screen goes straight from it to the launch rather than flashing the bare title.
     void flushSfx(int winW, int winH, const Settings* settings = nullptr) {
         for (int i = 0; i < 30 && sfx_.busy(); ++i) {
             render(winW, winH);
+            if (serverSelect) renderServerSelect(winW, winH);   // a CONNECT pick
             if (replayMenu_) renderReplayMenu(winW, winH);
             if (benchMenu_) renderBenchMenu(winW, winH, settings);
             SDL_RenderPresent(ren);

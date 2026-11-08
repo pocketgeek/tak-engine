@@ -1390,10 +1390,14 @@ int main(int argc, char** argv) {
     // Present before synchronous local-server/data/lobby setup, not after the
     // first lobby draw discovers and parses the entire map catalogue.
     std::unique_ptr<tak::LoadScreen> lobbyLoading;
-    if (fromMenu && menuInteractive && campaignStem.empty() && !benchmarkLaunch) {
-        // Titled as the door that opened it: PlayComputer, captioned "Play the Machine".
-        lobbyLoading=std::make_unique<tak::LoadScreen>(ren,vfs,"Play the Machine",&settings);
-        lobbyLoading->step("Starting...",5);
+    // Multiplayer too: its connect and sign-in below are synchronous, and without a
+    // screen of its own the window kept showing the title until the lobby drew.
+    const bool menuMultiplayer = fromMenu && origin == tak::LaunchOrigin::Multiplayer;
+    if (fromMenu && (menuInteractive || menuMultiplayer) && campaignStem.empty() && !benchmarkLaunch) {
+        // Titled as the door that opened it: PlayComputer "Play the Machine", PlayPlayer
+        // "Play an Opponent" (the doors' captions in guis/mainmenu.gui).
+        lobbyLoading=std::make_unique<tak::LoadScreen>(ren,vfs,menuMultiplayer ? "Play an Opponent" : "Play the Machine",&settings);
+        lobbyLoading->step(menuMultiplayer ? "Connecting..." : "Starting...",5);
     }
 
     std::string serverBin;
@@ -1455,7 +1459,12 @@ int main(int argc, char** argv) {
             playerName = loginUser;   // the account IS the multiplayer identity
         }
         tak::crypto::wipe(loginPass);
-        if (lobbyLoading) lobbyLoading->step("Connecting to local server",35);
+        // The step lines name the server: the local one for Play the Machine, else the host.
+        const std::string connectingTo = localServer.started() ? std::string("Connecting to local server")
+                                                               : "Connecting to " + serverHost;
+        const std::string signingIn = localServer.started() || loginUser.empty() ? connectingTo
+                                                                                : "Signing in to " + serverHost;
+        if (lobbyLoading) lobbyLoading->step(connectingTo,35);
         uint64_t lobbyProgressAt=SDL_GetTicks64();
         bool ok = false;
         std::string serverDied;   // the local server exited before it would answer
@@ -1498,7 +1507,7 @@ int main(int argc, char** argv) {
             while (!mp->handshakeSettled() && SDL_GetTicks64() < deadline) {
                 if (!mp->poll()) break;
                 if (lobbyLoading && SDL_GetTicks64()-lobbyProgressAt>=100) {
-                    lobbyLoading->step("Connecting to local server",40);lobbyProgressAt=SDL_GetTicks64();
+                    lobbyLoading->step(signingIn,40);lobbyProgressAt=SDL_GetTicks64();
                 }
                 SDL_PumpEvents();          // keep the window responsive while we wait
                 SDL_Delay(5);
