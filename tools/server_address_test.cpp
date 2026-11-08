@@ -14,8 +14,14 @@ int main() {
     check("tak.pgnet.us:1234","tls://tak.pgnet.us",1234);
     check("tls://tak.pgnet.us:7677","tls://tak.pgnet.us",7677);
     check("192.0.2.1","tls://192.0.2.1",7677);
-    check("[::1]","tls://::1",7677);
-    check("::1","tls://::1",7677);
+    // This machine's loopback addresses default to plain TCP (a local test server).
+    check("[::1]","::1",7677);
+    check("::1","::1",7677);
+    check("127.0.0.1:7677","127.0.0.1",7677);
+    check("127.1.2.3","127.1.2.3",7677);
+    check("localhost","localhost",7677);
+    check("tls://localhost","tls://localhost",7677);
+    check("tls://127.0.0.1","tls://127.0.0.1",7677);
     check("tls://[::1]:1234","tls://::1",1234);
     check("tcp://[::1]:1234","::1",1234);
     check("tcp://localhost","localhost",7677);

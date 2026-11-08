@@ -9,14 +9,17 @@ namespace tak {
 struct ServerAddress { std::string host; uint16_t port=7677; };
 
 // Menu addresses default to verified TLS. Plain TCP is an explicit LAN/testing
-// opt-in; the automatically launched local server uses its separate launch path.
+// opt-in (tcp://), and the default for this machine's own loopback addresses
+// (localhost, 127.x.x.x, ::1): that traffic never leaves the machine, and a local
+// test server (takserver --local) speaks plain TCP. tls:// still forces TLS there.
+// The automatically launched local server uses its separate launch path.
 inline std::optional<ServerAddress> parseServerAddress(std::string_view text) {
     const auto first=text.find_first_not_of(" \t\r\n");
     if(first==text.npos)return {};
     text=text.substr(first,text.find_last_not_of(" \t\r\n")-first+1);
-    bool secure=true;
-    if(text.starts_with("tls://"))text.remove_prefix(6);
-    else if(text.starts_with("tcp://")) {secure=false;text.remove_prefix(6);}
+    bool secure=true,scheme=false;
+    if(text.starts_with("tls://")) {scheme=true;text.remove_prefix(6);}
+    else if(text.starts_with("tcp://")) {scheme=true;secure=false;text.remove_prefix(6);}
     if(text.empty() || text.find_first_of("/ \t\r\n")!=text.npos)return {};
     std::string_view host=text,port;
     bool hasPort=false;
@@ -33,6 +36,7 @@ inline std::optional<ServerAddress> parseServerAddress(std::string_view text) {
         host=text.substr(0,colon);port=text.substr(colon+1);hasPort=true;
     }
     if(host.empty() || host.find_first_of("[]")!=host.npos)return {};
+    if(!scheme && (host=="localhost" || host=="::1" || host.starts_with("127.")))secure=false;
     unsigned number=7677;
     if(hasPort) {
         const auto parsed=std::from_chars(port.data(),port.data()+port.size(),number);
