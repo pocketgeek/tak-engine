@@ -1228,9 +1228,9 @@ float createOptionPx(float maxW) {
                       {60,66,86,255},1.6f);
                 py+=28;
                 if(const auto status=mp_->roomModStatus();gameOn && !status.empty()){
-                    blockText(tak::uiTextFit(status,1.2f,280),winW-296.0f,py,1.2f,{205,190,135,255});py+=20;}
+                    blockText(tak::uiTextFit(status,1.2f,280),winW-296.0f,py,1.2f,{205,190,135,255});py+=16;}
             }
-            modBottom=py+8;
+            modBottom=py+4;
         }
         // SP spectate ("watch the AIs"): the instant the host lands in the room, fill
         // every open capacity slot with an AI -- each on its own team/colour and a
