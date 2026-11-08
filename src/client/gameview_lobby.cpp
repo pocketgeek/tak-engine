@@ -1535,14 +1535,13 @@ float createOptionPx(float maxW) {
         }
         // chat panel on the right (multiplayer only -- there's no one to chat with in SP)
         if (!singlePlayer_) {
-            // CHAT, small (as the mods status line), over the message box; the box runs down
-            // to the line the text field and SEND share.
+            // The message box runs from under the mods down to the line the text field and
+            // SEND share.
             float chx = winW - 300.0f, chy = modBottom, chw = 280;
             constexpr float kLineH = 16, kSb = 8;
             const float inputY = winH - 52.0f;
-            blockText("CHAT", chx + 2, chy, 1.2f, {160, 165, 180, 255});
             SDL_SetRenderDrawColor(ren_, 22, 24, 32, 255);
-            SDL_FRect cp{chx, chy + 16, chw, std::max(40.0f, inputY - 6 - (chy + 16))}; SDL_RenderFillRectF(ren_, &cp);
+            SDL_FRect cp{chx, chy, chw, std::max(40.0f, inputY - 6 - chy)}; SDL_RenderFillRectF(ren_, &cp);
             chatRect_ = cp;
             // Every message wrapped to the box (measured, so it fits in either UI FONT),
             // oldest first; chatScroll_ is how many rows up from the newest the view sits
