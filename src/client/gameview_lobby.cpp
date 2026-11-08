@@ -4,6 +4,7 @@
 #include "net/matchconfig.h"
 #include "client/startmarkers.h"
 #include <cctype>
+#include <set>
 #include <cstring>
 #include <cmath>
 #include "util/u8path.h"
@@ -172,7 +173,31 @@ float createOptionPx(float maxW) {
         vfs_.refreshMapCache(tak::hpi::userMapRoot());
         mapList_.clear();
         mapTitlesLoaded_ = false;   // the install may have changed: read the tables again
-        const auto maps=tak::hpi::listMaps(vfs_);
+        auto maps=tak::hpi::listMaps(vfs_);
+        // A per-user MapCache copy ("name [16 hex]": a map received from a server, or a
+        // Cartographer Test Map snapshot) is left out while an installed map has the same
+        // name: those are older or other versions of a map the player has. A copy of a map
+        // the player does not have stays. Joining and Test Map pick the copy by its exact
+        // name, so they are unaffected.
+        {
+            const auto lower = [](std::string t) {
+                for (char& c : t) c = char(std::tolower(static_cast<unsigned char>(c)));
+                return t;
+            };
+            const auto cacheBase = [](const std::string& n) -> std::string {
+                if (n.size() > 19 && n.compare(n.size() - 19, 2, " [") == 0 && n.back() == ']' &&
+                    std::all_of(n.end() - 17, n.end() - 1, [](char c) { return std::isxdigit((unsigned char)c) != 0; }))
+                    return n.substr(0, n.size() - 19);
+                return {};
+            };
+            std::set<std::string> installed;
+            for (const auto& [name, path] : maps)
+                if (cacheBase(name).empty()) installed.insert(lower(name));
+            std::erase_if(maps, [&](const auto& entry) {
+                const std::string base = cacheBase(entry.first);
+                return !base.empty() && installed.count(lower(base));
+            });
+        }
         size_t completed=0;
         uint64_t lastProgress=0;
         for (const auto& [name, path] : maps) {
@@ -962,13 +987,11 @@ float createOptionPx(float maxW) {
     void GameView::drawRoom(int winW, int winH) {
         const auto& room = mp_->room();
         // The slot table starts just under the page title (multiplayer: under the room's
-        // name). The map's name heads the right column, right-justified above its preview.
+        // name). The map's name heads the right column, above its preview.
         float x = 40, y = 54;
         if (!singlePlayer_) { blockText(room.name, x, y, 2.2f, {210, 210, 220, 255}); y += 34; }
-        {
-            const std::string title = tak::uiTextFit("MAP  " + mapTitle(room.mapId), 1.8f, 280.0f);
-            blockText(title, winW - 20.0f - blockWidth(title, 1.8f), 62, 1.8f, {180, 185, 195, 255});
-        }
+        // Left-aligned with the preview under it; a long name runs on past the right edge.
+        blockText("MAP  " + mapTitle(room.mapId), winW - 300.0f, 62, 1.8f, {180, 185, 195, 255});
         bool host = (room.hostId == mp_->myClientId());
         // MAP SCENARIO (259): the room plays its map's scenario when the option is on, or
         // for a Test Map copy, read from the verified package (the host's own until then).
