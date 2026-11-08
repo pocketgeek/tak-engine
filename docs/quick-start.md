@@ -157,10 +157,11 @@ the orders for the selection on the right-hand panel.*
 | Any point | a transport carrying units | Go there and unload. |
 | A tree, rock or wreck | a reclaiming builder | Reclaim (clear) it. It gives no mana. |
 
-![The attack cursor, crossed swords, over an enemy Skeleton Archer with the Aramon army selected](img/quick/attack-cursor.jpg)
+![The pointer, an arrow with a red dot, over an enemy Skeleton Archer with the Aramon army selected](img/quick/attack-cursor.jpg)
 
-*Over an enemy the pointer becomes the attack cursor (shown here at Cursor Size
-2×).*
+*With units selected, the pointer over an enemy gains a red dot: a right-click attacks
+it (shown here at Cursor Size 2×). The crossed swords appear in Attack mode, from the
+Orders panel or **A**.*
 
 ### Orders
 

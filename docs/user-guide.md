@@ -567,7 +567,7 @@ claimed.*
 
 ## Playing
 
-![The in-game screen with numbered markers on the minimap, stats panel, orders, weapons and stances, mana, build menu, information bar and the selected Monarch](img/guide/hud-annotated.jpg)
+![The in-game screen with numbered markers on the minimap, stats panel, orders, weapons and stances, mana, build menu, information bar and the selected Monarch; the Monarch's portrait also stands in the Idle Builders column at the right edge of the map](img/guide/hud-annotated.jpg)
 
 *The in-game screen with Aramon's Monarch, Elsin, selected.*
 
@@ -585,6 +585,11 @@ claimed.*
    the bar is empty, the mana bar appears only for units that have mana, and the
    bar on the right appears only while the unit is building or conjuring something.
 8. **The selected unit**, here the Monarch.
+
+The portrait at the right edge of the map is the **Idle Builders**
+column: one portrait for each kind of builder or factory of yours with nothing to do
+(here the Monarch). Click one to select it and go to it; see
+[Interface](#interface) for where it sits and how big it is.
 
 ### Fog of war
 

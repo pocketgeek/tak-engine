@@ -33,8 +33,41 @@ install (the 0.9.0 `instM` install, which adds House Rules, for the mods picture
   (`TAK_CAP_OPTIONS=40`), from 1600 x 1100 cropped to (388, 246, 1212, 776), 78 px taller
   for IDLE BUILDERS and IDLE BUILDERS SCALE.
 
-Not retaken: the in-game pictures predate the Idle Builders column and the depth-ordered
-shots and effects.
+Then the in-game pictures, for the Idle Builders column and the depth-ordered shots and
+effects: a Debug `-O2` build of `main` at `fd8a5cdf` (0.9.23) with the 0.9.0 in-game
+capture hooks ported, plus `TAK_CAP_BENCHSEC` (the Benchmark badge's seconds, which a
+headless run does not advance) and `TAK_CAP_NONAME` (no player name on the Monarch's
+panel); the diff is `capture-hooks-0923-ingame.diff` and the jobs, driver, encoder and
+the 0.9.0 `brief.sh` / `dw.sh` are in `~/tak-tmp/scratch/release-0923/shots-ingame/`.
+Every picture keeps its 0.9.0 recipe (scene, seed, moment, window, crop, quality) and its
+size, except as listed:
+
+- Retaken: `battle.jpg`, `dragons.jpg`, `hud.jpg`, `naval.jpg`, `generated.jpg`,
+  `diplomacy.jpg`; `guide/` `hud-annotated`, `selection-strip`, the five `side-*`,
+  `shift-queue`, `flyers-retail-legion`, `fire-on-the-move`, `tactical-dots`,
+  `campaign-briefing`, `benchmark`, `scorecard`, `chat-box`, `build-line`,
+  `disconnect-wait`, `build-menu-wrap`; `quick/` `box-select`, `selected`,
+  `attack-cursor`, `build-placement`, `build-line` (`quick/command-panel.jpg` came out
+  byte-identical).
+- `battle.jpg`, `guide/benchmark.jpg`, `guide/scorecard.jpg`: `TAK_CAP_BENCHSEC=55`, so the
+  badge reads 0:05 as before.
+- `generated.jpg`: at 660 game seconds (was 420): the AI no longer has the lodestone
+  up by 420.
+- `dragons.jpg`: the view showing the Neo Dragons' breath on the Aramon column.
+- `guide/tactical-dots.jpg`: zoom 0.10, the zoom-out floor now (0.1875 no longer is, and
+  drew no dots); same crop, the armies stand differently.
+- `quick/box-select.jpg`: the drag box `D160,190;M400,330;M570,430`, higher and smaller,
+  since the army now stands higher on the screen.
+- `quick/attack-cursor.jpg`: over the enemy the pointer is now retail's hover cursor (an
+  arrow with a red dot), as the cursor rules have been since 0.9.20; the crossed swords
+  belong to Attack mode.
+- `guide/disconnect-wait.jpg` reads WAITING FOR Brannoc 18 (the alt text's figure).
+- Idle Builders portraits show where the player has idle builders: `hud`,
+  `hud-annotated`, the `side-*` pictures, `shift-queue`, `fire-on-the-move`, `diplomacy`,
+  `disconnect-wait`, `guide/build-line`, `build-menu-wrap`, `flyers-retail-legion` and
+  some `quick/` pictures; none in the spectator, Benchmark and briefing views.
+- Kept: `guide/replay.jpg` (its procedure is not recorded and the 0.9.0 one gives a
+  different scene).
 
 **Earlier: retaken for 0.9.22** (2026-11-07): `title.jpg` only, by the 0.9.22 build (Debug of
 `main` at `ac1f9dac` with the 0.9.22 version line), with the 0.9.1 title capture (script
