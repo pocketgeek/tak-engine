@@ -2777,10 +2777,14 @@ private:
         return note;
     }
     void scanModPacks();   // fills availableGameMods_ / availableCosmeticMods_ / alwaysCosmeticMods_ / alwaysGameMods_ once
-    size_t gameModPage_=0, cosmeticModPage_=0;
     // The room's mod lists' FILTER fields (lobby text fields 7 cosmetic, 8 game): the packs
     // whose names contain the text, case-insensitively.
     std::string cosmeticModFilter_, gameModFilter_;
+    // The room's mods screen (MODS...): open, and its two lists' scroll (rows) and boxes.
+    bool modsScreen_ = false;
+    int modScroll_[2] = {0, 0};
+    SDL_FRect modListRect_[2]{};
+    void drawModsScreen(int winW, int winH);
     std::string mpMapId_;   // set from the launched map basename
     std::string missionStem_;   // campaign mission to host (headless --mpmission)
     // Per-mission unit whitelist from missions/<stem>.tdf (lowercased ids). When set,

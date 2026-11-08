@@ -2791,8 +2791,12 @@ inside a pack is skipped), or its animation art would change game timing (for
 example the frame timing of a storm effect), it is left out of that game and the
 game's chat says so.
 
-In the game room you tick the packs you want (up to 64 of each kind, counting
-the always-enabled ones). Inside each kind, always-enabled packs load first,
+In the game room, **MODS** under the map lists what is always on and what is
+ticked; **MODS...** opens the mods screen, with **Cosmetic** and **Game** packs
+side by side, each with a **Filter** box and a scrolling list of tick boxes (the
+always-enabled packs at the top, locked on). Tick the packs you want there (up to
+64 of each kind, counting the always-enabled ones); **Done** or **Esc** returns to
+the room. Only the host ticks game packs; everyone else sees the host's choice. Inside each kind, always-enabled packs load first,
 then ticked ones, each in alphabetical order of their folder names; later packs
 win when they change the same file. Game packs load first, then cosmetic packs.
 

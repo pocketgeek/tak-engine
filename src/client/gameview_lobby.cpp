@@ -77,7 +77,8 @@ float createOptionPx(float maxW) {
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         float cx = winW / 2.0f;
         // Single player is titled as the door that opens it (PlayComputer's caption).
-        const char* title = singlePlayer_ ? "PLAY THE MACHINE" : "TA:KINGDOMS  MULTIPLAYER";
+        const char* title = modsScreen_ && mp_ && mp_->state() == tak::net::MpClient::State::InRoom ? "MODS"
+                          : singlePlayer_ ? "PLAY THE MACHINE" : "TA:KINGDOMS  MULTIPLAYER";
         blockText(title, cx - blockWidth(title, 2.6f) / 2, 24, 2.6f, {210, 200, 150, 255});
         if (!mp_) return;
         auto st = mp_->state();
@@ -107,7 +108,8 @@ float createOptionPx(float maxW) {
                   [this] { menuRequested_ = true; });
             return;
         }
-        if (st == tak::net::MpClient::State::InRoom) drawRoom(winW, winH);
+        if (st != tak::net::MpClient::State::InRoom) modsScreen_ = false;   // left the room: back to it next time
+        if (st == tak::net::MpClient::State::InRoom) { if (modsScreen_) drawModsScreen(winW, winH); else drawRoom(winW, winH); }
         else if (lobbyScreen_ == LobbyScreen::Create) drawCreate(winW, winH);
         else drawBrowser(winW, winH);
     }
@@ -984,6 +986,134 @@ float createOptionPx(float maxW) {
         }
     }
 
+    // The mods screen (the room's MODS... button): COSMETIC and GAME side by side over the
+    // whole panel, each with its FILTER and a scrolling list of tick boxes, the
+    // always-enabled packs first, locked on. COSMETIC packs are this player's own (never
+    // sent, never changing the game); GAME packs only the skirmish host ticks, and a guest
+    // sees the host's choice. At most 64 packs of a kind, its always-enabled ones included.
+    // Changes apply as they are ticked; DONE (or Esc) goes back to the room.
+    void GameView::drawModsScreen(int winW, int winH) {
+        (void)winH;
+        const auto& room = mp_->room();
+        const bool host = room.hostId == mp_->myClientId();
+        scanModPacks();
+        const bool gameOn = room.mission.empty() && room.opts.gameMods;
+        const auto& alwaysGame = mp_->alwaysGameModPacks();
+        // (The page title, MODS, is the lobby's own.)
+        constexpr float kTop = 60, kRowH = 22, kListTop = 112, kListBottom = 482, kPx = 1.5f;
+        const float colW = (winW - 2 * kCreateMargin - 16) / 2;
+        // One column: heading, count, FILTER, then the list box.
+        auto column = [&](int k, const char* heading, const std::vector<std::string>& available,
+                          const std::vector<std::string>& selected, const std::vector<std::string>& always,
+                          std::string& filter, int field, bool editable, const char* note,
+                          std::function<void(std::vector<std::string>)> apply) {
+            const float cx = kCreateMargin + float(k) * (colW + 16);
+            blockText(heading, cx, kTop, 1.8f, {205, 210, 225, 255});
+            const auto key = [](const std::string& n) { return tak::hpi::MountSet::key(n); };
+            const auto isAlways = [&](const std::string& n) {
+                return std::any_of(always.begin(), always.end(), [&](const std::string& a) { return key(a) == key(n); });
+            };
+            std::vector<std::string> names = available;
+            for (const auto& n : selected)
+                if (std::find(names.begin(), names.end(), n) == names.end() && !isAlways(n)) names.push_back(n);
+            std::sort(names.begin(), names.end());
+            size_t enabled = always.size();
+            for (const auto& n : selected) if (!isAlways(n)) ++enabled;
+            const std::string count = std::to_string(enabled) + " / 64 ON";
+            blockText(count, cx + colW - blockWidth(count, 1.4f), kTop + 4, 1.4f, {160, 170, 185, 255});
+            // FILTER.
+            const SDL_FRect fr{cx, kTop + 24, colW, kRowH};
+            const bool active = lbField_ == field;
+            SDL_SetRenderDrawColor(ren_, 24, 26, 34, 255); SDL_RenderFillRectF(ren_, &fr);
+            SDL_SetRenderDrawColor(ren_, active ? 200 : 90, active ? 210 : 100, active ? 130 : 130, 255); SDL_RenderDrawRectF(ren_, &fr);
+            if (filter.empty() && !active) blockText("FILTER", fr.x + 6, fr.y + 5, kPx, {110, 116, 132, 255});
+            else blockText(tak::uiTextFitStart(filter + (active ? "_" : ""), kPx, fr.w - 12), fr.x + 6, fr.y + 5, kPx, {225, 230, 240, 255});
+            lobbyHots_.push_back({fr, [this, field] { lbField_ = field; SDL_StartTextInput(); }});
+            const std::string want = tak::mapfilter::lower(filter);
+            // The rows: the always-enabled packs (locked), then the tickable ones.
+            struct Row { std::string name; bool locked; };
+            std::vector<Row> rows;
+            for (const auto& a : always) if (tak::mapfilter::matches(a, "", want)) rows.push_back({a, true});
+            for (const auto& n : names) if (tak::mapfilter::matches(n, "", want)) rows.push_back({n, false});
+            const SDL_FRect box{cx, kListTop, colW, kListBottom - kListTop};
+            modListRect_[k] = box;
+            SDL_SetRenderDrawColor(ren_, 24, 26, 34, 255); SDL_RenderFillRectF(ren_, &box);
+            SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &box);
+            if (note) { blockText(note, cx + 8, kListTop + 8, 1.4f, {150, 155, 165, 255}); return; }
+            if (rows.empty()) {
+                blockText(names.empty() && always.empty() ? (k ? "NO PACKS IN MODS/GAME" : "NO PACKS IN MODS/COSMETIC")
+                                                          : "NO PACK MATCHES THE FILTER",
+                          cx + 8, kListTop + 8, 1.4f, {150, 155, 165, 255});
+                return;
+            }
+            const int visible = int((box.h - 4) / kRowH);
+            modScroll_[k] = std::clamp(modScroll_[k], 0, std::max(0, int(rows.size()) - visible));
+            const float sbW = int(rows.size()) > visible ? 10.0f : 0.0f;
+            for (int r = 0; r < visible && modScroll_[k] + r < int(rows.size()); ++r) {
+                const Row& row = rows[size_t(modScroll_[k] + r)];
+                const SDL_FRect rr{cx + 2, kListTop + 2 + float(r) * kRowH, colW - 4 - sbW, kRowH - 2};
+                const bool on = row.locked || std::find(selected.begin(), selected.end(), row.name) != selected.end();
+                const bool live = editable && !row.locked;
+                if (live) {
+                    const std::string name = row.name;
+                    lbBtn(rr.x, rr.y, rr.w, rr.h, "", true, [selected, name, on, apply, n = always.size()] {
+                        auto selection = selected;
+                        if (on) selection.erase(std::remove(selection.begin(), selection.end(), name), selection.end());
+                        else if (selection.size() + n + 1 <= 64) selection.push_back(name);
+                        apply(std::move(selection));
+                    }, {40, 44, 58, 255}, kPx);
+                }
+                SDL_FRect check{rr.x + 8, rr.y + 5, 11, 11};
+                SDL_SetRenderDrawColor(ren_, live ? 190 : 120, live ? 205 : 128, live ? 220 : 140, 255);
+                SDL_RenderDrawRectF(ren_, &check);
+                if (on) { check.x += 3; check.y += 3; check.w -= 6; check.h -= 6; SDL_RenderFillRectF(ren_, &check); }
+                blockText(tak::uiTextFit(row.name, kPx, rr.w - 120), rr.x + 28, rr.y + 4, kPx,
+                          live ? SDL_Color{225, 230, 240, 255} : SDL_Color{170, 200, 170, 255});
+                if (row.locked) {
+                    const char* tag = "ALWAYS ON";
+                    blockText(tag, rr.x + rr.w - blockWidth(tag, 1.2f) - 8, rr.y + 5, 1.2f, {150, 185, 150, 255});
+                }
+            }
+            if (sbW > 0) {   // where the visible rows sit in the list
+                const float th = std::max(20.0f, box.h * float(visible) / float(rows.size()));
+                const float ty = box.y + (box.h - th) * float(modScroll_[k]) / float(int(rows.size()) - visible);
+                SDL_FRect thumb{box.x + box.w - sbW - 1, ty, sbW, th};
+                SDL_SetRenderDrawColor(ren_, 90, 100, 130, 255); SDL_RenderFillRectF(ren_, &thumb);
+            }
+        };
+        column(0, "COSMETIC MODS", availableCosmeticMods_, settings_ ? settings_->cosmeticModPacks : std::vector<std::string>{},
+               alwaysCosmeticMods_, cosmeticModFilter_, 7, room.mission.empty(), nullptr,
+               [this](std::vector<std::string> selection) {
+                   if (!settings_) return;
+                   settings_->cosmeticModPacks = std::move(selection); saveSettings(*settings_);
+               });
+        std::string guestNote;
+        if (!gameOn) guestNote = "THE HOST TURNED GAME MODS OFF";
+        else if (!host) {
+            std::string names = mp_->modPackage() ? mp_->modPackage()->mapPath : "";
+            guestNote = "THE HOST CHOOSES: " + (names.empty() ? std::string(mp_->modPackage() ? "NONE" : "WAITING FOR THE HOST") : names);
+            guestNote = tak::uiTextFit(guestNote, 1.4f, colW - 16);
+        }
+        column(1, "GAME MODS", availableGameMods_, mp_->gameModPacks(), host ? alwaysGame : std::vector<std::string>{},
+               gameModFilter_, 8, host && gameOn && !mp_->modBusy(), guestNote.empty() ? nullptr : guestNote.c_str(),
+               [this, alwaysGame](std::vector<std::string> selection) {
+                   mp_->setGameModPacks(selection);
+                   if (settings_) {
+                       // A saved tick hidden by a same-named always-enabled pack is kept (it
+                       // applies again once that pack leaves always_enabled/).
+                       for (const auto& n : settings_->gameModPacks)
+                           if (std::find(selection.begin(), selection.end(), n) == selection.end() &&
+                               std::any_of(alwaysGame.begin(), alwaysGame.end(), [&](const std::string& a) {
+                                   return tak::hpi::MountSet::key(a) == tak::hpi::MountSet::key(n); }))
+                               selection.push_back(n);
+                       settings_->gameModPacks = std::move(selection); saveSettings(*settings_);
+                   }
+               });
+        if (const auto status = mp_->roomModStatus(); gameOn && !status.empty())
+            blockText(tak::uiTextFit(status, 1.3f, 600), kCreateMargin, kLobbyH - 32, 1.3f, {205, 190, 135, 255});
+        lbBtn(kLobbyW - kCreateMargin - 120, kLobbyH - 40, 120, 30, "DONE", true, [this] { modsScreen_ = false; lbField_ = 0; SDL_StopTextInput(); });
+    }
+
     void GameView::drawRoom(int winW, int winH) {
         const auto& room = mp_->room();
         // The slot table starts just under the page title (multiplayer: under the room's
@@ -1027,142 +1157,78 @@ float createOptionPx(float maxW) {
             const bool gameRoom=room.mission.empty();
             const bool gameOn=gameRoom && room.opts.gameMods;
             const auto& alwaysGame=mp_->alwaysGameModPacks();
-            const bool alwaysGameLine=gameOn && host && !alwaysGame.empty();
+            // A summary under the map: what is always on and what is ticked, each line as
+            // many names as fit then +N, and a MODS button to the mods screen
+            // (drawModsScreen), where both lists use the whole panel. The game mods' status
+            // (transfer, error, VERIFIED) stays here.
             float py=87+mapDrop;
-            // Rows per page. Multiplayer: what fits above the chat (5, or 3 / 2 for the host's
-            // two lists). Single player has no chat: the two lists share the rows down to the
-            // panel's foot, a short list leaving its spare rows to the other.
-            const auto countable=[&](const std::vector<std::string>& available,const std::vector<std::string>& selected,
-                                     const std::vector<std::string>& always) {
-                size_t n=available.size();
-                for(const auto& s:selected)
-                    if(std::find(available.begin(),available.end(),s)==available.end() &&
-                       std::none_of(always.begin(),always.end(),[&](const std::string& a){
-                           return tak::hpi::MountSet::key(a)==tak::hpi::MountSet::key(s);}))++n;
-                return n;
+            // A label and its names, wrapping onto further lines down the column, pushing
+            // what follows down; once the lines `after` it (one each, then the MODS button
+            // and the status) would run out of room -- the panel's foot in single player,
+            // the chat's room in multiplayer -- the last line ends with +N.
+            const float bottom=singlePlayer_ ? float(winH)-24 : float(winH)-72-140;
+            const auto namesLine=[&](const std::string& label,const std::vector<std::string>& names,SDL_Color c,int after) {
+                constexpr float kLineW=280,kPx=1.3f,kLineH=18;
+                const float reserve=float(after)*kLineH+4+28+20;
+                const int maxLines=std::max(1,int((bottom-py-reserve)/kLineH));
+                std::string line=label;
+                bool lineHasName=false;
+                int lines=1;
+                for(size_t i=0;i<names.size();++i){
+                    const std::string piece=(lineHasName?", ":"")+names[i];
+                    const bool last=i+1==names.size();
+                    // On the last line allowed, keep room for " +N" unless this is the last name.
+                    const float need=blockWidth(line+piece+(lines==maxLines && !last?" +99":""),kPx);
+                    if(need<=kLineW || !lineHasName){
+                        line+=lineHasName||line==label?piece:names[i];
+                        lineHasName=true;
+                        if(blockWidth(line,kPx)>kLineW)line=tak::uiTextFit(line,kPx,kLineW);
+                        continue;
+                    }
+                    if(lines==maxLines){line+=" +"+std::to_string(names.size()-i);break;}
+                    blockText(line,winW-296.0f,py,kPx,c);py+=kLineH;
+                    line="  "+names[i];lineHasName=true;++lines;
+                }
+                blockText(line,winW-296.0f,py,kPx,c);py+=kLineH;
             };
-            const size_t mpPerPage=gameOn && host?(alwaysGameLine?2:3):5;
-            size_t cosmeticPerPage=mpPerPage,gamePerPage=mpPerPage;
-            if(singlePlayer_ && gameRoom) {
-                const size_t nCos=countable(availableCosmeticMods_,settings_?settings_->cosmeticModPacks:std::vector<std::string>{},alwaysCosmeticMods_);
-                const size_t nGame=gameOn && host?countable(availableGameMods_,mp_->gameModPacks(),alwaysGame):0;
-                // The column's fixed lines: two headings and the gap (48), the ALWAYS ON lines
-                // (20 each), and per list a FILTER and a PAGE row (22 each) and the status (23).
-                const float fixed=48+(alwaysCosmeticMods_.empty()?0:20)+(alwaysGameLine?20:0)+(gameOn && host?2*44:44)+23;
-                const size_t rows=size_t(std::max(4.0f,(float(winH)-24-py-fixed)/22.0f));
-                if(!(gameOn && host)) cosmeticPerPage=std::max<size_t>(2,rows);
-                else {
-                    gamePerPage=std::max<size_t>(2,std::min(nGame,rows/2));
-                    cosmeticPerPage=std::max<size_t>(2,rows-gamePerPage);
-                    if(nCos<cosmeticPerPage) gamePerPage=std::max<size_t>(2,rows-std::max<size_t>(2,nCos));
+            const auto splitNames=[](const std::string& joined) {
+                std::vector<std::string> out;
+                size_t at=0;
+                while(at<joined.size()){
+                    size_t comma=joined.find(',',at);
+                    std::string n=joined.substr(at,comma==std::string::npos?std::string::npos:comma-at);
+                    while(!n.empty() && n.front()==' ')n.erase(n.begin());
+                    if(!n.empty())out.push_back(n);
+                    if(comma==std::string::npos)break;
+                    at=comma+1;
                 }
-            }
-            constexpr float kPackPx=1.3f;   // the column's list text (ALWAYS ON, HOST:)
-            // `always`: the kind's always-enabled packs. They are on the ALWAYS ON line, so a
-            // saved tick of the same name (ignoring case) is not listed again, and they
-            // count against the 64-pack limit.
-            auto packList=[&](const std::vector<std::string>& available,const std::vector<std::string>& selected,
-                              const std::vector<std::string>& always,
-                              size_t& page,bool busy,const char* empty,const char* pageLabel,
-                              std::string& filter,int filterField,size_t perPage,
-                              std::function<void(std::vector<std::string>)> apply) {
-                auto hidden=[&](const std::string& n){return std::any_of(always.begin(),always.end(),
-                    [&](const std::string& a){return tak::hpi::MountSet::key(a)==tak::hpi::MountSet::key(n);});};
-                auto names=available;for(const auto& n:selected)if(std::find(names.begin(),names.end(),n)==names.end() && !hidden(n))names.push_back(n);
-                std::sort(names.begin(),names.end());
-                // FILTER: shown once the list overflows a page (or while it holds text); the
-                // packs whose names contain it, case-insensitively.
-                if(names.size()>perPage || !filter.empty()) {
-                    const SDL_FRect r{winW-300.0f,py,280,20};
-                    const bool active=lbField_==filterField;
-                    SDL_SetRenderDrawColor(ren_,24,26,34,255);SDL_RenderFillRectF(ren_,&r);
-                    SDL_SetRenderDrawColor(ren_,active?200:90,active?210:100,active?130:130,255);SDL_RenderDrawRectF(ren_,&r);
-                    if(filter.empty() && !active)blockText("FILTER",r.x+6,py+5,1.3f,{110,116,132,255});
-                    else blockText(tak::uiTextFitStart(filter+(active?"_":""),1.3f,r.w-12),r.x+6,py+5,1.3f,{225,230,240,255});
-                    lobbyHots_.push_back({r,[this,filterField]{lbField_=filterField;SDL_StartTextInput();}});
-                    py+=22;
-                    const std::string want=tak::mapfilter::lower(filter);
-                    std::erase_if(names,[&](const std::string& n){return !tak::mapfilter::matches(n,"",want);});
-                }
-                const size_t pages=std::max<size_t>(1,(names.size()+perPage-1)/perPage);page=std::min(page,pages-1);
-                if(names.empty()){blockText(empty,winW-296.0f,py,1.3f,{150,155,165,255});py+=22;}
-                for(size_t i=page*perPage;i<std::min(names.size(),page*perPage+perPage);++i){
-                    const auto name=names[i];const bool enabled=std::find(selected.begin(),selected.end(),name)!=selected.end();
-                    // A pack's name at the size of the column's other lines (ALWAYS ON, the
-                    // joiner's HOST: list), centered clear of the checkbox.
-                    const std::string label=tak::uiTextFit(name,kPackPx,220);
-                    const size_t locked=always.size();
-                    lbBtn(winW-300.0f,py,280,20,label,!busy,[selected,name,enabled,apply,locked]{
-                        auto selection=selected;
-                        if(enabled)selection.erase(std::remove(selection.begin(),selection.end(),name),selection.end());else if(selection.size()+locked+1<=64)selection.push_back(name);
-                        apply(std::move(selection));
-                    },{60,66,86,255},kPackPx);
-                    SDL_FRect checkBox{winW-291.0f,py+4.5f,11,11};
-                    SDL_SetRenderDrawColor(ren_,190,205,220,255);
-                    SDL_RenderDrawRectF(ren_,&checkBox);
-                    if(enabled){checkBox.x+=3;checkBox.y+=3;checkBox.w-=6;checkBox.h-=6;SDL_RenderFillRectF(ren_,&checkBox);}
-                    py+=22;
-                }
-                if(pages>1){lbCycle(winW-300.0f,py,280,20,std::string(pageLabel)+" "+std::to_string(page+1)+" / "+std::to_string(pages),true,[&page,pages](int d){page=(page+pages+d)%pages;},kPackPx);py+=22;}
+                return out;
             };
-            // ALWAYS ON: a, b +N -- as many always-enabled pack names as fit on one line
-            // (280 px), then "+N".
-            auto alwaysLine=[&](const std::vector<std::string>& always) {
-                if(always.empty())return;
-                constexpr float kLineW=280;
-                std::string line="ALWAYS ON: ";
-                const size_t n=always.size();size_t shown=0;
-                for(;shown<n;++shown){
-                    const std::string next=(shown?", ":"")+always[shown];
-                    if(blockWidth(line+next+(shown+1<n?" +99":""),1.3f)>kLineW)break;
-                    line+=next;
-                }
-                if(!shown){line=tak::uiTextFit(line+always[0],1.3f,kLineW-(n>1?blockWidth(" +99",1.3f):0));shown=1;}
-                if(shown<n)line+=" +"+std::to_string(n-shown);
-                blockText(line,winW-296.0f,py,1.3f,{170,200,170,255});py+=20;
-            };
-            // COSMETIC MODS heads the always-enabled and the ticked packs alike (a mission
-            // room shows the heading only when it has always-enabled packs to list).
-            if(gameRoom || !alwaysCosmeticMods_.empty()){blockText("COSMETIC MODS",winW-296.0f,py,1.6f,{205,210,225,255});py+=22;}
-            alwaysLine(alwaysCosmeticMods_);
+            blockText("MODS",winW-296.0f,py,1.6f,{205,210,225,255});py+=22;
+            std::vector<std::string> always=alwaysCosmeticMods_;
+            if(gameOn && host)always.insert(always.end(),alwaysGame.begin(),alwaysGame.end());
+            if(!always.empty())namesLine("ALWAYS ON: ",always,{170,200,170,255},gameRoom?2:0);
             if(gameRoom) {
-                packList(availableCosmeticMods_,settings_?settings_->cosmeticModPacks:std::vector<std::string>{},alwaysCosmeticMods_,cosmeticModPage_,false,
-                         "NO PACKS IN MODS/COSMETIC","COSMETIC PAGE",cosmeticModFilter_,7,cosmeticPerPage,[this](std::vector<std::string> selection){
-                    if(!settings_)return;
-                    settings_->cosmeticModPacks=std::move(selection);saveSettings(*settings_);
-                });
-                py+=4;
-                blockText(gameOn?"GAME MODS":"GAME MODS: OFF (HOST)",winW-296.0f,py,1.6f,{205,210,225,255});py+=22;
-                if(gameOn && host) {
-                    // The host's own always-enabled game packs: locked on, and sent with
-                    // the ticked ones. A guest's never apply (it sees HOST: below).
-                    alwaysLine(alwaysGame);
-                    packList(availableGameMods_,mp_->gameModPacks(),alwaysGame,gameModPage_,mp_->modBusy(),
-                             "NO PACKS IN MODS/GAME","GAME PAGE",gameModFilter_,8,gamePerPage,
-                             [this,alwaysGame](std::vector<std::string> selection){
-                        mp_->setGameModPacks(selection);
-                        if(settings_){
-                            // A saved tick hidden by a same-named always-enabled pack is not
-                            // in the room's list, so it is kept here (as the cosmetic list
-                            // keeps it): it applies again once that pack leaves always_enabled/.
-                            for(const auto& n:settings_->gameModPacks)
-                                if(std::find(selection.begin(),selection.end(),n)==selection.end() &&
-                                   std::any_of(alwaysGame.begin(),alwaysGame.end(),[&](const std::string& a){
-                                       return tak::hpi::MountSet::key(a)==tak::hpi::MountSet::key(n);}))
-                                    selection.push_back(n);
-                            settings_->gameModPacks=std::move(selection);saveSettings(*settings_);
-                        }
-                    });
-                } else if(gameOn) {
-                    // The host's packs, as named by the verified package (read-only here).
-                    std::string names=mp_->modPackage()?mp_->modPackage()->mapPath:"";
-                    if(names.empty())names=mp_->modPackage()?"NONE SELECTED":"WAITING FOR THE HOST";
-                    blockText(tak::uiTextFit("HOST: "+names,1.3f,280),winW-296.0f,py,1.3f,{180,190,205,255});py+=22;
+                std::vector<std::string> cosmetic;
+                if(settings_)for(const auto& n:settings_->cosmeticModPacks)
+                    if(std::find(availableCosmeticMods_.begin(),availableCosmeticMods_.end(),n)!=availableCosmeticMods_.end())cosmetic.push_back(n);
+                if(cosmetic.empty())blockText("COSMETIC: NONE",winW-296.0f,py,1.3f,{150,155,165,255}),py+=18;
+                else namesLine("COSMETIC: ",cosmetic,{200,205,215,255},1);
+                if(!gameOn)blockText("GAME: OFF (HOST)",winW-296.0f,py,1.3f,{150,155,165,255}),py+=18;
+                else if(host){
+                    if(mp_->gameModPacks().empty())blockText("GAME: NONE",winW-296.0f,py,1.3f,{150,155,165,255}),py+=18;
+                    else namesLine("GAME: ",mp_->gameModPacks(),{200,205,215,255},0);
+                } else {
+                    const std::string names=mp_->modPackage()?mp_->modPackage()->mapPath:"";
+                    if(names.empty())blockText(mp_->modPackage()?"GAME (HOST): NONE":"GAME (HOST): WAITING FOR THE HOST",winW-296.0f,py,1.3f,{180,190,205,255}),py+=18;
+                    else namesLine("GAME (HOST): ",splitNames(names),{180,190,205,255},0);
                 }
-                // The transfer's progress, an error, or GAME MODS VERIFIED when packs are in
-                // play (MpClient::roomModStatus: nothing to say for an empty selection).
+                py+=4;
+                lbBtn(winW-300.0f,py,280,22,"MODS...",true,[this]{modsScreen_=true;lbField_=0;SDL_StopTextInput();},
+                      {60,66,86,255},1.6f);
+                py+=28;
                 if(const auto status=mp_->roomModStatus();gameOn && !status.empty()){
-                    blockText(tak::uiTextFit(status,1.2f,280),winW-296.0f,py+3,1.2f,{205,190,135,255});py+=23;}
+                    blockText(tak::uiTextFit(status,1.2f,280),winW-296.0f,py,1.2f,{205,190,135,255});py+=20;}
             }
             modBottom=py+8;
         }
@@ -1594,6 +1660,11 @@ float createOptionPx(float maxW) {
             genSlider_ = -1; mapDrag_ = false;
             saveCreatePreferences();
         }
+        // The mods screen: Esc (no field being typed in) goes back to the room, as DONE.
+        if (modsScreen_ && e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && !lbField_) {
+            modsScreen_ = false;
+            return;
+        }
         if (e.type == SDL_MOUSEMOTION) {
             mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y);
             if (mapDrag_) setMapScrollFromThumb();   // dragging the map scrollbar
@@ -1608,6 +1679,8 @@ float createOptionPx(float maxW) {
                 mapScroll_ -= e.wheel.y;
                 clampMapScroll();
             }
+            for (int k = 0; k < 2; ++k)   // the mods screen's two lists (clamped as they draw)
+                if (modsScreen_ && ptIn(modListRect_[k], mx, my)) modScroll_[k] = std::max(0, modScroll_[k] - e.wheel.y);
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    (e.button.button == SDL_BUTTON_LEFT || e.button.button == SDL_BUTTON_RIGHT)) {
             mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
@@ -1633,8 +1706,8 @@ float createOptionPx(float maxW) {
                             (c >= '0' && c <= '9') || c == ' ' || c == '-' || c == '_')) *f += char(c);
                 } else *f += e.text.text;
                 if (lbField_ == 6) mapScroll_ = 0;   // a new filter starts at the top
-                if (lbField_ == 7) cosmeticModPage_ = 0;
-                if (lbField_ == 8) gameModPage_ = 0;
+                if (lbField_ == 7) modScroll_[0] = 0;
+                if (lbField_ == 8) modScroll_[1] = 0;
             }
             saveCreatePreferences();
         } else if (e.type == SDL_KEYDOWN && lbField_) {
@@ -1642,8 +1715,8 @@ float createOptionPx(float maxW) {
                 std::string* f = lbFieldBuf();
                 if (f && !f->empty()) f->pop_back();
                 if (lbField_ == 6) mapScroll_ = 0;
-                if (lbField_ == 7) cosmeticModPage_ = 0;
-                if (lbField_ == 8) gameModPage_ = 0;
+                if (lbField_ == 7) modScroll_[0] = 0;
+                if (lbField_ == 8) modScroll_[1] = 0;
             }
             else if (e.key.keysym.sym == SDLK_RETURN) {
                 if (lbField_ == 4 && !chatDraft_.empty()) { mp_->chat(chatDraft_); chatDraft_.clear(); }

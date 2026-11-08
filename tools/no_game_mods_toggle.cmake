@@ -9,8 +9,9 @@ foreach(needle "\"GAME MODS: ON\"" "createGameMods")
   endif()
 endforeach()
 # The 64-pack limit counts the always-enabled packs, and still allows 64 in all;
-# a click on the GAME list keeps a saved tick that an always-enabled namesake hides.
-foreach(needle "selection.size()+locked+1<=64" "[this,alwaysGame](std::vector<std::string> selection)")
+# a click on the GAME list keeps a saved tick that an always-enabled namesake hides
+# (both on the room's mods screen, drawModsScreen).
+foreach(needle "selection.size() + n + 1 <= 64" "[this, alwaysGame](std::vector<std::string> selection)")
   string(FIND "${text}" "${needle}" at)
   if(at EQUAL -1)
     message(FATAL_ERROR "${LOBBY} lacks the game pack list rule (${needle})")
