@@ -3,7 +3,8 @@
 Protocol **316** (unchanged from 0.9.22), replay format **15** (unchanged), generator
 version **9** (unchanged).
 
-Tag `v0.9.23` -> the preparation commit (filled in below once tagged).
+Tag `v0.9.23` -> `0bb9e201` (the preparation commit); annotated tag object
+`64beace2`. Published 2026-11-08 21:00:54 UTC as the Latest release.
 
 ## Scope and compatibility
 
@@ -73,15 +74,34 @@ Windows and macOS local suites; tag CI builds and tests all three platforms.
 
 ## CI and packages
 
-(Filled in after tag CI.)
+Tag CI on `v0.9.23`, all green at the first attempt: Determinism (sim) 42520087582
+(dispatched), Windows build 42520081999, Linux packages 42520081856 and macOS build
+42520081767, both Sign + notarize jobs included. Main's runs for `0bb9e201` were
+cancelled in favour of the tag's; main's last full set before it (`e794db17`) passed.
+
+31 assets, as 0.9.22; all 31 downloaded and match the release's SHA-256 digests. The
+build string is `v0.9.23` in the Fedora 44 package's `takclient` and `takserver` and the
+Arch package's `takserver` (the Arch `takclient` needs a newer glibc than the checking
+machine).
 
 ## Signing
 
-(Filled in after tag CI.)
+Windows: on oden-win (scratch `C:/tak/w/rel0923`, removed afterwards; no TAK process
+running before or after), `Get-AuthenticodeSignature` reports **Valid** (timestamped,
+"Curtis Edge") for the x64 setup program and `takclient`, `takserver` and `cartographer`
+in both zips; the x64 `takclient.exe` and `takserver.exe` report `0.9.23 (build v0.9.23)`.
+
+macOS: on the MacBook, both DMGs and all eight app copies (two in each DMG and each zip)
+pass `stapler validate`, and `spctl -a -vv` accepts them as "Notarized Developer ID";
+every app passes `codesign --verify --strict --deep` and has version 0.9.23. The arm64
+zip's `takclient` reports `0.9.23 (build v0.9.23)`. The scratch folder was removed.
 
 ## Publication
 
-(Filled in at publication.)
+The draft was created with the notes (the validation link rewritten to its `blob`
+`v0.9.23` URL) before tag CI uploaded into it; published on 2026-11-08 21:00:54 UTC as
+the Latest release, 31 assets; 0.9.22 and earlier releases are kept. The notes'
+validation link answers 200.
 
 ## Known limits
 
