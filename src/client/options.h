@@ -246,6 +246,7 @@ private:
     void pollFolder();                  // fold in a finished pick (input() and render())
     std::string folderStatusText() const;
     void drawFolderRow(const Control& c);
+    SDL_FRect folderButton(const Control& c) const;   // the row's CHANGE button: the only click target
     void drawRestartPrompt(int winW, int winH);
     bool restartPromptInput(const SDL_Event& e);   // true = leave Options (RESTART NOW)
     PromptBox defaultsPrompt_;          // DEFAULTS asks first: RESET TO DEFAULTS? YES / NO

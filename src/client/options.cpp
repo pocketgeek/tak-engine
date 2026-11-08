@@ -969,7 +969,10 @@ bool OptionsScreen::handle(const SDL_Event& e, int winW, int winH) {
                 if (c.action) c.action();
                 return false;
             }
-            if (c.kind == Control::Folder) { clickFolder(); return false; }
+            if (c.kind == Control::Folder) {   // only the CHANGE button opens the picker
+                if (in(folderButton(c), mx, my)) clickFolder();
+                return false;
+            }
             if (c.kind == Control::Dropdown) { refreshDevices(); openDrop_ = int(i); dropScroll_ = 0; return false; }   // fresh A-Z list
         }
         return false;
@@ -1349,6 +1352,11 @@ std::string OptionsScreen::folderStatusText() const {
     return "SHARED WITH CARTOGRAPHER. A NEW FOLDER IS LOADED BY RESTARTING THE GAME.";
 }
 
+SDL_FRect OptionsScreen::folderButton(const Control& c) const {
+    const float bw = 96 * u_;
+    return {c.row.x + c.row.w - bw, c.row.y + 5 * u_, bw, 24 * u_};
+}
+
 void OptionsScreen::drawFolderRow(const Control& c) {
     const bool on = folder_.locked.empty();
     const float fpx = 2.0f * u_, dpx = 1.6f * u_, npx = 1.3f * u_;
@@ -1357,7 +1365,7 @@ void OptionsScreen::drawFolderRow(const Control& c) {
     // CHANGE button at the right; the folder in use in a chip to its left, elided at
     // its START (the end of a path is the part that tells installs apart).
     const float bw = 96 * u_, gap = 8 * u_;
-    SDL_FRect btn{c.row.x + c.row.w - bw, c.row.y + 5 * u_, bw, 24 * u_};
+    const SDL_FRect btn = folderButton(c);
     const float cw = std::max(60 * u_, dropWidth(c) - bw - gap);
     SDL_FRect chip{btn.x - gap - cw, c.row.y + 5 * u_, cw, 24 * u_};
     SDL_SetRenderDrawColor(ren_, on ? 35 : 30, on ? 40 : 33, on ? 56 : 42, 255); SDL_RenderFillRectF(ren_, &chip);
