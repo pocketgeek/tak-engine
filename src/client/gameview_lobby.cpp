@@ -658,10 +658,12 @@ float createOptionPx(float maxW) {
             const std::string why = "CANNOT CREATE: " + mp_->createError();
             blockText(tak::uiTextFit(why, 1.3f, kLobbyW - 2 * x - 2 * bw - 152.0f), x + bw + 20, by + 9, 1.3f, {255, 130, 110, 255});
         }
-        if (!singlePlayer_)   // a private single-player game has no browser to go back to
-            lbBtn(kLobbyW - x - bw - 122, by, 110, 30, "BROWSER", true,
-                  [this] { lobbyScreen_ = LobbyScreen::Browser; });
-        lbBtn(x, by, bw, 30, "BACK", true, [this] { menuRequested_ = true; });
+        // BACK: multiplayer returns to the game browser it came from; a private
+        // single-player game has no browser, so it returns to the menu.
+        lbBtn(x, by, bw, 30, "BACK", true, [this] {
+            if (singlePlayer_) menuRequested_ = true;
+            else lobbyScreen_ = LobbyScreen::Browser;
+        });
 
         // Map picker (right column): a scrollable list box. Selecting sets both the
         // wire id (mpMapId_ = bare .tnt stem) and mapPath_, so mpCapacity() recomputes
