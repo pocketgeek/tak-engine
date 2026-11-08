@@ -609,7 +609,10 @@ float createOptionPx(float maxW) {
         // Fog of war: a room rule, so it is picked here and not only after the
         // room exists. Display-only (never hashed) -- every peer applies the same
         // rule, so it stays fair. The room displays this choice as information.
-        option(std::string("FOG OF WAR: ") + kFogName[std::min<int>(createFog_, 2)], true,
+        // A single-player spectator sees everything: FULL VISION, greyed. The saved
+        // choice (createFog_) is left alone and comes back when SPECTATE is turned off.
+        const bool spectateFog = singlePlayer_ && spSpectate_;
+        option(std::string("FOG OF WAR: ") + kFogName[spectateFog ? 2 : std::min<int>(createFog_, 2)], !spectateFog,
                [this](int direction) { createFog_ = uint8_t((createFog_ + direction + 3) % 3); });
         // Start Locations: also a room rule, picked here like fog so it is set before
         // the room exists. FIXED = the seated slots take the map's starts in order and
@@ -636,7 +639,7 @@ float createOptionPx(float maxW) {
             o.unitCap = createUnitCap_;
             o.monarchExpendable = createMonarchExp_ ? 1 : 0;
             o.powerCodes = createPowerCodes_ ? 1 : 0;
-            o.fogExplored = std::min<uint8_t>(createFog_, 2);
+            o.fogExplored = singlePlayer_ && spSpectate_ ? 2 : std::min<uint8_t>(createFog_, 2);
             // MAP SCENARIO: an offerable map's own scenario, when chosen. A Test Map copy
             // plays its scenario through its opt-in and sends 0 (the server checks the
             // verified package either way). Seats and rule regions follow fixed starts.
