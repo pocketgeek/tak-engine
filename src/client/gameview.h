@@ -2778,6 +2778,9 @@ private:
     }
     void scanModPacks();   // fills availableGameMods_ / availableCosmeticMods_ / alwaysCosmeticMods_ / alwaysGameMods_ once
     size_t gameModPage_=0, cosmeticModPage_=0;
+    // The room's mod lists' FILTER fields (lobby text fields 7 cosmetic, 8 game): the packs
+    // whose names contain the text, case-insensitively.
+    std::string cosmeticModFilter_, gameModFilter_;
     std::string mpMapId_;   // set from the launched map basename
     std::string missionStem_;   // campaign mission to host (headless --mpmission)
     // Per-mission unit whitelist from missions/<stem>.tdf (lowercased ids). When set,

@@ -4178,6 +4178,8 @@
             case 3: return &joinPass_; case 4: return &chatDraft_;
             case 5: return &genParams_.name;
             case 6: return &mapFilter_;
+            case 7: return &cosmeticModFilter_;
+            case 8: return &gameModFilter_;
             default: return nullptr;
         }
     }
