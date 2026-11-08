@@ -807,6 +807,7 @@ struct MainMenu::Impl {
     int serverSel = 0;                      // selected row; == serverItems.size() -> CUSTOM
     std::string serverText = "127.0.0.1";   // custom-entry text
     std::vector<SDL_FRect> serverRects;     // row hit-rects (rebuilt each render)
+    std::vector<SDL_FRect> serverDeleteRects;   // DELETE per remembered row (none on the default)
     SDL_FRect serverBoxRect{};              // custom text-box hit-rect
     SDL_FRect serverConnectRect{}, serverBackRect{};   // button hit-rects
     std::string serverError;                // shown in red after a failed connect
@@ -928,6 +929,36 @@ struct MainMenu::Impl {
             default: return nullptr;
         }
     }
+    // DELETE on a remembered row: drop it from the list and from Settings::knownServers
+    // (saved at once), keeping the selection on the same row where one is left.
+    void deleteServer(int i, Settings* settings) {
+        if (i <= 0 || i >= int(serverItems.size())) return;   // never the default server
+        const std::string gone = serverItems[size_t(i)];
+        const bool wasCustom = serverCustom();
+        serverItems.erase(serverItems.begin() + i);
+        if (settings) {
+            auto& ks = settings->knownServers;
+            std::erase_if(ks, [&](const std::string& sv) {
+                if (sv.size() != gone.size()) return false;
+                for (size_t k = 0; k < sv.size(); ++k)
+                    if (std::tolower((unsigned char)sv[k]) != std::tolower((unsigned char)gone[k])) return false;
+                return true;
+            });
+            saveSettings(*settings);
+            // A remembered server beyond the rows on show moves up into the freed one.
+            for (const auto& sv : ks) {
+                if (serverItems.size() >= 7) break;
+                bool dup = false;
+                for (const auto& it : serverItems)
+                    if (it.size() == sv.size() && std::equal(it.begin(), it.end(), sv.begin(), [](char x, char y) {
+                            return std::tolower((unsigned char)x) == std::tolower((unsigned char)y); })) { dup = true; break; }
+                if (!dup) serverItems.push_back(sv);
+            }
+        }
+        if (wasCustom) serverSel = int(serverItems.size());   // stay on CUSTOM
+        else if (serverSel > i) --serverSel;
+        serverSel = std::min(serverSel, int(serverItems.size()));
+    }
     std::string serverChoice() const {
         return serverCustom() ? serverText : serverItems[size_t(serverSel)];
     }
@@ -964,6 +995,7 @@ struct MainMenu::Impl {
         }
         // Dropdown rows: the default server, remembered servers, then CUSTOM.
         serverRects.clear();
+        serverDeleteRects.clear();
         float ry = y0 + 66 + errH;
         for (int i = 0; i < rows; ++i) {
             SDL_FRect r{x0 + 30, ry, pw - 60, rowH - 6};
@@ -974,10 +1006,21 @@ struct MainMenu::Impl {
             SDL_RenderDrawRectF(ren, &r);
             std::string label = i < int(serverItems.size()) ? serverItems[size_t(i)]
                                                             : std::string("CUSTOM...");
-            blockText(uiTextFit(label, 2.4f, r.w - (i == 0 ? 140 : 28)), r.x + 14, r.y + 9, 2.4f,
+            const bool remembered = i > 0 && i < int(serverItems.size());
+            blockText(uiTextFit(label, 2.4f, r.w - (i == 0 || remembered ? 140 : 28)), r.x + 14, r.y + 9, 2.4f,
                       sel ? SDL_Color{235, 240, 250, 255} : SDL_Color{175, 180, 195, 255});
             if (i == 0)   // mark the official default server
                 blockText("DEFAULT", r.x + r.w - 110, r.y + 13, 1.6f, {150, 165, 145, 255});
+            SDL_FRect del{0, 0, 0, 0};
+            if (remembered) {   // a remembered server can be forgotten
+                del = {r.x + r.w - 104, r.y + 5, 96, r.h - 10};
+                SDL_SetRenderDrawColor(ren, 70, 34, 38, 255); SDL_RenderFillRectF(ren, &del);
+                SDL_SetRenderDrawColor(ren, 190, 120, 125, 255); SDL_RenderDrawRectF(ren, &del);
+                const float tw = uiTextWidth("DELETE", 1.6f);
+                blockText("DELETE", del.x + (del.w - tw) / 2, del.y + (del.h - 7 * 1.6f - uiTextDescent(1.6f)) / 2, 1.6f,
+                          {240, 215, 215, 255});
+            }
+            serverDeleteRects.push_back(del);
             serverRects.push_back(r);
             ry += rowH;
         }
@@ -1055,7 +1098,7 @@ struct MainMenu::Impl {
             out = b;
         };
         button(x0 + 30, "CONNECT", serverConnectRect, true);
-        button(x0 + 196, "BACK", serverBackRect, false);
+        button(x0 + 196, "BACK", serverBackRect, true);
     }
 
     // The layout unit of SETTINGS, BENCHMARK and LOAD REPLAY: the Options screen's (1x at
@@ -1668,8 +1711,18 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                                my >= r.y && my <= r.y + r.h;
                     };
                     // Rows only SELECT; connecting is the explicit button (or ENTER).
-                    for (size_t i = 0; i < d_->serverRects.size(); ++i)
-                        if (in(d_->serverRects[i])) { d_->setServerSel(int(i)); break; }
+                    // A remembered row's DELETE forgets that server instead.
+                    bool deleted = false;
+                    for (size_t i = 0; i < d_->serverDeleteRects.size(); ++i)
+                        if (in(d_->serverDeleteRects[i])) {
+                            d_->sfx_.play(menuclick::kOk);
+                            d_->deleteServer(int(i), settings);
+                            deleted = true;
+                            break;
+                        }
+                    if (!deleted)
+                        for (size_t i = 0; i < d_->serverRects.size(); ++i)
+                            if (in(d_->serverRects[i])) { d_->setServerSel(int(i)); break; }
                     if (in(d_->serverBoxRect)) {
                         d_->setServerSel(int(d_->serverItems.size()));   // focus the field
                         d_->field = 1;
