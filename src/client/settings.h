@@ -59,11 +59,11 @@ struct Settings {
     // never filtered by this; see Smooth GUI Art. Persisted as textureFilter.
     int   textureFilter = 2;
     int   buildBarAlign = 1;       // conjure/build icon row: 0=left, 1=center, 2=right
-    float buildBarScale = 1.0f;    // extra scale on the build icon row, ON TOP of uiScale; 0.75..4.0
+    float buildBarScale = 1.0f;    // extra scale on the build icon row, ON TOP of uiScale; 0.5..4.0
     // IDLE BUILDERS: a column of portraits, one per type of idle mobile builder or
     // factory, at the right edge of the play area: 0 = off, 1 = top, 2 = middle, 3 = bottom.
     int   idleBuilders = 2;
-    float idleBuildersScale = 1.0f;   // IDLE BUILDERS SCALE: on top of uiScale, as BUILD MENU SCALE; 0.75..4.0
+    float idleBuildersScale = 0.5f;   // IDLE BUILDERS SCALE: on top of uiScale, as BUILD MENU SCALE; 0.5..4.0
     // The in-game chat box (client/chatbox.h): its size, ON TOP of uiScale (0.5..3.0), and
     // where it sits over the play area: 0 = left, 1 = centered.
     float chatScale = 1.0f;

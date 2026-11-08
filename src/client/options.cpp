@@ -684,7 +684,7 @@ void OptionsScreen::build(int channels) {
         [this] { return float(std::clamp(s_.buildBarAlign, 0, 2)); },
         [this](float idx) { s_.buildBarAlign = std::clamp(int(idx + 0.5f), 0, 2); });
     // Extra scale for the build icon row, applied ON TOP of UI SCALE (same range).
-    slider("BUILD MENU SCALE", 0.75f, 4.0f, [&] { return s_.buildBarScale; },
+    slider("BUILD MENU SCALE", 0.5f, 4.0f, [&] { return s_.buildBarScale; },
            [&](float v) { s_.buildBarScale = v; }, [](float v) { return pctOf(v, 1); });
     // A column of idle builders' portraits at the right edge of the play area.
     dropdown("IDLE BUILDERS",
@@ -697,7 +697,7 @@ void OptionsScreen::build(int channels) {
             "OF THE MAP. CLICK ONE TO SELECT THE NEXT AND GO TO IT; SHIFT+CLICK SELECTS THEM ALL."};
     };
     // Extra scale for that column, ON TOP of UI SCALE (as BUILD MENU SCALE).
-    slider("IDLE BUILDERS SCALE", 0.75f, 4.0f, [&] { return s_.idleBuildersScale; },
+    slider("IDLE BUILDERS SCALE", 0.5f, 4.0f, [&] { return s_.idleBuildersScale; },
            [&](float v) { s_.idleBuildersScale = v; }, [](float v) { return pctOf(v, 1); });
     // The in-game chat box: where it sits over the play area, and its size ON TOP of
     // UI SCALE, in 10% steps (client/chatbox.h).

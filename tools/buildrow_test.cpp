@@ -38,7 +38,7 @@ int main() {
         for (float winH : {480.0f, 600.0f, 720.0f, 768.0f, 1080.0f, 1440.0f})
             for (float ui : {0.5f, 1.0f, 1.5f, 2.0f})
                 for (float panelW : {140.0f, 204.0f, 270.0f})
-                    for (float bs : {0.75f, 1.0f, 2.0f, 4.0f})
+                    for (float bs : {0.5f, 0.75f, 1.0f, 2.0f, 4.0f})
                         for (int align = 0; align < 3; ++align)
                             for (int n = 1; n <= 30; ++n) {
                                 const float barH = float(int(72 * ui)), barTop = winH - barH;

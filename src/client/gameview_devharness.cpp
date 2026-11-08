@@ -2899,7 +2899,7 @@
             const float smallW=mid.w;
             idleBuildersScale_=1.5f;frame();
             check(idleRects_.front().r.w>smallW*1.2f,"IDLE BUILDERS SCALE enlarges the portraits");
-            idleBuildersScale_=1.0f;frame();
+            idleBuildersScale_=0.5f;frame();
             idleBuilders_=1;frame();const float top=idleRects_.front().r.y;
             idleBuilders_=3;frame();const float bottom=idleRects_.front().r.y;
             check(top<mid.y && mid.y<bottom,"TOP, MIDDLE and BOTTOM stack in that order");

@@ -149,9 +149,9 @@ Settings loadSettings() {
         // 4.0, matching the slider and GameView. This still said 2.0 when the slider
         // went to 400%, so 300-400% survived until the next restart and then silently
         // snapped back to 200%.
-        else if (key == "buildBarScale")   s.buildBarScale = asFloat(0.75f, 4.0f);
+        else if (key == "buildBarScale")   s.buildBarScale = asFloat(0.5f, 4.0f);
         else if (key == "idleBuilders")    s.idleBuilders = asInt(0, 3);
-        else if (key == "idleBuildersScale") s.idleBuildersScale = asFloat(0.75f, 4.0f);
+        else if (key == "idleBuildersScale") s.idleBuildersScale = asFloat(0.5f, 4.0f);
         else if (key == "chatScale")       s.chatScale = asFloat(0.5f, 3.0f);
         else if (key == "chatAlign")       s.chatAlign = asInt(0, 1);
         else if (key == "uiFont")          s.uiFont = val == "classic" ? 1 : 0;
