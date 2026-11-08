@@ -1,4 +1,5 @@
 #include "util/virtualpath.h"
+#include "client/mapfilter.h"
 #include "client/gameview.h"
 #include "net/matchconfig.h"
 #include "client/startmarkers.h"
@@ -523,7 +524,7 @@ float createOptionPx(float maxW) {
         // Single player has only the page title over its columns, which start just under
         // it: the option buttons level with the map list's sort buttons. Multiplayer heads
         // its column CREATE GAME, then the name and password fields and the MAP line.
-        float x = 80, y = singlePlayer_ ? 60 : 70;
+        float x = kCreateMargin, y = singlePlayer_ ? 60 : 70;   // the left margin = the right one
         if (!singlePlayer_) { blockText("CREATE GAME", x, y, 2.2f, {200, 205, 220, 255}); y += 34; }
         // A private single-player game needs no name or password.
         if (!singlePlayer_) {
@@ -653,7 +654,7 @@ float createOptionPx(float maxW) {
         }
         // hy: the columns' heading line; single player has no headings, so its sort
         // buttons (hy + 20) sit level with the first option button (y 60).
-        float lx = 400, hy = singlePlayer_ ? 40 : 90;
+        float lx = kCreateMargin + 320, hy = singlePlayer_ ? 40 : 90;   // 20 right of the 300-wide option column
         if (!singlePlayer_) blockText("SELECT MAP", lx, hy, 1.8f, {200, 205, 220, 255});
         // Toggle between the map list and the random-map generator.
         bool gen = tak::mapgen::isGeneratedMapId(mpMapId_);
@@ -664,6 +665,22 @@ float createOptionPx(float maxW) {
         {
             const char* keys[3] = {"NAME", "PLAYERS", "SIZE"};
             const float bw = 86, bh = 20, sy = hy + 20;
+            // FILTER: a text field right of the sort buttons, as tall as they are, to the
+            // list's right edge. A dim FILTER until something is typed.
+            {
+                const float fx = lx + 3 * (bw + 6), fw = mapListW() - 3 * (bw + 6);
+                const SDL_FRect r{fx, sy, fw, bh};
+                const bool active = lbField_ == 6;
+                SDL_SetRenderDrawColor(ren_, 24, 26, 34, 255); SDL_RenderFillRectF(ren_, &r);
+                SDL_SetRenderDrawColor(ren_, active ? 200 : 90, active ? 210 : 100, active ? 130 : 130, 255);
+                SDL_RenderDrawRectF(ren_, &r);
+                if (mapFilter_.empty() && !active)
+                    blockText("FILTER", fx + 6, sy + 5, 1.5f, {110, 116, 132, 255});
+                else
+                    blockText(tak::uiTextFitStart(mapFilter_ + (active ? "_" : ""), 1.5f, fw - 12), fx + 6, sy + 5, 1.5f,
+                              {225, 230, 240, 255});
+                lobbyHots_.push_back({r, [this] { lbField_ = 6; SDL_StartTextInput(); }});
+            }
             for (int k = 0; k < 3; ++k) {
                 float bx = lx + k * (bw + 6);
                 SDL_FRect b{bx, sy, bw, bh};
@@ -693,8 +710,16 @@ float createOptionPx(float maxW) {
             }
         }
         // Single player's list reaches down to y 480, above the BACK/CREATE footer.
-        const float boxX = lx, boxY = hy + 46, boxW = 340, boxH = singlePlayer_ ? 480 - boxY : 344, rowH = 24, sbW = 12;
-        const int total = int(mapList_.size());
+        const float boxX = lx, boxY = hy + 46, boxW = mapListW(), boxH = singlePlayer_ ? 480 - boxY : 344, rowH = 24, sbW = 12;
+        // The rows on show: every map, or those whose title or name holds the FILTER text
+        // (case-insensitive).
+        std::vector<int> shown;
+        {
+            const std::string want = tak::mapfilter::lower(mapFilter_);
+            for (int i = 0; i < int(mapList_.size()); ++i)
+                if (tak::mapfilter::matches(mapList_[size_t(i)].title, mapList_[size_t(i)].name, want)) shown.push_back(i);
+        }
+        const int total = int(shown.size());
         mapVisRows_ = int(boxH / rowH);
         mapTotalRows_ = total;
         clampMapScroll();
@@ -707,9 +732,9 @@ float createOptionPx(float maxW) {
         const float infoW = 108;                    // right-side "S 2P 8x8" column
         const float nameW = rowW - infoW - 12;      // the name column, at px 2.0
         for (int r = 0; r < mapVisRows_; ++r) {
-            int i = mapScroll_ + r;
-            if (i >= total) break;
-            const MapInfo& m = mapList_[size_t(i)];
+            const int at = mapScroll_ + r;
+            if (at >= total) break;
+            const MapInfo& m = mapList_[size_t(shown[size_t(at)])];
             const std::string& nm = m.name;
             const std::string& pth = m.path;
             bool sel = (nm == mpMapId_);
@@ -851,7 +876,8 @@ float createOptionPx(float maxW) {
         // Preview panel, right of the list / params column. A real map shows its
         // embedded minimap; a generated map shows a live thumbnail rolled from its
         // seed (both go through buildMapPreview -> mapPreviewTex_).
-        const float pvx = lx + 352, pvy = hy + 46, pvW = 192, pvH = 192;
+        // Against the right margin; the map list widens to 12 short of it.
+        const float pvW = 192, pvH = 192, pvx = kLobbyW - kCreateMargin - pvW, pvy = hy + 46;
         if (!singlePlayer_) blockText("PREVIEW", pvx, hy, 1.8f, {200, 205, 220, 255});
         SDL_FRect pbox{pvx, pvy, pvW, pvH};
         SDL_SetRenderDrawColor(ren_, 18, 20, 28, 255); SDL_RenderFillRectF(ren_, &pbox);
@@ -1534,10 +1560,15 @@ float createOptionPx(float maxW) {
                         if (f->size() < 24 && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
                             (c >= '0' && c <= '9') || c == ' ' || c == '-' || c == '_')) *f += char(c);
                 } else *f += e.text.text;
+                if (lbField_ == 6) mapScroll_ = 0;   // a new filter starts at the top
             }
             saveCreatePreferences();
         } else if (e.type == SDL_KEYDOWN && lbField_) {
-            if (e.key.keysym.sym == SDLK_BACKSPACE) { std::string* f = lbFieldBuf(); if (f && !f->empty()) f->pop_back(); }
+            if (e.key.keysym.sym == SDLK_BACKSPACE) {
+                std::string* f = lbFieldBuf();
+                if (f && !f->empty()) f->pop_back();
+                if (lbField_ == 6) mapScroll_ = 0;
+            }
             else if (e.key.keysym.sym == SDLK_RETURN) {
                 if (lbField_ == 4 && !chatDraft_.empty()) { mp_->chat(chatDraft_); chatDraft_.clear(); }
                 if (lbField_ == 5) applyGenParams();

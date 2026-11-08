@@ -4177,6 +4177,7 @@
             case 1: return &createName_; case 2: return &createPass_;
             case 3: return &joinPass_; case 4: return &chatDraft_;
             case 5: return &genParams_.name;
+            case 6: return &mapFilter_;
             default: return nullptr;
         }
     }

@@ -2521,6 +2521,10 @@ if(TAK_BUILD_CLIENT)
     add_executable(buildrow_test tools/buildrow_test.cpp)
     target_include_directories(buildrow_test PRIVATE src)
     add_test(NAME buildrow COMMAND buildrow_test)
+    # The create screen's map list FILTER (client/mapfilter.h): case-insensitive.
+    add_executable(mapfilter_test tools/mapfilter_test.cpp)
+    target_include_directories(mapfilter_test PRIVATE src)
+    add_test(NAME mapfilter COMMAND mapfilter_test)
     # The map view's top-left overlays (client/hudcorner.h): the stream banner, GAME TIME
     # clock and F4 scoreboard stack instead of overlapping, at every size and scale.
     add_executable(hudcorner_test tools/hudcorner_test.cpp)
