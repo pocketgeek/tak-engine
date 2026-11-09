@@ -930,9 +930,11 @@ public:
         loadTrack((musicTrack_ + 1) % playlist_.size());
     }
 
-    void setMusicVolume(int v) { musicVol_ = std::clamp(v, 0, 256); }
-    void setMasterVolume(int v) { masterVol_ = std::clamp(v, 0, 256); }
-    void setSfxVolume(int v) { sfxVol_ = std::clamp(v, 0, 256); }
+    // The volumes and channel gains are read by mix() on the audio thread: set them
+    // under the device lock, as every other mixer state is.
+    void setMusicVolume(int v) { underMixLock([&] { musicVol_ = std::clamp(v, 0, 256); }); }
+    void setMasterVolume(int v) { underMixLock([&] { masterVol_ = std::clamp(v, 0, 256); }); }
+    void setSfxVolume(int v) { underMixLock([&] { sfxVol_ = std::clamp(v, 0, 256); }); }
     // How many sound effects play at once (Options: SOUND VOICES). Retail's voice
     // manager (56ed40) holds 32; past the pool a new sound replaces a strictly lower
     // class or is not played. Lowering it stops the voices past the new limit.
@@ -951,12 +953,20 @@ public:
     static constexpr int kMinVoices = 8, kMaxVoices = 256, kRetailVoices = 32;
     // New effects stop starting (a replay running too fast to follow); music plays on.
     void setEffectsMuted(bool muted) { effectsMuted_ = muted; }
-    void setChannelGain(int i, float g) { if (i >= 0 && i < 8) chanGain_[i] = std::clamp(g, 0.0f, 1.0f); }
+    void setChannelGain(int i, float g) {
+        if (i >= 0 && i < 8) underMixLock([&] { chanGain_[i] = std::clamp(g, 0.0f, 1.0f); });
+    }
 
     // For the Options screen: how many output channels the device gave us.
     int channelCount() const { return std::clamp(chan_, 1, 8); }
 
 private:
+    template <class F> void underMixLock(F&& set) {
+        if (dev_) SDL_LockAudioDevice(dev_);
+        set();
+        if (dev_) SDL_UnlockAudioDevice(dev_);
+    }
+
     void loadTrack(size_t idx) {
         // At the track's own rate and channels: the retail tracks are 22050 Hz stereo
         // (decoded from IMA ADPCM, kept at 22050: half the memory of 44100), a mod's
