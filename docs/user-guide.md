@@ -2337,8 +2337,8 @@ and AIs, **Start** stays greyed and the room says *NEEDS ANOTHER HUMAN PLAYER*
 (a game against the AI alone is single player).
 
 When a game ends, the victory or defeat screen names where each of its two doors
-leads when you point at it: the left one to the **Title Screen** (to **Connect to
-Server** after a local-server game), the right one to **Play the Machine** after
+leads when you point at it: the left one always to the **Title Screen**, the right
+one to **Play the Machine** after
 single player, or the server's **Game List** after an online game (**Connect to
 Server** if the game needs you to sign in again, and after a local-server game).
 

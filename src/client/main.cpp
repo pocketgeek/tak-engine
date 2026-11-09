@@ -3118,6 +3118,7 @@ int main(int argc, char** argv) {
     if (gameView) gameView->setAudioTap(nullptr,nullptr);
     // Campaign mission ended (and resolved -- not a mid-mission quit): advance
     // persisted progress on a win, then show the result screen and act on the choice.
+    bool resultToTitle = false;   // the end screen's left door: the title, whatever the game
     if (!campaignStem.empty() && !campaignId.empty() && gameView && !quitApp &&
         gameView->missionOutcomePublic() != 0) {
         int oc = gameView->missionOutcomePublic();
@@ -3170,15 +3171,15 @@ int main(int argc, char** argv) {
         const auto next = origin == tak::LaunchOrigin::SinglePlayer ? tak::ResultChoice::NewGame
                         : origin == tak::LaunchOrigin::Multiplayer  ? tak::ResultChoice::GameSelect
                                                                     : tak::ResultChoice::Menu;
-        // Say where the doors really go. Single player's right door is the Play the
-        // Machine setup. A LAN game's both return to Connect to Server (its list); an
-        // online game's right door is that server's game list only with a sign-in token
-        // for it, else Connect to Server too (see the menu loop above).
+        // Say where the doors really go. The left one is always the title screen. Single
+        // player's right door is the Play the Machine setup; a LAN game's returns to
+        // Connect to Server (its list); an online game's is that server's game list only
+        // with a sign-in token for it, else Connect to Server too (see the menu loop above).
         const bool lanGame = origin == tak::LaunchOrigin::Multiplayer && !tokenLaunch &&
                              (lanHosting || connectKind == tak::MainMenu::Connect::LanJoin ||
                               connectKind == tak::MainMenu::Connect::LanSpectate);
         std::string menuTip, proceedTip;
-        if (lanGame) menuTip = proceedTip = "Connect to Server";
+        if (lanGame) proceedTip = "Connect to Server";
         else if (next == tak::ResultChoice::NewGame) proceedTip = "Play the Machine";
         else if (next == tak::ResultChoice::GameSelect) {
             const auto address = tak::parseServerAddress(lastServer);
@@ -3188,13 +3189,14 @@ int main(int argc, char** argv) {
         const auto rc = tak::ResultScreen::run(ren, vfs, oc > 0, "", false, &settings, &menuMusic, &st, next,
                                                menuTip, proceedTip);
         if (rc == next) afterResult = rc;
+        else resultToTitle = true;
     }
     // Session ended: tear down any single-player local server, then either loop back
     // to the menu or exit the app.
     localServer.stop();
     // A LAN game (a LOCAL SERVER hosted here, or one joined or watched) goes back to the
-    // CONNECT screen, where its list is.
-    if (origin == tak::LaunchOrigin::Multiplayer && !tokenLaunch &&
+    // CONNECT screen, where its list is -- unless its end screen's left door chose the title.
+    if (origin == tak::LaunchOrigin::Multiplayer && !tokenLaunch && !resultToTitle &&
         (lanHosting || connectKind == tak::MainMenu::Connect::LanJoin || connectKind == tak::MainMenu::Connect::LanSpectate))
         lanReturnToConnect = true;
     // Destroy the session's views NOW (not at scope end below): the renderer is
