@@ -285,7 +285,10 @@ setting says, and any allies and opponents play on.
    numbered start positions and how many players it supports. **Name**, **Players** and
    **Size** sort the list, and typing in **Filter** beside them keeps only the maps
    whose name contains the text (upper or lower case alike). You can also choose
-   **Generate Random Map**.
+   **Generate Random Map**. Click the preview to see the whole map, its ground,
+   trees and rocks, filling the window; **Back** or **Esc** returns. The preview in
+   the game room opens the same view, for every player in the room; the game still
+   starts for you if the host starts it while you are looking.
 3. Set the match rules (all explained in [Match options](#match-options)). The
    defaults are fine for a first game.
 4. Click **Create**. In the lobby, choose your **side**, **colour** and **team**.

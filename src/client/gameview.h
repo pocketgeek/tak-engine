@@ -73,6 +73,7 @@
 #include "client/uifont.h"    // the embedded TrueType face (chat box, MODERN UI FONT)
 #include "client/uitext.h"    // plain interface text in the chosen UI FONT
 #include "client/mapview.h"   // terrain pan/zoom + async chunk compositor (extracted leaf)
+#include "client/bigmapview.h"   // the lobby's full-window map view
 #include "client/modelpiece.h"
 #include "client/modelmath.h"   // Tri/Xform/scriptRot (shared by GameView + model viewer)
 #include "client/selectionring.h"
@@ -2761,6 +2762,13 @@ private:
     // The previewed map's start positions (world px, in StartPosN order) and its world
     // size, read along with the preview so the numbered start markers never reparse.
     std::vector<std::pair<float, float>> mapPreviewStarts_;
+    // The full-window map view a click on a preview opens (create screen or room), and
+    // the preview it was opened from (mapPreviewFor_): when that changes -- another map,
+    // another screen, the game starting -- the view closes. Drawn over the lobby, which
+    // keeps running underneath; BACK or Esc closes it.
+    std::unique_ptr<BigMapView> bigMap_;
+    std::string bigMapFor_;
+    std::vector<int> roomPreviewColors_;   // the room preview's start colours, for the big view
     float mapPreviewWorldW_ = 0, mapPreviewWorldH_ = 0;
     std::map<std::string, std::vector<uint8_t>> kingdomPals_;  // kingdom -> RGBA palette (256*4)
     std::vector<std::string> availableGameMods_, availableCosmeticMods_;   // mods/game, mods/cosmetic
@@ -4155,10 +4163,12 @@ private:
     // marker k is the map's (k+1)-th start in StartPosN order (the order setupMatch
     // assigns), filled with player colour colorOfStart[k]
     // (the slot rows' palette), or neutral where that is -1 or missing.
-    void drawStartMarkers(const SDL_FRect& img, const std::vector<int>& colorOfStart = {});
+    void drawStartMarkers(const SDL_FRect& img, const std::vector<int>& colorOfStart = {}, float maxRadius = 11.0f);
     // The room's map preview with its start markers, fitted into `box`. `authored`:
     // a scenario that places its own forces, whose starts no slot takes.
     void drawRoomPreview(const SDL_FRect& box, bool authored);
+    void openBigMap();                      // the map of the preview on show (mapPreviewFor_)
+    void drawBigMap(int winW, int winH);
     void buildGenPreview(const std::string& id);   // thumbnail for a "~gen1~" map
 
     void drawCreate(int winW, int winH);

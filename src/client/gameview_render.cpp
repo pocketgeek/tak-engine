@@ -70,6 +70,7 @@
             }
             return;
         }
+        if (bigMap_ && !inLobbyPhase()) bigMap_.reset();   // the game started under it
         // The loading plate owns the screen from world setup until the first tick,
         // so the wait on the other players isn't a frozen lobby frame. It presents
         // itself, so return before the world is drawn over it.
@@ -112,6 +113,7 @@
             drawLobby(int(kLobbyW), int(kLobbyH));
             SDL_RenderSetViewport(ren_, nullptr);
             SDL_RenderSetScale(ren_, 1.0f, 1.0f);
+            if (bigMap_) drawBigMap(winW, winH);   // over the lobby, which still runs
             drawVoiceIndicator(winW, winH);   // voice works in the room too
             return;
         }

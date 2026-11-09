@@ -950,6 +950,7 @@ float createOptionPx(float maxW) {
                       {120, 125, 140, 255});
         }
         SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &pbox);
+        if (mapPreviewTex_ && mapPreviewW_ > 0) lobbyHots_.push_back({pbox, [this] { openBigMap(); }});   // full window
         if (!mapPreviewDims_.empty())
             blockText(mapPreviewDims_, pvx, pvy + pvH + 8, 1.6f, {160, 165, 180, 255});
         // Keep the generator action below the preview and map description.
@@ -1622,11 +1623,11 @@ float createOptionPx(float maxW) {
         return roomStarts_;
     }
 
-    void GameView::drawStartMarkers(const SDL_FRect& img, const std::vector<int>& colorOfStart) {
+    void GameView::drawStartMarkers(const SDL_FRect& img, const std::vector<int>& colorOfStart, float maxRadius) {
         if (mapPreviewStarts_.empty() || img.w <= 0 || img.h <= 0) return;
-        // Sized from the preview, so the create preview (192 to 288 px) and the room's smaller
+        // Sized from the preview (the full-window map view allows larger), so the create preview (192 to 288 px) and the room's smaller
         // one both read: a black rim and a white ring keep it legible on any terrain.
-        const float r = std::clamp(std::min(img.w, img.h) * 0.06f, 7.0f, 11.0f);
+        const float r = std::clamp(std::min(img.w, img.h) * 0.06f, 7.0f, maxRadius);
         auto disc = [&](float cx, float cy, float rad, SDL_Color c) {
             constexpr int kSeg = 20;
             SDL_Vertex v[kSeg + 1];
@@ -1687,8 +1688,79 @@ float createOptionPx(float maxW) {
                 for (int slot : tak::startmarkers::occupants(room.opts, room.slots, mapPreviewStarts_.size()))
                     colors.push_back(slot >= 0 ? room.slots[slot].color : -1);
             drawStartMarkers(dst, colors);
+            roomPreviewColors_ = std::move(colors);
+            lobbyHots_.push_back({box, [this] { openBigMap(); }});   // the map, full window
         }
         SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &box);
+    }
+
+    void GameView::openBigMap() {
+        // The map of the preview on show: the room's (its verified package if it has one,
+        // as drawRoomPreview reads it) or the create screen's choice. A downloaded map
+        // reads through a view holding its archive's files; a generated one is rolled
+        // again from its id, through the base data only (as the game builds it).
+        const bool room = mapPreviewFor_.rfind("room:", 0) == 0;
+        std::string path = room ? mpRoom().mapId : mapPath_;
+        if (path.empty()) return;
+        static const char* kWorld[tak::mapgen::kMapTypes] = {"aramon", "taros", "veruna", "zhon", "creon"};
+        try {
+            if (tak::mapgen::isGeneratedMapId(path)) {
+                const auto params = tak::mapgen::decodeMapId(path);
+                auto view = std::make_unique<tak::hpi::Vfs>(&vfs_, true);
+                auto map = tak::mapgen::generate(params, *view).map;
+                bigMap_ = std::make_unique<BigMapView>(ren_, std::move(view), std::move(map),
+                                                       kWorld[params.mapType % tak::mapgen::kMapTypes]);
+            } else {
+                auto view = std::make_unique<tak::hpi::Vfs>(&vfs_);
+                const auto pkg = room ? mp_->mapPackage() : nullptr;
+                if (pkg && pkg->files) { path = pkg->mapPath; view->setMapFiles(pkg->files); }
+                else {
+                    if (room) path = tak::hpi::findMap(vfs_, path);
+                    if (const auto cached = vfs_.cachedMap(path)) { path = cached->first; view->setMapFiles(cached->second); }
+                }
+                std::string ota;
+                if (auto o = view->tryRead(tak::vpath::replaceExtension(path, ".ota"))) ota.assign(o->begin(), o->end());
+                std::string world = otaField(ota, "kingdom");
+                std::transform(world.begin(), world.end(), world.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                bigMap_ = std::make_unique<BigMapView>(ren_, std::move(view), path, world);
+            }
+            bigMapFor_ = mapPreviewFor_;
+            lbField_ = 0; SDL_StopTextInput();
+        } catch (const std::exception&) {
+            bigMap_.reset();   // an unreadable map keeps the small preview only
+        }
+    }
+
+    void GameView::drawBigMap(int winW, int winH) {
+        // Another map or another screen than the one it was opened from: close.
+        if (bigMapFor_ != mapPreviewFor_) { bigMap_.reset(); return; }
+        // Only BACK is live (the lobby drew its own buttons underneath).
+        lobbyHots_.clear();
+        std::fill(std::begin(genSliderRect_), std::end(genSliderRect_), SDL_FRect{}); mapThumbRect_ = {};
+        const float s = lobbyScale_, lw = winW / s, lh = winH / s;
+        SDL_SetRenderDrawColor(ren_, 8, 9, 13, 255);
+        const SDL_FRect all{0, 0, float(winW), float(winH)};
+        SDL_RenderFillRectF(ren_, &all);
+        // The map fills the window above a footer as tall as the lobby's (BACK at 40 from
+        // the bottom), with the lobby's 16 margin round it.
+        const SDL_FRect area{kCreateMargin * s, kCreateMargin * s, (lw - 2 * kCreateMargin) * s,
+                             (lh - kCreateMargin - 50) * s};
+        const SDL_FRect r = bigMap_->draw(area);
+        if (r.w > 0 && mapPreviewWorldW_ > 0) {
+            // The starts as the preview shows them, in the room's colours there.
+            const SDL_FRect img{r.x, r.y, mapPreviewWorldW_ * r.w / bigMap_->worldW(),
+                                mapPreviewWorldH_ * r.h / bigMap_->worldH()};
+            drawStartMarkers(img, bigMapFor_.rfind("room:", 0) == 0 ? roomPreviewColors_ : std::vector<int>{}, 16 * s);
+        }
+        // The footer in the lobby's units, from the window's corner: lobbyMouse reads
+        // the pointer the same way while this is open.
+        lobbyOffX_ = lobbyOffY_ = 0;
+        SDL_RenderSetScale(ren_, s, s);
+        lbBtn(kCreateMargin, lh - 40, 120, 30, "BACK", true, [this] { bigMap_.reset(); });
+        const std::string title = mapTitle(bigMapFor_.rfind("room:", 0) == 0 ? mpRoom().mapId : mpMapId_);
+        const std::string fitted = tak::uiTextFit(title, 1.8f, lw - 2 * (kCreateMargin + 140), false);
+        blockText(fitted, (lw - blockWidth(fitted, 1.8f)) / 2, lh - 32, 1.8f, {200, 205, 220, 255});
+        SDL_RenderSetScale(ren_, 1.0f, 1.0f);
     }
 
     void GameView::lobbyMouse(float& mx, float& my) const {
@@ -1702,6 +1774,19 @@ float createOptionPx(float maxW) {
             if (genSlider_ >= 0 || lbField_ == 5) applyGenParams();
             genSlider_ = -1; mapDrag_ = false;
             saveCreatePreferences();
+        }
+        // The full-window map view: BACK (its only button) or Esc closes it; nothing
+        // else reaches the lobby under it.
+        if (bigMap_) {
+            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) bigMap_.reset();
+            else if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
+            else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
+                float mx, my; lobbyMouse(mx, my);
+                for (auto& hot : lobbyHots_)
+                    if (ptIn(hot.rect, mx, my) && hot.action) { hot.action(); break; }
+            }
+            return;
         }
         // The mods screen: Esc (no field being typed in) goes back to the room, as DONE.
         if (modsScreen_ && e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && !lbField_) {
