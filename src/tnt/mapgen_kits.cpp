@@ -71,10 +71,11 @@ int nameCase(const std::string& path, bool& gate) {
     return c;
 }
 
-// A large army (the generator's 6-cell, slope-16 validation class) can climb a
+// A movement class (the generator's 6-cell, slope-16 army, or GROUND3) can climb a
 // straight piece from its low side to the high plateau, with the piece's own
-// blockers in place. The piece is tested between flat low and high ground.
-bool climbable(const tnt::Map& piece, int c, int low, int high) {
+// blockers in place. The piece is tested between flat low and high ground, with
+// its sides blocked: in a rim its neighbours are cliffs.
+bool climbable(const tnt::Map& piece, int c, int low, int high, int slope, int foot) {
     constexpr int pad = 16, size = 32 + 2 * pad;
     std::vector<uint8_t> heights(size * size), obstacles(size * size);
     for (int z = 0; z < size; ++z) for (int x = 0; x < size; ++x) {
@@ -84,9 +85,11 @@ bool climbable(const tnt::Map& piece, int c, int low, int high) {
         if ((c == 12 && north) || (c == 3 && south) || (c == 5 && east) || (c == 10 && west)) h = low;
         if ((c == 12 && south) || (c == 3 && north) || (c == 5 && west) || (c == 10 && east)) h = high;
         heights[size_t(z) * size + x] = uint8_t(h);
-        obstacles[size_t(z) * size + x] = piece.features[size_t(pz) * 32 + px] == 0xfffc;
+        // Beside the piece (along its rim) stand cliffs: the climb must stay on it.
+        const bool beside = (c == 12 || c == 3) ? (west || east) : (north || south);
+        obstacles[size_t(z) * size + x] = beside || piece.features[size_t(pz) * 32 + px] == 0xfffc;
     }
-    sim::NavGrid::Limits limits; limits.maxSlope = 16; limits.maxWaterDepth = 0;
+    sim::NavGrid::Limits limits; limits.maxSlope = slope; limits.maxWaterDepth = 0;
     sim::NavGrid nav(heights, size, size, 0, limits);
     nav.setObstacles(&obstacles);
     // Flood from the low strip; succeed on reaching the high strip.
@@ -96,13 +99,13 @@ bool climbable(const tnt::Map& piece, int c, int low, int high) {
     std::vector<uint8_t> seen(size * size);
     std::vector<int> queue;
     for (int z = 0; z < size; ++z) for (int x = 0; x < size; ++x)
-        if (onLow(x, z) && nav.fits(x, z, 6)) { seen[size_t(z) * size + x] = 1; queue.push_back(z * size + x); }
+        if (onLow(x, z) && nav.fits(x, z, foot)) { seen[size_t(z) * size + x] = 1; queue.push_back(z * size + x); }
     for (size_t head = 0; head < queue.size(); ++head) {
         const int x = queue[head] % size, z = queue[head] / size;
         if (onHigh(x, z)) return true;
         for (auto [dx, dz] : std::array<std::pair<int, int>, 4>{{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}}) {
             const int nx = x + dx, nz = z + dz;
-            if (nx < 0 || nz < 0 || nx >= size || nz >= size || seen[size_t(nz) * size + nx] || !nav.fits(nx, nz, 6)) continue;
+            if (nx < 0 || nz < 0 || nx >= size || nz >= size || seen[size_t(nz) * size + nx] || !nav.fits(nx, nz, foot)) continue;
             seen[size_t(nz) * size + nx] = 1; queue.push_back(nz * size + nx);
         }
     }
@@ -161,7 +164,8 @@ CaseKit edgeKit(SectionCache& cache, const KitSpec& spec) {
             }
             if (!good) continue;
             const bool straight = c == 3 || c == 5 || c == 10 || c == 12;
-            kit[size_t(c)].push_back({piece, straight && climbable(*piece, c, low, high), false, dir == spec.edges[1]});
+            kit[size_t(c)].push_back({piece, straight && climbable(*piece, c, low, high, 16, 6), false, dir == spec.edges[1],
+                                      straight && climbable(*piece, c, low, high, 30, 3)});
         }
     }
     return kit;

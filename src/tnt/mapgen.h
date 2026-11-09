@@ -58,8 +58,8 @@ struct Params {
     uint8_t  reliefDensity = 128;    // authored hill patch density; 0 = flat
     uint8_t  manaScatter = ScatterNone;   // v9: ManaScatter level for neutral spots
     // v10 retail kits, 0 = none. All three at 0 reproduce the v9 terrain exactly.
-    uint8_t  plateauDensity = 72;    // cliff-edged plateaus (with walkable ramps)
-    uint8_t  mountainDensity = 56;   // mountain ranges (raised on their own plateau)
+    uint8_t  plateauDensity = 96;    // cliff-edged plateaus (with walkable ramps)
+    uint8_t  mountainDensity = 48;   // mountain ranges (raised on their own plateau)
     uint8_t  townDensity = 64;       // walled settlements / Zhon hut villages
 };
 
@@ -68,6 +68,8 @@ struct Result {
     int waterPercent = 0, reliefPatches = 0;
     int scatteredMana = 0;   // v9 neutral spots placed (not part of any player's rounds)
     int plateaus = 0, mountains = 0, towns = 0;   // v10 kit placements (components/ranges/towns)
+    int mountainPlateaus = 0;   // plateaus carrying a range (the rest are plain)
+    int plateauMana = 0, manaPlateaus = 0;   // deposits on plateau tops, and plateaus holding one
     // v10: 0 = kits as requested; 1 = halved, 2 = dropped, because a fair map did not fit.
     int kitFallback = 0;
     // v3: one open-water harbor per island; cells suitable for naval construction.

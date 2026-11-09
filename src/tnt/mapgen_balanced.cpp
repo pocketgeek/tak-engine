@@ -437,12 +437,79 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
     std::vector<uint8_t> mountain(size_t(corners),0),kitHigh(size_t(corners),0);
     uint64_t kitRng=p.seed^0x6b6974733130ULL;
     const int span=std::max(w,h);
+    // Mountains are separate from the plain plateaus: a few seeds per map, each grown
+    // by a short four-way walk into a single peak, a ridge or a clump, and raised on
+    // a plateau of its own with a corner of open top around it (two on Creon, for the
+    // snow line), so a range covers only part of its plateau and never merges into a
+    // plain one. Maze and Highlands put them on high ground they already have.
+    std::vector<uint8_t> mountainHigh(size_t(corners),0);
+    if((rangeKit||spireKit)&&(raise||!ownPlateaus)&&p.mountainDensity) {
+        const int margin=moat+1;
+        const bool spires=spireKit&&!rangeKit;
+        const int seeds=std::max(1,(int(p.mountainDensity)*sw*sh+255*32)/(255*64));   // at most one per 64 sections
+        const int longest=spires?0:1+int(p.mountainDensity)/64;               // up to 1..4 extra cores
+        const auto fits=[&](int x,int z) {
+            if(x<margin||z<margin||x>sw-margin||z>sh-margin)return false;
+            for(int dz=-margin-1;dz<=margin+1;++dz)for(int dx=-margin-1;dx<=margin+1;++dx) {
+                const int nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>sw||nz>sh)continue;
+                const size_t j=size_t(nz)*(sw+1)+nx;
+                const bool inside=std::abs(dx)<=margin&&std::abs(dz)<=margin;
+                if(ownPlateaus) {
+                    if(inside&&!allowHigh[j])return false;
+                    if(kitHigh[j]||mountainHigh[j])return false;   // keep plain plateaus and other ranges apart
+                } else {
+                    if(inside&&!high[j])return false;
+                    if(mountain[j])return false;
+                }
+            }
+            return true;
+        };
+        static constexpr std::array<Point,4> steps={{{1,0},{0,1},{-1,0},{0,-1}}};
+        for(int placed=0,attempt=0;placed<seeds&&attempt<seeds*40&&sw>2*margin&&sh>2*margin;++attempt) {
+            const int x0=margin+int(splitmix(kitRng)%uint64_t(sw-2*margin+1)),z0=margin+int(splitmix(kitRng)%uint64_t(sh-2*margin+1));
+            if(!fits(x0,z0))continue;
+            std::vector<Point> path{{x0,z0}};
+            const int length=longest?int(splitmix(kitRng)%uint64_t(longest+1)):0;
+            int dir=int(splitmix(kitRng)%4);
+            for(int step=0;step<length;++step) {
+                if(splitmix(kitRng)%3==0)dir=(dir+(splitmix(kitRng)%2?1:3))%4;   // ridges bend, clumps curl
+                const Point next{path.back().first+steps[size_t(dir)].first,path.back().second+steps[size_t(dir)].second};
+                if(std::find(path.begin(),path.end(),next)!=path.end()||!fits(next.first,next.second))break;
+                path.push_back(next);
+            }
+            for(auto [x,z]:path) {
+                mountain[size_t(z)*(sw+1)+x]=1;
+                // The rings the range needs are whole; the open margin beyond them is
+                // ragged, so the plateau's outline is irregular rather than a square.
+                if(ownPlateaus)for(int dz=-margin;dz<=margin;++dz)for(int dx=-margin;dx<=margin;++dx)
+                    if(std::max(std::abs(dx),std::abs(dz))<margin||splitmix(kitRng)%100<55)
+                        mountainHigh[size_t(z+dz)*(sw+1)+x+dx]=1;
+            }
+            ++placed;
+        }
+        // A diagonal pinch in the ragged margin is filled, never cleared: clearing
+        // could cut into the rings the range needs. Filled corners lie inside the
+        // margin squares already checked.
+        for(bool again=true;again;) {again=false;
+            for(int z=0;z<sh;++z)for(int x=0;x<sw;++x) {const int c=maskCase(mountainHigh,x,z);
+                if(c==6||c==9) {mountainHigh[size_t(z)*(sw+1)+x+(c==9)]=1;again=true;}}}
+        for(size_t i=0;i<mountainHigh.size();++i)if(mountainHigh[i])kitHigh[i]=1;
+    }
+    // Plain plateaus fill the eligible ground the mountains left, a corner clear of
+    // every mountain plateau so the two never merge.
+    const auto nearRange=[&](int x,int z) {
+        for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx) {
+            const int nx=x+dx,nz=z+dz;
+            if(nx>=0&&nz>=0&&nx<=sw&&nz<=sh&&mountainHigh[size_t(nz)*(sw+1)+nx])return true;
+        }
+        return false;
+    };
     if(raise&&p.plateauDensity) {
         // Low-frequency blobs; the amount sets how much of the eligible ground rises.
         const int threshold=196-int(p.plateauDensity)*76/255;
         for(int z=0;z<=sh;++z)for(int x=0;x<=sw;++x) {
             const size_t i=size_t(z)*(sw+1)+x;
-            if(allowHigh[i]&&int(fractal(p.seed^0x706c617465617553ULL,x*32,z*32,span*3/2))>=threshold)kitHigh[i]=1;
+            if(allowHigh[i]&&!nearRange(x,z)&&int(fractal(p.seed^0x706c617465617553ULL,x*32,z*32,span*3/2))>=threshold)kitHigh[i]=1;
         }
         // A lone corner would make a 2x2-section pimple; plateaus need some breadth.
         for(int z=0;z<=sh;++z)for(int x=0;x<=sw;++x) {
@@ -452,19 +519,34 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
                 if((dx||dz)&&x+dx>=0&&z+dz>=0&&x+dx<=sw&&z+dz<=sh)neighbours+=kitHigh[size_t(z+dz)*(sw+1)+x+dx];
             if(!neighbours)corner=0;
         }
-    }
-    if((rangeKit||spireKit)&&(raise||!ownPlateaus)) {
-        const int threshold=212-int(p.mountainDensity)*72/255;
-        for(int z=moat;z<=sh-moat;++z)for(int x=moat;x<=sw-moat;++x) {
-            if(int(fractal(p.seed^0x6d6f756e7461696eULL,x*32,z*32,span/2))<threshold)continue;
-            bool ok=true;   // raised layouts need room to raise; themed ones existing high ground
-            for(int dz=-moat;ok&&dz<=moat;++dz)for(int dx=-moat;dx<=moat;++dx) {
-                const size_t j=size_t(z+dz)*(sw+1)+x+dx;
-                if(ownPlateaus?!allowHigh[j]:!high[j]){ok=false;break;}
-            }
-            if(!ok)continue;
-            mountain[size_t(z)*(sw+1)+x]=1;
-            if(ownPlateaus)for(int dz=-moat;dz<=moat;++dz)for(int dx=-moat;dx<=moat;++dx)kitHigh[size_t(z+dz)*(sw+1)+x+dx]=1;
+        // Every start also gets a plain plateau of its own a few sections out, nearer
+        // to it than to any other start, so high ground (and the mana it can carry)
+        // is shared out fairly instead of being left to the noise. At least four
+        // corners wide, so a hillside ramp has straight cliffs on either side.
+        if(p.plateauDensity>=48) {
+            uint64_t flankRng=p.seed^0x666c616e6b73ULL;
+            for(size_t k=0;k<r.starts.size();++k)
+                for(int attempt=0;attempt<120;++attempt) {
+                    const auto [dx,dz]=kCompass[size_t(splitmix(flankRng)%8)];
+                    const int reach=3+int(splitmix(flankRng)%10);   // corners from the start
+                    const bool wide=splitmix(flankRng)%2;
+                    int a=wide?4:3+int(splitmix(flankRng)%2),b=wide?3+int(splitmix(flankRng)%2):4;
+                    if(attempt>=80)a=b=3;   // cramped: a smaller block (cliff-family ramps only)
+                    const int cx=r.starts[k].first/32+dx*reach/1000,cz=r.starts[k].second/32+dz*reach/1000;
+                    const int x0=cx-a/2,z0=cz-b/2;
+                    if(x0<1||z0<1||x0+a>sw||z0+b>sh)continue;
+                    bool good=true;
+                    for(int z=z0;good&&z<z0+b;++z)for(int x=x0;x<x0+a;++x)
+                        if(!allowHigh[size_t(z)*(sw+1)+x]||nearRange(x,z)){good=false;break;}
+                    // Nearer to its own start than to any other, with room to spare.
+                    const int mx=(x0*2+a-1)*16,mz=(z0*2+b-1)*16;
+                    const auto d2=[&](Point s){return (s.first-mx)*(s.first-mx)+(s.second-mz)*(s.second-mz);};
+                    for(size_t other=0;good&&other<r.starts.size();++other)
+                        if(other!=k&&d2(r.starts[other])*10<d2(r.starts[k])*14)good=false;
+                    if(!good)continue;
+                    for(int z=z0;z<z0+b;++z)for(int x=x0;x<x0+a;++x)kitHigh[size_t(z)*(sw+1)+x]=1;
+                    break;
+                }
         }
     }
     if(raise) {
@@ -490,12 +572,16 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         }
     } else cleanPinches(mountain);
     // ---- plateau edges and ramps --------------------------------------------------
+    // A ramp is a piece the army class climbs or, where the kit has none, a hillside
+    // builders and infantry climb (Taros's hillsides are too steep for siege).
+    const auto rampable=[](const KitPiece& piece){return piece.walkable||(piece.alternate&&piece.climbable);};
     std::vector<uint8_t> ramp(size_t(sw)*sh,0);
+    std::vector<int> component(size_t(corners),-1);   // plateau each kit-high corner belongs to
     if(raise) {
         // Each plateau gets walkable ramps, retail hillside/ramp pieces that the
         // validation class can climb, spaced around its rim. Worlds whose edge kit
         // is all slope (Creon) are walkable everywhere anyway.
-        std::vector<int> component(size_t(corners),-1);int components=0;
+        int components=0;
         for(int start=0;start<corners;++start) {
             if(!kitHigh[size_t(start)]||component[size_t(start)]>=0)continue;
             std::vector<int> queue{start};component[size_t(start)]=components;
@@ -511,13 +597,30 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
             for(int z=0;z<sh;++z)for(int x=0;x<sw;++x) {
                 const int c=maskCase(high,x,z);
                 if(c!=3&&c!=5&&c!=10&&c!=12)continue;
-                bool walkable=false;for(const auto& piece:edges[size_t(c)])walkable|=piece.walkable;
+                bool walkable=false,mainWalkable=false;
+                for(const auto& piece:edges[size_t(c)]){walkable|=rampable(piece);mainWalkable|=piece.walkable&&!piece.alternate;}
                 if(!walkable||component[size_t((z+(c==3?0:1))*(sw+1)+x+(c==10?1:0))]!=components)continue;
+                // A hillside ramp has no corner pieces of its own and shows a seam
+                // against a cliff corner: it goes only between straight cliffs.
+                if(!mainWalkable) {
+                    const bool across=c==3||c==12;
+                    const int ax=x-(across?1:0),az=z-(across?0:1),bx=x+(across?1:0),bz=z+(across?0:1);
+                    if(ax<0||az<0||bx>=sw||bz>=sh||maskCase(high,ax,az)!=c||maskCase(high,bx,bz)!=c)continue;
+                }
                 // The section the ramp climbs to must be open plateau, not a mountain.
                 const int tx=x+(c==5?-1:c==10?1:0),tz=z+(c==3?-1:c==12?1:0);
                 if(tx<0||tz<0||tx>=sw||tz>=sh||maskCase(high,tx,tz)!=15||maskCase(mountain,tx,tz))continue;
-                candidates.push_back({splitmix(kitRng),z*sw+x});
+                // The first ramp faces the nearest start, so a plateau beside a home
+                // is climbed from that home's side.
+                uint64_t nearest=~0ull;
+                for(auto [sx,sz]:r.starts) {
+                    const int64_t ddx=x*32+16-sx,ddz=z*32+16-sz;
+                    nearest=std::min<uint64_t>(nearest,uint64_t(ddx*ddx+ddz*ddz));
+                }
+                candidates.push_back({(nearest<<8)|(splitmix(kitRng)&255),z*sw+x});
             }
+            bool ranged=false;for(int at:queue)ranged|=mountain[size_t(at)]!=0;
+            r.mountainPlateaus+=ranged;
             std::sort(candidates.begin(),candidates.end());
             const int want=std::min(4,1+int(queue.size())/10);int placed=0;
             for(auto [order,at]:candidates) {
@@ -539,8 +642,10 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
             // as plain rim they would meet the cliff family along mixed edges.
             const bool isRamp=ramp[size_t(z)*sw+x];
             std::vector<KitPiece> choice;
+            bool mainWalkable=false;for(const auto& piece:edges[size_t(c)])mainWalkable|=piece.walkable&&!piece.alternate;
             for(const auto& piece:edges[size_t(c)])
-                if(isRamp?piece.walkable:(!piece.alternate&&!piece.walkable))choice.push_back(piece);
+                if(isRamp?(mainWalkable?piece.walkable&&!piece.alternate:piece.alternate&&rampable(piece))
+                         :(!piece.alternate&&!piece.walkable))choice.push_back(piece);
             if(choice.empty())for(const auto& piece:edges[size_t(c)])if(!piece.alternate)choice.push_back(piece);
             if(choice.empty())choice=edges[size_t(c)];
             stampKit(*pick(choice,x*32,z*32,0x72696d)->map,x*32,z*32,1);
@@ -744,18 +849,26 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
     const auto& palette=kWorldFeat[p.mapType];
     const std::array<Point,3> homeOffsets={{{-24,-24},{24,-24},{0,28}}};
     std::vector<Point> deposits;
-    const auto flat=[&](int x,int z,int fx,int fz) {
+    // Level, unclaimed ground at one height: the low land, or (top) a kit plateau top.
+    const auto flatAt=[&](int x,int z,int fx,int fz,int level,bool top) {
         if(x<1||z<1||x+fx>=w||z+fz>=h)return false;
         for(int dz=0;dz<fz;++dz)for(int dx=0;dx<fx;++dx) {
             const size_t i=size_t(z+dz)*w+x+dx;
-            if(m.heights[i]!=land||claim[i])return false;
+            if(m.heights[i]!=level||claim[i]||(top&&!kitTop[i]))return false;
         }
         return true;
+    };
+    const bool anyTop=std::find(kitTop.begin(),kitTop.end(),1)!=kitTop.end();
+    const auto flat=[&](int x,int z,int fx,int fz) {
+        return flatAt(x,z,fx,fz,land,false)||(anyTop&&flatAt(x,z,fx,fz,spec.high,true));
     };
     uint64_t featureRng=p.seed^0xbe72431851ULL;
     const auto decorateDeposit=[&](int x,int z) {
         // Decorative rings stay outside the reserved build footprint. The actual
-        // TDF footprints, not nominal 3x3 guesses, decide whether an arc fits.
+        // TDF footprints, not nominal 3x3 guesses, decide whether an arc fits, on
+        // the deposit's own level (a plateau deposit keeps its ruins on top).
+        const int level=m.heights[size_t(z)*w+x];
+        const auto arcFits=[&](int ax,int az,int fx,int fz){return flatAt(ax,az,fx,fz,level,level!=land);};
         const auto& spec=kRing[p.mapType];
         int count=0;
         bool occupiedSlots[8]={};
@@ -765,7 +878,7 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
                 const auto* f=sizeOf(arc.name);if(!f)continue;
                 int ax=x+arc.dx,az=z+arc.dz;
                 if(ax<x+4&&ax+f->x>x-3&&az<z+4&&az+f->z>z-3)continue;
-                bool clear=flat(ax,az,f->x,f->z);
+                bool clear=arcFits(ax,az,f->x,f->z);
                 for(int dz=0;clear&&dz<f->z;++dz)for(int dx=0;dx<f->x;++dx)
                     if(reserved[size_t(az+dz)*w+ax+dx]&1){clear=false;break;}
                 if(clear) {putFeature(ax,az,arc.name);++count;occupiedSlots[arc.slot]=true;}
@@ -785,7 +898,7 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
                         const int ax=x+arc.dx+(arc.dx<0?-radius:arc.dx>0?radius:0);
                         const int az=z+arc.dz+(arc.dz<0?-radius:arc.dz>0?radius:0);
                         if (ax<x+4 && ax+f->x>x-3 && az<z+4 && az+f->z>z-3) continue;
-                        bool clear=flat(ax,az,f->x,f->z);
+                        bool clear=arcFits(ax,az,f->x,f->z);
                         for (int dz=0; clear && dz<f->z; ++dz)
                             for (int dx=0; dx<f->x; ++dx)
                                 if (reserved[size_t(az+dz)*w+ax+dx]&1) { clear=false; break; }
@@ -811,6 +924,10 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
     sim::NavGrid::Limits groundLimits;groundLimits.maxSlope=16;groundLimits.maxWaterDepth=0;
     sim::NavGrid ground(m.heights,w,h,m.seaLevel,groundLimits);
     ground.setObstacles(&obstacles);
+    // Plateau tops are judged by who builds there: builders and infantry (GROUND3).
+    sim::NavGrid::Limits builderLimits;builderLimits.maxSlope=30;builderLimits.maxWaterDepth=0;
+    sim::NavGrid builders(m.heights,w,h,m.seaLevel,builderLimits);
+    builders.setObstacles(&obstacles);
     // Open expansion sites, separated from homes and from one another. They must
     // lie on a reachable component, rather than merely looking dry on the map.
     std::vector<uint8_t> reachable(cells);
@@ -826,8 +943,54 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
     // tier, and the route-length band grows equally. A cramped map stops a round
     // for everyone instead of silently favoring whichever start was scanned first.
     const int rounds=extraManaRounds(p.manaDensity);
+    int highRounds=0;
     for(int round=0;round<rounds;++round) {
+      bool roundDone=false,stopRounds=false;
+      for(int pass=0;pass<2&&!roundDone&&!stopRounds;++pass) {
         std::vector<Point> sites;
+        // From the second round on, a round first tries the kit plateau tops a ramp
+        // reaches (every round until one succeeds, then every other), so high
+        // ground is worth taking. It is all or nothing: each player needs a top site
+        // in one common walking-distance band (through the ramps), nearer to it than
+        // to any other start; otherwise (or if its ruins find no room) the round
+        // falls back to the low ground.
+        std::vector<std::vector<int>> topDistances;const bool highRound=pass==0;
+        if(highRound&&!(anyTop && round>=1 && (!highRounds || round%2==1)))continue;
+        if(highRound) {
+            builders.markClearanceDirty();
+            for(auto start:r.starts)topDistances.push_back(distances(builders,start,3));
+            std::vector<std::vector<std::pair<int,Point>>> tops(r.starts.size());
+            for(int z=8;z<h-8;z+=4)for(int x=8;x<w-8;x+=4) {
+                const size_t i=size_t(z)*w+x;
+                if(!kitTop[i]||reserved[i]||!flatAt(x-6,z-6,14,14,spec.high,true))continue;
+                for(size_t player=0;player<r.starts.size();++player) {
+                    const int distance=topDistances[player][i];if(distance<0)continue;
+                    bool nearest=true;
+                    for(size_t other=0;other<topDistances.size();++other)
+                        if(other!=player&&topDistances[other][i]>=0&&topDistances[other][i]<distance+8)nearest=false;
+                    if(nearest)tops[player].push_back({distance,{x,z}});
+                }
+            }
+            const int target=64+round*24;
+            for(int offset=0;offset<=480&&sites.empty();offset+=4)for(int sign:{1,-1}) {
+                const int band=target+sign*offset;if(band<64||(offset==0&&sign<0))continue;
+                std::vector<Point> chosen;
+                for(size_t player=0;player<r.starts.size();++player) {
+                    Point best={-1,-1};int bestScore=13;
+                    for(const auto& [distance,at]:tops[player]) {
+                        const int score=std::abs(distance-band);if(score>=bestScore)continue;
+                        bool spaced=true;
+                        for(const auto* group:{&deposits,&chosen})for(auto pt:*group)
+                            if((pt.first-at.first)*(pt.first-at.first)+(pt.second-at.second)*(pt.second-at.second)<32*32)spaced=false;
+                        if(spaced){best=at;bestScore=score;}
+                    }
+                    if(best.first<0)break;
+                    chosen.push_back(best);
+                }
+                if(chosen.size()==r.starts.size()){sites=chosen;break;}
+            }
+        }
+        if(!highRound)
         for(size_t player=0;player<r.starts.size();++player) {
             Point best={-1,-1};int bestScore=1000000;
             const auto& d=homeDistances[player];
@@ -842,7 +1005,7 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
                 const int x=x0+int(splitmix(featureRng)%uint64_t(x1-x0));
                 const int z=z0+int(splitmix(featureRng)%uint64_t(z1-z0));
                 const size_t i=size_t(z)*w+x;const int distance=d[i];
-                if(distance<target-12||distance>target+12||reserved[i]||!flat(x-6,z-6,14,14))continue;
+                if(distance<target-12||distance>target+12||reserved[i]||!flatAt(x-6,z-6,14,14,land,false))continue;
                 bool good=true;
                 for(size_t other=0;other<homeDistances.size();++other)
                     if(other!=player&&homeDistances[other][i]>=0&&homeDistances[other][i]<distance+8)good=false;
@@ -855,7 +1018,7 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
             if(best.first<0)break;
             sites.push_back(best);
         }
-        if(sites.size()!=r.starts.size())break;
+        if(sites.size()!=r.starts.size()){stopRounds=!highRound;continue;}
         const auto oldDeposits=deposits.size(),oldNames=m.featureNames.size();
         undo.clear();transaction=true;
         // Reserve every route in this round before its ruins are placed.
@@ -863,7 +1026,7 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
             const auto site=sites[player];
             // Follow the existing footprint-valid distance field back home, and
             // reserve this approach before adding any trees or rocks.
-            Point at=site;const auto& d=homeDistances[player];
+            Point at=site;const auto& d=highRound?topDistances[player]:homeDistances[player];
             while(d[size_t(at.second)*w+at.first]>0) {
                 mark(at.first,at.second,4,5);
                 const int here=d[size_t(at.second)*w+at.first];
@@ -884,9 +1047,11 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
                 claim[it->index]=it->claim;obstacles[it->index]=it->obstacle;
             }
             deposits.resize(oldDeposits);m.featureNames.resize(oldNames);
-            transaction=false;undo.clear();break;
+            transaction=false;undo.clear();stopRounds=!highRound;continue;
         }
-        transaction=false;undo.clear();
+        transaction=false;undo.clear();roundDone=true;highRounds+=highRound;
+      }
+      if(stopRounds)break;
         // New ruins are real obstacles. Plan the next round against the
         // updated terrain, rather than routing through an earlier ruin.
         ground.markClearanceDirty();
@@ -1008,6 +1173,15 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         }
         if(good)putFeature(x,z,name);
     }
+    if(anyTop) {
+        std::vector<uint8_t> holding(size_t(std::max(1,r.plateaus)),0);
+        for(auto [x,z]:deposits) {
+            if(!kitTop[size_t(z)*w+x])continue;
+            ++r.plateauMana;
+            const int c=component[size_t(z/32)*(sw+1)+x/32];
+            if(c>=0&&c<int(holding.size())&&!holding[size_t(c)]){holding[size_t(c)]=1;++r.manaPlateaus;}
+        }
+    }
     // Final footprint-aware validation sees scenery exactly as the simulation
     // will. Failure is explicit; an invalid map is never silently launched.
     ground.markClearanceDirty();
@@ -1019,9 +1193,16 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         for(size_t j=k*3;j<k*3+3;++j)
             if(d[size_t(deposits[j].second)*w+deposits[j].first]<0)
                 throw std::runtime_error("Random map home mana is unreachable");
-        for(size_t j=r.starts.size()*3+k;j<roundDeposits;j+=r.starts.size())
-            if(d[size_t(deposits[j].second)*w+deposits[j].first]<0)
-                throw std::runtime_error("Random map expansion mana is unreachable");
+        std::vector<int> onFoot;   // plateau deposits: builders and infantry
+        for(size_t j=r.starts.size()*3+k;j<roundDeposits;j+=r.starts.size()) {
+            const size_t i=size_t(deposits[j].second)*w+deposits[j].first;
+            if(d[i]>=0)continue;
+            if(kitTop[i]) {
+                if(onFoot.empty()){builders.markClearanceDirty();onFoot=distances(builders,s,3);}
+                if(onFoot[i]>=0)continue;
+            }
+            throw std::runtime_error("Random map expansion mana is unreachable");
+        }
         if(p.layout!=Islands)for(auto target:r.starts)
             if(d[size_t(target.second)*w+target.first]<0)throw std::runtime_error("Random map scenery blocks an army route");
         for(size_t j=roundDeposits;j<deposits.size();++j)

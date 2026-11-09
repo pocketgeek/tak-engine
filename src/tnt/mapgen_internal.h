@@ -331,8 +331,10 @@ private:
     std::map<std::string, std::unique_ptr<tnt::Map>> cache_;
 };
 
-// alternate: from a kit's second edge family (hillsides), used only as a ramp.
-struct KitPiece { const tnt::Map* map = nullptr; bool walkable = false, gate = false, alternate = false; };
+// walkable: the generator's army class (6 cells, slope 16) climbs it; climbable: the
+// builder/infantry class (GROUND3: 3 cells, slope 30) does. alternate: from a kit's
+// second edge family (hillsides), used only as a ramp.
+struct KitPiece { const tnt::Map* map = nullptr; bool walkable = false, gate = false, alternate = false, climbable = false; };
 using CaseKit = std::array<std::vector<KitPiece>, 16>;
 inline bool kitEmpty(const CaseKit& k) { for (const auto& v : k) if (!v.empty()) return false; return true; }
 // Plateau edges by corner height; straight pieces a large army can climb are walkable.

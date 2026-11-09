@@ -108,15 +108,26 @@ The generator reads them that way:
   plateau fill all the same), so their role comes from the name (`1ne` outer,
   `2sw` inner, `rampe`). Dead ends, voided fills and Veruna's quarry pit are left out.
 - **Ramps**: each straight edge piece is tested with the engine's own terrain
-  classifier between flat low and high ground. Those that the generator's
-  validation class (six cells wide, slope 16) can climb are ramps; the rest are
-  cliffs. Every plateau gets 1–4 spaced ramps (one per ten plateau corners), each
-  leading onto open plateau, never into a mountain. A second edge family
-  (Aramon's and Taros's *Hillsides*) supplies ramps only: as plain rim it would
-  meet the cliffs along mixed edges, so the rims always come from the cliff kit.
+  classifier between flat low and high ground, with its sides blocked (in a rim its
+  neighbours are cliffs). Pieces the generator's army class (six cells wide, slope
+  16) can climb are ramps. Where a kit has none, a *Hillsides* piece that builders
+  and infantry (the game's GROUND3 class: three cells, slope 30) can climb is the
+  ramp instead: Taros's hillsides are too steep for siege engines, as in retail.
+  Every plateau gets 1–4 spaced ramps (one per ten plateau corners), the first facing
+  the nearest start, each leading onto open plateau, never into a mountain. A second
+  edge family (Aramon's and Taros's *Hillsides*) supplies ramps only, and only
+  between two straight cliffs: it has no corner pieces of its own and would show a
+  seam against a cliff corner (or, as plain rim, along mixed edges).
 - **Mountains** use the retail role names (their blockers are too ragged to
-  classify); a range is a corner mask with plateau all around it, so each range
-  stands on its own plateau even when Plateaus is zero.
+  classify). They are placed first, apart from the plain plateaus: a few seeds per
+  map (at most one per 64 sections), each grown by a short four-way walk into a
+  single peak, a ridge or a clump, and raised on a plateau of its own with a corner
+  of open, walkable top around the range (two on Creon, for the snow line). The
+  rings the range needs are whole; the outer margin is ragged, so mountain plateaus
+  are irregular rather than square. Plain plateaus then fill the rest of the
+  eligible ground, a corner clear of every mountain plateau: the Plateaus and
+  Mountains sliders act independently, and Mountains 0 leaves the plain plateaus as
+  they are.
 - **Towns** are classified from their road-flagged corners, which must agree with
   the role name. Gate pieces are not used: their road runs out to the section edge
   and would stop dead in the grass. As in retail, the painted walls carry no
@@ -125,8 +136,8 @@ The generator reads them that way:
 
 | World | Plateaus (edge kit, fill, levels) | Mountains | Towns |
 | --- | --- | --- | --- |
-| Aramon | *Low to High Cliffs* + *Hillsides* (ramps on N/S/E/W), *alightgr_200*, 80→200 | *High Mountains* (all 13 roles) | *Low Towns* on *cobb_80*; *High Towns* on *cobb_200* on plateaus; houses, wells, carts, fountain |
-| Taros | *Low to High Cliffs* + *Hillsides* (ramps N/S/W), *high_ground*, 62→235 | *High Mountains* (13 roles) | *Low Towns* on *low cobbles*; *High Towns* on *high cobbles*; hovels, buildings, stocks, impalers |
+| Aramon | *Low to High Cliffs* + *Hillsides* (as ramps), *alightgr_200*, 80→200 | *High Mountains* (all 13 roles) | *Low Towns* on *cobb_80*; *High Towns* on *cobb_200* on plateaus; houses, wells, carts, fountain |
+| Taros | *Low to High Cliffs* + *Hillsides* (ramps for builders and infantry only), *high_ground*, 62→235 | *High Mountains* (13 roles) | *Low Towns* on *low cobbles*; *High Towns* on *high cobbles*; hovels, buildings, stocks, impalers |
 | Veruna | *Low to High Cliffs* (its walkable variants are the ramps), *int_200*, 62→200 | **none**: Veruna ships no mountain kit; its *High Specials* are craters and outcrops, not blocking mountains | *Low Towns* on *s_cobbflat*; *High Towns* on *i_cobbflat*; houses, huts, wells, lamps, fountain |
 | Zhon | *Low to High Cliffs Jungle*, *mountainplateau230*, 63→215 (ramps S/E/W) | standalone spires *High Specials/mt1–mt4*: Zhon's *High Mountains* (`mttp_`) are a ridge set crossing edge midpoints, not a marching kit | **villages**: Zhon has no settlement sections (*Low Plazas Jungle* are stepped temple platforms on a dirt palette that does not border the jungle fill), so a village is retail tents, huts and a bonfire in a clearing |
 | Creon | *hillsides* (all walkable slopes), *highland512*, 80→250 | *mountains* (+ *intmt512* centre) on snow: the 256-pixel *snow line* kit blends half a section of *snow256* around each range into the highland | *low towns* on *chunglo*; *high towns* on *chunghi*; houses and civic buildings |
@@ -135,24 +146,39 @@ The generator reads them that way:
 are only allowed where no water corner touches them, more than 48 cells from every
 start (so the 24×24 construction square and the home deposits stay on level low
 ground) and more than 24 cells from every reserved army route; a lone high corner is
-dropped. Mountain cores need room for their plateau around them (two corners on
-Creon, for the snow line). Maze and Highlands keep their own high ground: their
-mountains go only where it already surrounds the core, and the Plateaus amount does
-not apply. Towns take plain ground of one level (low, or a plateau top), at least a
+dropped. With Plateaus at 48 or more every start also gets a plain plateau of its own
+three to twelve corners out, nearer to it than to any other start, so high ground
+is shared out evenly rather than left to the noise. Maze and Highlands keep their
+own high ground: their mountains go only where it already surrounds the core, and
+the Plateaus amount does not apply. Towns take plain ground of one level (low, or a plateau top), at least a
 section from other towns, outside every home economy; nothing else is placed in a
-town. Expansion and scattered mana stay on the low ground, where walking distances are
-compared; plateau tops get trees and rocks from the same forest fields. The final
+town. Plateau tops get trees and rocks from the same forest fields, and mana: from
+the second extra-mana round on, a round first tries the kit plateau tops (every
+round until one succeeds, then every other). It is all or nothing, under the same
+rules as any round: every player needs a top site in one common ±12-cell walking-
+distance band, measured for builders through the ramps, nearer by walk to that
+player than to any other start, with the usual ruins on the top; otherwise (or if
+the ruins find no room) the round falls back to the low ground. Scattered neutral
+mana may also land on a top the army class can reach. In the sweep below, at the
+default amounts, maps with plateaus got plateau mana in 13/24 2-player 16×16 maps,
+23/24 at 24×24 and 22/24 at 32×32; 4-player maps about half to two-thirds of the
+time from 24×24 up; 8-player maps rarely (all eight must find a fair top in one
+band). Across all layouts and player counts, 26% of plateaus carried mana. The final
 walking-distance validation is unchanged and sees mountains, cliffs and houses as the
 simulation will. If kit terrain leaves no room for a fair map, the generator retries
-deterministically with half the kit amounts, then none (`Result::kitFallback`); the
-5×4-layout sweep of 1,280 maps (2–8 players, 16×16 to 32×32, default and maximum
-amounts) never needed it.
+deterministically with half the kit amounts, then none (`Result::kitFallback`); a
+sweep of 1,620 maps (five worlds; Mainland, Lakes and each themed layout; 2, 4 and 8
+players; 16×16 to 32×32; two seeds; six Plateaus/Mountains combinations) never
+needed it. At the defaults it held 679 plain and 245 mountain plateaus; Mountains
+255 raised 705 mountain plateaus beside 536 plain ones, Mountains 0 kept 723 plain
+plateaus, and Plateaus 0 left only the 245 mountain plateaus.
 
 **Controls.** The game setup screen shows the nine sliders in two columns: Forests,
 Rocks, Extra Mana, Scattered Mana, Water, Hills (Highlands on Creon Highlands),
 Plateaus, Mountains and Towns (Villages on Zhon). Plateaus reads AUTO on Maze and
-Highlands; Mountains reads NONE on Veruna. Defaults: Plateaus 72, Mountains 56,
-Towns 64 of 255, about two plateaus, one range and one town on a 16×16 map. The game
+Highlands; Mountains reads NONE on Veruna. Defaults: Plateaus 96, Mountains 48,
+Towns 64 of 255: on a 24×24 two-player map about three plain plateaus (one beside
+each start), one or two mountain plateaus and two or three towns. The game
 room lists the three amounts under the map seed; Cartographer's generator dialog has
 PLATEAUS, MOUNTAINS and TOWNS fields (0–255).
 

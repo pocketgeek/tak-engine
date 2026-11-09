@@ -529,8 +529,11 @@ The Retail AI always plays the campaign's computer opponents: see
   villages on Zhon. As in the original game, armies can cross a town's painted
   walls. Veruna has no mountains in the original sections, so its Mountains
   slider reads NONE; Taros Maze and Creon Highlands make their own high ground,
-  so Plateaus reads AUTO there. Bases, home mana and army routes always stay on
-  level, connected ground.
+  so Plateaus reads AUTO there. Plateaus and Mountains are independent: plain
+  plateaus (every player gets one nearby) and mountain plateaus (a range with open
+  ground around it). Extra mana spots can sit on plateau tops, reached by the ramps,
+  but only when every player gets an equally distant one. Bases, home mana and army
+  routes always stay on level, connected ground.
 - **Extra Mana Spots**: 0 to 6 extra spots per player, added fairly. Terrain can
   limit how many fair rounds fit, so the preview shows the real total.
 - **Scattered Mana**: a second slider, separate from the per-player extra spots,

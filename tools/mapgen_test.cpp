@@ -342,6 +342,24 @@ int main(int argc,char** argv) {
                             world,layoutName(uint8_t(layout)),players,seed,amount,r.plateaus,r.mountains,r.towns,sectionsChecked,seconds);
                 std::fflush(stdout);
             }
+            // The sliders act independently: Mountains 0 still raises plain plateaus,
+            // Plateaus 0 leaves only the mountains' own plateaus, and high ground the
+            // kits build carries mana when a fair round fits (two players, roomy maps).
+            int plateauMana=0;
+            for(int world=0;world<kMapTypes;++world)for(int seed=1;seed<=4;++seed) {
+                Params p;p.mapType=uint8_t(world);p.widthCells=p.heightCells=768;p.seed=uint64_t(seed);
+                p.mountainDensity=0;
+                const auto plain=generate(p,vfs);verify(p,plain);
+                check(plain.mountainPlateaus==0&&plain.mountains==0&&plain.plateaus>0,"Mountains 0 lost the plain plateaus");
+                plateauMana+=plain.plateauMana;
+                p.plateauDensity=0;p.mountainDensity=255;
+                const auto ranges=generate(p,vfs);verify(p,ranges);
+                check(ranges.plateaus==ranges.mountainPlateaus,"Plateaus 0 still raised a plain plateau");
+                check((ranges.mountains>0)==kitAvailable(uint8_t(world),KitMountains)||seed>1,"Mountains 255 raised no range");
+                std::printf("kits sliders world=%d seed=%d plain: plateaus=%d topmana=%d; ranges only: plateaus=%d mountains=%d\n",
+                            world,seed,plain.plateaus,plain.plateauMana,ranges.plateaus,ranges.mountains);
+            }
+            check(plateauMana>0,"no plateau ever carried mana");
             for(int world=0;world<kMapTypes;++world) {
                 check(seen[world][KitPlateaus]>0,"a world never raised a plateau");
                 check(seen[world][KitTowns]>0,"a world never built a town");
