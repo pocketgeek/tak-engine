@@ -1,6 +1,27 @@
 # README and user-guide screenshots
 
-**Retaken for 0.9.23** (2026-11-08): the pictures of the screens 0.9.23 changed, by a
+**Retaken for 0.9.24** (2026-11-08): by a Debug `-O2` build of `main` at `9b47f6dc` with the
+0.9.24 version line, the 0.9.23 in-game capture hooks and the 0.9.0 Cartographer capture
+driver (`capdrv`) in a worktree (not committed); scripts in
+`~/tak-tmp/scratch/release-0924/shots/`, offscreen GL, scratch profiles and installs as for
+0.9.23.
+
+- `title.jpg`: the title capture at 1920 x 1080 cropped to (240, 0, 1680, 1080); VERSION 0.9.24.
+- `guide/random-map-lobby.jpg`: the same scene as before (Aramon, Mainland, 12 x 12, 4
+  players, Scattered Mana High), now with nine sliders in two columns; from 1600 x 1000
+  cropped to (0, 50, 1600, 950). The preview reads MANA: 54.
+- `cartographer/random-generator.jpg`: the generator dialog with its plateau, mountain
+  and town fields (seed 2026, 4 players, Aramon Riverlands, 16 x 16, defaults otherwise)
+  and its preview, composited as before (1103 x 508).
+- `generated.jpg`: the version-9 recipe no longer generates, so a new Silverford: Aramon
+  Riverlands, seed 13, 512 x 512 cells (the generator raised the old 256), four players,
+  Scattered Mana Medium, Plateaus 96, Mountains 48, Towns 64:
+  `~gen1~0a000d00000000000000000002000204aa6e808296050260304053696c766572666f7264`. A local
+  server (`--seed 42`) with four level-3 AIs at speed 80, spectator view 9
+  (`2912,6672,1.0`) at 660 game seconds, 1920 x 1080 uncropped: the lake shore, an AI's
+  lodestone among standing stones on a neutral scattered spot, and a plateau rim.
+
+**Earlier: retaken for 0.9.23** (2026-11-08): the pictures of the screens 0.9.23 changed, by a
 Debug `-O2` build of `main` at `72ebf352` with the 0.9.23 version line and capture-only
 hooks in a worktree (not committed; `capture-hooks-0923.diff` in
 `~/tak-tmp/scratch/release-0923/shots/`, which also holds the scripts `menu.py`,
@@ -542,7 +563,7 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 | `dragons.jpg` | **Development scene.** Five server AIs, one per side, from a stress-test start (300-unit cap) with gods on, 90 game seconds in. Creon Neo Dragons breathe fire on an Aramon siege column; health bars show for every side. Spectator view, 1.4× zoom. Rendered by the 0.9.0 build |
 | `hud.jpg` | Aramon player in a local-server game, about 10 s in. **Stress-test start**: Normal AI opponent, 250-unit cap. **Scripted orders**: 45 units of eight types (Archers, Swordsmen, Knights, Catapults, Mage Archers, Cannoneers, Horsemen, Rolling Towers) were made formation 1 and selected, so the information bar shows the portrait strip (one portrait per type with its count), FORMATION 1 and 45 SELECTED, and the selected units show `1F` in solid green. Stats panel on, 1.15× zoom; its VID row reads 117 MB with the default graphics settings, and its CLOCK row is the capture machine's wall clock. Rendered by the 0.9.0 build |
 | `naval.jpg` | **Development scene, spawned.** Cairbray Coast Landing, 10 s in. Veruna Flagship, Men of War, Trebuchet Ships and Harpoon Ships fight Creon Iron Clads, Stern Wheelers and Submersibles. Nothing is selected, so the information bar is empty. 1.6× zoom, fog off. Rendered by the 0.9.0 build |
-| `generated.jpg` | Generated Aramon Riverlands map "Silverford" (seed 7, 256 × 256, four players, Scattered Mana Medium). Four Hard AIs at 8× speed, seven game minutes in. Spectator view of the lake shore at 1×, with an AI's lodestone on a neutral scattered mana spot among standing stones in the clearing. Rendered by the 0.9.0 build |
+| `generated.jpg` | Generated Aramon Riverlands map "Silverford" (generator version 10, seed 13, 512 × 512 cells, four players, Scattered Mana Medium, Plateaus 96, Mountains 48, Towns 64). Four AIs, eleven game minutes in. Spectator view of the lake shore at 1×, with an AI's lodestone on a neutral scattered mana spot among standing stones and a plateau rim at the lower left. Rendered by the 0.9.24 build (see "Retaken for 0.9.24") |
 | `lobby.jpg` | Single-player create screen with Ulasem Arena selected (the title from the map's translate table, in the list and on the MAP line): the preview numbers the map's eight start positions and reads 20 X 20 8 PLAYER, MAP SCENARIO under it is greyed (THIS MAP HAS NO SCENARIO), and POWER CODES: OFF is among the options. Retail pathfinding, other options at their defaults. Rendered by the 0.9.0 build, 1600 × 1000 (see *Lobby captures* below) |
 | `lobby-scenario.jpg` | Single-player create screen on King of the Hill with **MAP SCENARIO** turned on: the gold **S** marks the maps with a playable scenario in the list, the lines under the button say what the scenario changes, Monarch Expendable and Start Locations are greyed, and the preview numbers the four start positions. 1024 × 768, cropped to the lobby panel; the map row and the button were clicked with `TAK_SHOT_CLICKS`, then the pointer moved off the panel. Rendered by the 0.9.0 build. Used only by the user guide |
 | `room.jpg` | Single-player room on Ulasem Arena with three Normal AIs (Taros, Veruna, Zhon) added by clicks, Crusades and Double Sight on, Legion pathfinding and both example cosmetic packs ticked (placeholder folders in the scratch install); under the COSMETIC MODS heading ALWAYS ON: click (the always-enabled pack folder), then the pack names, the GAME MODS list below (no game pack ticked and no always-enabled game pack, so no GAME MODS VERIFIED line). The open rows 5 to 8 each have a **MOVE HERE** button. The match rules end with MAP SCENARIO: OFF. The map at the top of the right column marks starts 1 to 4 in the colours of the four seated players. The AI names are the lobby's own random picks. Rendered by the 0.9.0 build, 1600 × 1000; the CREATE screen's toggles, slot types, sides and pack boxes were clicked with `TAK_SHOT_CLICKS`, then the pointer moved off the panel |

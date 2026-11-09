@@ -12,14 +12,11 @@ independent security audit or protection against a volumetric DDoS.
 ## Versions
 
 Server and clients must speak the same gameplay protocol; update the server and
-every client together when it changes. **0.9.23 keeps protocol 316**, so a 0.9.22 or
-0.9.23 `takserver` and players of either version play together, and the server needs no
-update for them (the AI's flying-builder fix needs a 0.9.23 server). **0.9.22 changed it
-(protocol 316):** a 0.9.22
-`takserver` turns away 0.9.21 and older clients with a *protocol version mismatch*
-message, and a 0.9.21 or older server turns away 0.9.22 clients, so a server still on
-0.9.21 or older must update. (0.9.21 used protocol 315; 0.9.20 312; 0.9.19 311; 0.9.16, 0.9.17 and 0.9.18 shared protocol 309; 0.9.15 and 0.9.14 used protocol 308, 0.9.13 307, 0.9.12 305, 0.9.11 304; 0.9.9 and 0.9.10 shared 303;
-306, 313 and 314 were never released.) Since 0.9.12 a
+every client together when it changes. **0.9.24 changed it (protocol 320):** a 0.9.24
+`takserver` turns away 0.9.23 and older clients with a *protocol version mismatch*
+message, and a 0.9.23 or older server turns away 0.9.24 clients, so a server still on
+0.9.23 or older must update. (0.9.23 and 0.9.22 shared protocol 316; 0.9.21 used protocol 315; 0.9.20 312; 0.9.19 311; 0.9.16, 0.9.17 and 0.9.18 shared protocol 309; 0.9.15 and 0.9.14 used protocol 308, 0.9.13 307, 0.9.12 305, 0.9.11 304; 0.9.9 and 0.9.10 shared 303;
+306, 313, 314 and 317 to 319 were never released.) Since 0.9.12 a
 server whose game has no human player left (AIs watched by spectators) no longer
 computes the lockstep check nobody compares, except for a recorded replay's
 checkpoints. Since 0.9.8 a release `takserver` reads only its four test timers

@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.23-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.24-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,15 +26,15 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.23
+## What's new in 0.9.24
 
-- Idle Builders: a column of portraits of your builders and factories with nothing to do.
-- Shots, spells and explosions are drawn behind the trees and units in front of them.
-- A Mods screen for choosing packs; up to 64 remembered servers, each with Delete.
-- Cleaner game setup and room screens, with a map list Filter.
+- Random maps get cliff-edged plateaus (some with mana on top), mountains and towns.
+- Legion ranged attackers fill up to three rows deep, so many more of them shoot.
+- Units you order to attack walk to a clear shot whatever their stance.
+- Spectators no longer see build menus.
 
-Plays with 0.9.22 and its replays (protocol 316); servers need no update.
-Details in the [CHANGELOG](CHANGELOG.md#0923).
+Protocol 320: does not play with 0.9.23 or earlier, nor their replays; servers must update too.
+Details in the [CHANGELOG](CHANGELOG.md#0924).
 
 ## Features
 
@@ -72,7 +72,7 @@ Details in the [CHANGELOG](CHANGELOG.md#0923).
   </tr>
   <tr>
     <td width="50%"><a href="docs/img/dragons.jpg"><img src="docs/img/dragons.jpg" alt="Creon Neo Dragons breathe blue fire on an Aramon siege column"></a><br><sub>Creon Neo Dragons strike an Aramon siege column</sub></td>
-    <td width="50%"><a href="docs/img/generated.jpg"><img src="docs/img/generated.jpg" alt="A wooded lake shore on a generated themed map, with a lodestone on a scattered neutral mana spot"></a><br><sub>A generated map with Scattered Mana</sub>
+    <td width="50%"><a href="docs/img/generated.jpg"><img src="docs/img/generated.jpg" alt="A wooded lake shore on a generated themed map, with a lodestone on a scattered neutral mana spot and a rocky plateau rim"></a><br><sub>A generated map with Scattered Mana</sub>
     </td>
   </tr>
   <tr>

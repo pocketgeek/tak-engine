@@ -11,7 +11,7 @@ with every TAK Engine package, next to the game.
 This guide is for players and mapmakers. It explains what you see on screen and
 what each control does, from a first map to sharing a finished one.
 
-This guide describes Cartographer in TAK Engine 0.9.23; changes by version are in
+This guide describes Cartographer in TAK Engine 0.9.24; changes by version are in
 the [CHANGELOG](../CHANGELOG.md).
 
 Every picture in this guide is a real Cartographer screen (the Test Map lobby is
@@ -1109,7 +1109,7 @@ uses for its random maps.
    Click **ACCEPT** (**Enter**) to use it, **SETTINGS** to go back and change
    the settings, or **DISCARD** (**Esc**) to keep your current map.
 
-![Left: RANDOM MAP SETTINGS (shown before version 10 added the plateau, mountain and town fields) with seed 2026, 4 players, layout Aramon Riverlands, trees 128, rocks 96, mana 128, water intensity 96, relief 128, width and height 16, world aramon, scattered mana (by map area) Medium. Right: GENERATED MAP PREVIEW, 16 x 16, 4 players, a green map with small ponds and four numbered yellow start markers](img/cartographer/random-generator.jpg)
+![Left: RANDOM MAP SETTINGS in two columns with seed 2026, 4 players, layout Aramon Riverlands, trees 128, rocks 96, mana 128, water intensity 96, relief 128, width and height 16, world aramon, scattered mana (by map area) Medium, plateaus 96, mountains 48 and towns 64. Right: GENERATED MAP PREVIEW, 16 x 16, 4 players, a green map with small ponds, raised plateaus near the edges and four numbered yellow start markers](img/cartographer/random-generator.jpg)
 
 *Generating a 4-player, 16 × 16 Aramon Riverlands map from seed 2026.*
 

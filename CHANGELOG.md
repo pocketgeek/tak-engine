@@ -19,6 +19,39 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.24
+*2026-11-08 · protocol 320 · replay format 15 · does not play with 0.9.23 or earlier, nor their replays*
+
+- **Random maps get plateaus, mountains and towns.** The generator builds them from
+  the original game's own terrain pieces in every world and on every layout: cliff-edged
+  plateaus with ramps, mountains standing on part of a plateau, and towns (Zhon gets
+  villages; the original has no Zhon towns and no Veruna mountains). Three new
+  sliders set the amounts: **Plateaus**, **Mountains** and **Towns**. Extra mana can now
+  stand on plateau tops when every player gets an equally far spot, so high ground is
+  worth taking. Some slider labels are shorter: **Rocks**, **Extra Mana**, **Water**,
+  **Hills**. Cartographer's generator dialog has the same three fields. Ramps keep to one
+  family of pieces, so their edges join cleanly; Aramon and Taros plateaus are climbed
+  by builders and infantry, as in the original game.
+- **Random map recipes from before 0.9.24 no longer generate** (the generator is now
+  version 10). Maps you saved as `.kmp` files still play.
+- **Legion: ranged attackers fill up to three rows deep.** When more ranged units attack
+  a target than fit at the edge of their range, the front rows walk in so the rows behind
+  can shoot too. 100 gunners against one target now get about 89 in range instead of 47
+  and deal about twice the damage. Melee units still go round to reach the target.
+- **Units you order to attack move to a clear shot whatever their stance.** A unit
+  whose shots keep hitting a hill or rock walks to a spot with a clear shot after three
+  of them; units on **Defensive**, the stance most units start with, did this only when
+  they had picked the target themselves while on the move, so units you ordered to attack
+  fired into the hill for good.
+- **Spectators and replay viewers see no build menu** when they select a builder.
+- **Play the Machine:** with **Spectate (Watch AIs)** on, **Fog of War** shows **Full
+  Vision** and cannot be changed; turning Spectate off brings back your own choice.
+- **Options:** under **Data folder**, a line shows the folder that holds your settings
+  and replays; only the **Change** button opens the folder picker.
+
+**Upgrading (server operators):** update `takserver` together with your
+players.
+
 ## 0.9.23
 *2026-11-08 · protocol 316 · replay format 15 · plays with 0.9.22, and its replays*
 
