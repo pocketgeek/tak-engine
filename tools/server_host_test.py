@@ -244,6 +244,31 @@ def scenario_spectator_host_hands_over(port, h):
         close_all(alice, bob)
 
 
+def scenario_spectator_host_leaves_running(port, h):
+    """A spectator host leaving a RUNNING game with a seated human: its powers pass on and its
+    pause ends, as a seated host's do."""
+    alice, bob = Seat(port, h, 'Alice'), Seat(port, h, 'Bob')
+    try:
+        room = create(alice, 'watched', watch=True)
+        join(bob, room, 0)
+        bob.slot = 0
+        ready_and_start(alice, (bob,), ai=(1,))
+        started(alice, h, loaded=False)   # a spectator host never reports Loaded
+        started(bob, h)
+        assert pump_all((alice, bob), 20, lambda: bob.last_tick() >= 30), 'the game never ticked'
+        alice.send('SetPause', b'\x01')
+        assert pump_all((alice, bob), 5, lambda: bob.paused), 'the spectator host could not pause'
+        alice.send('LeaveGame')
+        assert bob.pump(5, lambda p: p.host == bob.id), ('the host\'s powers did not pass on', bob.host, bob.id)
+        assert bob.pump(5, lambda p: p.paused is False), 'the pause outlived the host that made it'
+        assert goes_on((bob,), bob), 'the game did not go on without its host'
+        bob.send('SetGameOptions', options(speed=20))
+        assert bob.pump(5, lambda p: p.speed == 20), 'the new host could not change the speed'
+        assert alice.games().get(room) == 1, 'the running game is not listed'
+    finally:
+        close_all(alice, bob)
+
+
 def scenario_spectator_leaves(port, h):
     alice, carol = Seat(port, h, 'Alice'), Seat(port, h, 'Carol')
     try:
@@ -528,7 +553,8 @@ def scenario_lan_running(port, h):
 
 CASES = {
     'lobby': [scenario_spectator_host_leaves, scenario_spectator_host_disconnects,
-              scenario_spectator_host_hands_over, scenario_spectator_leaves],
+              scenario_spectator_host_hands_over, scenario_spectator_host_leaves_running,
+              scenario_spectator_leaves],
     'authority': [scenario_host_pause_reconnect, scenario_host_reconnect_running, scenario_guest_reconnect,
                   scenario_host_leaves_paused, scenario_host_leaves_running, scenario_host_timeout,
                   scenario_no_successor, scenario_held_successor],

@@ -201,7 +201,7 @@ float createOptionPx(float maxW) {
         blockText("GAMES", x, y, 2.2f, {200, 205, 220, 255});
         lbBtn(x + w - 200, y - 6, 95, 26, "REFRESH", true, [this] { mp_->listGames(); });
         lbBtn(x + w - 100, y - 6, 100, 26, "CREATE", true,
-              [this] { lobbyScreen_ = LobbyScreen::Create; });
+              [this] { lobbyScreen_ = LobbyScreen::Create; mapListScanned_ = false; });
         y += 34;
         // column header
         blockText("NAME", x + 8, y, 1.6f, {130, 135, 150, 255});
@@ -253,6 +253,7 @@ float createOptionPx(float maxW) {
         resetMinimap(); mapView_.quiesce(); stopPreviewReaders();
         vfs_.refreshMapCache(tak::hpi::userMapRoot());
         mapList_.clear();
+        mapListScanned_ = true;
         mapTitlesLoaded_ = false;   // the install may have changed: read the tables again
         auto maps=tak::hpi::listMaps(vfs_);
         // A per-user MapCache copy ("name [16 hex]": a map received from a server, or a
@@ -792,7 +793,7 @@ float createOptionPx(float maxW) {
         // Map picker (right column): a scrollable list box. Selecting sets both the
         // wire id (mpMapId_ = bare .tnt stem) and mapPath_, so mpCapacity() recomputes
         // the chosen map's start-position count.
-        if (mapList_.empty()) buildMapList();
+        if (mapList_.empty() && !mapListScanned_) buildMapList();
         // Adopt the remembered map once (persisted across launches), and scroll to it.
         if (!mapPrefApplied_ && settings_ && !settings_->lastMap.empty()) {
             for (int i = 0; i < int(mapList_.size()); ++i)

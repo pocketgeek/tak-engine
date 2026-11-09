@@ -357,6 +357,14 @@ void factoryProduction(const Registry& reg) {
     g.send(0, net::Cmd::Train, w, 1, 0, "sol");
     check(g.w.unit(w)->buildQueue.size() == 1 && g.w.unit(w)->buildQueue.front() == reg("sol"),
           "...and Train of the mobile type on the same menu is taken");
+    // A placement needs a mobile builder: a factory's (forged) Build of its own menu's
+    // unit, Ctrl included, is refused before the front insert rewinds the factory.
+    g.send(0, net::Cmd::Move, w, 0, 0, "", 1900, 1300);   // a rally order to rewind
+    g.ticks(2);
+    for (const uint8_t q : {kCtrl, uint8_t(0)})
+        unchanged(g, {w}, [&] { g.send(0, net::Cmd::Build, w, 0, q, "sol", 1900, 1100); },
+                  q ? "a factory: Ctrl Build of its menu's unit changes nothing"
+                    : "a factory: Build of its menu's unit changes nothing");
     // The scripts' / retail planner's API is not a player's order and stays unrestricted.
     g.w.train(f, reg("foreign"));
     check(g.w.unit(f)->buildQueue.size() == 1, "World::train itself (scripts, the planner) is not menu-bound");

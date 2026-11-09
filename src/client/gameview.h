@@ -2747,6 +2747,9 @@ private:
         int area() const { return sizeW * sizeH; }
     };
     std::vector<MapInfo> mapList_;      // cached, sorted per mapSort_
+    // buildMapList ran for this visit to the create screen. An install with no maps would
+    // otherwise rescan -- and stop the previews for the remount -- every frame.
+    bool mapListScanned_ = false;
     // Map titles. A map's name (its .tnt stem, the wire id) is often lowercase: Iron
     // Plague's archive stores "maps/ulasem arena.tnt". Retail shows the title from its
     // translate tables (translate/maps.tdf, ipmaps.tdf: [ulasem arena] English = Ulasem

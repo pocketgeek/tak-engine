@@ -19,7 +19,13 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 320;      // 320: random-map ramps keep one kit family (Aramon cliff ramps, Taros hillside runs)
+constexpr uint32_t kNetVersion = 321;      // 321: review fixes -- refused player orders change nothing (a Ctrl Load checked
+                                           // before either unit is rewound; Train/RepeatTrain/Build/BuildManaArea held to the
+                                           // producer's build menu, Train/RepeatTrain to mobile types); host powers follow the
+                                           // host's seat across reconnects and pass on when it leaves a running game (LobbyState
+                                           // mid-game names the host; its pause ends); a reconnect is sent the live speed and
+                                           // pause; gameplayHash covers scripts/*.cob, objects3d/*.3do and every sim feature key
+                                           // 320: random-map ramps keep one kit family (Aramon cliff ramps, Taros hillside runs)
                                            // 319: random maps v10 (retail plateau/mountain/town kits; v8/v9 recipes refused)
                                            // 318: an ordered attacker leaves a blocked firing spot whatever its stance
                                            // 317: Legion's ranged attack rings fire up to three bodies deep and more
