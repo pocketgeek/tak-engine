@@ -1412,7 +1412,8 @@ int main(int argc, char** argv) {
             serverPort = address->port;
             serverPlainFallback = address->plainFallback;
             // A LAN game heard on the network is not remembered: it is gone with its host.
-            if (connectKind == tak::MainMenu::Connect::LanJoin) rememberServer.clear();
+            if (connectKind == tak::MainMenu::Connect::LanJoin || connectKind == tak::MainMenu::Connect::LanSpectate)
+                rememberServer.clear();
         } else {
             // Remote credentials belong to that multiplayer session. Leaving the
             // account set makes the client reject the private server's no-auth
@@ -1736,6 +1737,7 @@ int main(int argc, char** argv) {
                 }
                 // A LAN game's password, for getting into its game if it asks one.
                 if (!lanHosting) gameView->setLanJoinPassword(lanGamePass);
+                if (connectKind == tak::MainMenu::Connect::LanSpectate && !tokenLaunch) gameView->setLanSpectate();
                 tak::crypto::wipe(lanGamePass);
             }
             if (lobbyLoading) {

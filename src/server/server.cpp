@@ -3032,16 +3032,22 @@ void Server::onFrame(Client& c, const Frame& f) {
     }
 }
 
-// The open game (not started, not private) announced once a second: its name, the
-// host's name, the map, seats taken and the room's capacity. Nothing while there is
-// none -- before the host creates it and after it starts.
+// The game (not private) announced once a second: its name, the host's name, the map,
+// seats taken and the room's capacity, whether it is locked, started and watchable.
+// One waiting in its room first; else a started one that allows spectators. Nothing
+// before the host creates it.
 void Server::announceLan(uint64_t now) {
     if (now < beaconAtMs_) return;
     beaconAtMs_ = now + 1000;
     if (!lanNonce_) lanNonce_ = std::random_device{}() * 0x9E3779B97F4A7C15ull ^ now;
+    const Room* pick = nullptr;
     for (const auto& [id, r] : rooms_) {
         (void)id;
-        if (r.running || r.priv) continue;
+        if (r.priv || (r.running && !r.opts.allowSpectators)) continue;
+        if (!pick || (pick->running && !r.running)) pick = &r;
+    }
+    if (pick) {
+        const Room& r = *pick;
         tak::net::LanAnnounce a;
         a.version = kNetVersion; a.nonce = lanNonce_; a.port = port_;
         a.game = r.name;
@@ -3076,8 +3082,9 @@ void Server::announceLan(uint64_t now) {
             if (r.slots[i].type == 1 || r.slots[i].type == 2) ++a.players;
         a.capacity = uint8_t(r.cap);
         a.locked = !r.password.empty();
+        a.running = r.running;
+        a.spectators = r.opts.allowSpectators != 0;
         beacon_.send(a);
-        return;
     }
 }
 

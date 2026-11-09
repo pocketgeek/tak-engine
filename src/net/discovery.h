@@ -22,6 +22,8 @@ struct LanAnnounce {
     std::string game, host, map;
     uint8_t players = 0, capacity = 0;
     bool locked = false;    // the game has a password
+    bool running = false;   // started: no seats left to take, watchable when spectators allowed
+    bool spectators = true; // ALLOW SPECTATORS
 };
 
 std::vector<uint8_t> encodeAnnounce(const LanAnnounce& a);

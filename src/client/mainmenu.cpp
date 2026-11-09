@@ -817,6 +817,7 @@ struct MainMenu::Impl {
     std::vector<SDL_FRect> serverDeleteRects;   // DELETE per display row (remembered rows only)
     SDL_FRect serverBoxRect{};              // custom text-box hit-rect
     SDL_FRect serverConnectRect{}, serverBackRect{};   // button hit-rects
+    SDL_FRect serverSpectateRect{};         // SPECTATE, beside CONNECT while a LAN game is picked
     std::string serverError;                // shown in red after a failed connect
     // LOCAL SERVER (row 2) starts this player's own unencrypted server and hosts on
     // it; the LAN games heard on the network follow it (rows 3..), never remembered.
@@ -837,7 +838,12 @@ struct MainMenu::Impl {
     // and a typed address for CUSTOM.
     bool canConnect() const {
         return !loginUser.empty() && (!serverAccount() || !loginPass.empty()) &&
-               (!serverCustom() || !serverText.empty());
+               (!serverCustom() || !serverText.empty()) &&
+               !(lanIndex() >= 0 && lanGames[size_t(lanIndex())].announce.running);   // started: watch only
+    }
+    // SPECTATE: a picked LAN game whose host allows spectators, and a name.
+    bool canSpectate() const {
+        return lanIndex() >= 0 && !loginUser.empty() && lanGames[size_t(lanIndex())].announce.spectators;
     }
     // Take in the LAN announcements, keeping the picked row on the same server.
     void pollLan() {
@@ -1104,7 +1110,8 @@ struct MainMenu::Impl {
                 blockText("HOST", r.x + r.w - 110, r.y + 13, 1.6f, {150, 165, 145, 255});
             if (lan >= 0) {   // a game heard on the network: LAN and its seats
                 const auto& a = lanGames[size_t(lan)].announce;
-                const std::string seats = (a.locked ? "LOCK " : "LAN ") + std::to_string(a.players) + "/" + std::to_string(a.capacity);
+                const std::string seats = (a.running ? "LIVE " : a.locked ? "LOCK " : "LAN ") + std::to_string(a.players) + "/" +
+                                          std::to_string(a.capacity);
                 blockText(seats, r.x + r.w - 110, r.y + 13, 1.6f,
                           a.locked ? SDL_Color{230, 200, 120, 255} : SDL_Color{150, 175, 200, 255});
             }
@@ -1228,6 +1235,10 @@ struct MainMenu::Impl {
         button(x0 + 30, 150, "BACK", serverBackRect, true);
         button(x0 + pw - 30 - 210, 210, serverLocal() ? "START/CONNECT" : "CONNECT", serverConnectRect, canConnect());
         if (!canConnect()) serverConnectRect = {0, 0, 0, 0};
+        // SPECTATE to CONNECT's left, always there; live only for a picked LAN game whose
+        // host allows spectators.
+        button(x0 + pw - 30 - 210 - 16 - 170, 170, "SPECTATE", serverSpectateRect, canSpectate());
+        if (!canSpectate()) serverSpectateRect = {0, 0, 0, 0};
     }
 
     // The layout unit of SETTINGS, BENCHMARK and LOAD REPLAY: the Options screen's (1x at
@@ -1615,6 +1626,12 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             if (serverOut) *serverOut = p.substr(at + 1);
             return Choice::Multiplayer;
         }
+        // lanwatch:<name>[:<game password>]@<address> = SPECTATE on a LAN game.
+        if (p.rfind("lanwatch:", 0) == 0 && p.find('@') != std::string::npos) {
+            namePass(p.substr(9, p.find('@') - 9)); d_->chosenConnect_ = Connect::LanSpectate;
+            if (serverOut) *serverOut = "tcp://" + p.substr(p.find('@') + 1);
+            return Choice::Multiplayer;
+        }
         if (p.rfind("lanjoin:", 0) == 0 && p.find('@') != std::string::npos) {
             namePass(p.substr(8, p.find('@') - 8)); d_->chosenConnect_ = Connect::LanJoin;
             if (serverOut) *serverOut = "tcp://" + p.substr(p.find('@') + 1);
@@ -1809,7 +1826,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 continue;
             }
             if (d_->serverSelect) {   // multiplayer: server + account sign-in
-                auto connect = [&]() -> bool {
+                auto connect = [&](bool spectate = false) -> bool {
                     std::string sv = d_->serverChoice();
                     if (sv.empty() && !d_->serverLocal()) return false;   // empty custom field: stay
                     // Check the account locally before spending a round trip on it,
@@ -1826,7 +1843,8 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         return false;
                     }
                     d_->chosenConnect_ = d_->serverLocal() ? MainMenu::Connect::LanHost
-                                       : d_->serverAccount() ? MainMenu::Connect::Server : MainMenu::Connect::LanJoin;
+                                       : d_->serverAccount() ? MainMenu::Connect::Server
+                                       : spectate ? MainMenu::Connect::LanSpectate : MainMenu::Connect::LanJoin;
                     SDL_StopTextInput();
                     if (serverOut) *serverOut = sv;
                     return true;
@@ -1909,6 +1927,10 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     if (in(d_->serverConnectRect)) {
                         d_->sfx_.play(menuclick::kOk);
                         if (connect()) { d_->flushSfx(w, h); return Choice::Multiplayer; }
+                    }
+                    if (in(d_->serverSpectateRect)) {
+                        d_->sfx_.play(menuclick::kOk);
+                        if (connect(true)) { d_->flushSfx(w, h); return Choice::Multiplayer; }
                     }
                     if (in(d_->serverBackRect)) {
                         d_->sfx_.play(menuclick::kBack);

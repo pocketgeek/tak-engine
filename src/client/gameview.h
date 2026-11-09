@@ -238,6 +238,8 @@ public:
     }
     // The game password typed on the CONNECT screen, for joining a LAN host's game.
     void setLanJoinPassword(const std::string& password) { joinPass_ = password; }
+    // SPECTATE on a LAN game: watch it (from its start, if it is still in its room).
+    void setLanSpectate() { lanSpectate_ = true; }
     void prepareLobbyMaps(tak::LoadScreen& progress) { buildMapList(&progress); }
     // Return-to-menu request: a lobby/in-game action sets this; main()'s outer loop
     // tears the session down and re-shows the front-end menu.
@@ -2671,7 +2673,7 @@ private:
     bool singlePlayer_ = false;    // menu single-player: private local game (SP-flavoured lobby)
     // A player's LOCAL SERVER (MpClient::lanServer). Its host is lanHost_; anyone else
     // goes straight into the open game there (lanJoinStep), or is told why not.
-    bool lanHost_ = false, lanJoinSent_ = false;
+    bool lanHost_ = false, lanJoinSent_ = false, lanSpectate_ = false, lanWaitingStart_ = false;
     uint64_t lanJoinAtMs_ = 0;
     std::string lanJoinError_;
     void lanJoinStep();

@@ -2318,8 +2318,11 @@ it is announced on your network about once a second until it starts.
 Everyone else on the network sees it listed under **LOCAL SERVER** with its map and
 seats (**LAN 2/8**, or **LOCK 2/8** when it has a password). They pick it, type a
 name (and the game password for a locked game) and click **CONNECT**, and go
-straight into your room. If the game is full, has a password or has already
-started, they are told why. Typing your computer's address under **CUSTOM...** also
+straight into your room. If the game is full or has a password, they are told why.
+**SPECTATE**, beside **CONNECT** (greyed until a network game is picked), watches it instead:
+a game still in its room is watched from the moment the host starts it, and a
+started game (listed **LIVE**, which can no longer be joined) is watched at once,
+if its host allows spectators. Typing your computer's address under **CUSTOM...** also
 works and goes straight into the room too.
 
 The local server is unencrypted and has no accounts, so use it only on a network

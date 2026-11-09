@@ -21,7 +21,7 @@ std::vector<uint8_t> encodeAnnounce(const LanAnnounce& a) {
     for (char c : kMagic) w.u8(uint8_t(c));
     w.u32(a.version); w.u64(a.nonce); w.u16(a.port);
     w.str(a.game.substr(0, 64)); w.str(a.host.substr(0, 64)); w.str(a.map.substr(0, 96));
-    w.u8(a.players); w.u8(a.capacity); w.u8(a.locked ? 1 : 0);
+    w.u8(a.players); w.u8(a.capacity); w.u8(a.locked ? 1 : 0); w.u8(a.running ? 1 : 0); w.u8(a.spectators ? 1 : 0);
     return std::move(w.b);
 }
 
@@ -31,7 +31,7 @@ std::optional<LanAnnounce> decodeAnnounce(const uint8_t* data, size_t size) {
     LanAnnounce a;
     a.version = r.u32(); a.nonce = r.u64(); a.port = r.u16();
     a.game = r.str(); a.host = r.str(); a.map = r.str();
-    a.players = r.u8(); a.capacity = r.u8(); a.locked = r.u8() == 1;
+    a.players = r.u8(); a.capacity = r.u8(); a.locked = r.u8() == 1; a.running = r.u8() == 1; a.spectators = r.u8() == 1;
     if (!r.ok || a.port == 0) return {};
     return a;
 }

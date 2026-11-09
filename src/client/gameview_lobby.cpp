@@ -114,7 +114,7 @@ float createOptionPx(float maxW) {
         if (st == tak::net::MpClient::State::Lobby && mp_->lanServer() && !lanHost_) {
             lanJoinStep();
             if (mp_->state() == tak::net::MpClient::State::Lobby) {
-                const char* note = "JOINING THE GAME...";
+                const char* note = lanWaitingStart_ ? "WAITING FOR THE GAME TO START..." : "JOINING THE GAME...";
                 blockText(note, cx - blockWidth(note, 2.0f) / 2, winH / 2.0f, 2.0f, {200, 200, 210, 255});
             }
             return;
@@ -135,13 +135,21 @@ float createOptionPx(float maxW) {
         if (!lanJoinAtMs_) lanJoinAtMs_ = now;
         if (now - mpListMs_ > 1000) { mp_->listGames(); mpListMs_ = now; }
         bool started = false;
+        lanWaitingStart_ = false;
         for (const auto& g : mp_->games()) {
+            if (lanSpectate_) {   // watching: a started game now, a waiting one from its start
+                if (!g.running) { lanWaitingStart_ = true; continue; }
+                mp_->spectate(g.id, joinPass_);
+                lanJoinSent_ = true;
+                return;
+            }
             if (g.running) { started = true; continue; }
             mp_->joinGame(g.id, joinPass_);
             lanJoinSent_ = true;
             return;
         }
-        if (started) fail("the game on this server has already started");
+        if (lanWaitingStart_) return;
+        if (started) fail("the game on this server has already started -- SPECTATE to watch it");
         else if (now - lanJoinAtMs_ > 5000) fail("the host has not opened a game on this server yet");
     }
 
