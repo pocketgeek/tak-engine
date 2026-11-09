@@ -1109,7 +1109,7 @@ uses for its random maps.
    Click **ACCEPT** (**Enter**) to use it, **SETTINGS** to go back and change
    the settings, or **DISCARD** (**Esc**) to keep your current map.
 
-![Left: RANDOM MAP SETTINGS with seed 2026, 4 players, layout Aramon Riverlands, trees 128, rocks 96, mana 128, water intensity 96, relief 128, width and height 16, world aramon, scattered mana (by map area) Medium. Right: GENERATED MAP PREVIEW, 16 x 16, 4 players, a green map with small ponds and four numbered yellow start markers](img/cartographer/random-generator.jpg)
+![Left: RANDOM MAP SETTINGS (shown before version 10 added the plateau, mountain and town fields) with seed 2026, 4 players, layout Aramon Riverlands, trees 128, rocks 96, mana 128, water intensity 96, relief 128, width and height 16, world aramon, scattered mana (by map area) Medium. Right: GENERATED MAP PREVIEW, 16 x 16, 4 players, a green map with small ponds and four numbered yellow start markers](img/cartographer/random-generator.jpg)
 
 *Generating a 4-player, 16 × 16 Aramon Riverlands map from seed 2026.*
 
@@ -1123,7 +1123,12 @@ uses for its random maps.
 | **RELIEF** | How many hills, from 0 (flat) to 255. |
 | **WIDTH**, **HEIGHT** | 1 to 64 units. |
 | **WORLD** | The world to use. |
-| **SCATTERED MANA (BY MAP AREA)** | None, Minimum, Medium, High or Max neutral mana spots spread over open ground, by area. Max is as dense as a home with six spots; each lower level halves it. Choosing any level on a map saved by an older version upgrades its recipe to version 9. |
+| **SCATTERED MANA (BY MAP AREA)** | None, Minimum, Medium, High or Max neutral mana spots spread over open ground, by area. Max is as dense as a home with six spots; each lower level halves it. |
+| **PLATEAUS**, **MOUNTAINS**, **TOWNS** | 0 to 255: cliff-edged plateaus with ramps, mountain ranges and walled towns (Zhon: villages), built from the world's own retail sections. Ignored where a world has no such kit (Veruna has no mountains) and, for plateaus, by Taros Maze and Creon Highlands, which make their own high ground. All three at 0 give the same terrain as generator version 9. |
+
+The fields are in two columns. **Regenerate** on a map made by a generator older
+than version 10 explains that its recipe cannot be rebuilt; use **RANDOM** for a
+new one.
 
 The generator adjusts some settings without asking, and the preview shows the
 size it really used:
