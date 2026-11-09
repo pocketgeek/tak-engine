@@ -9115,7 +9115,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // shot, so the first ring stood on the reach edge and the bodies behind it
     // never came into reach (attackring-mob-100: 47 of 100 in reach). The
     // owner of an inner spot is not braked while it walks in to it: it is in
-    // reach all the way and fires as it goes if its weapons aim. Braked (and
+    // reach all the way and fires as it goes if its weapons aim (a unit whose
+    // shot needs it to face the target mostly does not: 200 araarch on a scratch
+    // fixture fired 3 shots in 1,902 walking ticks, yet killed a Keep sooner,
+    // 17,496 damage by t=1200 against 15,704, more of them reaching). Braked (and
     // its spot let go, see engaged) once its own centre is as deep as its
     // spot, or held kWalkInHeld ticks, or its last crowd window found it still:
     // a body walled off from its spot shoots from where it stands.

@@ -3302,7 +3302,12 @@ reach for the last 600 ticks and 3,021 damage (Retail 44 / 44 / 2,685).
   the target, so the first bodies walk deepest and the ground behind them stays open; a fresh claim (`ringClaim`'s
   `ringNearest(..., deepFirst)`) takes the innermost free unspent layer too.
 * **The walk in** (`walkInRing`, from `walkOnShot`, so in `tickCombat` just before the brake): the owner of an inner
-  spot is not braked while it walks in to it, in reach the whole way (its weapons fire if they aim on the move). It
+  spot is not braked while it walks in to it, in reach the whole way. Whether it fires on the way depends on the
+  weapon: the fixtures' synthetic gun does (mob-100 offset 0: 94 shots in 2,071 walking ticks, its full rate is one
+  per 30), but a unit whose shot needs it to face the target does not. 200 retail Aramon archers (`araarch`) on a
+  scratch fixture fired 3 shots in 1,902 walking ticks, loaded on 1,765 of them but aligned on only 104, about 65
+  ticks of walk per walker. It still pays: against a Keep the same 200 archers had dealt 17,496 damage (the whole
+  Keep) by t=1200 against 15,704 before, and mob-100's damage_t1200 went 300 -> 635. It
   is braked once its centre is as deep as its spot, once held 30 ticks (`kWalkInHeld`), or once a crowd window found it
   still; `engaged` then lets the spot go for the members behind. A body making a press step (`pressIn`) is braked as
   before. `work.walk_ins` counts the walking ticks.

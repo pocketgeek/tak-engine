@@ -62514,6 +62514,426 @@
    "mode": "legion",
    "reason": "Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): AM-1 plus the sight gate: a fighter takes an E body only once its player sees it and it is inside the gun's 96 px, so the column walks up beside E before the chase (contact_settled_permille 0 -> 225, Retail 0 -> 125), and every fighter now finishes (g.F.done -1 -> 2522, Retail 2687; damage 180 of 180): work.held_rechecks.max 4 at the TS312 retake against the reference 3 (the W0 base raised by ratchets), licensed at the head's value: higher than allowed (cumulative vs reference 3 x1.10), got 4",
    "scenario": "fight-retarget"
+  },
+  {
+   "key": "engaged.member_ticks",
+   "max": 125417,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: engaged.member_ticks 125417 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 86919 x1.10; cumulative vs reference 86919 x1.10), got 125417",
+   "scenario": "attackring-f1-64"
+  },
+  {
+   "key": "engagement_on_flowing",
+   "max": 50,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: engagement_on_flowing 50 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 44 x1.10; cumulative vs reference 44 x1.10), got 50",
+   "scenario": "attackring-f1-64"
+  },
+  {
+   "key": "follow_chain_mean_x100",
+   "max": 417,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: follow_chain_mean_x100 417 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 363 x1.10; cumulative vs reference 252 x1.10), got 417",
+   "scenario": "attackring-f1-64"
+  },
+  {
+   "key": "gauge.engaged_max",
+   "max": 64,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: gauge.engaged_max 64 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 46 x1.10; cumulative vs reference 46 x1.10), got 64",
+   "scenario": "attackring-f1-64"
+  },
+  {
+   "key": "parked_held",
+   "max": 116110,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: parked_held 116110 at the DR317 gate, licensed at the head's value: higher than allowed (cumulative vs reference 70731 x1.10), got 116110",
+   "scenario": "attackring-f1-64"
+  },
+  {
+   "key": "reach.ring.hold0_max",
+   "max": 17,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: reach.ring.hold0_max 17 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 5 x1.10; cumulative vs reference 5 x1.10), got 17",
+   "scenario": "attackring-f1-64"
+  },
+  {
+   "key": "spins",
+   "max": 258,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: spins 258 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 210 x1.10; cumulative vs reference 210 x1.10), got 258",
+   "scenario": "attackring-f1-64"
+  },
+  {
+   "key": "stopped_permille",
+   "max": 672,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: stopped_permille 672 at the DR317 gate, licensed at the head's value: higher than allowed (cumulative vs reference 513 x1.10), got 672",
+   "scenario": "attackring-f1-64"
+  },
+  {
+   "key": "work.slot_search_cells.max",
+   "max": 3289,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.slot_search_cells.max 3289 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 1909 x1.10; cumulative vs reference 1909 x1.10), got 3289",
+   "scenario": "attackring-f1-64"
+  },
+  {
+   "key": "work.trace_cells.p99",
+   "max": 2358,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.trace_cells.p99 2358 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 2081 x1.10; cumulative vs reference 2121 x1.10), got 2358",
+   "scenario": "attackring-f1-64"
+  },
+  {
+   "key": "churn.bin0",
+   "max": 4569193,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: churn.bin0 4569193 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 3614680 x1.10; cumulative vs reference 983925 x1.10), got 4569193",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "contact_settled_permille",
+   "max": 1270000,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: contact_settled_permille 1270000 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 0 x1.10; cumulative vs reference 0 x1.10), got 1270000",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "engaged.member_ticks",
+   "max": 54347,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: engaged.member_ticks 54347 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 29457 x1.10; cumulative vs reference 29457 x1.10), got 54347",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "follow_chain_mean_x100",
+   "max": 491,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: follow_chain_mean_x100 491 at the DR317 gate, licensed at the head's value: higher than allowed (cumulative vs reference 370 x1.10), got 491",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "gauge.engaged_max",
+   "max": 27,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: gauge.engaged_max 27 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 15 x1.10; cumulative vs reference 15 x1.10), got 27",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "parked_held",
+   "max": 113039,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: parked_held 113039 at the DR317 gate, licensed at the head's value: higher than allowed (cumulative vs reference 75835 x1.10), got 113039",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "spins",
+   "max": 128,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: spins 128 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 62 x1.10; cumulative vs reference 62 x1.10), got 128",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "work.field_work.p99",
+   "max": 94160,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.field_work.p99 94160 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 46240 x1.10; cumulative vs reference 46240 x1.10), got 94160",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "work.field_work.total",
+   "max": 3782400,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.field_work.total 3782400 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 2836800 x1.10; cumulative vs reference 2836800 x1.10), got 3782400",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "work.field_work_refresh_moving.total",
+   "max": 3546000,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.field_work_refresh_moving.total 3546000 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 2600400 x1.10; cumulative vs reference 2600400 x1.10), got 3546000",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "work.fields_built.total",
+   "max": 16,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.fields_built.total 16 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 12 x1.10; cumulative vs reference 12 x1.10), got 16",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "work.fields_started_by_kind_4.total",
+   "max": 16,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.fields_started_by_kind_4.total 16 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 12 x1.10; cumulative vs reference 12 x1.10), got 16",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "work.group_loop_iters.total",
+   "max": 367,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.group_loop_iters.total 367 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 315 x1.10; cumulative vs reference 315 x1.10), got 367",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "work.legion_total.p99",
+   "max": 95108,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.legion_total.p99 95108 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 46516 x1.10; cumulative vs reference 2348 x1.10), got 95108",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "work.legion_total.total",
+   "max": 4684700,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.legion_total.total 4684700 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 3754134 x1.10; cumulative vs reference 1128359 x1.10), got 4684700",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "work.reach_presses.total",
+   "max": 2,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.reach_presses.total 2 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 1 x1.10; cumulative vs reference 1 x1.10), got 2",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "work.refresh_completed.total",
+   "max": 15,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.refresh_completed.total 15 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 11 x1.10; cumulative vs reference 11 x1.10), got 15",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "work.ring_reseeds.total",
+   "max": 15,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.ring_reseeds.total 15 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 11 x1.10; cumulative vs reference 11 x1.10), got 15",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "work.sched_group_visits.total",
+   "max": 204,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.sched_group_visits.total 204 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 152 x1.10; cumulative vs reference 152 x1.10), got 204",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "work.slides.total",
+   "max": 872,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.slides.total 872 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 687 x1.10), got 872",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "work.slot_search_cells.max",
+   "max": 15072,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.slot_search_cells.max 15072 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 7536 x1.10; cumulative vs reference 7536 x1.10), got 15072",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "work.still_units_processed.total",
+   "max": 2878,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.still_units_processed.total 2878 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 2463 x1.10; cumulative vs reference 2463 x1.10), got 2878",
+   "scenario": "attackring-f2-64"
+  },
+  {
+   "key": "contact_settled_permille",
+   "max": 224000,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: contact_settled_permille 224000 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 0 x1.10; cumulative vs reference 0 x1.10), got 224000",
+   "scenario": "attackring-mob-100"
+  },
+  {
+   "key": "engaged.member_ticks",
+   "max": 173244,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: engaged.member_ticks 173244 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 90096 x1.10; cumulative vs reference 90096 x1.10), got 173244",
+   "scenario": "attackring-mob-100"
+  },
+  {
+   "key": "follow_chain_mean_x100",
+   "max": 364,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: follow_chain_mean_x100 364 at the DR317 gate, licensed at the head's value: higher than allowed (cumulative vs reference 290 x1.10), got 364",
+   "scenario": "attackring-mob-100"
+  },
+  {
+   "key": "gauge.engaged_max",
+   "max": 91,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: gauge.engaged_max 91 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 47 x1.10; cumulative vs reference 47 x1.10), got 91",
+   "scenario": "attackring-mob-100"
+  },
+  {
+   "key": "open_still900",
+   "max": 100,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: open_still900 100 at the DR317 gate, licensed at the head's value: higher than allowed (cumulative vs reference 50 x1.10), got 100",
+   "scenario": "attackring-mob-100"
+  },
+  {
+   "key": "reach.ring.hold0_max",
+   "max": 24,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: reach.ring.hold0_max 24 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 5 x1.10; cumulative vs reference 5 x1.10), got 24",
+   "scenario": "attackring-mob-100"
+  },
+  {
+   "key": "spins",
+   "max": 388,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: spins 388 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 186 x1.10; cumulative vs reference 186 x1.10), got 388",
+   "scenario": "attackring-mob-100"
+  },
+  {
+   "key": "still900_ever",
+   "max": 100,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: still900_ever 100 at the DR317 gate, licensed at the head's value: higher than allowed (cumulative vs reference 56 x1.10), got 100",
+   "scenario": "attackring-mob-100"
+  },
+  {
+   "key": "stop_go",
+   "max": 918,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: stop_go 918 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 816 x1.10), got 918",
+   "scenario": "attackring-mob-100"
+  },
+  {
+   "key": "work.detour_cells.max",
+   "max": 1946,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.detour_cells.max 1946 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 1627 x1.10; cumulative vs reference 1627 x1.10), got 1946",
+   "scenario": "attackring-mob-100"
+  },
+  {
+   "key": "work.detours.max",
+   "max": 4,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.detours.max 4 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 3 x1.10; cumulative vs reference 3 x1.10), got 4",
+   "scenario": "attackring-mob-100"
+  },
+  {
+   "key": "work.detours.total",
+   "max": 144,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.detours.total 144 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 100 x1.10; cumulative vs reference 100 x1.10), got 144",
+   "scenario": "attackring-mob-100"
+  },
+  {
+   "key": "work.line_sweeps.total",
+   "max": 43436,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.line_sweeps.total 43436 at the DR317 gate, licensed at the head's value: higher than allowed (cumulative vs reference 31095 x1.10), got 43436",
+   "scenario": "attackring-mob-100"
+  },
+  {
+   "key": "work.slot_search_cells.max",
+   "max": 9901,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.slot_search_cells.max 9901 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 4104 x1.10; cumulative vs reference 4104 x1.10), got 9901",
+   "scenario": "attackring-mob-100"
+  },
+  {
+   "key": "work.still_units_processed.total",
+   "max": 6229,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.still_units_processed.total 6229 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 4518 x1.10; cumulative vs reference 4518 x1.10), got 6229",
+   "scenario": "attackring-mob-100"
+  },
+  {
+   "key": "engaged.member_ticks",
+   "max": 125417,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: engaged.member_ticks 125417 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 86919 x1.10; cumulative vs reference 86919 x1.10), got 125417",
+   "scenario": "attackring-squad-64"
+  },
+  {
+   "key": "engagement_on_flowing",
+   "max": 50,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: engagement_on_flowing 50 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 44 x1.10; cumulative vs reference 44 x1.10), got 50",
+   "scenario": "attackring-squad-64"
+  },
+  {
+   "key": "follow_chain_mean_x100",
+   "max": 417,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: follow_chain_mean_x100 417 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 363 x1.10; cumulative vs reference 252 x1.10), got 417",
+   "scenario": "attackring-squad-64"
+  },
+  {
+   "key": "gauge.engaged_max",
+   "max": 64,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: gauge.engaged_max 64 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 46 x1.10; cumulative vs reference 46 x1.10), got 64",
+   "scenario": "attackring-squad-64"
+  },
+  {
+   "key": "parked_held",
+   "max": 116110,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: parked_held 116110 at the DR317 gate, licensed at the head's value: higher than allowed (cumulative vs reference 70731 x1.10), got 116110",
+   "scenario": "attackring-squad-64"
+  },
+  {
+   "key": "reach.ring.hold0_max",
+   "max": 17,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: reach.ring.hold0_max 17 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 5 x1.10; cumulative vs reference 5 x1.10), got 17",
+   "scenario": "attackring-squad-64"
+  },
+  {
+   "key": "spins",
+   "max": 258,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: spins 258 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 210 x1.10; cumulative vs reference 210 x1.10), got 258",
+   "scenario": "attackring-squad-64"
+  },
+  {
+   "key": "stopped_permille",
+   "max": 672,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: stopped_permille 672 at the DR317 gate, licensed at the head's value: higher than allowed (cumulative vs reference 513 x1.10), got 672",
+   "scenario": "attackring-squad-64"
+  },
+  {
+   "key": "work.slot_search_cells.max",
+   "max": 3289,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.slot_search_cells.max 3289 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 1909 x1.10; cumulative vs reference 1909 x1.10), got 3289",
+   "scenario": "attackring-squad-64"
+  },
+  {
+   "key": "work.trace_cells.p99",
+   "max": 2358,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.trace_cells.p99 2358 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 2081 x1.10; cumulative vs reference 2121 x1.10), got 2358",
+   "scenario": "attackring-squad-64"
+  },
+  {
+   "key": "follow_chain_max",
+   "max": 9,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: follow_chain_max 9 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 8 x1.10; cumulative vs reference 8 x1.10), got 9",
+   "scenario": "attackring-wall-64"
+  },
+  {
+   "key": "reach.ring.damage_t1200",
+   "max": 129,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: reach.ring.damage_t1200 129 at the DR317 gate, licensed at the head's value: lower than allowed (per-step vs head base 151 x1.10; cumulative vs reference 151 x1.10), got 129",
+   "scenario": "attackring-wall-64"
+  },
+  {
+   "key": "work.ring_swaps.total",
+   "max": 8,
+   "mode": "legion",
+   "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.ring_swaps.total 8 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 7 x1.10; cumulative vs reference 7 x1.10), got 8",
+   "scenario": "attackring-wall-64"
   }
  ],
  "entries": {
@@ -451489,6 +451909,12 @@
    "cleared_exceptions": [],
    "ratchets": [],
    "reason": "DR317: Legion's ranged attack rings fire up to three bodies deep and more (legion-deep-rings, protocol 317, 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): a ranged ring whose reach edge holds fewer spots than its members gets a thick band 0 handed out innermost first, and its inner spots' owners walk in past the shot (walkInRing); retaken on the five attackring fixtures whose rings now go thick (f1-64, f2-64, squad-64, mob-100, wall-64): their Legion hashes, the new work class walk_ins and only the Legion keys that improved past the band (RATCHET); the keys that got worse are not retaken",
+   "when": "2026-11-08"
+  },
+  {
+   "cleared_exceptions": [],
+   "ratchets": [],
+   "reason": "DR317 accepted regressions: DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve; 60 keys on attackring-f1-64, -f2-64, -squad-64, -mob-100 and -wall-64 licensed at their gate values",
    "when": "2026-11-08"
   }
  ],
