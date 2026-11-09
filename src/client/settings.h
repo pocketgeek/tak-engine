@@ -403,14 +403,13 @@ inline Settings preferenceDefaults(const Settings& cur) {
 // fields reset. Together the three reset exactly what preferenceDefaults() does (with the
 // AUDIO and VOICE CHAT pages' own); tools/settings_test.cpp checks that, so a new field
 // that lands on no page is caught.
-inline Settings graphicsDefaults(const Settings& cur) {   // GRAPHICS: display + graphics
+inline Settings graphicsDefaults(const Settings& cur) {   // GRAPHICS: display + graphics (less tactical dots)
     Settings d = cur;
     const Settings f;
     d.fullscreen = f.fullscreen; d.vsync = f.vsync; d.maxFps = f.maxFps;
     d.nativeWayland = f.nativeWayland; d.ignoreDpiScaling = f.ignoreDpiScaling;
     d.renderer = f.renderer; d.textureFilter = f.textureFilter; d.unitShadows = f.unitShadows;
     d.smoothArt = f.smoothArt; d.videoDeblock = f.videoDeblock; d.treeSway = f.treeSway;
-    d.tacticalDots = f.tacticalDots; d.tacticalDotsZoom = f.tacticalDotsZoom;
     d.hiddenUnits = f.hiddenUnits; d.hiddenFadeOpacity = f.hiddenFadeOpacity;
     d.screenShake = f.screenShake; d.smoothMotion = f.smoothMotion; d.gpuMemoryLimit = f.gpuMemoryLimit;
     return d;
@@ -426,10 +425,11 @@ inline Settings uiDefaults(const Settings& cur) {   // UI: interface + cursor
     d.hardwareCursor = f.hardwareCursor; d.cursorScale = f.cursorScale;
     return d;
 }
-inline Settings gameDefaults(const Settings& cur) {   // GAME: the camera (name and data folder are kept)
+inline Settings gameDefaults(const Settings& cur) {   // GAME: camera + tactical dots (name and data folder kept)
     Settings d = cur;
     const Settings f;
     d.mouseZoomSpeed = f.mouseZoomSpeed; d.edgeScroll = f.edgeScroll; d.edgeScrollSpeed = f.edgeScrollSpeed;
+    d.tacticalDots = f.tacticalDots; d.tacticalDotsZoom = f.tacticalDotsZoom;
     return d;
 }
 
