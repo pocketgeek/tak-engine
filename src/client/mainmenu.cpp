@@ -169,10 +169,21 @@ struct MainMenu::Impl {
     bool benchMenu_ = false;          // benchmark intensity submenu (opened from SETTINGS)
     bool replayMenu_ = false;         // replay picker (opened from SETTINGS)
     int replayScroll_ = 0;            // first listed row
+    static constexpr int kReplayRows = 10;   // rows on show at once
+    SDL_FRect replayTrack_{}, replayThumb_{};   // the scroll bar (empty while it all fits)
+    bool replayDrag_ = false;                   // the thumb is held
+    float replayDragOff_ = 0;                   // where on the thumb it was taken
+    int replayMaxTop() const { return std::max(0, int(replayFiles_.size()) - kReplayRows); }
+    // The list scrolled so the thumb's top sits at y (the thumb dragged there).
+    void replayScrollTo(float thumbTop) {
+        const float room = replayTrack_.h - replayThumb_.h;
+        const float t = room > 0 ? std::clamp((thumbTop - replayTrack_.y) / room, 0.0f, 1.0f) : 0.0f;
+        replayScroll_ = int(std::lround(t * float(replayMaxTop())));
+    }
     std::vector<std::string> replayFiles_;   // full paths, newest first
     std::string chosenReplay_;
     std::string replayError_;         // shown on the picker
-    SDL_FRect replayBtnRect_[10]{};   // one per listed row (set each render)
+    SDL_FRect replayBtnRect_[kReplayRows]{};   // one per listed row (set each render)
     SDL_FRect benchBtnRect_[6]{};      // LOW..EXTRA ABSURD hit-rects (set each render)
     SDL_FRect benchPathRect_[2]{};     // its PATHFINDING choices, kBenchmarkPaths order (set each render)
     SDL_FRect benchSpeedRect_[3]{};    // its SPEED choices, kBenchmarkSpeeds order (set each render)
@@ -1335,6 +1346,7 @@ struct MainMenu::Impl {
     void scanReplays() {
         replayFiles_.clear();
         replayScroll_ = 0;
+        replayDrag_ = false;
         const std::string dir = tak::replayDir();
         if (dir.empty()) return;
         tak::net::recoverReplayParts(dir);
@@ -1362,7 +1374,7 @@ struct MainMenu::Impl {
         SDL_FRect dim{0, 0, float(winW), float(winH)};
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 150);
         SDL_RenderFillRectF(ren, &dim);
-        const int kRows = 10;
+        const int kRows = kReplayRows;
         const int shown = std::min(kRows, int(replayFiles_.size()) - replayScroll_);
         const int nBtn = std::max(1, shown);
         const float u = menuUnit(winW, winH, 688, 2 * 34 + 7 * 3.2f + 22 + kRows * 54 + 34 + 44);
@@ -1381,6 +1393,22 @@ struct MainMenu::Impl {
         { float lx, ly; SDL_RenderWindowToLogical(ren, mx, my, &lx, &ly); mx = int(lx); my = int(ly); }
         for (auto& r : replayBtnRect_) r = SDL_FRect{0, 0, 0, 0};
         float by = py0 + pad + titleH;
+        // The scroll bar, in the margin right of the rows: a track the rows' height and a
+        // thumb sized to the share on show, dragged, or clicked above/below to page.
+        replayTrack_ = replayThumb_ = SDL_FRect{0, 0, 0, 0};
+        if (replayMaxTop() > 0) {
+            const float listH = kRows * bh + (kRows - 1) * gap;
+            replayTrack_ = {px0 + pad + bw + (pad - 10 * u) / 2, by, 10 * u, listH};
+            const float th = std::max(28 * u, listH * float(kRows) / float(replayFiles_.size()));
+            const float ty = by + (listH - th) * float(replayScroll_) / float(replayMaxTop());
+            replayThumb_ = {replayTrack_.x, ty, replayTrack_.w, th};
+            SDL_SetRenderDrawColor(ren, 16, 18, 26, 255); SDL_RenderFillRectF(ren, &replayTrack_);
+            SDL_SetRenderDrawColor(ren, 70, 78, 96, 255); SDL_RenderDrawRectF(ren, &replayTrack_);
+            const bool hotThumb = replayDrag_ || (mx >= replayThumb_.x && mx <= replayThumb_.x + replayThumb_.w &&
+                                                  my >= replayThumb_.y && my <= replayThumb_.y + replayThumb_.h);
+            SDL_SetRenderDrawColor(ren, hotThumb ? 180 : 120, hotThumb ? 200 : 130, hotThumb ? 240 : 160, 255);
+            SDL_RenderFillRectF(ren, &replayThumb_);
+        }
         if (replayFiles_.empty()) {
             // Say WHERE they would be, so an empty list is an answer rather than a dead end.
             const std::string m1 = "NO REPLAYS SAVED YET";
@@ -1411,8 +1439,8 @@ struct MainMenu::Impl {
             by += 22 * u;
         }
         if (int(replayFiles_.size()) > kRows)
-            shadowText("WHEEL - SCROLL  (" + std::to_string(replayScroll_ + 1) + "-" +
-                       std::to_string(replayScroll_ + shown) + " OF " + std::to_string(replayFiles_.size()) + ")",
+            shadowText(std::to_string(replayScroll_ + 1) + "-" + std::to_string(replayScroll_ + shown) + " OF " +
+                       std::to_string(replayFiles_.size()),
                        px0 + pad, by + 8 * u, 1.8f * u, {150, 155, 175, 255});
         menuBackButton(px0, pw, pad, by + 8 * u, u);
     }
@@ -2071,20 +2099,38 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     d_->replayMenu_ = false;
                     d_->settingsMenu_ = true;   // back to SETTINGS, not out of the menu
                 } else if (e.type == SDL_MOUSEWHEEL) {
-                    const int maxTop = std::max(0, int(d_->replayFiles_.size()) - 10);
-                    d_->replayScroll_ = std::clamp(d_->replayScroll_ - e.wheel.y, 0, maxTop);
+                    d_->replayScroll_ = std::clamp(d_->replayScroll_ - e.wheel.y, 0, d_->replayMaxTop());
+                } else if (e.type == SDL_MOUSEMOTION && d_->replayDrag_) {
+                    d_->replayScrollTo(float(e.motion.y) - d_->replayDragOff_);
+                } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+                    d_->replayDrag_ = false;
                 } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                     float fx = float(e.button.x), fy = float(e.button.y);
                     auto hit = [&](const SDL_FRect& r) {
                         return r.w > 0 && fx >= r.x && fx <= r.x + r.w && fy >= r.y && fy <= r.y + r.h;
                     };
+                    // The scroll bar: take the thumb, or page toward the click on the track.
+                    // (The bar is a little wider to the hand than to the eye.)
+                    SDL_FRect grab = d_->replayTrack_;
+                    grab.x -= 6; grab.w += 12;
+                    if (hit(grab)) {
+                        const SDL_FRect& t = d_->replayThumb_;
+                        if (fy >= t.y && fy <= t.y + t.h) {
+                            d_->replayDrag_ = true;
+                            d_->replayDragOff_ = fy - t.y;
+                        } else {
+                            const int page = fy < t.y ? -Impl::kReplayRows : Impl::kReplayRows;
+                            d_->replayScroll_ = std::clamp(d_->replayScroll_ + page, 0, d_->replayMaxTop());
+                        }
+                        continue;
+                    }
                     if (hit(d_->menuBackRect_)) {   // BACK -> SETTINGS, as Esc
                         d_->sfx_.play(menuclick::kBack);
                         d_->replayMenu_ = false;
                         d_->settingsMenu_ = true;
                         continue;
                     }
-                    for (int i = 0; i < 10; ++i)
+                    for (int i = 0; i < Impl::kReplayRows; ++i)
                         if (hit(d_->replayBtnRect_[i])) {
                             const size_t k = size_t(d_->replayScroll_ + i);
                             if (k >= d_->replayFiles_.size()) break;
