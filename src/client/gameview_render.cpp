@@ -3063,9 +3063,12 @@
             // go the room's forfeit way, and main() shows the defeat's result screen.
             const bool canSurrender = canReturnToMenu_ && mp_ && !watchOnly() && outcome_ == 0 &&
                                       mp_->state() == tak::net::MpClient::State::InGame;
-            // The last row is SURRENDER, MAIN MENU or, launched without the menu, QUIT.
-            const int nBtn = 6;
-            const float bw = 280, gap = 14, pad = 32, titlePx = 3.0f;
+            // RESUME, YOUTUBE STREAMING, GRAPHICS, USER INTERFACE, GAME, AUDIO, CONTROLS and
+            // VOICE CHAT, then SURRENDER, MAIN MENU or (launched without the menu) QUIT.
+            const int nBtn = 8 + (canSurrender ? 1 : 0) + (canReturnToMenu_ && !canSurrender ? 1 : 0) +
+                             (!canReturnToMenu_ ? 1 : 0);
+            const float bw = 280, pad = 32, titlePx = 3.0f;
+            const float gap = winH < 640 ? 6.0f : 14.0f;   // tighter on a short window
             const float titleH = 7 * titlePx + 24;
             // Buttons shrink on a short window (the minimum is 480 high) rather than spill.
             const float bh = std::clamp((float(winH) - 2 * pad - titleH - 24 - (nBtn - 1) * gap) / float(nBtn), 30.0f, 50.0f);
@@ -3104,7 +3107,9 @@
                 SDL_Event event{};event.type=SDL_USEREVENT;event.user.code=tak::kStreamingEvent;
                 SDL_PushEvent(&event);
             });
-            btn("OPTIONS", [this] { exitMenu_ = false; openOptions(); });
+            btn("GRAPHICS", [this] { exitMenu_ = false; openOptions(tak::OptionsPage::Graphics); });
+            btn("USER INTERFACE", [this] { exitMenu_ = false; openOptions(tak::OptionsPage::Interface); });
+            btn("GAME", [this] { exitMenu_ = false; openOptions(tak::OptionsPage::Game); });
             btn("AUDIO", [this] { exitMenu_ = false; openAudioOptions(); });
             btn("CONTROLS", [this] { exitMenu_ = false; openHotkeys(); });   // hotkey rebinding
             btn("VOICE CHAT", [this] { exitMenu_ = false; openVoiceOptions(); });

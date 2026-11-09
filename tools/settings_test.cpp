@@ -290,6 +290,26 @@ int main() {
         reset("gpuMemoryLimit",   d.gpuMemoryLimit == fresh.gpuMemoryLimit && d.gpuMemoryLimit == 1280);
         reset("uiFont",           d.uiFont == fresh.uiFont && d.uiFont == 0);
 
+        // The GRAPHICS, UI and GAME pages' DEFAULTS together reset exactly what the old
+        // single Options DEFAULTS did: a field on no page would make this differ.
+        {
+            Settings all = cur;
+            all.fullscreen = !all.fullscreen; all.vsync = !all.vsync; all.maxFps = 77; all.nativeWayland = 2;
+            all.ignoreDpiScaling = !all.ignoreDpiScaling; all.smoothArt = !all.smoothArt; all.treeSway = !all.treeSway;
+            all.smoothMotion = !all.smoothMotion; all.scorecardScale = 1.5f; all.healthBars = 2; all.statsPanel = !all.statsPanel;
+            all.buildBarAlign = 2; all.buildBarScale = 2.5f; all.idleBuilders = 3; all.idleBuildersScale = 2.0f;
+            all.chatAlign = 1; all.chatScale = 2.0f; all.hardwareCursor = !all.hardwareCursor; all.cursorScale = 5;
+            all.mouseZoomSpeed = 2.0f; all.edgeScroll = !all.edgeScroll; all.edgeScrollSpeed = 3.0f;
+            const Settings pages = tak::gameDefaults(tak::uiDefaults(tak::graphicsDefaults(all)));
+            const bool same = pages == tak::preferenceDefaults(all);
+            std::printf("  %-23s %s\n", "pages => full reset", same ? "ok" : "FAIL (a field is on no Options page)");
+            if (!same) ++g_fail;
+            const bool own = tak::graphicsDefaults(all).uiScale == all.uiScale && tak::uiDefaults(all).unitShadows == all.unitShadows &&
+                             tak::gameDefaults(all).uiScale == all.uiScale && tak::gameDefaults(all).playerName == all.playerName;
+            std::printf("  %-23s %s\n", "each page its own", own ? "ok" : "FAIL");
+            if (!own) ++g_fail;
+        }
+
         // And the two questions must agree: after a reset we ARE at defaults, which is
         // the invariant that broke when the preserve list and atDefaults() diverged.
         const bool agree = (d == tak::preferenceDefaults(d));

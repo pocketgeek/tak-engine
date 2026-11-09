@@ -181,10 +181,10 @@ SDL_AudioDeviceID openAudioDevice(int iscapture, const SDL_AudioSpec* want,
 OptionsScreen::OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
                              std::function<void()> onSave, int audioChannels,
                              std::function<void()> onHotkeys, std::function<void()> onAudioDevice,
-                             DataFolderRow dataFolder)
+                             DataFolderRow dataFolder, OptionsPage page)
     : ren_(ren), s_(s), onChange_(std::move(onChange)), onSave_(std::move(onSave)),
       onHotkeys_(std::move(onHotkeys)), onAudioDevice_(std::move(onAudioDevice)),
-      folder_(std::move(dataFolder)) {
+      folder_(std::move(dataFolder)), page_(page) {
     build(audioChannels > 0 ? audioChannels : detectOutputChannels());
 }
 
@@ -474,7 +474,7 @@ void OptionsScreen::build(int channels) {
     channels_ = channels;
     if (page_ == OptionsPage::Voice) { buildVoice(); return; }
     if (page_ == OptionsPage::Audio) { buildAudio(); return; }
-    std::fprintf(stderr, "Options: %d speaker sliders\n", channels);
+    (void)channels;
     auto section = [&](const char* label) { ctls_.push_back({Control::Section, label, 0, 0, {}, {}, {}, {}, {}}); };
     auto slider = [&](const char* label, float lo, float hi, std::function<float()> get,
                       std::function<void(float)> set, std::function<std::string(float)> fmt) {
@@ -778,6 +778,28 @@ void OptionsScreen::build(int channels) {
     // menu -- the in-game Esc menu and the title screen's menu button. See mainmenu.cpp
     // and the in-game GAME MENU. onHotkeys_ is retained for compatibility but unused here.)
     // DEFAULTS / BACK are drawn as a fixed footer (see layout()/render()), not list rows.
+
+    // The rows above are every one-time OPTIONS setting; keep this page's. A section goes
+    // to one page; HARDWARE CURSOR and CURSOR SIZE leave GRAPHICS and CAMERA for a CURSOR
+    // section on USER INTERFACE.
+    auto pageOf = [](const std::string& section) {
+        if (section == "DISPLAY" || section == "GRAPHICS") return OptionsPage::Graphics;
+        if (section == "INTERFACE") return OptionsPage::Interface;
+        return OptionsPage::Game;   // PLAYER, GAME DATA, CAMERA
+    };
+    auto cursorRow = [](const Control& c) { return c.label == "HARDWARE CURSOR" || c.label == "CURSOR SIZE"; };
+    std::vector<Control> all = std::move(ctls_), cursor;
+    ctls_.clear();
+    std::string inSection;
+    for (auto& c : all) {
+        if (c.kind == Control::Section) inSection = c.label;
+        if (c.kind != Control::Section && cursorRow(c)) { cursor.push_back(std::move(c)); continue; }
+        if (pageOf(inSection) == page_) ctls_.push_back(std::move(c));
+    }
+    if (page_ == OptionsPage::Interface && !cursor.empty()) {
+        ctls_.push_back({Control::Section, "CURSOR", 0, 0, {}, {}, {}, {}, {}});
+        for (auto& c : cursor) ctls_.push_back(std::move(c));
+    }
 }
 
 void OptionsScreen::layout(int winW, int winH) {
@@ -1082,7 +1104,9 @@ void OptionsScreen::render(int winW, int winH) {
     SDL_SetRenderDrawColor(ren_, 24, 26, 34, 245); SDL_RenderFillRectF(ren_, &panel_);
     SDL_SetRenderDrawColor(ren_, 120, 130, 160, 255); SDL_RenderDrawRectF(ren_, &panel_);
 
-    const char* title = page_ == OptionsPage::Voice ? "VOICE CHAT" : page_ == OptionsPage::Audio ? "AUDIO" : "OPTIONS";
+    const char* title = page_ == OptionsPage::Voice ? "VOICE CHAT" : page_ == OptionsPage::Audio ? "AUDIO"
+                      : page_ == OptionsPage::Graphics ? "GRAPHICS" : page_ == OptionsPage::Interface ? "USER INTERFACE"
+                                                                                                     : "GAME";
     float tpx = 3.4f * u_;
     uiText(ren_, title, panel_.x + (panel_.w - uiTextWidth(title, tpx)) / 2,
                   panel_.y + 13 * u_, tpx, {235, 225, 180, 255});
@@ -1337,8 +1361,10 @@ void OptionsScreen::drawDefaultsPrompt(int winW, int winH) {
         : page_ == OptionsPage::Audio
         ? std::vector<std::string>{"EVERY SOUND SETTING GOES BACK TO ITS DEFAULT,",
                                    "AND EVERY TRACK TO ITS ORIGINAL MUSIC."}
-        : std::vector<std::string>{"EVERY OPTION HERE GOES BACK TO ITS DEFAULT.",
-                                   "YOUR PLAYER NAME AND GAME DATA FOLDER ARE KEPT."};
+        : page_ == OptionsPage::Game
+        ? std::vector<std::string>{"THE CAMERA SETTINGS GO BACK TO THEIR DEFAULTS.",
+                                   "YOUR PLAYER NAME AND GAME DATA FOLDER ARE KEPT."}
+        : std::vector<std::string>{"EVERY SETTING ON THIS PAGE GOES BACK TO ITS DEFAULT."};
     defaultsPrompt_.render(ren_, panel_, u_, winW, winH, "RESET TO DEFAULTS?", lines, "YES", "NO");
 }
 
@@ -1346,8 +1372,7 @@ void OptionsScreen::defaultsPromptInput(const SDL_Event& e) {
     if (defaultsPrompt_.input(e) != 1) return;   // NO / Esc: nothing changes
     // One definition per page, shared with atDefaults().
     const std::string deviceWas = currentAudioDevice();
-    s_ = page_ == OptionsPage::Voice ? tak::voiceDefaults(s_)
-       : page_ == OptionsPage::Audio ? tak::audioDefaults(s_) : tak::preferenceDefaults(s_);
+    s_ = pageDefaults();
     // The sound device goes back to the system default: switch to it now, as picking it in
     // the SOUND DEVICE list does, and only if the device in use really changes. The voice
     // devices need nothing here: the host applies them from the settings on every change.

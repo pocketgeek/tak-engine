@@ -246,7 +246,7 @@
             [this] { sounds_.reopenDevice(); });
     }
 
-    void GameView::openOptions() {
+    void GameView::openOptions(tak::OptionsPage page) {
         if (!settings_) return;
         options_ = std::make_unique<tak::OptionsScreen>(ren_, *settings_,
             [this, fsWas = settings_->fullscreen, vsWas = settings_->vsync]() mutable {
@@ -271,9 +271,10 @@
             // GAME DATA FOLDER: shown, never changeable here -- this view's whole session
             // (and in multiplayer, its agreed gameplay data) sits on the mounted install.
             tak::DataFolderRow{installRoot_,
-                replayMode_ ? "Change it from Options on the main menu, not while watching a replay."
-                : inLobbyPhase() ? "Change it from Options on the main menu, not in a lobby."
-                                 : "Change it from Options on the main menu, not during a game.", {}});
+                replayMode_ ? "Change it from Settings > Game on the main menu, not while watching a replay."
+                : inLobbyPhase() ? "Change it from Settings > Game on the main menu, not in a lobby."
+                                 : "Change it from Settings > Game on the main menu, not during a game.", {}},
+            page);
     }
 
     namespace {

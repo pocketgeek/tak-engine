@@ -141,10 +141,10 @@ struct MainMenu::Impl {
     // The SETTINGS menu overlay -- the lower-right menu button opens THIS (OPTIONS / CONTROLS)
     // instead of jumping straight into Options, mirroring the in-game Esc GAME MENU.
     bool settingsMenu_ = false;
-    // By id: OPTIONS / CONTROLS / VOICE CHAT / BENCHMARK / LOAD REPLAY / STREAMING / AUDIO
-    // (shown in kSettingsOrder: AUDIO under OPTIONS).
-    SDL_FRect setBtnRect_[7]{};
-    static constexpr int kSettingsOrder[7] = {0, 6, 1, 2, 3, 4, 5};
+    // By id: GRAPHICS / CONTROLS / VOICE CHAT / BENCHMARK / LOAD REPLAY / STREAMING / AUDIO /
+    // USER INTERFACE / GAME, shown in kSettingsOrder (the Options pages first).
+    SDL_FRect setBtnRect_[9]{};
+    static constexpr int kSettingsOrder[9] = {0, 7, 8, 6, 1, 2, 3, 4, 5};
     SDL_FRect menuBackRect_{};         // the BACK button of SETTINGS, BENCHMARK and LOAD REPLAY (set each render)
     VoiceEngine* voice_ = nullptr;     // main()'s voice engine (MainMenu::setVoice)
 
@@ -1275,8 +1275,8 @@ struct MainMenu::Impl {
         SDL_FRect dim{0, 0, float(winW), float(winH)};
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 150);
         SDL_RenderFillRectF(ren, &dim);
-        const int nBtn = 7;
-        const float u = menuUnit(winW, winH, 388, 450);
+        const int nBtn = 9;
+        const float u = menuUnit(winW, winH, 388, 560);
         const float bw = 320 * u, gap = 16 * u, pad = 34 * u, titlePx = 3.2f * u;
         const float titleH = 7 * titlePx + 22 * u;
         // Buttons shrink on a short window rather than run off it.
@@ -1292,8 +1292,8 @@ struct MainMenu::Impl {
         shadowText("SETTINGS", px0 + (pw - tw("SETTINGS", titlePx)) / 2, py0 + pad, titlePx, {235, 225, 180, 255});
         int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
         { float lx, ly; SDL_RenderWindowToLogical(ren, mx, my, &lx, &ly); mx = int(lx); my = int(ly); }
-        const char* labels[nBtn] = {"OPTIONS", "CONTROLS", "VOICE CHAT", "BENCHMARK", "LOAD REPLAY", "YOUTUBE STREAMING",
-                                    "AUDIO"};
+        const char* labels[nBtn] = {"GRAPHICS", "CONTROLS", "VOICE CHAT", "BENCHMARK", "LOAD REPLAY", "YOUTUBE STREAMING",
+                                    "AUDIO", "USER INTERFACE", "GAME"};
         float by = py0 + pad + titleH;
         for (int i : kSettingsOrder) {
             SDL_FRect r{px0 + pad, by, bw, bh};
@@ -1731,8 +1731,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 o.input(wheel, w, h);
             }
             o.render(w, h);
-        } else if (settings && tak::devFlag("TAK_SHOT_OPTIONS")) {
-            OptionsScreen o(d_->ren, *settings, [] {}, [] {}, 2, {}, {}, d_->dataFolder_);
+        } else if (settings && tak::devFlag("TAK_SHOT_OPTIONS")) {   // =graphics|interface|game (default)
+            const std::string page = tak::devEnv("TAK_SHOT_OPTIONS");
+            OptionsScreen o(d_->ren, *settings, [] {}, [] {}, 2, {}, {}, d_->dataFolder_,
+                            page == "graphics" ? OptionsPage::Graphics : page == "interface" ? OptionsPage::Interface
+                                                                                             : OptionsPage::Game);
             o.render(w, h);
         }
         // Debug: TAK_SHOT_MENU=settings|benchmark|replay captures that panel.
@@ -1774,7 +1777,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
     // A screen opened from SETTINGS (Options, Controls, Voice Chat, Benchmark, YouTube
     // Streaming) goes back to SETTINGS on BACK / Esc, as LOAD REPLAY does.
     bool fromSettings = false;
-    auto openGeneralOptions = [&] {
+    auto openGeneralOptions = [&](OptionsPage page) {
         d_->options_ = std::make_unique<OptionsScreen>(d_->ren, *settings,
             [this, ren = d_->ren, music, settings, fsWas = settings->fullscreen,
              vsWas = settings->vsync]() mutable {
@@ -1799,7 +1802,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             },
             [settings] { saveSettings(*settings); }, 0, [] {},
             [music] { if (music) music->reopen(); },   // live output-device switch
-            d_->dataFolder_);
+            d_->dataFolder_, page);
     };
 
     PresentationPacer streamPacer;
@@ -1981,12 +1984,13 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     auto hit = [&](const SDL_FRect& r) { return fx >= r.x && fx <= r.x + r.w && fy >= r.y && fy <= r.y + r.h; };
                     SDL_Renderer* ren = d_->ren;
                     // Each opens a page: the menu-button click (menuclick.h).
-                    for (int i = 0; i < 7; ++i)
+                    for (int i = 0; i < 9; ++i)
                         if (hit(d_->setBtnRect_[i]) && (i != 5 || streaming)) d_->sfx_.play(menuclick::kForward);
                     if (hit(d_->menuBackRect_)) {          // BACK -> the title screen, as Esc
                         d_->sfx_.play(menuclick::kBack);
                         d_->settingsMenu_ = false;
-                    } else if (hit(d_->setBtnRect_[0])) {          // OPTIONS -> the audio/display screen
+                    } else if (hit(d_->setBtnRect_[0]) || hit(d_->setBtnRect_[7]) || hit(d_->setBtnRect_[8])) {
+                        // GRAPHICS / USER INTERFACE / GAME -> that page of Options
                         d_->settingsMenu_ = false;
                         fromSettings = true;
                         // Cartographer may have changed the shared data folder since this
@@ -1995,7 +1999,8 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                             settings->dataDir = disk.dataDir;
                             settings->dataManifest = disk.dataManifest;
                         }
-                        openGeneralOptions();
+                        openGeneralOptions(hit(d_->setBtnRect_[0]) ? OptionsPage::Graphics
+                                           : hit(d_->setBtnRect_[7]) ? OptionsPage::Interface : OptionsPage::Game);
                     } else if (hit(d_->setBtnRect_[6])) {   // AUDIO -> its own page of Options
                         d_->settingsMenu_ = false;
                         fromSettings = true;

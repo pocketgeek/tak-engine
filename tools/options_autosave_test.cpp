@@ -85,7 +85,7 @@ static void testOptions(SDL_Renderer* ren) {
     int saves = 0, changes = 0;
     auto save = [&] { ++saves; check(saveSettings(s), "the host's save writes the file"); };
     {
-        OptionsScreen o(ren, s, [&] { ++changes; }, save, 2);
+        OptionsScreen o(ren, s, [&] { ++changes; }, save, 2, {}, {}, {}, OptionsPage::Graphics);
         o.render(W, H);
 
         // A toggle: in the file at once.
@@ -96,7 +96,8 @@ static void testOptions(SDL_Renderer* ren) {
 
         // A slider: live on every drag step, saved once when let go. MASTER VOLUME is on the
         // AUDIO page, with the rest of the sound settings.
-        check(o.rowRect("MASTER VOLUME") == nullptr, "the sound settings are not on the OPTIONS page");
+        check(o.rowRect("MASTER VOLUME") == nullptr && o.rowRect("UI SCALE") == nullptr && o.rowRect("PLAYER NAME") == nullptr,
+              "GRAPHICS holds only its own settings");
         OptionsScreen audio(ren, s, [&] { ++changes; }, save, std::vector<music::SideTracks>{}, 2);
         audio.render(W, H);
         if (const SDL_FRect* r = bring(audio, "MASTER VOLUME")) {
@@ -125,8 +126,11 @@ static void testOptions(SDL_Renderer* ren) {
             check(saves == 3 && loadSettings().gpuMemoryLimit == kGpuMemoryLimits[0], "a dropdown pick is saved at once");
         }
 
-        // The player name: typed live, saved when its field loses focus.
-        if (const SDL_FRect* r = bring(o, "PLAYER NAME")) {
+        // The player name (on GAME): typed live, saved when its field loses focus.
+        OptionsScreen game(ren, s, [&] { ++changes; }, save, 2, {}, {}, {}, OptionsPage::Game);
+        game.render(W, H);
+        if (const SDL_FRect* r = bring(game, "PLAYER NAME")) {
+            OptionsScreen& o = game;
             click(o, *r);
             check(o.editingText(), "clicking the name field focuses it");
             SDL_Event t{}; t.type = SDL_TEXTINPUT; SDL_strlcpy(t.text.text, "Aldric", sizeof t.text.text);
@@ -143,13 +147,13 @@ static void testOptions(SDL_Renderer* ren) {
     }   // the screen closes with the name still focused
     check(saves == 5 && loadSettings().playerName == "Brand", "closing the screen saves the name being typed");
 
-    // DEFAULTS asks first.
+    // DEFAULTS asks first, and resets only its page (GRAPHICS here).
     saves = 0;
     {
-        OptionsScreen o(ren, s, [&] { ++changes; }, save, 2);
+        OptionsScreen o(ren, s, [&] { ++changes; }, save, 2, {}, {}, {}, OptionsPage::Graphics);
         o.render(W, H);
         const Settings before = s;
-        check(!(s == preferenceDefaults(s)), "the profile is off its defaults");
+        check(!(s == graphicsDefaults(s)), "the profile is off its defaults");
         click(o, o.defaultsRect());
         check(s == before && saves == 0, "DEFAULTS alone changes nothing");
         const SDL_FRect no = o.defaultsNoRect(), yes = o.defaultsYesRect();
@@ -160,7 +164,7 @@ static void testOptions(SDL_Renderer* ren) {
         check(s == before && saves == 0 && o.defaultsYesRect().w == 0, "Esc answers NO, and stays in Options");
         click(o, o.defaultsRect());
         click(o, o.defaultsYesRect());
-        check(s == preferenceDefaults(before) && s.playerName == "Brand", "YES resets, keeping the player name");
+        check(s == graphicsDefaults(before) && s.playerName == "Brand", "YES resets this page, keeping the player name");
         check(saves == 1 && loadSettings() == s, "YES saves the defaults");
         check(click(o, o.defaultsRect()) == false && o.defaultsYesRect().w == 0, "at defaults, DEFAULTS does nothing");
     }

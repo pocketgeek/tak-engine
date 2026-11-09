@@ -169,7 +169,7 @@ remembers it, and does not ask again.
 - On Linux, the folder picker needs `kdialog` or `zenity`. Without either one,
   start the game with `--data` instead (see [Command line](#command-line)).
 
-To use a different install later, open **Settings → Options** on the main menu
+To use a different install later, open **Settings → Game** on the main menu
 and click **Change** beside **Data folder** (see
 [Game data folder](#game-data-folder)). The map editor uses the same setting.
 
@@ -237,7 +237,9 @@ The **Settings** button opens:
 
 | Entry | What it does |
 | --- | --- |
-| **Options** | Display, graphics, interface and camera settings. See [Options](#options). |
+| **Graphics** | Display and graphics settings. See [Options](#options). |
+| **User Interface** | Interface and cursor settings. See [Options](#options). |
+| **Game** | Player name, game data folder and camera. See [Options](#options). |
 | **Audio** | Sound device, volumes, speakers and custom music. See [Audio](#audio). |
 | **Controls** | Rebind command, selection, view, emote and push-to-talk keys. |
 | **Voice Chat** | Turn voice chat on and choose the microphone, voice output and volumes. See [Voice chat](#voice-chat). |
@@ -271,7 +273,7 @@ the details.
 The version number is shown on the title screen.
 
 In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
-**Options**, **Audio**, **Controls**, **Voice Chat** and **Surrender**. Replays, spectators and a
+**Graphics**, **User Interface**, **Game**, **Audio**, **Controls**, **Voice Chat** and **Surrender**. Replays, spectators and a
 finished game have **Main Menu** in place of Surrender.
 **Surrender** (click twice to confirm) ends your part in the game and shows the
 defeat screen with the match's statistics; your units go the way the room's forfeit
@@ -1349,7 +1351,7 @@ speed keys are fixed.
 | **Alt + right-click** | Unload the selected transports there. |
 | **Right-drag** | A box (at least about 32 × 32 pixels; a smaller drag is an ordinary right-click): the selection attacks the visible enemies in it, nearest first; units with no attack order that can clear it clear the box (reclaim); a lone transport loads your units in it. The cursor shows what the box will do. |
 | **Middle-drag**, or the cursor at a screen edge | Scroll the map. |
-| **Mouse wheel** | Zoom in and out, towards the cursor. Far out, **Options → Tactical Dots** can draw units as minimap-style dots. |
+| **Mouse wheel** | Zoom in and out, towards the cursor. Far out, **Settings → Graphics → Tactical Dots** can draw units as minimap-style dots. |
 | **Mouse wheel** during a Shift-drag build line | Space the buildings out (up) or pack them tighter (down), one cell per notch. The camera does not zoom. |
 | **Minimap left-click / drag** | Move the camera. With an order armed, issue it there instead. |
 | **Minimap right-click** | Move the selection there, or attack, help or repair the unit under the pointer. Shift queues it. |
@@ -1882,13 +1884,19 @@ in a formation with ground units keep station over them.
 
 ## Options
 
-Open **Options** from **Settings** on the main menu, or **Esc → Options** in a
-game. Changes apply and are saved immediately; there is no Save button
-(**Defaults** is at the bottom left, **Back** at the bottom right). A
+The options are on three pages: **Graphics** ([Display](#display) and
+[Graphics](#graphics)), **User Interface** ([Interface](#interface), plus
+**Hardware Cursor** and **Cursor Size** under *Cursor*) and **Game**
+([Player](#player), [Game data folder](#game-data-folder) and [Camera](#camera)).
+Open them from **Settings** on the main menu, or from the game menu (**Esc**) in a
+game; sound has its own [Audio](#audio) page. Changes apply and are saved
+immediately; there is no Save button (**Defaults** is at the bottom left, **Back**
+at the bottom right). A
 slider is saved when you let go of it, a dropdown when you pick a choice, and your player name when you press
 Enter or click elsewhere. **Defaults** asks first (**Reset to defaults?**
-**Yes** / **No**), then puts the options back to their defaults; it leaves your
-player name, data folder, key bindings, audio and voice chat settings alone. It also sets UI Scale and Cursor Size
+**Yes** / **No**), then puts that page's options back to their defaults; the
+**Game** page's leaves your player name and data folder alone, and no page touches
+key bindings, audio or voice chat. It also sets UI Scale and Cursor Size
 back to their defaults, undoing the one-time enlargement made by Ignore Windows
 Display Scaling, Native Retina Resolution or Native Wayland, so raise them again
 on a scaled or Retina display.
@@ -1918,7 +1926,7 @@ and keeps the current one. A good folder is saved at once, then the game offers
 **Restart now** (or **Later**) to load it, because everything the game has
 loaded comes from that folder.
 
-You can change the folder only from **Options** on the main menu. During a game,
+You can change the folder only from **Settings → Game** on the main menu. During a game,
 in a lobby or while watching a replay the row is greyed out. It is also greyed
 out when the game was started with `--data` or from inside an install folder,
 because those always win over the setting. **Defaults** never changes the data
@@ -3232,13 +3240,13 @@ itself is being starved. TAK Engine caps and backs off its own video-memory use
 to avoid this. If it still happens:
 
 - close other programs that use the GPU heavily;
-- set **Options → Graphics → GPU Memory Limit** to 768 MB or 512 MB;
+- set **Settings → Graphics → GPU Memory Limit** to 768 MB or 512 MB;
 - turn **Smooth GUI Art** off and **Shadows** off;
 - use a lower resolution.
 
 ### The game will not start, or shows a black screen
 
-If this started after you changed **Options → Graphics → Renderer**, set it back
+If this started after you changed **Settings → Graphics → Renderer**, set it back
 to Auto by hand: close the game, open `settings.ini` (see
 [Where files are kept](#where-files-are-kept)) in a text editor, and change the
 line `renderer = ...` to

@@ -399,6 +399,40 @@ inline Settings preferenceDefaults(const Settings& cur) {
     return d;
 }
 
+// What each Options page's DEFAULTS means: the current settings with only that page's
+// fields reset. Together the three reset exactly what preferenceDefaults() does (with the
+// AUDIO and VOICE CHAT pages' own); tools/settings_test.cpp checks that, so a new field
+// that lands on no page is caught.
+inline Settings graphicsDefaults(const Settings& cur) {   // GRAPHICS: display + graphics
+    Settings d = cur;
+    const Settings f;
+    d.fullscreen = f.fullscreen; d.vsync = f.vsync; d.maxFps = f.maxFps;
+    d.nativeWayland = f.nativeWayland; d.ignoreDpiScaling = f.ignoreDpiScaling;
+    d.renderer = f.renderer; d.textureFilter = f.textureFilter; d.unitShadows = f.unitShadows;
+    d.smoothArt = f.smoothArt; d.videoDeblock = f.videoDeblock; d.treeSway = f.treeSway;
+    d.tacticalDots = f.tacticalDots; d.tacticalDotsZoom = f.tacticalDotsZoom;
+    d.hiddenUnits = f.hiddenUnits; d.hiddenFadeOpacity = f.hiddenFadeOpacity;
+    d.screenShake = f.screenShake; d.smoothMotion = f.smoothMotion; d.gpuMemoryLimit = f.gpuMemoryLimit;
+    return d;
+}
+inline Settings uiDefaults(const Settings& cur) {   // UI: interface + cursor
+    Settings d = cur;
+    const Settings f;
+    d.uiFont = f.uiFont; d.scorecardScale = f.scorecardScale; d.uiScale = f.uiScale;
+    d.healthBars = f.healthBars; d.statsPanel = f.statsPanel;
+    d.buildBarAlign = f.buildBarAlign; d.buildBarScale = f.buildBarScale;
+    d.idleBuilders = f.idleBuilders; d.idleBuildersScale = f.idleBuildersScale;
+    d.chatAlign = f.chatAlign; d.chatScale = f.chatScale;
+    d.hardwareCursor = f.hardwareCursor; d.cursorScale = f.cursorScale;
+    return d;
+}
+inline Settings gameDefaults(const Settings& cur) {   // GAME: the camera (name and data folder are kept)
+    Settings d = cur;
+    const Settings f;
+    d.mouseZoomSpeed = f.mouseZoomSpeed; d.edgeScroll = f.edgeScroll; d.edgeScrollSpeed = f.edgeScrollSpeed;
+    return d;
+}
+
 // What the AUDIO screen's DEFAULTS means: the current settings with the sound fields
 // reset (volumes, voices, levels, speakers, the system device) and every track back to
 // its original music.

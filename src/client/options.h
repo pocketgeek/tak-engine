@@ -60,9 +60,10 @@ const std::string& currentAudioDevice();
 SDL_AudioDeviceID openAudioDevice(int iscapture, const SDL_AudioSpec* want,
                                   SDL_AudioSpec* got, int allowed);
 
-// Which screen an OptionsScreen shows: the general OPTIONS, VOICE CHAT or AUDIO (each its
-// own page in the same overlay, with its own DEFAULTS; see buildVoice(), buildAudio()).
-enum class OptionsPage { General, Voice, Audio };
+// Which screen an OptionsScreen shows: GRAPHICS, USER INTERFACE or GAME (the settings
+// that used to be one OPTIONS screen; see build()), VOICE CHAT or AUDIO. Each is its own
+// page in the same overlay, with its own DEFAULTS.
+enum class OptionsPage { Graphics, Interface, Game, Voice, Audio };
 
 // What the VOICE CHAT page reads from the host's voice engine (client/voice.h), so the
 // screen itself needs no engine. Every hook is optional.
@@ -90,7 +91,7 @@ public:
     OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
                   std::function<void()> onSave, int audioChannels = 0,
                   std::function<void()> onHotkeys = {}, std::function<void()> onAudioDevice = {},
-                  DataFolderRow dataFolder = {});
+                  DataFolderRow dataFolder = {}, OptionsPage page = OptionsPage::Game);
 
     // The VOICE CHAT page. Its rows edit only the voice fields, and every one of them but
     // the VOICE CHAT switch is greyed out and ignores input while voice chat is off.
@@ -225,8 +226,7 @@ private:
     // definition -- see tak::preferenceDefaults. They used to be two hand-maintained
     // lists that kept drifting apart.
     bool atDefaults() const {
-        return page_ == OptionsPage::Voice ? s_ == tak::voiceDefaults(s_)
-             : page_ == OptionsPage::Audio ? s_ == tak::audioDefaults(s_) : s_ == tak::preferenceDefaults(s_);
+        return s_ == pageDefaults();
     }
 
     SDL_Renderer* ren_;
@@ -281,7 +281,18 @@ private:
     float dropScroll_ = 0;  // scroll offset (px) INSIDE the open dropdown's option list
     std::vector<std::string> devSnapshot_;   // output devices ([0]="" system default, rest A-Z)
     std::vector<std::string> capSnapshot_;   // capture devices, the same way (VOICE CHAT page)
-    OptionsPage page_ = OptionsPage::General;
+    OptionsPage page_ = OptionsPage::Game;
+    // This page's DEFAULTS: the settings with only its own fields reset (tak::*Defaults).
+    Settings pageDefaults() const {
+        switch (page_) {
+            case OptionsPage::Graphics: return tak::graphicsDefaults(s_);
+            case OptionsPage::Interface: return tak::uiDefaults(s_);
+            case OptionsPage::Game: return tak::gameDefaults(s_);
+            case OptionsPage::Voice: return tak::voiceDefaults(s_);
+            case OptionsPage::Audio: return tak::audioDefaults(s_);
+        }
+        return s_;
+    }
     VoicePageHooks voice_;
     int channels_ = 2;                  // the speaker count build() last laid out
     float voiceLabelW_ = 0;   // widest chip/meter row label on the VOICE CHAT page, at 2.0 (per u)

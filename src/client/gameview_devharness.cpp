@@ -2905,7 +2905,7 @@
             if (settings_) {
                 settings_->idleBuilders=2;applySettings(*settings_);frame();
                 const float before=idleRects_.empty() ? -1 : idleRects_.front().r.y;
-                openOptions();
+                openOptions(tak::OptionsPage::Interface);   // IDLE BUILDERS is on USER INTERFACE
                 check(options_!=nullptr,"Options opens in game");
                 options_->render(W,H);
                 const auto press=[&](float x,float y) {
