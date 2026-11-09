@@ -415,7 +415,7 @@ inline Settings graphicsDefaults(const Settings& cur) {   // GRAPHICS: display +
     d.smoothMotion = f.smoothMotion; d.gpuMemoryLimit = f.gpuMemoryLimit;
     return d;
 }
-inline Settings uiDefaults(const Settings& cur) {   // UI: interface + cursor
+inline Settings uiDefaults(const Settings& cur) {   // UI: interface, camera (+ tactical dots, screen shake), cursor
     Settings d = cur;
     const Settings f;
     d.uiFont = f.uiFont; d.scorecardScale = f.scorecardScale; d.uiScale = f.uiScale;
@@ -424,16 +424,14 @@ inline Settings uiDefaults(const Settings& cur) {   // UI: interface + cursor
     d.idleBuilders = f.idleBuilders; d.idleBuildersScale = f.idleBuildersScale;
     d.chatAlign = f.chatAlign; d.chatScale = f.chatScale;
     d.hardwareCursor = f.hardwareCursor; d.cursorScale = f.cursorScale;
-    return d;
-}
-inline Settings gameDefaults(const Settings& cur) {   // GAME: camera, tactical dots, screen shake (name and data folder kept)
-    Settings d = cur;
-    const Settings f;
     d.mouseZoom = f.mouseZoom; d.mouseZoomSpeed = f.mouseZoomSpeed;
     d.edgeScroll = f.edgeScroll; d.edgeScrollSpeed = f.edgeScrollSpeed;
     d.tacticalDots = f.tacticalDots; d.tacticalDotsZoom = f.tacticalDotsZoom;
     d.screenShake = f.screenShake;
     return d;
+}
+inline Settings gameDefaults(const Settings& cur) {   // GAME: player name and data folder, both kept
+    return cur;
 }
 
 // What the AUDIO screen's DEFAULTS means: the current settings with the sound fields

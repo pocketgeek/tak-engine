@@ -799,11 +799,11 @@ void OptionsScreen::build(int channels) {
     // The rows above are every one-time OPTIONS setting; keep this page's. A section goes
     // to one page; HARDWARE CURSOR and CURSOR SIZE leave GRAPHICS and CAMERA for a CURSOR
     // section on USER INTERFACE, and TACTICAL DOTS (with its zoom) and SCREEN SHAKE leave
-    // GRAPHICS for the end of GAME's CAMERA.
+    // GRAPHICS for the end of USER INTERFACE's CAMERA.
     auto pageOf = [](const std::string& section) {
         if (section == "DISPLAY" || section == "GRAPHICS") return OptionsPage::Graphics;
-        if (section == "INTERFACE") return OptionsPage::Interface;
-        return OptionsPage::Game;   // PLAYER, GAME DATA, CAMERA
+        if (section == "INTERFACE" || section == "CAMERA") return OptionsPage::Interface;
+        return OptionsPage::Game;   // PLAYER, GAME DATA
     };
     auto cursorRow = [](const Control& c) { return c.label == "HARDWARE CURSOR" || c.label == "CURSOR SIZE"; };
     auto dotsRow = [](const Control& c) {
@@ -818,7 +818,7 @@ void OptionsScreen::build(int channels) {
         if (c.kind != Control::Section && dotsRow(c)) { dots.push_back(std::move(c)); continue; }
         if (pageOf(inSection) == page_) ctls_.push_back(std::move(c));
     }
-    if (page_ == OptionsPage::Game)   // CAMERA is GAME's last section
+    if (page_ == OptionsPage::Interface)   // CAMERA is the last section built for it
         for (auto& c : dots) ctls_.push_back(std::move(c));
     if (page_ == OptionsPage::Interface && !cursor.empty()) {
         ctls_.push_back({Control::Section, "CURSOR", 0, 0, {}, {}, {}, {}, {}});
@@ -1387,8 +1387,7 @@ void OptionsScreen::drawDefaultsPrompt(int winW, int winH) {
         ? std::vector<std::string>{"EVERY SOUND SETTING GOES BACK TO ITS DEFAULT,",
                                    "AND EVERY TRACK TO ITS ORIGINAL MUSIC."}
         : page_ == OptionsPage::Game
-        ? std::vector<std::string>{"THE CAMERA, TACTICAL DOTS AND SCREEN SHAKE GO BACK TO THEIR DEFAULTS.",
-                                   "YOUR PLAYER NAME AND GAME DATA FOLDER ARE KEPT."}
+        ? std::vector<std::string>{"YOUR PLAYER NAME AND GAME DATA FOLDER ARE KEPT."}
         : std::vector<std::string>{"EVERY SETTING ON THIS PAGE GOES BACK TO ITS DEFAULT."};
     defaultsPrompt_.render(ren_, panel_, u_, winW, winH, "RESET TO DEFAULTS?", lines, "YES", "NO");
 }

@@ -237,9 +237,9 @@ The **Settings** button opens:
 
 | Entry | What it does |
 | --- | --- |
-| **Game** | Player name, game data folder, camera, tactical dots and screen shake. See [Options](#options). |
+| **Game** | Player name and game data folder. See [Options](#options). |
 | **Graphics** | Display and graphics settings. See [Options](#options). |
-| **User Interface** | Interface and cursor settings. See [Options](#options). |
+| **User Interface** | Interface, camera (with tactical dots and screen shake) and cursor settings. See [Options](#options). |
 | **Audio** | Sound device, volumes, speakers and custom music. See [Audio](#audio). |
 | **Voice Chat** | Turn voice chat on and choose the microphone, voice output and volumes. See [Voice chat](#voice-chat). |
 | **Controls** | Rebind command, selection, view, emote and push-to-talk keys. |
@@ -1885,10 +1885,10 @@ in a formation with ground units keep station over them.
 ## Options
 
 The options are on three pages: **Graphics** ([Display](#display) and
-[Graphics](#graphics)), **User Interface** ([Interface](#interface), plus
-**Hardware Cursor** and **Cursor Size** under *Cursor*) and **Game**
-([Player](#player), [Game data folder](#game-data-folder) and [Camera](#camera), with
-**Tactical Dots**, **Tactical Dots Zoom** and **Screen Shake** at its end).
+[Graphics](#graphics)), **User Interface** ([Interface](#interface), [Camera](#camera)
+with **Tactical Dots**, **Tactical Dots Zoom** and **Screen Shake** at its end, plus
+**Hardware Cursor** and **Cursor Size** under *Cursor*) and **Game** ([Player](#player)
+and [Game data folder](#game-data-folder)).
 Open them from **Settings** on the main menu, or from the game menu (**Esc**) in a
 game; sound has its own [Audio](#audio) page. Changes apply and are saved
 immediately; there is no Save button (**Defaults** is at the bottom left, **Back**

@@ -306,7 +306,8 @@ int main() {
             std::printf("  %-23s %s\n", "pages => full reset", same ? "ok" : "FAIL (a field is on no Options page)");
             if (!same) ++g_fail;
             const bool own = tak::graphicsDefaults(all).uiScale == all.uiScale && tak::uiDefaults(all).unitShadows == all.unitShadows &&
-                             tak::gameDefaults(all).uiScale == all.uiScale && tak::gameDefaults(all).playerName == all.playerName;
+                             tak::gameDefaults(all).uiScale == all.uiScale && tak::gameDefaults(all).playerName == all.playerName &&
+                             tak::gameDefaults(all).mouseZoom == all.mouseZoom && tak::uiDefaults(all).mouseZoom != all.mouseZoom;
             std::printf("  %-23s %s\n", "each page its own", own ? "ok" : "FAIL");
             if (!own) ++g_fail;
         }
