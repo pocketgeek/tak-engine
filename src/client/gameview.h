@@ -2739,6 +2739,23 @@ private:
     // slider bar rects for drag hit-testing.
     tak::mapgen::Params genParams_{};
     std::string genPreviewError_;
+    // A generated map's preview is rolled on a worker (a large map takes a moment) and
+    // shown when done; until then the previous random map's picture stays, marked
+    // GENERATING. Only the newest request (genSeq_) is applied. The rolled map is kept
+    // (genPreviewMap_) so the full-window view does not roll it again.
+    struct GenPreviewOut {
+        std::vector<uint8_t> rgba; int w = 0, h = 0;
+        std::vector<std::pair<float, float>> starts; float worldW = 0, worldH = 0;
+        std::string id, dims, error;
+        std::shared_ptr<const tak::tnt::Map> map;
+    };
+    static GenPreviewOut rollGenPreview(const std::string& id, const tak::hpi::Vfs& vfs);
+    void pollGenPreview();
+    std::vector<std::pair<uint64_t, std::future<GenPreviewOut>>> genJobs_;
+    uint64_t genSeq_ = 0;
+    bool genPreviewPending_ = false, mapPreviewIsGen_ = false;
+    std::shared_ptr<const tak::tnt::Map> genPreviewMap_;
+    std::string genPreviewMapId_;
     // The create screen's map list filter (lobby text field 6): the maps whose title or
     // name contains it, case-insensitively.
     std::string mapFilter_;
@@ -4169,7 +4186,6 @@ private:
     void drawRoomPreview(const SDL_FRect& box, bool authored);
     void openBigMap();                      // the map of the preview on show (mapPreviewFor_)
     void drawBigMap(int winW, int winH);
-    void buildGenPreview(const std::string& id);   // thumbnail for a "~gen1~" map
 
     void drawCreate(int winW, int winH);
 

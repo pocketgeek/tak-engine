@@ -3,9 +3,12 @@
 #include "sim/sim.h"
 #include "tdf/tdf.h"
 
+#include <algorithm>
+#include <atomic>
 #include <deque>
 #include <map>
 #include <stdexcept>
+#include <thread>
 
 namespace tak::mapgen {
 using namespace detail;
@@ -72,21 +75,52 @@ std::map<std::string,FeatureSize> featureSizes(const hpi::Vfs& vfs,uint8_t world
 
 // This is map validation, not a new movement algorithm. Use the engine's retail
 // terrain classifier and footprint clearance, then flood four-way legal steps.
-std::vector<int> distances(const sim::NavGrid& nav,Point start,int foot) {
+// The cells a foot-wide body can stand on (NavGrid::fits for each), asked once per
+// flood set instead of once per step. Single-threaded: fits() rebuilds a dirty
+// clearance cache on first use.
+std::vector<uint8_t> passable(const sim::NavGrid& nav,int foot) {
     const int w=nav.width(),h=nav.height();
+    std::vector<uint8_t> ok(size_t(w)*h);
+    for (int z=0;z<h;++z) for (int x=0;x<w;++x) ok[size_t(z)*w+x]=nav.fits(x,z,foot);
+    return ok;
+}
+
+// Walking distance in cells from start over a passable mask (-1 = unreachable).
+// Shortest distances do not depend on visiting order, so floods run in any order
+// or thread give the same bytes on every peer.
+std::vector<int> flood(const std::vector<uint8_t>& ok,int w,int h,Point start) {
     std::vector<int> d(size_t(w)*h,-1),q;
-    if (!nav.fits(start.first,start.second,foot)) return d;
-    q.reserve(d.size());q.push_back(start.second*w+start.first);d[q[0]]=0;
+    const int s=start.second*w+start.first;
+    if (start.first<0||start.second<0||start.first>=w||start.second>=h||!ok[size_t(s)]) return d;
+    q.reserve(d.size());q.push_back(s);d[size_t(s)]=0;
     for (size_t head=0;head<q.size();++head) {
-        const int c=q[head],x=c%w,z=c/w;
-        for (auto [dx,dz]:std::array<Point,4>{{{0,-1},{1,0},{0,1},{-1,0}}}) {
-            const int nx=x+dx,nz=z+dz;
-            if (nx<0||nz<0||nx>=w||nz>=h) continue;
-            const int n=nz*w+nx;
-            if (d[n]<0&&nav.fits(nx,nz,foot)) { d[n]=d[c]+1;q.push_back(n); }
-        }
+        const int c=q[head],z=c/w,x=c-z*w,next=d[size_t(c)]+1;
+        auto step=[&](int n) { if (d[size_t(n)]<0&&ok[size_t(n)]) { d[size_t(n)]=next;q.push_back(n); } };
+        if (z>0) step(c-w);
+        if (x+1<w) step(c+1);
+        if (z+1<h) step(c+w);
+        if (x>0) step(c-1);
     }
     return d;
+}
+
+std::vector<int> distances(const sim::NavGrid& nav,Point start,int foot) {
+    return flood(passable(nav,foot),nav.width(),nav.height(),start);
+}
+
+// One flood per start, in parallel (a flood per thread, at most one thread per core).
+std::vector<std::vector<int>> distancesFrom(const sim::NavGrid& nav,const std::vector<Point>& starts,int foot) {
+    const auto ok=passable(nav,foot);
+    const int w=nav.width(),h=nav.height();
+    std::vector<std::vector<int>> out(starts.size());
+    const size_t threads=std::clamp<size_t>(std::thread::hardware_concurrency(),1,starts.size());
+    std::atomic<size_t> nextStart{0};
+    auto work=[&] { for (size_t k;(k=nextStart++)<starts.size();) out[k]=flood(ok,w,h,starts[k]); };
+    std::vector<std::thread> pool;
+    for (size_t t=1;t<threads;++t) pool.emplace_back(work);
+    work();
+    for (auto& t:pool) t.join();
+    return out;
 }
 
 // Each island has a generous cell allocation, including offshore launch space.
@@ -968,13 +1002,12 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
     // Open expansion sites, separated from homes and from one another. They must
     // lie on a reachable component, rather than merely looking dry on the map.
     std::vector<uint8_t> reachable(cells);
-    std::vector<std::vector<int>> homeDistances;
+    std::vector<std::vector<int>> homeDistances=distancesFrom(ground,r.starts,6);
     for(size_t k=0;k<r.starts.size();++k) {
-        auto d=distances(ground,r.starts[k],6);
+        const auto& d=homeDistances[k];
         if(p.layout!=Islands&&k==0)for(auto s:r.starts)
             if(d[size_t(s.second)*w+s.first]<0)throw std::runtime_error("Random map has disconnected starts");
         for(size_t i=0;i<cells;++i)if(d[i]>=0)reachable[i]=1;
-        homeDistances.push_back(std::move(d));
     }
     // Add expansions in complete rounds: each player gets the same number and
     // tier, and the route-length band grows equally. A cramped map stops a round
@@ -995,7 +1028,7 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         if(highRound&&!(anyTop && round>=1 && (!highRounds || round%2==1)))continue;
         if(highRound) {
             builders.markClearanceDirty();
-            for(auto start:r.starts)topDistances.push_back(distances(builders,start,3));
+            topDistances=distancesFrom(builders,r.starts,3);
             std::vector<std::vector<std::pair<int,Point>>> tops(r.starts.size());
             for(int z=8;z<h-8;z+=4)for(int x=8;x<w-8;x+=4) {
                 const size_t i=size_t(z)*w+x;
@@ -1092,8 +1125,7 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         // New ruins are real obstacles. Plan the next round against the
         // updated terrain, rather than routing through an earlier ruin.
         ground.markClearanceDirty();
-        for (size_t player=0;player<r.starts.size();++player)
-            homeDistances[player]=distances(ground,r.starts[player],6);
+        homeDistances=distancesFrom(ground,r.starts,6);
     }
     const size_t roundDeposits=deposits.size();
     // v9 scattered neutral mana: a jittered grid at the level's pitch (one
@@ -1223,10 +1255,12 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
     // will. Failure is explicit; an invalid map is never silently launched.
     ground.markClearanceDirty();
     std::vector<uint8_t> scatterReached(deposits.size()-roundDeposits);
+    for(auto s:r.starts)
+        if(!flat(s.first-12,s.second-12,24,24))throw std::runtime_error("Random map has an obstructed base");
+    homeDistances=distancesFrom(ground,r.starts,6);
     for(size_t k=0;k<r.starts.size();++k) {
         const auto s=r.starts[k];
-        if(!flat(s.first-12,s.second-12,24,24))throw std::runtime_error("Random map has an obstructed base");
-        const auto d=distances(ground,s,6);
+        const auto& d=homeDistances[k];
         for(size_t j=k*3;j<k*3+3;++j)
             if(d[size_t(deposits[j].second)*w+deposits[j].first]<0)
                 throw std::runtime_error("Random map home mana is unreachable");

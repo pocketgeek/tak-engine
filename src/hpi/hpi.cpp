@@ -240,7 +240,12 @@ void Archive::Mapping::close() {
     handle_ = nullptr;
 }
 
+// Archives open on first read, from any thread (the lobby's preview roll, the terrain
+// worker, the feature loader): one lock keeps two first reads from both opening it.
+static std::mutex archiveOpenMutex;
+
 Archive::View Archive::bytes() const {
+    std::lock_guard<std::mutex> lock(archiveOpenMutex);
     if (!loaded_) {
         // Map the archive read-only; fall back to an eager read if mapping fails
         // (exotic filesystems). Either way the view is stable for our lifetime.

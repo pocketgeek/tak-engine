@@ -65,6 +65,7 @@ float createOptionPx(float maxW) {
 }  // namespace
 
     void GameView::drawLobby(int winW, int winH) {
+        pollGenPreview();   // a random map's preview rolled on its worker
         lobbyHots_.clear();
         // Map-picker geometry is only live while the create screen is shown; clear it
         // so a stale thumb/list rect can't grab clicks or wheel on the other screens.
@@ -306,17 +307,31 @@ float createOptionPx(float maxW) {
     }
 
     void GameView::buildMapPreview(const std::string& tntPath, const tak::hpi::Vfs* src) {
-        if (mapPreviewTex_) { gpuvram::destroy(mapPreviewTex_); mapPreviewTex_ = nullptr; }
+        const bool gen = tak::mapgen::isGeneratedMapId(tntPath);
+        ++genSeq_;   // any newer preview supersedes a roll still running
+        genPreviewPending_ = false;
         mapPreviewFor_ = tntPath;
-        mapPreviewW_ = mapPreviewH_ = 0;
-        mapPreviewDims_.clear();
-        mapPreviewStarts_.clear();
-        mapPreviewWorldW_ = mapPreviewWorldH_ = 0;
+        // Another random map keeps the last one's picture until its own is rolled.
+        if (!(gen && mapPreviewIsGen_ && mapPreviewTex_)) {
+            if (mapPreviewTex_) { gpuvram::destroy(mapPreviewTex_); mapPreviewTex_ = nullptr; }
+            mapPreviewW_ = mapPreviewH_ = 0;
+            mapPreviewDims_.clear();
+            mapPreviewStarts_.clear();
+            mapPreviewWorldW_ = mapPreviewWorldH_ = 0;
+        }
+        mapPreviewIsGen_ = gen;
         if (tntPath.empty()) return;
         genPreviewError_.clear();
-        if (tak::mapgen::isGeneratedMapId(tntPath)) {
-            try { buildGenPreview(tntPath); }
-            catch (const std::exception& e) { genPreviewError_ = e.what(); }
+        if (gen) {
+            // Done with old rolls: drop them (a running one finishes on its own and
+            // its result is ignored; its future would block here, so it stays listed).
+            std::erase_if(genJobs_, [](auto& job) {
+                return job.second.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+            });
+            genJobs_.emplace_back(genSeq_, std::async(std::launch::async, [this, id = tntPath] {
+                return rollGenPreview(id, vfs_);
+            }));
+            genPreviewPending_ = true;
             return;
         }
         const tak::hpi::Vfs& from = src ? *src : vfs_;
@@ -361,14 +376,18 @@ float createOptionPx(float maxW) {
         mapPreviewDims_ = size + (players.empty() ? "" : "   " + players + " PLAYER");
     }
 
-    void GameView::buildGenPreview(const std::string& id) {
-        // Roll the map from the seed (cheap integer-only work) and paint a downsampled
-        // height/water map with feature + start markers, so the sliders preview live.
+    GameView::GenPreviewOut GameView::rollGenPreview(const std::string& id, const tak::hpi::Vfs& vfs) {
+        // On a worker: roll the map from the seed and paint a downsampled height/water
+        // map with feature dots; pollGenPreview uploads it. Nothing here touches the view.
+        GenPreviewOut out;
+        out.id = id;
         tak::mapgen::Params gp = tak::mapgen::decodeMapId(id);
-        tak::mapgen::Result g = tak::mapgen::generate(gp, vfs_);
+        tak::mapgen::Result g;
+        try { g = tak::mapgen::generate(gp, vfs); }
+        catch (const std::exception& e) { out.error = e.what(); return out; }
         const tak::tnt::Map& m = g.map;
         const int W = m.width, H = m.height, sea = m.seaLevel;
-        if (W <= 0 || H <= 0 || m.heights.size() < size_t(W) * H) return;
+        if (W <= 0 || H <= 0 || m.heights.size() < size_t(W) * H) return out;
         // As many texels as the largest create preview (288), so it is never stretched.
         const int cap = 288, mx = std::max(W, H);
         const int TW = std::max(1, W * cap / mx), TH = std::max(1, H * cap / mx);
@@ -414,18 +433,39 @@ float createOptionPx(float maxW) {
             }
         // Start positions: drawn over the thumbnail as numbered markers (drawStartMarkers),
         // in world px like a shipped map's -- the same cell -> px setupMatch applies.
-        for (auto& [sx, sz] : g.starts) mapPreviewStarts_.push_back({float(sx * 16), float(sz * 16)});
-        mapPreviewWorldW_ = float(W) * 16; mapPreviewWorldH_ = float(H) * 16;
-        mapPreviewTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, TW, TH);
-        if (!mapPreviewTex_) return;
-        SDL_SetTextureBlendMode(mapPreviewTex_, SDL_BLENDMODE_BLEND);
-        SDL_UpdateTexture(mapPreviewTex_, nullptr, rgba.data(), TW * 4);
-        SDL_SetTextureScaleMode(mapPreviewTex_, SDL_ScaleModeNearest);
-        mapPreviewW_ = TW; mapPreviewH_ = TH;
+        for (auto& [sx, sz] : g.starts) out.starts.push_back({float(sx * 16), float(sz * 16)});
+        out.worldW = float(W) * 16; out.worldH = float(H) * 16;
+        out.rgba = std::move(rgba); out.w = TW; out.h = TH;
         char dims[48];
         std::snprintf(dims, sizeof dims, "%d x %d   %d PLAYER", W / 32, H / 32, int(gp.players));
-        mapPreviewDims_ = dims;
+        out.dims = dims;
+        out.map = std::make_shared<const tak::tnt::Map>(std::move(g.map));
+        return out;
+    }
 
+    void GameView::pollGenPreview() {
+        for (auto it = genJobs_.begin(); it != genJobs_.end();) {
+            if (it->second.wait_for(std::chrono::seconds(0)) != std::future_status::ready) { ++it; continue; }
+            GenPreviewOut out = it->second.get();
+            const bool newest = it->first == genSeq_;
+            it = genJobs_.erase(it);
+            if (!newest) continue;
+            genPreviewPending_ = false;
+            if (mapPreviewTex_) { gpuvram::destroy(mapPreviewTex_); mapPreviewTex_ = nullptr; }
+            mapPreviewW_ = mapPreviewH_ = 0;
+            mapPreviewStarts_ = std::move(out.starts);
+            mapPreviewWorldW_ = out.worldW; mapPreviewWorldH_ = out.worldH;
+            mapPreviewDims_ = std::move(out.dims);
+            genPreviewError_ = std::move(out.error);
+            if (out.map) { genPreviewMap_ = std::move(out.map); genPreviewMapId_ = out.id; }
+            if (out.w <= 0) continue;
+            mapPreviewTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, out.w, out.h);
+            if (!mapPreviewTex_) continue;
+            SDL_SetTextureBlendMode(mapPreviewTex_, SDL_BLENDMODE_BLEND);
+            SDL_UpdateTexture(mapPreviewTex_, nullptr, out.rgba.data(), out.w * 4);
+            SDL_SetTextureScaleMode(mapPreviewTex_, SDL_ScaleModeNearest);
+            mapPreviewW_ = out.w; mapPreviewH_ = out.h;
+        }
     }
 
     void GameView::applyGenParams() {
@@ -950,7 +990,14 @@ float createOptionPx(float maxW) {
                       {120, 125, 140, 255});
         }
         SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &pbox);
-        if (mapPreviewTex_ && mapPreviewW_ > 0) lobbyHots_.push_back({pbox, [this] { openBigMap(); }});   // full window
+        if (gen && genPreviewPending_ && mapPreviewTex_) {   // the last map's picture, until the new one is rolled
+            const char* note = "GENERATING";
+            const SDL_FRect band{pvx, pvy + pvH / 2 - 14, pvW, 28};
+            SDL_SetRenderDrawColor(ren_, 12, 14, 20, 200); SDL_RenderFillRectF(ren_, &band);
+            blockText(note, pvx + (pvW - blockWidth(note, 1.6f)) / 2, pvy + pvH / 2 - 7, 1.6f, {200, 205, 220, 255});
+        }
+        if (mapPreviewTex_ && mapPreviewW_ > 0 && !genPreviewPending_)
+            lobbyHots_.push_back({pbox, [this] { openBigMap(); }});   // full window
         if (!mapPreviewDims_.empty())
             blockText(mapPreviewDims_, pvx, pvy + pvH + 8, 1.6f, {160, 165, 180, 255});
         // Keep the generator action below the preview and map description.
@@ -1689,7 +1736,7 @@ float createOptionPx(float maxW) {
                     colors.push_back(slot >= 0 ? room.slots[slot].color : -1);
             drawStartMarkers(dst, colors);
             roomPreviewColors_ = std::move(colors);
-            lobbyHots_.push_back({box, [this] { openBigMap(); }});   // the map, full window
+            if (!genPreviewPending_) lobbyHots_.push_back({box, [this] { openBigMap(); }});   // the map, full window
         }
         SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &box);
     }
@@ -1707,7 +1754,9 @@ float createOptionPx(float maxW) {
             if (tak::mapgen::isGeneratedMapId(path)) {
                 const auto params = tak::mapgen::decodeMapId(path);
                 auto view = std::make_unique<tak::hpi::Vfs>(&vfs_, true);
-                auto map = tak::mapgen::generate(params, *view).map;
+                // The preview's roll when it is this map (it always is once the preview shows).
+                auto map = genPreviewMap_ && genPreviewMapId_ == path ? *genPreviewMap_
+                                                                      : tak::mapgen::generate(params, *view).map;
                 bigMap_ = std::make_unique<BigMapView>(ren_, std::move(view), std::move(map),
                                                        kWorld[params.mapType % tak::mapgen::kMapTypes]);
             } else {

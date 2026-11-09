@@ -129,6 +129,7 @@
     }
 
     GameView::~GameView() {
+        genJobs_.clear();   // waits for any preview roll still reading vfs_
         stopSimThread(/*drain=*/false);
         // The session is over, however it ended (quit, return to menu, results,
         // disconnect, desync, kick, SIGTERM): finish the replay with everything
