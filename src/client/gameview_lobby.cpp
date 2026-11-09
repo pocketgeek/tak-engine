@@ -1566,13 +1566,19 @@ float createOptionPx(float maxW) {
         // Room readiness also includes game mods and other players. A
         // completed local map is not progress to display while packs change;
         // their status is already shown beside the pack list.
+        // The status beside the buttons stops short of the map column (winW - 300),
+        // shrunk before it is cut, as the refusal line below is.
+        const auto status = [&](const std::string& text) {
+            const float room = std::max(40.0f, winW - 312.0f - (bx + 280));
+            const float px = tak::uiTextFitPx(text, 1.3f, room, 0.9f);
+            blockText(tak::uiTextFit(text, px, room), bx + 280, y + 9, px, {235, 205, 120, 255});
+        };
         const auto& mapStatus = mp_->mapStatus();
         if (!room.mapsReady && !mp_->modPending() && !mp_->modBusy() &&
             mapStatus != "MAP READY" && mapStatus != "MAP VERIFIED")
-            blockText(mapStatus.empty() ? "WAITING FOR MAP VERIFICATION" : mapStatus,
-                bx + 280, y + 9, 1.3f, {235, 205, 120, 255});
+            status(mapStatus.empty() ? "WAITING FOR MAP VERIFICATION" : mapStatus);
         else if (host && needHuman && !mp_->startPending() && !mp_->starting())
-            blockText("NEEDS ANOTHER HUMAN PLAYER", bx + 280, y + 9, 1.3f, {235, 205, 120, 255});
+            status("NEEDS 2+ HUMAN PLAYERS");
         // Why the server refused the last START (a needed seat, setupMatch's refusal...).
         if (!mp_->startError().empty()) {
             // Shrunk before it is cut: a refusal that names a unit and the way out (a

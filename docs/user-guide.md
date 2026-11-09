@@ -2333,7 +2333,7 @@ units is named in amber (*NO PLACED UNITS: PLAYER N*). If the server still
 refuses to start the game, the reason appears in red under the buttons.
 
 A multiplayer room needs at least two human players to start: with only the host
-and AIs, **Start** stays greyed and the room says *NEEDS ANOTHER HUMAN PLAYER*
+and AIs, **Start** stays greyed and the room says *NEEDS 2+ HUMAN PLAYERS*
 (a game against the AI alone is single player).
 
 When a game ends, the victory or defeat screen names where each of its two doors
