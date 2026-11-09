@@ -804,14 +804,15 @@ struct MainMenu::Impl {
     }
 
     // ---- minimal block font + multiplayer server-select overlay ---------------
-    // A dropdown: the default server on top, then NEW SERVER... (with a text field under it),
-    // then every server that has connected successfully before (Settings::knownServers,
+    // A dropdown: the default server on top, then LOCAL SERVER and the LAN games heard,
+    // then NEW SERVER... (with a text field under it), then every server that has connected successfully before (Settings::knownServers,
     // up to 64, most recent first) in a list that scrolls past kServerRowsShown rows.
     static constexpr const char* kDefaultServer = "tak.pgnet.us";
     bool serverSelect = false;
     std::vector<std::string> serverItems;   // the default server, then the remembered ones
-    // The selected row in display order: 0 the default server, 1 CUSTOM, 2+k the
-    // remembered server serverItems[1+k].
+    // The selected row: 0 the default server, 1 CUSTOM (NEW SERVER...), kRowLocal, the
+    // LAN games, then rememberedRow0()+k the remembered server serverItems[1+k]. On screen
+    // CUSTOM follows the LAN games (rowOrder()); the numbers stay put.
     int serverSel = 0;
     static constexpr int kServerRowsShown = 6;   // remembered rows on show at once
     int serverScroll = 0;                        // first remembered row on show
@@ -832,6 +833,21 @@ struct MainMenu::Impl {
     uint64_t lanSelNonce = 0;
     MainMenu::Connect chosenConnect_ = MainMenu::Connect::Server;
     int rememberedRow0() const { return kRowLan + int(lanGames.size()); }
+    // The rows top to bottom as drawn: default, LOCAL SERVER, the LAN games, NEW SERVER...,
+    // the remembered servers. The arrow keys walk this order.
+    std::vector<int> rowOrder() const {
+        std::vector<int> o{0, kRowLocal};
+        for (int k = 0; k < int(lanGames.size()); ++k) o.push_back(kRowLan + k);
+        o.push_back(1);
+        for (int i = rememberedRow0(); i < serverRows(); ++i) o.push_back(i);
+        return o;
+    }
+    void stepServerSel(int dir) {
+        const auto o = rowOrder();
+        const auto at = std::find(o.begin(), o.end(), serverSel);
+        const int pos = at == o.end() ? 0 : int(at - o.begin());
+        setServerSel(o[size_t(std::clamp(pos + dir, 0, int(o.size()) - 1))]);
+    }
     int lanIndex() const { return serverSel >= kRowLan && serverSel < rememberedRow0() ? serverSel - kRowLan : -1; }
     bool serverLocal() const { return serverSel == kRowLocal; }
     // The rows that sign in to an account. The others take a player name, and their
@@ -1052,8 +1068,8 @@ struct MainMenu::Impl {
         }
         const float rowH = 40;
         const float errH = serverError.empty() ? 0 : 26;
-        // The default and CUSTOM rows, the address box under CUSTOM when it is picked,
-        // LOCAL SERVER and the LAN games, the remembered rows on show (+ a gap before
+        // The default row, LOCAL SERVER and the LAN games, NEW SERVER... and its address
+        // box when it is picked, the remembered rows on show (+ a gap before
         // them), then the two account fields side by side (label + box) and the hint line.
         float ph = 78 + errH + (3 + float(lanGames.size())) * rowH + (serverCustom() ? 56 : 0) +
                    (shownRows ? shownRows * rowH + 8 : 0) + 82 + 64;
@@ -1073,8 +1089,8 @@ struct MainMenu::Impl {
             for (size_t k = 0; k < lines.size() && k < 2; ++k)
                 blockText(lines[k], x0 + 30, y0 + 50 + step * float(k), 1.8f, {235, 120, 110, 255});
         }
-        // Dropdown rows: the default server, CUSTOM (its address box under it when
-        // picked), then the remembered servers, scrolling.
+        // Dropdown rows: the default server, LOCAL SERVER and the LAN games, NEW SERVER...
+        // (its address box under it when picked), then the remembered servers, scrolling.
         serverRects.assign(size_t(serverRows()), SDL_FRect{0, 0, 0, 0});
         serverDeleteRects.assign(size_t(serverRows()), SDL_FRect{0, 0, 0, 0});
         float ry = y0 + 66 + errH;
@@ -1132,9 +1148,10 @@ struct MainMenu::Impl {
             ry += rowH;
         };
         drawRow(0, pw - 60);
+        drawRow(kRowLocal, pw - 60);
+        for (int k = 0; k < int(lanGames.size()); ++k) drawRow(kRowLan + k, pw - 60);
         drawRow(1, pw - 60);
-        // CUSTOM selected: the address entry field under it (LOCAL SERVER and the LAN
-        // games follow it).
+        // NEW SERVER... selected: the address entry field under it.
         serverBoxRect = {0, 0, 0, 0};
         if (serverCustom()) {
             SDL_SetRenderDrawColor(ren, 16, 18, 26, 255);
@@ -1150,8 +1167,6 @@ struct MainMenu::Impl {
             serverBoxRect = box;
             ry += 56;
         }
-        drawRow(kRowLocal, pw - 60);
-        for (int k = 0; k < int(lanGames.size()); ++k) drawRow(kRowLan + k, pw - 60);
         // The remembered servers: kServerRowsShown at a time, the mouse wheel scrolling
         // them, with a scroll bar beside them once there are more.
         serverListRect = {0, 0, 0, 0};
@@ -1911,8 +1926,8 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     // UP/DOWN still walk the server list; TAB walks the text fields,
                     // which is what a keyboard user reaches for between name and
                     // password.
-                    if (k == SDLK_UP) d_->setServerSel(d_->serverSel - 1);
-                    if (k == SDLK_DOWN) d_->setServerSel(d_->serverSel + 1);
+                    if (k == SDLK_UP) d_->stepServerSel(-1);
+                    if (k == SDLK_DOWN) d_->stepServerSel(+1);
                     if (k == SDLK_TAB) d_->cycleField(shift ? -1 : 1);
                     if (k == SDLK_ESCAPE) {
                         d_->sfx_.play(menuclick::kBack);

@@ -2278,14 +2278,14 @@ host's game mods are sent automatically.
 
 ### Joining a game
 
-![The Connect to Server panel: the default server tak.pgnet.us, NEW SERVER..., LOCAL SERVER (HOST), two remembered servers each with a DELETE button, the account name and password fields side by side, the note A NEW NAME IS REGISTERED WHEN YOU SIGN IN, and BACK on the left with SPECTATE and CONNECT on the right](img/mp-connect.jpg)
+![The Connect to Server panel: the default server tak.pgnet.us, LOCAL SERVER (HOST), NEW SERVER..., two remembered servers each with a DELETE button, the account name and password fields side by side, the note A NEW NAME IS REGISTERED WHEN YOU SIGN IN, and BACK on the left with SPECTATE and CONNECT on the right](img/mp-connect.jpg)
 
 *Signing in to a server.*
 
 1. Click the **Multiplayer** door. The **CONNECT TO SERVER** panel opens.
-2. Click a server in the list, or **NEW SERVER...** to type its address. Then come
-   **LOCAL SERVER** and the games announced on your network (see
-   [Local server](#local-server)), and under them the servers you have signed in to
+2. Click a server in the list. Under the default server come **LOCAL SERVER** and the
+   games announced on your network (see [Local server](#local-server)), then
+   **NEW SERVER...** to type an address, and under it the servers you have signed in to
    before (up to 64, most recent first; the mouse wheel scrolls them); **DELETE**
    forgets one.
 3. Enter an **account name** and **password** and click **CONNECT** (it stays greyed
