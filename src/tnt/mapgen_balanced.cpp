@@ -572,9 +572,32 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         }
     } else cleanPinches(mountain);
     // ---- plateau edges and ramps --------------------------------------------------
-    // A ramp is a piece the army class climbs or, where the kit has none, a hillside
-    // builders and infantry climb (Taros's hillsides are too steep for siege).
-    const auto rampable=[](const KitPiece& piece){return piece.walkable||(piece.alternate&&piece.climbable);};
+    // A ramp is the best piece the role offers: one of the cliff family the army class
+    // climbs; else one of the cliff family builders and infantry climb (Aramon), which
+    // keeps the rim seamless; only then a hillside builders climb (Taros, whose
+    // hillsides are too steep for siege). Retail's hillsides interlock with each
+    // other, not with cliffs: beside a cliff their slope ends in a hard edge.
+    const auto rampTier=[](const KitPiece& piece) {
+        return piece.alternate?(piece.climbable?1:0):piece.walkable?3:piece.climbable?2:0;
+    };
+    const auto bestTier=[&](int c){int best=0;for(const auto& piece:edges[size_t(c)])best=std::max(best,rampTier(piece));return best;};
+    // A tier-1 (hillside) ramp is laid as the world's run of end pieces when it has one.
+    const auto runOf=[&](int c) {
+        std::vector<const KitPiece*> run;
+        const int slot=c==3?0:c==5?1:c==10?2:3;
+        const char* names=spec.rampRuns[size_t(slot)];
+        if(!names)return run;
+        std::string list(names);
+        for(size_t at=0;at<=list.size();) {
+            const size_t end=std::min(list.find(' ',at),list.size());
+            const std::string want=list.substr(at,end-at);at=end+1;
+            const KitPiece* found=nullptr;
+            for(const auto& piece:edges[size_t(c)])if(piece.alternate&&piece.climbable&&piece.name==want)found=&piece;
+            if(!found)return std::vector<const KitPiece*>{};   // incomplete run: none at all
+            run.push_back(found);
+        }
+        return run;
+    };
     std::vector<uint8_t> ramp(size_t(sw)*sh,0);
     std::vector<int> component(size_t(corners),-1);   // plateau each kit-high corner belongs to
     if(raise) {
@@ -597,19 +620,23 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
             for(int z=0;z<sh;++z)for(int x=0;x<sw;++x) {
                 const int c=maskCase(high,x,z);
                 if(c!=3&&c!=5&&c!=10&&c!=12)continue;
-                bool walkable=false,mainWalkable=false;
-                for(const auto& piece:edges[size_t(c)]){walkable|=rampable(piece);mainWalkable|=piece.walkable&&!piece.alternate;}
-                if(!walkable||component[size_t((z+(c==3?0:1))*(sw+1)+x+(c==10?1:0))]!=components)continue;
+                const int tier=bestTier(c);
+                if(!tier||component[size_t((z+(c==3?0:1))*(sw+1)+x+(c==10?1:0))]!=components)continue;
                 // A hillside ramp has no corner pieces of its own and shows a seam
-                // against a cliff corner: it goes only between straight cliffs.
-                if(!mainWalkable) {
-                    const bool across=c==3||c==12;
-                    const int ax=x-(across?1:0),az=z-(across?0:1),bx=x+(across?1:0),bz=z+(across?0:1);
-                    if(ax<0||az<0||bx>=sw||bz>=sh||maskCase(high,ax,az)!=c||maskCase(high,bx,bz)!=c)continue;
+                // against a cliff corner: it goes only between straight cliffs, as a
+                // whole run when the world has one (x,z is the run's first section).
+                const bool across=c==3||c==12;
+                const int length=tier==1?std::max<int>(1,int(runOf(c).size())):1;
+                bool room=true;
+                for(int i=(tier==1?-1:0);room&&i<=(tier==1?length:length-1);++i) {
+                    const int rx=x+(across?i:0),rz=z+(across?0:i);
+                    if(rx<0||rz<0||rx>=sw||rz>=sh||maskCase(high,rx,rz)!=c){room=false;break;}
+                    if(i<0||i>=length)continue;
+                    // Every ramp section climbs onto open plateau, not a mountain.
+                    const int tx=rx+(c==5?-1:c==10?1:0),tz=rz+(c==3?-1:c==12?1:0);
+                    if(tx<0||tz<0||tx>=sw||tz>=sh||maskCase(high,tx,tz)!=15||maskCase(mountain,tx,tz))room=false;
                 }
-                // The section the ramp climbs to must be open plateau, not a mountain.
-                const int tx=x+(c==5?-1:c==10?1:0),tz=z+(c==3?-1:c==12?1:0);
-                if(tx<0||tz<0||tx>=sw||tz>=sh||maskCase(high,tx,tz)!=15||maskCase(mountain,tx,tz))continue;
+                if(!room)continue;
                 // The first ramp faces the nearest start, so a plateau beside a home
                 // is climbed from that home's side.
                 uint64_t nearest=~0ull;
@@ -625,10 +652,19 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
             const int want=std::min(4,1+int(queue.size())/10);int placed=0;
             for(auto [order,at]:candidates) {
                 if(placed==want)break;
-                const int x=at%sw,z=at/sw;bool spaced=true;
-                for(int dz=-2;spaced&&dz<=2;++dz)for(int dx=-2;dx<=2;++dx)
-                    if(x+dx>=0&&z+dz>=0&&x+dx<sw&&z+dz<sh&&ramp[size_t(z+dz)*sw+x+dx]){spaced=false;break;}
-                if(spaced){ramp[size_t(at)]=1;++placed;}
+                const int x=at%sw,z=at/sw,c=maskCase(high,x,z),tier=bestTier(c);
+                const bool across=c==3||c==12;
+                const int length=tier==1?std::max<int>(1,int(runOf(c).size())):1;
+                bool spaced=true;
+                for(int i=0;spaced&&i<length;++i)
+                    for(int dz=-2;spaced&&dz<=2;++dz)for(int dx=-2;dx<=2;++dx) {
+                        const int rx=x+(across?i:0)+dx,rz=z+(across?0:i)+dz;
+                        if(rx>=0&&rz>=0&&rx<sw&&rz<sh&&ramp[size_t(rz)*sw+rx]){spaced=false;break;}
+                    }
+                if(!spaced)continue;
+                // ramp holds 1 + the section's place in its run.
+                for(int i=0;i<length;++i)ramp[size_t(z+(across?0:i))*sw+x+(across?i:0)]=uint8_t(1+i);
+                ++placed;
             }
             ++components;
         }
@@ -638,14 +674,15 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
             if(!c||!maskCase(kitHigh,x,z))continue;
             if(c==15){stampKit(*load(spec.top),x*32,z*32,1);continue;}
             // Rims come from the main edge family (cliffs, preferring the ones an army
-            // cannot climb); a ramp takes a climbable piece. Hillsides are ramps only:
-            // as plain rim they would meet the cliff family along mixed edges.
+            // cannot climb); a ramp takes a piece of the role's best ramp tier.
+            // Hillsides are never plain rim: they would meet the cliffs along mixed edges.
             const bool isRamp=ramp[size_t(z)*sw+x];
             std::vector<KitPiece> choice;
-            bool mainWalkable=false;for(const auto& piece:edges[size_t(c)])mainWalkable|=piece.walkable&&!piece.alternate;
-            for(const auto& piece:edges[size_t(c)])
-                if(isRamp?(mainWalkable?piece.walkable&&!piece.alternate:piece.alternate&&rampable(piece))
-                         :(!piece.alternate&&!piece.walkable))choice.push_back(piece);
+            const int tier=bestTier(c);
+            const auto run=isRamp&&tier==1?runOf(c):std::vector<const KitPiece*>{};
+            if(!run.empty())choice.push_back(*run[size_t(std::min<int>(ramp[size_t(z)*sw+x],int(run.size()))-1)]);
+            else for(const auto& piece:edges[size_t(c)])
+                if(isRamp?rampTier(piece)==tier:(!piece.alternate&&!piece.walkable))choice.push_back(piece);
             if(choice.empty())for(const auto& piece:edges[size_t(c)])if(!piece.alternate)choice.push_back(piece);
             if(choice.empty())choice=edges[size_t(c)];
             stampKit(*pick(choice,x*32,z*32,0x72696d)->map,x*32,z*32,1);

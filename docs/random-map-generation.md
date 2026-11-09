@@ -14,7 +14,8 @@ longer supported ...; generate a new map". The game setup screen and Cartographe
 upgrade a remembered recipe when it is edited; Cartographer's Regenerate explains
 that the map came from an older generator. Previously saved `.kmp` maps remain
 ordinary playable maps. Clients and servers must run the same engine version
-(protocol 319 introduced version 10; see the [CHANGELOG](../CHANGELOG.md)).
+(protocol 319 introduced version 10 and 320 its seam-free ramps; see the
+[CHANGELOG](../CHANGELOG.md)).
 
 ## Layout and placement
 
@@ -109,15 +110,18 @@ The generator reads them that way:
   `2sw` inner, `rampe`). Dead ends, voided fills and Veruna's quarry pit are left out.
 - **Ramps**: each straight edge piece is tested with the engine's own terrain
   classifier between flat low and high ground, with its sides blocked (in a rim its
-  neighbours are cliffs). Pieces the generator's army class (six cells wide, slope
-  16) can climb are ramps. Where a kit has none, a *Hillsides* piece that builders
-  and infantry (the game's GROUND3 class: three cells, slope 30) can climb is the
-  ramp instead: Taros's hillsides are too steep for siege engines, as in retail.
-  Every plateau gets 1–4 spaced ramps (one per ten plateau corners), the first facing
-  the nearest start, each leading onto open plateau, never into a mountain. A second
-  edge family (Aramon's and Taros's *Hillsides*) supplies ramps only, and only
-  between two straight cliffs: it has no corner pieces of its own and would show a
-  seam against a cliff corner (or, as plain rim, along mixed edges).
+  neighbours are cliffs). A ramp takes the best piece its rim role offers: a cliff
+  the generator's army class (six cells wide, slope 16) can climb (Veruna, Zhon,
+  Creon); else a cliff that builders and infantry (the game's GROUND3 class: three
+  cells, slope 30) can climb (Aramon), so the rim stays one family; only then a
+  hillside builders climb (Taros, whose hillsides are too steep for siege engines,
+  as in retail). Retail's *Hillsides* interlock with each other, not with cliffs:
+  their variants are end pieces, each joining a cliff cleanly on one side only. So
+  Taros lays them as retail does, as runs with straight cliffs at both ends: `nnw`
+  alone on a north rim, `sse`+`ssw` on a south rim, `ese` over `ene` on an east rim
+  and `wsw` over `wnw` on a west rim. Every plateau gets 1–4 spaced ramps (one per
+  ten plateau corners), the first facing the nearest start, each leading onto open
+  plateau, never into a mountain. Hillsides are never plain rim.
 - **Mountains** use the retail role names (their blockers are too ragged to
   classify). They are placed first, apart from the plain plateaus: a few seeds per
   map (at most one per 64 sections), each grown by a short four-way walk into a
@@ -136,8 +140,8 @@ The generator reads them that way:
 
 | World | Plateaus (edge kit, fill, levels) | Mountains | Towns |
 | --- | --- | --- | --- |
-| Aramon | *Low to High Cliffs* + *Hillsides* (as ramps), *alightgr_200*, 80→200 | *High Mountains* (all 13 roles) | *Low Towns* on *cobb_80*; *High Towns* on *cobb_200* on plateaus; houses, wells, carts, fountain |
-| Taros | *Low to High Cliffs* + *Hillsides* (ramps for builders and infantry only), *high_ground*, 62→235 | *High Mountains* (13 roles) | *Low Towns* on *low cobbles*; *High Towns* on *high cobbles*; hovels, buildings, stocks, impalers |
+| Aramon | *Low to High Cliffs* (its infantry-climbable variants are the ramps), *alightgr_200*, 80→200 | *High Mountains* (all 13 roles) | *Low Towns* on *cobb_80*; *High Towns* on *cobb_200* on plateaus; houses, wells, carts, fountain |
+| Taros | *Low to High Cliffs* + *Hillsides* runs as ramps (builders and infantry), *high_ground*, 62→235 | *High Mountains* (13 roles) | *Low Towns* on *low cobbles*; *High Towns* on *high cobbles*; hovels, buildings, stocks, impalers |
 | Veruna | *Low to High Cliffs* (its walkable variants are the ramps), *int_200*, 62→200 | **none**: Veruna ships no mountain kit; its *High Specials* are craters and outcrops, not blocking mountains | *Low Towns* on *s_cobbflat*; *High Towns* on *i_cobbflat*; houses, huts, wells, lamps, fountain |
 | Zhon | *Low to High Cliffs Jungle*, *mountainplateau230*, 63→215 (ramps S/E/W) | standalone spires *High Specials/mt1–mt4*: Zhon's *High Mountains* (`mttp_`) are a ridge set crossing edge midpoints, not a marching kit | **villages**: Zhon has no settlement sections (*Low Plazas Jungle* are stepped temple platforms on a dirt palette that does not border the jungle fill), so a village is retail tents, huts and a bonfire in a clearing |
 | Creon | *hillsides* (all walkable slopes), *highland512*, 80→250 | *mountains* (+ *intmt512* centre) on snow: the 256-pixel *snow line* kit blends half a section of *snow256* around each range into the highland | *low towns* on *chunglo*; *high towns* on *chunghi*; houses and civic buildings |
@@ -253,6 +257,37 @@ coast and relief sections used by the generators, as well as its existing
 feature-definition checks. It therefore detects differences in the source
 height/feature planes, not just differences in unit stats.
 
+### Seam hunt
+
+`mapgen_seams` looks for terrain tiles that should not sit next to each other,
+with two independent signals. (a) A retail adjacency whitelist: at every boundary
+between two different terrain JPGs in the 129 shipped multiplayer and campaign maps
+(and wherever a JPG meets a copy of itself out of step), the pair of keys and the
+direction are recorded; a generated boundary whose pair never occurs in retail is
+flagged. (b) Pixels: across each tile boundary the colour step is compared with the
+step just inside each tile, and the tone of the 4-pixel strips either side with the
+strip-to-strip change inside each tile, so busy textures do not false-alarm. A
+candidate is flagged by (a) and strong in (b) (edge or tone score above 3); strong
+(b) on a whitelisted pair is listed separately.
+
+On retail's own 790,192 boundary segments the edge score has median 0.79 and
+99.9th percentile 1.53, the tone score 0.38 and 2.90; 0.11% are strong, and with a
+leave-one-map-out whitelist 0.050% are candidates (largely genuine retail seams,
+such as a mission map's mid-map join). A 6,150-map sweep (every world and layout,
+16×16 to 64×64, 2/4/8 players, three seeds, default, maximum and three mixed slider
+extremes) found every candidate and strong seam in one place: hillside ramps beside
+cliffs (Aramon's dirt slopes read as rectangular patches; Taros's showed as a faint
+lighter band, tone 1.6 to 2.6). With the ramp rules above the sweep finds none.
+`mapgen_seams <data> pairs` scores every hillside/cliff and hillside/hillside join
+from the section art; the `mapgen_seams` test runs a smaller sweep and fails on any
+candidate or strong seam.
+
+```sh
+./build/mapgen_seams /path/to/tak_data retail
+./build/mapgen_seams /path/to/tak_data sweep 0 1          # or shard N of M
+./build/mapgen_seams /path/to/tak_data pairs
+```
+
 Run the focused tests with:
 
 ```sh
@@ -280,7 +315,7 @@ balance modes. `--mana` checks the extra-mana slider's complete rounds.
 CTest includes the asset-free test; a configured `TAK_TEST_DATA` additionally
 includes the smaller retail-map roster, extra-mana, naval production, themed
 layout, Ports and kit checks (`mapgen_roster`, `mapgen_mana`, `mapgen_naval`,
-`mapgen_themes`, `mapgen_ports`, `mapgen_kits`). `--kits` generates every world on
+`mapgen_themes`, `mapgen_ports`, `mapgen_kits`, `mapgen_seams`). `--kits` generates every world on
 Mainland, Lakes, Islands and its themed layout with 2, 5 and 8 players at 32×32, at
 the default and maximum kit amounts: it checks determinism, that no kit had to be
 reduced, an independent flood that cliffs never cut a start off, that every section

@@ -278,6 +278,12 @@ struct KitSpec {
     const char* lowTowns; const char* lowTownFill;
     const char* highTowns; const char* highTownFill;
     Span buildings;                 // town feature palette (real TDF footprints decide fit)
+    // Hillside ramps as retail lays them, for rims of case 3, 5, 10, 12: a run of
+    // straight hillside pieces in rim order (west to east, or north to south) whose
+    // ends meet the cliffs cleanly. Retail's hillside variants are end pieces: each
+    // joins a cliff on one side only. nullptr: no hillside runs (a single hillside
+    // between straight cliffs, if the kit has no better ramp).
+    std::array<const char*, 4> rampRuns{};
 };
 constexpr const char* kAraTown[] = {"AraHut01","AraHut02","AraHut03","AraHut04","AraHut05","AraHut06","AraHut07",
     "AraHut08","AraHut09","AraHut10","AraHut11","AraHut12","AraBuild01","AraBuild02","AraBuild03",
@@ -299,7 +305,10 @@ constexpr std::array<KitSpec, kMapTypes> kKitSpec = {{
     {62, 235, {"Sections/Taros/Low to High Cliffs/", "Sections/Taros/Low to High Hillsides/"},
      "Sections/Taros/High Flats/high_ground.TNT", "Sections/Taros/High Mountains/", nullptr, nullptr, nullptr, nullptr,
      "Sections/Taros/Low Towns/", "Sections/Taros/Low Flats/low cobbles.TNT",
-     "Sections/Taros/High Towns/", "Sections/Taros/High Flats/high cobbles.TNT", {kTarTown, 14}},
+     "Sections/Taros/High Towns/", "Sections/Taros/High Flats/high cobbles.TNT", {kTarTown, 14},
+     // Measured on the section art (tools/mapgen_seams pairs): every join of these
+     // runs scores like retail's own boundaries; a lone e/w/s/n hillside does not.
+     {"sse ssw", "ese ene", "wsw wnw", "nnw"}},
     // Veruna ships no mountain kit; its High Specials are craters and outcrops.
     {62, 200, {"Sections/Veruna/Low to High Cliffs/", nullptr},
      "Sections/Veruna/High Flats/int_200.TNT", nullptr, nullptr, nullptr, nullptr, nullptr,
@@ -334,7 +343,9 @@ private:
 // walkable: the generator's army class (6 cells, slope 16) climbs it; climbable: the
 // builder/infantry class (GROUND3: 3 cells, slope 30) does. alternate: from a kit's
 // second edge family (hillsides), used only as a ramp.
-struct KitPiece { const tnt::Map* map = nullptr; bool walkable = false, gate = false, alternate = false, climbable = false; };
+struct KitPiece { const tnt::Map* map = nullptr; bool walkable = false, gate = false, alternate = false, climbable = false;
+                 std::string name;   // lower-case file stem, e.g. "sse"
+};
 using CaseKit = std::array<std::vector<KitPiece>, 16>;
 inline bool kitEmpty(const CaseKit& k) { for (const auto& v : k) if (!v.empty()) return false; return true; }
 // Plateau edges by corner height; straight pieces a large army can climb are walkable.

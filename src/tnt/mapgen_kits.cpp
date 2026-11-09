@@ -164,8 +164,10 @@ CaseKit edgeKit(SectionCache& cache, const KitSpec& spec) {
             }
             if (!good) continue;
             const bool straight = c == 3 || c == 5 || c == 10 || c == 12;
+            std::string stem = key.substr(key.rfind('/') + 1);
+            stem = stem.substr(0, stem.size() - 4);
             kit[size_t(c)].push_back({piece, straight && climbable(*piece, c, low, high, 16, 6), false, dir == spec.edges[1],
-                                      straight && climbable(*piece, c, low, high, 30, 3)});
+                                      straight && climbable(*piece, c, low, high, 30, 3), stem});
         }
     }
     return kit;

@@ -1538,6 +1538,9 @@ add_test(NAME scenario_placement COMMAND scenario_placement_test)
 
 add_executable(mapgen_test tools/mapgen_test.cpp)
 target_link_libraries(mapgen_test PRIVATE tak-formats)
+# Seam hunt: generated tile boundaries against retail adjacency and pixel steps.
+add_executable(mapgen_seams tools/mapgen_seams.cpp)
+target_link_libraries(mapgen_seams PRIVATE tak-formats)
 add_test(NAME mapgen COMMAND mapgen_test)
 
 add_executable(retail_visual_test tools/retail_visual_test.cpp)
@@ -1832,6 +1835,7 @@ if(TAK_TEST_DATA)
     add_test(NAME mapgen_naval COMMAND mapgen_test "${TAK_TEST_DATA}" --naval)
     add_test(NAME mapgen_themes COMMAND mapgen_test "${TAK_TEST_DATA}" --themes)
     add_test(NAME mapgen_kits COMMAND mapgen_test "${TAK_TEST_DATA}" --kits)
+    add_test(NAME mapgen_seams COMMAND mapgen_seams "${TAK_TEST_DATA}" sweep 0 1 quick)
     add_test(NAME mapgen_ports COMMAND mapgen_test "${TAK_TEST_DATA}" --ports)
     add_test(NAME campaign_roster COMMAND campaign_test "${TAK_TEST_DATA}")
     add_test(NAME structure_combat COMMAND structure_combat_test "${TAK_TEST_DATA}")

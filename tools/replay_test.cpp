@@ -190,9 +190,11 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 319, "replay format 11 is kept under protocol 319");
-    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 319");
-    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 319");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 320, "replay format 11 is kept under protocol 320");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 320");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 320");
+    // 320 changes random-map ramps (generated terrain differs from 319's).
+    check(!supportedReplayProtocol(15, 319), "previous protocol (random-map hillside ramps) is refused");
     // 319 is random-map recipe v10: a v9 recipe no longer regenerates its map.
     check(!supportedReplayProtocol(15, 318), "previous protocol (random-map recipe v9) is refused");
     // 318 lets an ordered attacker leave a blocked firing spot whatever its stance (hashed);
