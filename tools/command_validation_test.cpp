@@ -11,8 +11,10 @@
 //
 // Production: Train, RepeatTrain, Build and BuildManaArea take only a type on
 // the producer's own build menu (World::canProduce), whatever its owner and
-// whether or not it is builderlimited, and only from a builder. Scripts' and
-// the retail AI planner's own World::train calls stay unrestricted.
+// whether or not it is builderlimited, and only from a builder. Train and
+// RepeatTrain set their output down beside the producer, so they take only a
+// mobile type: a structure is placed (Build). Scripts' and the retail AI
+// planner's own World::train calls stay unrestricted.
 //
 // Synthetic types loaded through the real registry (FBI + canbuild/ tree) from
 // an in-memory VFS, on a flat map. Data-independent.
@@ -64,14 +66,17 @@ struct Registry {
         const std::string builder = mover + "builder=1;\nworkertime=100;\nbuilddistance=80;\nmogriumstorage=100000;\n";
         fbi("builder", builder + "builderlimited=1;\n");   // a Zhon-style limited conjurer
         fbi("freebuilder", builder);                        // not builderlimited
-        fbi("factory", "maxvelocity=0;\nfootprintx=6;\nfootprintz=6;\nbuilder=1;\nworkertime=100;\n"
-                       "mogriumstorage=1000000;\nmaxdamage=5000;\n");
+        const std::string factory = "maxvelocity=0;\nfootprintx=6;\nfootprintz=6;\nbuilder=1;\nworkertime=100;\n"
+                                    "mogriumstorage=1000000;\nmaxdamage=5000;\n";
+        fbi("factory", factory);
+        fbi("workshop", factory);   // a mod's factory with a structure on its menu
         fbi("hut", "maxvelocity=0;\nfootprintx=2;\nfootprintz=2;\nbuildtime=3000;\nbuildcost=10;\n");
         fbi("tower", "maxvelocity=0;\nfootprintx=2;\nfootprintz=2;\nbuildtime=3000;\nbuildcost=10;\n");
         fbi("lode", "maxvelocity=0;\nfootprintx=2;\nfootprintz=2;\nbuildtime=3000;\nbuildcost=10;\n");   // onMana
         for (const char* t : {"hut", "sol", "lode"}) put(std::string("canbuild/builder/") + t + ".tdf", "[Menu]{\npriority=1;\n}\n");
         put("canbuild/freebuilder/hut.tdf", "[Menu]{\npriority=1;\n}\n");
         put("canbuild/factory/sol.tdf", "[Menu]{\npriority=1;\n}\n");
+        for (const char* t : {"sol", "tower"}) put(std::string("canbuild/workshop/") + t + ".tdf", "[Menu]{\npriority=1;\n}\n");
         vfs.setMapFiles(files);
         reg.loadDir(vfs, "units");
         reg.loadBuildTree(vfs, "canbuild");
@@ -281,8 +286,16 @@ void restrictedBuilder(const Registry& reg) {
               "Train of a type off the menu changes nothing");
     unchanged(g, {b}, [&] { g.send(0, net::Cmd::Build, b, 0, kCtrl, "nosuchtype", 600, 600); },
               "Ctrl Build of an unknown type changes nothing");
+    // A structure on its menu is placed (Build); Train/RepeatTrain would make
+    // it beside the builder with no placement (the HUD's Ctrl+click on a
+    // structure icon starts a placement instead).
+    unchanged(g, {b}, [&] { g.send(0, net::Cmd::Train, b, 1, 0, "hut"); },
+              "Train of a structure on the menu changes nothing");
+    unchanged(g, {b}, [&] { g.send(0, net::Cmd::RepeatTrain, b, 0, 0, "hut"); },
+              "RepeatTrain of a structure on the menu changes nothing (the walk goes on)");
     g.ticks(300);
     check(g.count("foreign", 0) == 0, "no off-menu unit is produced");
+    check(g.count("hut", 0) == 0, "no structure is produced beside the builder");
     // The menu still works: a conjured sol (repeat), and a hut placed.
     g.send(0, net::Cmd::RepeatTrain, b, 0, 0, "sol");
     check(g.w.unit(b)->repeatType == reg("sol"), "RepeatTrain from the menu starts repeat production");
@@ -328,8 +341,22 @@ void factoryProduction(const Registry& reg) {
     // Repeat production and its cancel.
     g.send(0, net::Cmd::RepeatTrain, f, 0, 0, "sol");
     check(g.w.unit(f)->repeatType == reg("sol"), "factory: RepeatTrain from the menu repeats");
+    // Repeating, a factory takes orders (no lock); an off-menu RepeatTrain is
+    // refused, not a switch to the other type.
+    unchanged(g, {f}, [&] { g.send(0, net::Cmd::RepeatTrain, f, 0, 0, "foreign"); },
+              "a repeating factory: RepeatTrain off the menu leaves its repeat alone");
     g.send(0, net::Cmd::RepeatTrain, f, 0, 0, "sol");
     check(!g.w.unit(f)->repeatType && g.w.unit(f)->buildQueue.empty(), "factory: RepeatTrain again cancels it");
+    // A structure on a factory's menu (a mod's): placed, not produced at its door.
+    const int w = g.spawn("workshop", 1700, 900, 0);
+    g.ticks(2);
+    unchanged(g, {w}, [&] { g.send(0, net::Cmd::Train, w, 1, 0, "tower"); },
+              "a factory: Train of a structure on its menu changes nothing");
+    unchanged(g, {w}, [&] { g.send(0, net::Cmd::RepeatTrain, w, 0, 0, "tower"); },
+              "a factory: RepeatTrain of a structure on its menu changes nothing");
+    g.send(0, net::Cmd::Train, w, 1, 0, "sol");
+    check(g.w.unit(w)->buildQueue.size() == 1 && g.w.unit(w)->buildQueue.front() == reg("sol"),
+          "...and Train of the mobile type on the same menu is taken");
     // The scripts' / retail planner's API is not a player's order and stays unrestricted.
     g.w.train(f, reg("foreign"));
     check(g.w.unit(f)->buildQueue.size() == 1, "World::train itself (scripts, the planner) is not menu-bound");
@@ -407,7 +434,7 @@ void unrestrictedAndGifted(const Registry& reg) {
 int main() {
     const Registry reg;
     if (!reg("sol") || !reg("foreign") || !reg("factory") || reg.reg.buildable("factory") != std::vector<std::string>{"sol"} ||
-        reg("builder")->buildMenu.size() != 3 || !reg("lode")->onMana) {
+        reg("builder")->buildMenu.size() != 3 || reg("workshop")->buildMenu.size() != 2 || !reg("lode")->onMana) {
         std::printf("FAIL fixture: synthetic registry did not load\n");
         return 1;
     }

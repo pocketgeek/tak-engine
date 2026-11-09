@@ -11898,8 +11898,9 @@ bool World::canHelpBuild(const Unit& b, const Unit& site) const {
     return !b.type->builderLimited || std::find(menu.begin(),menu.end(),site.type->id)!=menu.end();
 }
 
-bool World::canProduce(const Unit& b, const UnitType* type) const {
+bool World::canProduce(const Unit& b, const UnitType* type, bool placed) const {
     if (!buildAllowed(type) || !b.alive() || !b.type || !b.type->isBuilder) return false;
+    if (!placed && type->isStructure()) return false;
     const auto& menu=b.type->buildMenu;
     return std::find(menu.begin(),menu.end(),type->id)!=menu.end();
 }

@@ -124,7 +124,8 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         switch (c.kind) {
             case Cmd::Load: return world.canLoadInto(c.unitId, c.targetId);
             case Cmd::Train: case Cmd::RepeatTrain: case Cmd::Build: case Cmd::BuildManaArea:
-                return producer && world.canProduce(*producer, reg.find(c.type));
+                return producer && world.canProduce(*producer, reg.find(c.type),
+                                                    c.kind == Cmd::Build || c.kind == Cmd::BuildManaArea);
             case Cmd::Assist: {
                 // HelpBuild's own eligibility (World::canHelpBuild -- same owner,
                 // a mobile builder, the build menu when builderlimited).

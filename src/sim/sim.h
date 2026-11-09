@@ -2466,10 +2466,13 @@ public:
     // builder, `type` is on b's own build menu -- the menu the HUD offers, the
     // same whoever owns b; retail's MobileBuild tests it too, 0x519850, and
     // builderlimited narrows only HelpBuild -- and no game restriction forbids
-    // it (buildAllowed). Mission scripts (orderTrain) and the retail AI's base
-    // planner call World::train directly and are not held to the menu; the
-    // server's AIs send commands and are.
-    bool canProduce(const Unit& b, const UnitType* type) const;
+    // it (buildAllowed). An output that is not `placed` (Train, RepeatTrain:
+    // tickProduction makes it beside the producer, with no placement) is a
+    // mobile type; a structure goes through placement (Build). No shipped factory has
+    // a structure on its menu. Mission scripts (orderTrain) and the retail AI's
+    // base planner call World::train directly and are not held to the menu;
+    // the server's AIs send commands and are.
+    bool canProduce(const Unit& b, const UnitType* type, bool placed) const;
     // Retail repair eligibility (0x519d40): a damaged, finished, allied unit
     // other than b, which is a mobile builder; a flying b also needs the
     // target's top above the sea (repairTopAboveSea).

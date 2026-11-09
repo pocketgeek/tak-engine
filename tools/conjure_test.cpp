@@ -336,8 +336,12 @@ int main(int argc, char** argv) {
         }
         for (const auto& [name,type]:registry.types()) {
             const auto& menu=registry.buildable(name);
-            if (type.isStructure() || menu.empty()) continue;
-            const auto* output=registry.find(menu.front());
+            if (type.isStructure()) continue;
+            // Repeat production sets its output down beside the producer, so it
+            // takes a mobile type; a structure on the menu is placed (Build).
+            const sim::UnitType* output=nullptr;
+            for (const auto& entry:menu)
+                if (const auto* t=registry.find(entry);t && !t->isStructure()) { output=t;break; }
             if (!output) continue;
             sim::World world;
             world.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
