@@ -3170,7 +3170,23 @@ int main(int argc, char** argv) {
         const auto next = origin == tak::LaunchOrigin::SinglePlayer ? tak::ResultChoice::NewGame
                         : origin == tak::LaunchOrigin::Multiplayer  ? tak::ResultChoice::GameSelect
                                                                     : tak::ResultChoice::Menu;
-        const auto rc = tak::ResultScreen::run(ren, vfs, oc > 0, "", false, &settings, &menuMusic, &st, next);
+        // Say where the doors really go. Single player's right door is the Play the
+        // Machine setup. A LAN game's both return to Connect to Server (its list); an
+        // online game's right door is that server's game list only with a sign-in token
+        // for it, else Connect to Server too (see the menu loop above).
+        const bool lanGame = origin == tak::LaunchOrigin::Multiplayer && !tokenLaunch &&
+                             (lanHosting || connectKind == tak::MainMenu::Connect::LanJoin ||
+                              connectKind == tak::MainMenu::Connect::LanSpectate);
+        std::string menuTip, proceedTip;
+        if (lanGame) menuTip = proceedTip = "Connect to Server";
+        else if (next == tak::ResultChoice::NewGame) proceedTip = "Play the Machine";
+        else if (next == tak::ResultChoice::GameSelect) {
+            const auto address = tak::parseServerAddress(lastServer);
+            proceedTip = address && sessionToken.heldFor(address->host, address->port) ? "Game List"
+                                                                                       : "Connect to Server";
+        }
+        const auto rc = tak::ResultScreen::run(ren, vfs, oc > 0, "", false, &settings, &menuMusic, &st, next,
+                                               menuTip, proceedTip);
         if (rc == next) afterResult = rc;
     }
     // Session ended: tear down any single-player local server, then either loop back

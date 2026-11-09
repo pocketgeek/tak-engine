@@ -1541,9 +1541,13 @@ float createOptionPx(float maxW) {
         // A scenario that places its own armies opens nobody at the map's starts.
         if (roomMap) drawRoomPreview({winW - 300.0f, 84, kRoomMap, kRoomMap}, scenarioOn && scenarioLobby_.placed > 0);
         // A room playing its map's scenario may start solo, once every seat the scenario
-        // needs is played; ordinary skirmishes need two.
+        // needs is played; ordinary skirmishes need two. A multiplayer room (not single
+        // player's private one) also needs two human players: AI alone is single player.
+        int humans = 0;
+        for (const auto& s : room.slots) humans += s.type == 1;
+        const bool needHuman = !singlePlayer_ && humans < 2;
         bool canStart = host && startValid(room, scenarioOn, needSeats) && room.mapsReady && !mp_->modPending() &&
-            (!room.opts.gameMods || bool(mp_->modPackage()));
+            (!room.opts.gameMods || bool(mp_->modPackage())) && !needHuman;
         // The server takes a moment to build the game: show the click landed.
         if (mp_->startPending() || mp_->starting()) lbBtn(bx, y, 130, 30, "STARTING...", true, nullptr, {70, 110, 70, 255});
         else lbBtn(bx, y, 130, 30, "START", canStart, [this] { mp_->startGame(); }, {70, 110, 70, 255});
@@ -1560,6 +1564,8 @@ float createOptionPx(float maxW) {
             mapStatus != "MAP READY" && mapStatus != "MAP VERIFIED")
             blockText(mapStatus.empty() ? "WAITING FOR MAP VERIFICATION" : mapStatus,
                 bx + 280, y + 9, 1.3f, {235, 205, 120, 255});
+        else if (host && needHuman && !mp_->startPending() && !mp_->starting())
+            blockText("NEEDS ANOTHER HUMAN PLAYER", bx + 280, y + 9, 1.3f, {235, 205, 120, 255});
         // Why the server refused the last START (a needed seat, setupMatch's refusal...).
         if (!mp_->startError().empty()) {
             // Shrunk before it is cut: a refusal that names a unit and the way out (a

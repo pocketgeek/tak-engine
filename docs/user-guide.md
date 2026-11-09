@@ -2332,6 +2332,16 @@ greyed until they are all filled. A seated player whom the scenario gives no
 units is named in amber (*NO PLACED UNITS: PLAYER N*). If the server still
 refuses to start the game, the reason appears in red under the buttons.
 
+A multiplayer room needs at least two human players to start: with only the host
+and AIs, **Start** stays greyed and the room says *NEEDS ANOTHER HUMAN PLAYER*
+(a game against the AI alone is single player).
+
+When a game ends, the victory or defeat screen names where each of its two doors
+leads when you point at it: the left one to the **Title Screen** (to **Connect to
+Server** after a local-server game), the right one to **Play the Machine** after
+single player, or the server's **Game List** after an online game (**Connect to
+Server** if the game needs you to sign in again, and after a local-server game).
+
 ### Local server
 
 **LOCAL SERVER** in **CONNECT TO SERVER** hosts a game on your own computer for

@@ -132,7 +132,8 @@ std::string mmss(int sec) {
 ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool victory,
                                const std::string& title, bool hasNext,
                                Settings* settings, MenuMusic* music,
-                               const ResultStats* stats, ResultChoice skirmishNext) {
+                               const ResultStats* stats, ResultChoice skirmishNext,
+                               const std::string& menuTip, const std::string& proceedTipIn) {
     CursorSet cursors;
     cursors.load(ren, vfs, settings);
     // Decided per frame below (hardware -> shown, software -> hidden and drawn).
@@ -177,10 +178,12 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
     if (victory && hasNext) proceed = ResultChoice::Next;
     else if (!victory) proceed = ResultChoice::Retry;
     if (skirmishNext != ResultChoice::Menu) proceed = skirmishNext;
-    const char* proceedTip = proceed == ResultChoice::Next       ? "Next Mission"
-                           : proceed == ResultChoice::NewGame    ? "New Game"
-                           : proceed == ResultChoice::GameSelect ? "Game Select"
-                                                                 : "Retry";
+    const std::string proceedTip = !proceedTipIn.empty()                ? proceedTipIn
+                                 : proceed == ResultChoice::Next       ? "Next Mission"
+                                 : proceed == ResultChoice::NewGame    ? "New Game"
+                                 : proceed == ResultChoice::GameSelect ? "Game Select"
+                                                                       : "Retry";
+    const std::string cancelTip = menuTip.empty() ? "Title Screen" : menuTip;
     // A campaign's last win, or a replay's result, has no next step: the right door is inert.
     const bool canProceed = hasNext || skirmishNext != ResultChoice::Menu ||
                             (!victory && !title.empty());
@@ -367,7 +370,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
                 text(body, title, {(640 - ttw / lay.scale) / 2, g.title.y - 26, ttw / lay.scale, 20}, dim, false, true);
             }
         }
-        text(body, cancelHover ? "Title Screen" : okHover ? proceedTip : "", g.help, dim, false, true, true);
+        text(body, cancelHover ? cancelTip : okHover ? proceedTip : std::string(), g.help, dim, false, true, true);
 
         auto button = [&](SDL_Texture** tex, const SDL_FRect& r, bool hover, const char* fallback) {
             SDL_Texture* t = tex[hover && tex[1] ? 1 : 0];

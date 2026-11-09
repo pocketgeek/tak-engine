@@ -49,11 +49,14 @@ public:
     // which case the table is omitted. Returns the player's choice. `settings` supplies
     // the cursor scale; `music` keeps the front-end track looping. `skirmishNext`
     // (NewGame or GameSelect, title empty) is where a skirmish's right door leads.
+    // menuTip / proceedTip name where the doors really lead when the host knows better
+    // (a LAN game's go back to Connect to Server); empty keeps the usual words.
     static ResultChoice run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool victory,
                             const std::string& title, bool hasNext,
                             Settings* settings = nullptr, MenuMusic* music = nullptr,
                             const ResultStats* stats = nullptr,
-                            ResultChoice skirmishNext = ResultChoice::Menu);
+                            ResultChoice skirmishNext = ResultChoice::Menu,
+                            const std::string& menuTip = {}, const std::string& proceedTip = {});
 };
 
 }  // namespace tak
