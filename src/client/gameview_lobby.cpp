@@ -250,7 +250,7 @@ float createOptionPx(float maxW) {
 
     void GameView::buildMapList(tak::LoadScreen* progress) {
         if (progress) progress->step("Finding maps",70);
-        resetMinimap(); mapView_.quiesce();
+        resetMinimap(); mapView_.quiesce(); stopPreviewReaders();
         vfs_.refreshMapCache(tak::hpi::userMapRoot());
         mapList_.clear();
         mapTitlesLoaded_ = false;   // the install may have changed: read the tables again
@@ -402,7 +402,8 @@ float createOptionPx(float maxW) {
         genPreviewError_.clear();
         if (gen) {
             // Done with old rolls: drop them (a running one finishes on its own and
-            // its result is ignored; its future would block here, so it stays listed).
+            // its result is ignored; its future would block here, so it stays listed --
+            // it still reads vfs_, and stopPreviewReaders waits for it like the newest).
             std::erase_if(genJobs_, [](auto& job) {
                 return job.second.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
             });
@@ -519,6 +520,11 @@ float createOptionPx(float maxW) {
         out.dims = dims;
         out.map = std::make_shared<const tak::tnt::Map>(std::move(g.map));
         return out;
+    }
+
+    void GameView::stopPreviewReaders() {
+        bigMap_.reset();   // ~MapView joins its section and chunk workers
+        for (auto& job : genJobs_) job.second.wait();
     }
 
     void GameView::pollGenPreview() {

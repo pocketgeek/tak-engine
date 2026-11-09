@@ -2180,6 +2180,9 @@ private:
     // here (not a reference) so a multiplayer client can REMOUNT to the room's
     // mods at game start -- move-assigning vfs_ keeps every borrowed
     // pointer (MapView's Compositor) valid because the object itself is reused.
+    // Its contents are not kept alive for anyone, so no other thread may be reading
+    // it when it is replaced or changed: the minimap (resetMinimap), mapView_'s
+    // workers (quiesce) and the lobby's previews (stopPreviewReaders) are stopped first.
     tak::hpi::Vfs vfs_;          // retail-root read-path (the only way we read files)
     MapView mapView_;
     std::string installRoot_;    // retail install dir (for remounting with the room's mods)
@@ -2193,7 +2196,8 @@ private:
     std::string mapSibling(const char* ext) const;
     // Remount the data set with the room's game mods (its verified package) and
     // this player's own cosmetic mods, and rebuild the gameplay registry, so this
-    // client's sim reads the same gameplay data the referee does.
+    // client's sim reads the same gameplay data the referee does. Replaces vfs_: the
+    // caller stops its other readers first (startMpGame).
     void remountMods();
     // Fingerprint of the gameplay data THIS client will feed its sim (current mods).
     uint64_t gameDataHash() const { return tak::hpi::gameplayHash(vfs_); }
@@ -2771,7 +2775,8 @@ private:
     // A generated map's preview is rolled on a worker (a large map takes a moment) and
     // shown when done; until then the previous random map's picture stays, marked
     // GENERATING. Only the newest request (genSeq_) is applied. The rolled map is kept
-    // (genPreviewMap_) so the full-window view does not roll it again.
+    // (genPreviewMap_) so the full-window view does not roll it again. Every roll in
+    // genJobs_ reads vfs_ until it is done, a superseded one too (it runs to its end).
     struct GenPreviewOut {
         std::vector<uint8_t> rgba; int w = 0, h = 0;
         std::vector<std::pair<float, float>> starts; float worldW = 0, worldH = 0;
@@ -2785,6 +2790,17 @@ private:
     bool genPreviewPending_ = false, mapPreviewIsGen_ = false;
     std::shared_ptr<const tak::tnt::Map> genPreviewMap_;
     std::string genPreviewMapId_;
+    // Every lobby preview that reads vfs_ off the main thread is finished: the full-window
+    // view is closed (its MapView joins its terrain workers; its textures go here, on the
+    // main thread) and each roll in genJobs_ has returned -- the finished ones stay listed
+    // for pollGenPreview. Before vfs_ is replaced or changed (startMpGame, buildMapList's
+    // map cache) and at teardown.
+    void stopPreviewReaders();
+#ifndef NDEBUG
+    // TAK_PREVIEW_LIFETIME_TEST: hold preview readers at a read of vfs_ just before the
+    // data set changes (startMpGame) or goes (the destructor, `teardown`).
+    void previewLifetimeProbe(bool teardown);
+#endif
     // The create screen's map list filter (lobby text field 6): the maps whose title or
     // name contains it, case-insensitively.
     std::string mapFilter_;
@@ -2810,8 +2826,9 @@ private:
     std::vector<std::pair<float, float>> mapPreviewStarts_;
     // The full-window map view a click on a preview opens (create screen or room), and
     // the preview it was opened from (mapPreviewFor_): when that changes -- another map,
-    // another screen, the game starting -- the view closes. Drawn over the lobby, which
-    // keeps running underneath; BACK or Esc closes it.
+    // another screen -- the view closes. Drawn over the lobby, which keeps running
+    // underneath; BACK or Esc closes it, and so does the game starting (before the data
+    // set its workers read is remounted).
     std::unique_ptr<BigMapView> bigMap_;
     std::string bigMapFor_;
     std::vector<int> roomPreviewColors_;   // the room preview's start colours, for the big view
