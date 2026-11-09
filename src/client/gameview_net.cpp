@@ -218,8 +218,15 @@
         // rebuild the registry, so our world and hash agree with the server's
         // referee. remountMods already rebuilds the registry for the current
         // crusades setting; handle a crusades-only change separately.
+#ifndef NDEBUG
+        previewLifetimeProbe(false);   // TAK_PREVIEW_LIFETIME_TEST=gen|big
+#endif
         resetMinimap();
         mapView_.quiesce();
+        // The lobby's previews read vfs_ on their own threads too: a guest can still have
+        // the full-window map open, and generated maps' rolls (superseded ones included)
+        // may still be running. READY and START do not wait for them; this does.
+        stopPreviewReaders();
         remountMods();
         vfs_.setMapFiles(mp_ && mp_->mapPackage() && room.mission.empty() &&
             !tak::mapgen::isGeneratedMapId(room.mapId) ? mp_->mapPackage()->files : room.mission.empty()

@@ -70,7 +70,8 @@
             }
             return;
         }
-        if (bigMap_ && !inLobbyPhase()) bigMap_.reset();   // the game started under it
+        // The lobby is over under it (startMpGame has closed it already when a game starts).
+        if (bigMap_ && !inLobbyPhase()) bigMap_.reset();
         // The loading plate owns the screen from world setup until the first tick,
         // so the wait on the other players isn't a frozen lobby frame. It presents
         // itself, so return before the world is drawn over it.

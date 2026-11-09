@@ -3372,6 +3372,17 @@ if(TAK_BUILD_CLIENT)
       add_test(NAME terrain_cache COMMAND terrain_cache_test "${TAK_TEST_DATA}")
       set_tests_properties(terrain_cache PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     endif()
+    # The lobby's full-window map view: closing it waits for its terrain workers held at a
+    # read, so the data set can be remounted after (build with -fsanitize=thread too).
+    add_executable(bigmap_lifetime_test tools/bigmap_lifetime_test.cpp src/client/bigmapview.cpp
+      src/cartographer/features.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
+    target_include_directories(bigmap_lifetime_test PRIVATE src)
+    target_compile_definitions(bigmap_lifetime_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(bigmap_lifetime_test PRIVATE tak-formats ${_tak_sdl2})
+    if(TAK_TEST_DATA)
+      add_test(NAME bigmap_lifetime COMMAND bigmap_lifetime_test "${TAK_TEST_DATA}")
+      set_tests_properties(bigmap_lifetime PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    endif()
     # Camera-driven terrain work in a real MapView (workstream K): priority, cancellation
     # with hysteresis, stand-ins under memory pressure, nearby work, edits/resets mid-queue.
     add_executable(terrain_schedule_test tools/terrain_schedule_test.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
@@ -3929,6 +3940,13 @@ if(TAK_TEST_DATA)
         --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}"
         --hpitool "$<TARGET_FILE:hpitool>")
       set_tests_properties(harness_createfail PROPERTIES TIMEOUT 150)
+      # The lobby's map previews (generated-map rolls, the full-window view) are held at a
+      # read of the data set as the game starts and as the view is destroyed: the data set
+      # must outlive them, and the games then play normally.
+      add_test(NAME preview_lifetime COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tools/preview_lifetime_test.py"
+        --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
+      set_tests_properties(preview_lifetime PROPERTIES TIMEOUT 240)
       # A slowly simulating harness client (a stress game under load) keeps its seat, and a
       # concluded run reports exactly its result tick.
       add_test(NAME harness_seat_load COMMAND "${Python3_EXECUTABLE}"

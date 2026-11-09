@@ -19,6 +19,7 @@
 #include "client/runtimesettings.h"
 #include "client/buildline.h"
 #include "client/cursortiming.h"
+#include "client/vfsreadgate.h"
 #include "sim/retailmotion.h"
 #include <cctype>
 #include <cmath>
@@ -80,6 +81,80 @@
         e.type = SDL_MOUSEBUTTONUP;
         input(e, W, H);
         std::fprintf(stderr, "watch poke at tick %u: %zu commands queued\n", netTick_, outbox_.size());
+    }
+
+    // TAK_PREVIEW_LIFETIME_TEST=gen|big|teardown: the lobby's map previews against a change
+    // of the data set they read. A read gate on vfs_ holds every preview worker at a read --
+    // three generated-map rolls (the first two superseded) for gen, the full-window view's
+    // terrain workers for big, all of them for teardown -- and from two seconds on lets
+    // them go one at a time, the last held first and the first held last of all, so a wait
+    // for anything less than every reader (the newest roll alone, say) leaves one held. The
+    // data set must outlive them: startMpGame remounts it (gen, big), the destructor
+    // destroys it (teardown). tools/preview_lifetime_test.py runs all three.
+    void GameView::previewLifetimeProbe(bool teardown) {
+        static const char* const mode = tak::devEnv("TAK_PREVIEW_LIFETIME_TEST");
+        if (!mode || (std::strcmp(mode, "teardown") == 0) != teardown) return;
+        const bool gen = teardown || std::strcmp(mode, "gen") == 0;
+        const bool big = teardown || std::strcmp(mode, "big") == 0;
+        auto fail = [](const std::string& why) {
+            std::fprintf(stderr, "FAIL: preview lifetime (%s): %s\n", mode, why.c_str());
+            std::fflush(stderr);
+            std::_Exit(1);   // a released reader would read freed memory
+        };
+        auto waitHeld = [&](tak::ReadGate& gate, size_t n) {
+            if (!gate.waitHeld(n, std::chrono::seconds(60)))
+                fail("only " + std::to_string(gate.held()) + " of " + std::to_string(n) +
+                     " preview readers reached a read");
+        };
+        // The game's own terrain and minimap workers go quiet first, so every read the gate
+        // holds is a preview's.
+        resetMinimap();
+        mapView_.quiesce();
+        auto gate = std::make_shared<tak::ReadGate>(vfs_, mainThreadId_);
+        const auto start = std::chrono::steady_clock::now();
+        gate->onGone([start, fail](const tak::ReadGate::Gone& at) {
+            const auto ms = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start).count();
+            if (at.held || !at.released)
+                fail("the data set went " + std::to_string(ms) + " ms into the hold, with " +
+                     std::to_string(at.held) + " preview reads still in it");
+            std::fprintf(stderr, "PASS: preview lifetime (%s): the data set went %lld ms after the hold "
+                         "began, once its readers had left (%zu reads through it after the release)\n",
+                         mode, ms, at.lateReads);
+        });
+        gate->arm();
+        if (big) {
+            // A generated map: its view reads vfs_ itself (an installed map's room view
+            // reads the verified package's own files). Drawn once, as the lobby draws it,
+            // so the chunk worker has work too.
+            tak::mapgen::Params params;
+            params.seed = 4;
+            const std::string mapPath = mapPath_;
+            mapPreviewFor_ = mapPath_ = tak::mapgen::encodeMapId(params);
+            openBigMap();
+            mapPath_ = mapPath;
+            if (!bigMap_) fail("the full-window view did not open");
+            bigMap_->draw({0, 0, 640, 480});
+            waitHeld(*gate, 1);   // its section worker, at least
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));   // time for the chunk worker's
+        }
+        if (gen) {
+            const size_t before = gate->held();
+            for (uint64_t seed = 1; seed <= 3; ++seed) {   // each supersedes the one before
+                tak::mapgen::Params params;
+                params.seed = seed;
+                buildMapPreview(tak::mapgen::encodeMapId(params));
+                waitHeld(*gate, before + seed);   // held in the order they were asked for
+            }
+        }
+        std::fprintf(stderr, "preview lifetime (%s): %zu preview reads held (%zu rolls listed, full-window view %s)\n",
+                     mode, gate->held(), genJobs_.size(), bigMap_ ? "open" : "closed");
+        std::thread([gate] {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            while (gate->held() > 1 && gate->releaseLatest())
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            gate->release();
+        }).detach();
     }
 
     void GameView::guiSmoothTest() {
