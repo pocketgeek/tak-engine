@@ -274,8 +274,16 @@ link `sim`, `tdf`, `net`, and the new `ai` module only.
 - **Lobby service.** Holds the game registry. Handles create / list / join /
   leave / slot changes / chat / start. One TCP port (default 7677) for
   everything; a connection is in lobby state or attached to one game. If the
-  host disconnects **pre-start**, host powers pass to the next human in the
-  lobby (the game dissolves if none remain).
+  host leaves or disconnects **pre-start** (a host watching its room as a
+  spectator too), host powers pass to the next human in the lobby (the game
+  dissolves if none remain; an unstarted room nobody is in is dissolved in any
+  case). In a running game they belong to the host's **seat**: a host that
+  reconnects is the host again under its new connection; when the seat leaves
+  for good (a leave, or an AI takeover) they pass to the first seated player
+  still connected and playing (else to one held for its reconnect, which takes
+  them when it is back), or to nobody, and the host's pause ends with it.
+  A LOCAL SERVER's (`--lan`) game is its host's: it closes for everyone when
+  the host leaves, in the lobby or in the game.
 - **GameRoom.** One per game: player slots (up to 8), the sequencer, the
   headless referee sim, one `ai::Controller` per AI slot, the bundle log, and
   per-game settings (map, Crusades balance, gods on/off).
@@ -373,7 +381,9 @@ link `sim`, `tdf`, `net`, and the new `ai` module only.
     the password itself is gone; a session signed in by token spends its next
     sign-in token instead), then `Rejoin{game, resume token, fromTick}`,
     `fromTick` being the first tick whose bundle it never received. The server
-    answers `Reseated{slot, rotated token, fromTick, logEnd}` and streams the
+    answers `Reseated{slot, rotated token, fromTick, logEnd}`, then what no
+    bundle carries (`LobbyState`: the game speed and the host as they are now;
+    `Pause` while the host has the game paused; `Waiting`), and streams the
     log from `fromTick`; the client keeps its world (no rebuild from tick 0)
     and treats the ticks before `logEnd` as history -- its own orders wait and
     its acknowledgements are not counted until it is through them. A `Rejoin`
@@ -451,7 +461,7 @@ silently skipped.)
 | `TickBundle` | tick u32, n × Command (ascending player, then arrival order), m × Event | server → all clients, 30/s; empty bundles are the clock; the event section exists from day one (§3) |
 | `StateHash` | tick u32, hash u64 | client → server, every 30 ticks |
 | `Desynced` | tick, reason | server → one client; its game ends (no reconnect) |
-| `Pause` / `Resume` | cause, player | the host's pause (`SetPause`): server stops closing ticks, never expires |
+| `Pause` / `Resume` | cause, player | the host's pause (`SetPause`): server stops closing ticks, never expires; ends if the host leaves the game |
 | `Waiting` | n × (slot, ms left), own (running, ms) | protocol 289: the seats the room is waiting for (§4 disconnect policy); no tick closes while n > 0 |
 | `SpeedUpdate` | speed (tenths, 10 = 1×) | server → all; host changed speed mid-game (needs `speedUnlock`); re-cadences tick pacing, not the per-tick `dt`, so the sim stays deterministic |
 | `PlayerStatus` | slot, {connected, dropped, left} + ping | informational only — never sim-affecting (sim-affecting lifecycle is an Event in the bundle) |
@@ -737,7 +747,8 @@ design and none block v1:
   Seated players no longer rebuild from the log (§4 disconnect policy).
 - Host migration is a non-issue by construction (the server owns the game; the
   "host" is a player with lobby permissions — pre-start they pass to the next
-  human, in-game they matter only for pause/kick powers).
+  human, in-game they matter only for pause and speed, and follow the host's
+  seat; see the lobby service in §4).
 
 ## 11. Milestones
 

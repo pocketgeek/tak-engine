@@ -321,7 +321,12 @@ struct Room {
 
     std::string mission;           // campaign mission stem (empty = ordinary skirmish/MP)
     GameOptions opts;
-    uint32_t hostId = 0;
+    uint32_t hostId = 0;            // the host's connection (0 = nobody holds the host's powers)
+    // In a running game the host's powers (pause, speed) belong to its SEAT, not to the
+    // connection: a host that reconnects (Rejoin) into it is the host again under its new
+    // connection id, and when the seat leaves the game for good they pass on (passHost).
+    // -1: a spectator host, or nobody. Set at the start; the lobby goes by hostId alone.
+    int hostSlot = -1;
     SlotInfo slots[kMaxSlots];
     int slotClient[kMaxSlots];      // client id in each slot, -1 = none/ai/open
     std::vector<uint32_t> spectators;   // watching, not seated (no slot, no hash)
@@ -647,6 +652,11 @@ private:
     // command budgets. Nothing is charged unless every budget has room.
     bool takeInputBudget(Client& c, uint64_t now, unsigned bytes, unsigned count);
     void leaveRoom(Client& c, const char* reason);
+    // The host left a running game for good (`leaving`: its connection, 0 = none): its powers
+    // pass to a seated player still in the game (connected, else held for a reconnect), or to
+    // nobody, and its pause ends. A LOCAL SERVER's game closes instead. The caller tells the
+    // room (broadcastLobby carries hostId).
+    void passHost(Room& r, uint32_t leaving);
     void tryStart(Client& c);
     // A START the server will not run: the host is told why (Msg::MapError, which the
     // room shows under its buttons) and the log says so.
@@ -1459,6 +1469,11 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             // Re-seat the client and rotate the token (single use).
             room.slotClient[slot] = int(c.id);
             room.slotToken[slot] = randToken();
+            // The host's powers are the seat's: a host back under a new connection is the
+            // host again. Only the seat's own token gets here, and a seat whose powers passed
+            // on (passHost) no longer is room.hostSlot, so nobody else can claim them.
+            const bool hostBack = room.hostSlot == slot && room.hostId != c.id;
+            if (hostBack) room.hostId = c.id;
             c.clearCommands();   // never inherit a previous room's queue
             c.state = Client::InGame; c.roomId = gid; c.slot = slot; c.loaded = true;
             // It has the map, the game mods and the world already.
@@ -1466,6 +1481,13 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             if (room.modPackage) c.modReady = c.modOffered = room.modPackage->digest;
             Writer w; w.u8(uint8_t(slot)); w.u64(room.slotToken[slot]); w.u32(fromTick); w.u32(uint32_t(room.log.size()));
             c.conn.send(Msg::Reseated, w);
+            // What changed while it was away that no bundle carries, before the bundles it
+            // missed: the room as it is now (LobbyState: the game speed and the host, the
+            // room told too when that is this seat again), and the host's pause. Its world,
+            // its recording and the tick it continues from stay its own.
+            if (hostBack) broadcastLobby(room);
+            else { Writer ls; writeSlots(ls, room); c.conn.send(Msg::LobbyState, ls); }
+            if (room.paused) { Writer pw; pw.u8(1); pw.u8(0); c.conn.send(Msg::Pause, pw); }
             // The bundles it is missing, streamed like a spectator's catch-up. Flow
             // control resumes from where it says it is (a client that lies only paces
             // the room for itself, as a lying Progress could).
@@ -1610,19 +1632,15 @@ void Server::leaveRoom(Client& c, const char* reason) {
     Room* r = roomOf(c);
     if (!r) return;
     dropPendingCommands(c, *r);
-    // A spectator just detaches from the stream -- no slot, nothing to forfeit.
-    {
-        auto& sp = r->spectators;
-        auto it = std::find(sp.begin(), sp.end(), c.id);
-        if (it != sp.end()) {
-            sp.erase(it);
-            c.validationId=0;c.deferredMapOffer.reset();
-            c.state = Client::Lobby; c.roomId = 0; c.slot = -1; c.loaded = false;
-            std::fprintf(stderr, "client %u stopped spectating game %u (%s)\n", c.id, r->id, reason);
-            return;
-        }
-    }
-    if (c.slot >= 0 && c.slot < kMaxSlots) {
+    // First the connection detaches: a spectator just leaves the stream (no slot, nothing
+    // to forfeit); a seated player frees its seat in the lobby and forfeits it in a game.
+    // Then, separately, the host's departure (a spectator host's included).
+    auto& sp = r->spectators;
+    const auto watching = std::find(sp.begin(), sp.end(), c.id);
+    const bool spectator = watching != sp.end();
+    if (spectator) {
+        sp.erase(watching);
+    } else if (c.slot >= 0 && c.slot < kMaxSlots) {
         r->slotClient[c.slot] = -1;
         if (!r->running) { r->slots[c.slot].type = 0; r->slots[c.slot].name.clear(); }
         else {
@@ -1633,10 +1651,16 @@ void Server::leaveRoom(Client& c, const char* reason) {
             endWait(*r, c.slot);   // it was silent, came back and left: nothing to wait for
         }
     }
-    uint32_t rid = r->id;
-    bool wasHost = (r->hostId == c.id);
+    const uint32_t rid = r->id;
+    const bool wasHost = (r->hostId == c.id);
     c.validationId=0;c.deferredMapOffer.reset();
     c.state = Client::Lobby; c.roomId = 0; c.slot = -1; c.loaded = false;
+    if (spectator) std::fprintf(stderr, "client %u stopped spectating game %u (%s)\n", c.id, rid, reason);
+    // A spectator that is not the host changes nothing the room is shown.
+    if (spectator && !wasHost) return;
+    // The host leaving a running game: its powers pass on (or, on a LOCAL SERVER, the
+    // game closes with it).
+    if (r->running && wasHost) passHost(*r, c.id);
     // A LOCAL SERVER's room is its host's: it closes with them, and everyone still in
     // it is told so (their clients go back to the CONNECT screen).
     if (!r->running && wasHost && lan_) {
@@ -1663,7 +1687,50 @@ void Server::leaveRoom(Client& c, const char* reason) {
         else { rooms_.erase(rid); std::fprintf(stderr, "game %u dissolved\n", rid); return; }
     }
     broadcastLobby(*r);   // reachable only when the room still exists (not dissolved)
-    std::fprintf(stderr, "client %u left game %u (%s)\n", c.id, rid, reason);
+    if (!spectator) std::fprintf(stderr, "client %u left game %u (%s)\n", c.id, rid, reason);
+}
+
+void Server::passHost(Room& r, uint32_t leaving) {
+    if (lan_) {
+        // A LOCAL SERVER's game is its host's (its lobby too, see leaveRoom): nobody
+        // succeeds the host. Everyone still in it is told and their connections close; the
+        // run loop then tears the empty room down (a tick may be in flight, so not here).
+        r.hostId = 0; r.hostSlot = -1;
+        size_t others = 0;
+        for (auto& [id, peer] : clients_)
+            if (id != leaving && peer->roomId == r.id) {
+                sendReject(*peer, "the host closed the game");
+                peer->conn.fail("host closed the game");
+                ++others;
+            }
+        std::fprintf(stderr, "game %u closed by its host (%zu others)\n", r.id, others);
+        return;
+    }
+    // The first seated player still connected and still playing, else the first one the
+    // room holds the seat of for a reconnect (its powers wait for it, as the host's own
+    // would: Rejoin). None (only AIs, the defeated or spectators are left): nobody holds
+    // the host's powers from now on.
+    int next = -1;
+    for (int i = 0; i < kMaxSlots && next < 0; ++i) {
+        if (r.slots[i].type != 1 || r.defeated[size_t(i)] || r.slotClient[i] < 0 || uint32_t(r.slotClient[i]) == leaving)
+            continue;
+        if (const auto it = clients_.find(uint32_t(r.slotClient[i])); it != clients_.end() && it->second->conn.ok()) next = i;
+    }
+    for (int i = 0; i < kMaxSlots && next < 0; ++i)
+        if (r.slots[i].type == 1 && !r.defeated[size_t(i)] && r.slotClient[i] < 0 && r.waitDeadline[i]) next = i;
+    r.hostSlot = next;
+    r.hostId = next >= 0 && r.slotClient[next] >= 0 ? uint32_t(r.slotClient[next]) : 0;
+    // The pause was the host's: it ends with them rather than hold the game for a
+    // successor who never asked for it (or for nobody at all).
+    if (r.paused) {
+        r.paused = false;
+        if (!r.held()) r.rebasePace(nowUs());
+        Writer rw; rw.u8(1); rw.u8(0);
+        broadcastRoom(r, Msg::Resume, rw);
+    }
+    if (next >= 0) std::fprintf(stderr, "game %u: the host's powers pass to slot %d (client %u%s)\n", r.id, next, r.hostId,
+                                r.hostId ? "" : ": away, until it reconnects");
+    else std::fprintf(stderr, "game %u: nobody is left to hold the host's powers\n", r.id);
 }
 
 bool Server::mapsReady(const Room& r) const {
@@ -2007,6 +2074,7 @@ void Server::tryStart(Client& c) {
         }
     }
     r->running = true;
+    r->hostSlot = c.slot;   // the host's powers stay with this seat (-1: a spectator host)
     r->tick = 0;
     std::fill(std::begin(r->orderSerialFloor), std::end(r->orderSerialFloor), 0u);
     r->orderRotor = 0;
@@ -2972,11 +3040,8 @@ void Server::takeOver(Room& r, int slot) {
         r.ai.back().setStartSpots(aiStartSpots(r, slot));
     }
     std::fprintf(stderr, "game %u: player %d stopped communicating -- AI (Normal) takes over\n", r.id, slot);
-    // The host's in-game controls (pause, speed) pass to a player still connected.
-    const auto host = clients_.find(r.hostId);
-    if (host == clients_.end() || host->second->roomId != r.id || !host->second->conn.ok())
-        for (int i = 0; i < kMaxSlots; ++i)
-            if (r.slots[i].type == 1 && r.slotClient[i] >= 0) { r.hostId = uint32_t(r.slotClient[i]); break; }
+    // The host's seat is gone for good: its powers pass on, and the room is told.
+    if (slot == r.hostSlot) { passHost(r, 0); broadcastLobby(r); }
     if (!r.held()) r.rebasePace(nowUs());
     broadcastWaiting(r);
 }
@@ -3339,6 +3404,21 @@ int Server::run() {
             }
             std::fprintf(stderr, "game %u ended (%s)\n", rid, why);
             rooms_.erase(rid);
+        }
+        // A room that never started and that nobody is in any more holds no world and
+        // nothing to save, but would count against --max-games for good. leaveRoom
+        // dissolves a lobby as its host goes; this is the backstop for any departure that
+        // leaves one behind. A connection still naming the room keeps it (its map and
+        // game-mod uploads and validations are that connection's), and finishValidations
+        // cancels the validation of a room that is gone.
+        if (!rooms_.empty()) {
+            std::set<uint32_t> named;
+            for (const auto& [id, peer] : clients_) if (peer->roomId) named.insert(peer->roomId);
+            for (auto it = rooms_.begin(); it != rooms_.end();) {
+                if (it->second.running || roomOccupied(it->second) || named.count(it->first)) { ++it; continue; }
+                std::fprintf(stderr, "game %u dissolved (nobody left in it)\n", it->first);
+                it = rooms_.erase(it);
+            }
         }
         // No global batch join: slow rooms keep their own worker busy while
         // networking and other rooms continue. Only one tick per room is in flight.

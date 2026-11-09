@@ -1415,6 +1415,9 @@ add_test(NAME selection_order COMMAND selection_order_test)
 set_tests_properties(selection_order PROPERTIES LABELS legion)
 add_executable(mod_transfer_test tools/mod_transfer_test.cpp)
 target_link_libraries(mod_transfer_test PRIVATE tak-formats)
+# The host's powers, speed and pause across reconnects, as MpClients see them (host_session).
+add_executable(host_session_test tools/host_session_test.cpp)
+target_link_libraries(host_session_test PRIVATE tak-formats)
 add_executable(mod_packs_test tools/mod_packs_test.cpp)
 target_link_libraries(mod_packs_test PRIVATE tak-formats)
 add_test(NAME mod_packs COMMAND mod_packs_test)
@@ -3868,6 +3871,18 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_disconnect_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_disconnect PROPERTIES TIMEOUT 300)
+    # Host powers: a spectator host's room goes with it (no orphan lobbies), the host's seat
+    # keeps them across a reconnect and passes them on when it goes, a reconnect is told the
+    # speed, pause and host as they are now, a LOCAL SERVER's game closes with its host.
+    foreach(tak_case lobby authority speed lan)
+      add_test(NAME server_host_${tak_case} COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tools/server_host_test.py"
+        --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --case ${tak_case})
+      set_tests_properties(server_host_${tak_case} PROPERTIES TIMEOUT 180)
+    endforeach()
+    add_test(NAME host_session COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/host_session_test.py"
+      --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:host_session_test>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(host_session PROPERTIES TIMEOUT 180)
     # Silence timeouts around game start: a seat that is loading gets 30 s, play keeps 15 s.
     add_test(NAME server_load_timeout COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_load_timeout_test.py"
