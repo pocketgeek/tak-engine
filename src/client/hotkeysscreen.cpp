@@ -24,10 +24,31 @@ void HotkeysScreen::build() {
     }
 }
 
+bool HotkeysScreen::rowAtDefault(Act a) const {
+    for (const auto& d : hotkeyDefs())
+        if (d.act == a) return !s_.hotkeys.count(d.id);
+    return true;
+}
+
+// One action back to its factory chord. As when rebinding, an action that holds that
+// chord meanwhile gives it up (shows as UNBOUND) so no two actions share it.
+void HotkeysScreen::restoreDefault(Act a) {
+    for (const auto& d : hotkeyDefs()) {
+        if (d.act != a) continue;
+        if (d.def.bound())
+            for (const auto& o : hotkeyDefs())
+                if (o.act != a && effectiveChord(s_.hotkeys, o.act) == d.def)
+                    setChordOverride(s_.hotkeys, o.act, KeyChord{});
+        s_.hotkeys.erase(d.id);
+        changed();
+        return;
+    }
+}
+
 void HotkeysScreen::layout(int winW, int winH) {
     u_ = std::clamp(std::min(winW / 1280.0f, winH / 720.0f), 1.0f, 3.0f);
     auto rowH = [&](bool section) { return (section ? 30.0f : 34.0f) * u_; };
-    float panelW = std::min(660 * u_, winW * 0.72f);
+    float panelW = std::min(760 * u_, winW * 0.80f);
     float titleH = 3.4f * 7 * u_ + 26 * u_;
     float footerH = 52 * u_;
     float hintH = 22 * u_;   // the hint line's own band, between the rows and the footer
@@ -47,6 +68,8 @@ void HotkeysScreen::layout(int winW, int winH) {
     for (auto& r : rows_) {
         float h = rowH(r.section);
         r.rect = {panel_.x + 26 * u_, y, panelW - 52 * u_, h};
+        const float dw = 96 * u_;
+        r.defRect = {r.rect.x + r.rect.w - dw, y + 4 * u_, dw, 24 * u_};
         y += h;
     }
     // DEFAULTS at the left edge and BACK at the right, in line with the rows.
@@ -112,10 +135,16 @@ bool HotkeysScreen::input(const SDL_Event& e, int winW, int winH) {
             if (!atDefaults()) { capture_ = -1; refused_.clear(); defaultsPrompt_.open = true; }
             return false;
         }
-        // Right-click on a binding row clears it (unbind); left-click arms capture.
+        // Right-click on a binding row clears it (unbind); left-click arms capture, or on
+        // the row's DEFAULT button puts that one key back.
         if (!in(view_, mx, my)) return false;   // the title, the hint and the footer are not rows
         for (size_t i = 0; i < rows_.size(); ++i) {
             if (rows_[i].section || !in(rows_[i].rect, mx, my)) continue;
+            if (in(rows_[i].defRect, mx, my)) {
+                capture_ = -1; refused_.clear();
+                if (!rowAtDefault(rows_[i].act)) restoreDefault(rows_[i].act);
+                return false;
+            }
             capture_ = int(i); refused_.clear();
             return false;
         }
@@ -172,7 +201,7 @@ void HotkeysScreen::render(int winW, int winH) {
         KeyChord c = effectiveChord(s_.hotkeys, r.act);
         std::string val = armed ? "PRESS A KEY" : chordName(c);
         float chipW = std::max(120 * u_, uiTextWidth(val, fpx) + 20 * u_);
-        SDL_FRect chip{r.rect.x + r.rect.w - chipW, r.rect.y + 4 * u_, chipW, 24 * u_};
+        SDL_FRect chip{r.defRect.x - 10 * u_ - chipW, r.rect.y + 4 * u_, chipW, 24 * u_};
         if (armed) SDL_SetRenderDrawColor(ren_, 90, 80, 40, 255);
         else if (!c.bound()) SDL_SetRenderDrawColor(ren_, 60, 40, 44, 255);   // unbound: reddish
         else SDL_SetRenderDrawColor(ren_, 44, 52, 66, 255);
@@ -184,6 +213,16 @@ void HotkeysScreen::render(int winW, int winH) {
                                   : SDL_Color{175, 205, 235, 255};
         uiText(ren_, val, chip.x + (chip.w - uiTextWidth(val, fpx)) / 2,
                       chip.y + (chip.h - 7 * fpx) / 2, fpx, tc);
+        // The row's DEFAULT: live only while this key differs from its factory one.
+        const bool live = !rowAtDefault(r.act);
+        SDL_SetRenderDrawColor(ren_, live ? 60 : 34, live ? 66 : 38, live ? 86 : 46, 255);
+        SDL_RenderFillRectF(ren_, &r.defRect);
+        SDL_SetRenderDrawColor(ren_, live ? 130 : 70, live ? 140 : 76, live ? 170 : 92, 255);
+        SDL_RenderDrawRectF(ren_, &r.defRect);
+        const float dpx = 1.6f * u_;
+        uiText(ren_, "DEFAULT", r.defRect.x + (r.defRect.w - uiTextWidth("DEFAULT", dpx)) / 2,
+                      r.defRect.y + (r.defRect.h - 7 * dpx) / 2, dpx,
+                      live ? SDL_Color{228, 232, 242, 255} : SDL_Color{110, 115, 125, 255});
     }
     SDL_RenderSetClipRect(ren_, nullptr);
 
@@ -199,7 +238,7 @@ void HotkeysScreen::render(int winW, int winH) {
     // A hint line in its own band between the rows and the footer: how to unbind -- or why
     // the last key was refused.
     {
-        const std::string hint = !refused_.empty() ? refused_ : "CLICK TO REBIND   RIGHT-CLICK TO CLEAR";
+        const std::string hint = !refused_.empty() ? refused_ : "CLICK TO REBIND   RIGHT-CLICK TO CLEAR   DEFAULT PUTS ONE KEY BACK";
         float hpx = std::min(1.5f * u_, (panel_.w - 20 * u_) / std::max(1.0f, uiTextWidth(hint, 1)));
         uiText(ren_, hint, hintRect_.x + (hintRect_.w - uiTextWidth(hint, hpx)) / 2,
                       hintRect_.y + (hintRect_.h - 7 * hpx) / 2, hpx,

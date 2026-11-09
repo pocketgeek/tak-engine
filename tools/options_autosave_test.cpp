@@ -247,6 +247,26 @@ static void testControls(SDL_Renderer* ren) {
     click(hk, hk.defaultsRect());
     click(hk, hk.defaultsYesRect());
     check(s.hotkeys.empty() && saves == 2 && loadSettings().hotkeys.empty(), "YES resets the keys and saves");
+
+    // A row's own DEFAULT: one key back, and an action holding that key gives it up.
+    const HotkeyDef *mine = nullptr, *other = nullptr;   // one with a plain default key, and another
+    for (const auto& d : hotkeyDefs())
+        if (!mine && d.def.bound() && d.def.mod == 0) mine = &d;
+        else if (mine && !other && d.def.bound()) other = &d;
+    const Act act1 = mine->act;
+    const KeyChord actDef = mine->def;
+    click(hk, hk.rowDefaultRect(act1));
+    check(s.hotkeys.empty() && saves == 2, "a row's DEFAULT at its default changes nothing");
+    click(hk, hk.rowRect(act1));
+    key(hk, SDLK_F7);
+    click(hk, hk.rowRect(other->act));
+    key(hk, SDL_Keycode(actDef.key));   // the first action's default key, taken
+    check(effectiveChord(s.hotkeys, other->act) == actDef, "another row takes the first action's key");
+    click(hk, hk.rowDefaultRect(act1));
+    check(effectiveChord(s.hotkeys, act1) == actDef && !effectiveChord(s.hotkeys, other->act).bound() &&
+          loadSettings().hotkeys == s.hotkeys, "a row's DEFAULT puts its key back, takes it from the other, saves");
+    click(hk, hk.rowDefaultRect(other->act));
+    check(s.hotkeys.empty() && loadSettings().hotkeys.empty(), "the other row's DEFAULT: every key default again");
 }
 
 // The Controls screen at one window size, on a software renderer of its own: the hint

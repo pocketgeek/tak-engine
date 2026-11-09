@@ -1732,7 +1732,10 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 o.input(wheel, w, h);
             }
             o.render(w, h);
-        } else if (settings && tak::devFlag("TAK_SHOT_OPTIONS")) {   // =graphics|interface|voice|game (default)
+        } else if (settings && tak::devFlag("TAK_SHOT_OPTIONS") && std::string(tak::devEnv("TAK_SHOT_OPTIONS")) == "controls") {
+            HotkeysScreen hk(d_->ren, *settings, [] {}, [] {});
+            hk.render(w, h);
+        } else if (settings && tak::devFlag("TAK_SHOT_OPTIONS")) {   // =graphics|interface|voice|controls|game (default)
             const std::string page = tak::devEnv("TAK_SHOT_OPTIONS");
             OptionsScreen o = page == "voice"
                 ? OptionsScreen(d_->ren, *settings, [] {}, [] {}, VoicePageHooks{}, {})

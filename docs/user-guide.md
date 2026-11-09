@@ -1328,8 +1328,9 @@ build menus unchanged.
 These are the default bindings. Command, selection, view, emote,
 push-to-talk, streaming panel and poster (**MAKE POSTER**) keys can be changed in **Settings → Controls** (or **Esc →
 Controls** in a game): click a row and press the new key;
-right-click a row to unbind it. Each change is saved at once. **Defaults** asks
-first, then puts every key back. Number-key squads, **Esc**, chat, pause and game
+right-click a row to unbind it. A row's own **Default** button puts just that key
+back (an action holding it meanwhile is left unbound). Each change is saved at once.
+**Defaults** at the bottom asks first, then puts every key back. Number-key squads, **Esc**, chat, pause and game
 speed keys are fixed.
 
 ### Mouse

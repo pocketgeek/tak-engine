@@ -3,7 +3,8 @@
 // The hotkey-rebinding overlay, styled like OptionsScreen and hosted the same way
 // (main menu + in-game Esc menu). It edits Settings::hotkeys live -- click a row to
 // arm capture, then the next key press binds it; the DEFAULTS / BACK footer matches
-// Options (DEFAULTS asks first, then clears all overrides back to the factory chords).
+// Options (DEFAULTS asks first, then clears all overrides back to the factory chords);
+// each row's own DEFAULT button puts just that action back.
 // onChange() lets the host rebuild its live Hotkeys so a rebind takes effect
 // immediately, and onSave() writes the settings file after every change: there is no
 // SAVE button.
@@ -37,6 +38,10 @@ public:
         for (const auto& r : rows_) if (!r.section && r.act == a) return r.rect;
         return {};
     }
+    SDL_FRect rowDefaultRect(Act a) const {   // the row's own DEFAULT button
+        for (const auto& r : rows_) if (!r.section && r.act == a) return r.defRect;
+        return {};
+    }
     SDL_FRect defaultsRect() const { return defaultsRect_; }
     SDL_FRect viewRect() const { return view_; }       // where the rows scroll
     SDL_FRect hintRect() const { return hintRect_; }   // the hint line's band, below the rows
@@ -51,11 +56,14 @@ private:
         std::string label;
         Act act = Act::Count;   // valid when !section
         SDL_FRect rect{};       // filled by layout()
+        SDL_FRect defRect{};    // its DEFAULT button, at the row's right end
     };
 
     void build();
     void layout(int winW, int winH);
     bool atDefaults() const { return s_.hotkeys.empty(); }   // no overrides == all default
+    bool rowAtDefault(Act a) const;
+    void restoreDefault(Act a);
     void changed() { if (onChange_) onChange_(); if (onSave_) onSave_(); }   // apply live, then save
 
     SDL_Renderer* ren_;
