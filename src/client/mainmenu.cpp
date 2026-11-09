@@ -1698,7 +1698,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             if (m == 2) d_->setServerSel(1);   // CUSTOM view
             if (m == 3) d_->serverError = "COULD NOT CONNECT TO TAK.PGNET.US";
             if (m == 4) {   // signed-in state: name filled, password part-typed
-                d_->loginUser = "curtis";
+                d_->loginUser = "aldric"   /* the user guide's picture */;
                 d_->loginPass = "hunter2hunter";
                 d_->field = 3;
             }

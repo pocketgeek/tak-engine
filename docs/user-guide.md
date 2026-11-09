@@ -2278,7 +2278,7 @@ host's game mods are sent automatically.
 
 ### Joining a game
 
-![The Connect to Server panel: the default server tak.pgnet.us, NEW SERVER..., two remembered servers each with a DELETE button, the account name and password fields, the note A NEW NAME IS REGISTERED WHEN YOU SIGN IN, and the CONNECT and BACK buttons](img/mp-connect.jpg)
+![The Connect to Server panel: the default server tak.pgnet.us, NEW SERVER..., LOCAL SERVER (HOST), two remembered servers each with a DELETE button, the account name and password fields side by side, the note A NEW NAME IS REGISTERED WHEN YOU SIGN IN, and BACK on the left with SPECTATE and CONNECT on the right](img/mp-connect.jpg)
 
 *Signing in to a server.*
 
