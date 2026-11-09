@@ -6517,7 +6517,9 @@
             // Ctrl+left-click = infinite production (RepeatTrain), FIRST so it also
             // works for a mobile conjurer (a beast tamer): the sim spawns each new
             // unit beside the producer and re-queues, no manual placement needed.
-            if (lmb && ctrl && !shift) {
+            // A structure is always placed (the sim refuses to repeat one), so
+            // Ctrl+click on its icon starts a placement like a plain click.
+            if (lmb && ctrl && !shift && !isStructure(bt)) {
                 tak::net::Command c;
                 c.kind = tak::net::Cmd::RepeatTrain;
                 c.unitId = b->id;

@@ -11898,6 +11898,13 @@ bool World::canHelpBuild(const Unit& b, const Unit& site) const {
     return !b.type->builderLimited || std::find(menu.begin(),menu.end(),site.type->id)!=menu.end();
 }
 
+bool World::canProduce(const Unit& b, const UnitType* type, bool placed) const {
+    if (!buildAllowed(type) || !b.alive() || !b.type || !b.type->isBuilder) return false;
+    if (!placed && type->isStructure()) return false;
+    const auto& menu=b.type->buildMenu;
+    return std::find(menu.begin(),menu.end(),type->id)!=menu.end();
+}
+
 bool World::canRepairUnit(const Unit& b, const Unit& t) const {
     // World::repair's own acceptance (0x519d40: a damaged, finished unit of
     // an ally, never the repairer itself), for a builder with a mover. Its

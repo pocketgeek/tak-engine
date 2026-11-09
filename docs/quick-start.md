@@ -205,7 +205,7 @@ and cloakers a cloak button; units with several weapons get weapon buttons.*
 | Lodestones on many mana spots | Pick the lodestone, then drag a box (at least about 32 pixels each way; smaller places one lodestone): the builder takes every free mana spot in it. Shift queues the job; **Stop** cancels it. |
 | Upgrade a lodestone | Place your side's divine lodestone on one of your finished basic lodestones. |
 | Train at a production building | Left-click an icon: +1. Shift: +5. Ctrl+Shift: +10. Right-click (same modifiers) removes. |
-| Endless production | Ctrl + left-click an icon (again to stop). |
+| Endless production | Ctrl + left-click a unit's icon (again to stop). A building's icon is placed as usual. |
 | Rally point | With the building selected, right-click the ground, or press **M**, **P**, **A** or **F** and click (right-click an enemy for an attack rally). Shift adds rally steps; **Stop** clears them. A mobile builder in endless production takes the same rally orders; **Stop** ends its production. |
 
 ![A Mage Builder selected, the Barracks icon chosen from the build menu, and the Barracks ghost under the pointer](img/quick/build-placement.jpg)
