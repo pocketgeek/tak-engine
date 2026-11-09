@@ -42,6 +42,22 @@ void need(const std::vector<uint8_t>& d, uint64_t off, uint64_t n, const char* w
     if (off + n > d.size()) throw std::runtime_error(std::string(what) + " out of range");
 }
 
+// What one load() may decode. A file names every frame's size itself and frame records may
+// share one header, so a few bytes can ask for any amount of memory (65535 x 65535 is 17 GB
+// a frame): each frame is charged BEFORE its pixels are allocated. The shipped data peaks at
+// 102 MB (anims/loading.gaf) and 1,022 frames counting subframes, so the limits leave ten
+// times and sixty times that.
+struct Budget {
+    static constexpr uint64_t kBytes = uint64_t(1) << 30;
+    static constexpr uint32_t kFrames = 65536;
+    uint64_t bytes = 0;
+    uint32_t frames = 0;
+    void charge(uint16_t w, uint16_t h) {
+        bytes += uint64_t(w) * h * 4;
+        if (++frames > kFrames || bytes > kBytes) throw std::runtime_error("GAF decodes too large");
+    }
+};
+
 void putIndexed(Frame& fr, int x, int y, uint8_t idx, uint8_t transparency, const Palette& pal) {
     if (x < 0 || y < 0 || x >= fr.width || y >= fr.height) return;
     uint8_t* px = &fr.rgba[(size_t(y) * fr.width + x) * 4];
@@ -52,7 +68,8 @@ void putIndexed(Frame& fr, int x, int y, uint8_t idx, uint8_t transparency, cons
     px[3] = 255;
 }
 
-Frame decodeSingle(const std::vector<uint8_t>& d, const FrameHeader& h, const Palette& pal) {
+Frame decodeSingle(const std::vector<uint8_t>& d, const FrameHeader& h, const Palette& pal, Budget& budget) {
+    budget.charge(h.w, h.h);
     Frame fr;
     fr.width = h.w;
     fr.height = h.h;
@@ -132,9 +149,15 @@ Frame decodeSingle(const std::vector<uint8_t>& d, const FrameHeader& h, const Pa
     return fr;
 }
 
-Frame decodeFrame(const std::vector<uint8_t>& d, uint32_t off, const Palette& pal) {
+// `sub`: a composite's subframe, which is always a plain frame (every shipped GAF/TAF). A
+// subframe that is itself a composite -- or one pointing back at its parent -- is refused
+// rather than followed down until the stack runs out.
+Frame decodeFrame(const std::vector<uint8_t>& d, uint32_t off, const Palette& pal, Budget& budget,
+                  bool sub = false) {
     FrameHeader h = frameHeader(d, off);
-    if (h.numSubframes == 0) return decodeSingle(d, h, pal);
+    if (h.numSubframes == 0) return decodeSingle(d, h, pal, budget);
+    if (sub) throw std::runtime_error("GAF subframe with subframes of its own");
+    budget.charge(h.w, h.h);
 
     // Composite: subframes are aligned so their anchor points coincide.
     Frame fr;
@@ -147,7 +170,7 @@ Frame decodeFrame(const std::vector<uint8_t>& d, uint32_t off, const Palette& pa
     // Retail reads byte 10 as the count and preserves byte 11 for blending.
     need(d,h.dataPtr,uint64_t(h.numSubframes)*4,"subframe pointers");
     for (uint16_t i = 0; i < h.numSubframes; ++i) {
-        Frame sub = decodeFrame(d, u32(&d[h.dataPtr + i * 4]), pal);
+        Frame sub = decodeFrame(d, u32(&d[h.dataPtr + i * 4]), pal, budget, true);
         int ox = h.xoff - sub.xoff;
         int oy = h.yoff - sub.yoff;
         for (int y = 0; y < sub.height; ++y) {
@@ -224,6 +247,7 @@ std::vector<Sequence> load(const std::vector<uint8_t>& d, const Palette& pal,
 
     std::vector<Sequence> out;
     out.reserve(numEntries);
+    Budget budget;
     for (uint32_t i = 0; i < numEntries; ++i) {
         uint32_t e = u32(&d[12 + i * 4]);
         need(d, e, 40, "entry header");
@@ -234,7 +258,7 @@ std::vector<Sequence> load(const std::vector<uint8_t>& d, const Palette& pal,
         seq.name.assign(nm, strnlen(nm, 32));
         need(d, e + 40, uint64_t(numFrames) * 8, "frame pointers");
         for (uint16_t f = 0; f < numFrames; ++f) {
-            Frame fr = decodeFrame(d, u32(&d[e + 40 + f * 8]), pal);
+            Frame fr = decodeFrame(d, u32(&d[e + 40 + f * 8]), pal, budget);
             // The second dword of each frame record is the display duration in
             // 30Hz engine ticks (retail advances feature anims once per ~30fps
             // frame, holding each GAF frame for this count).
