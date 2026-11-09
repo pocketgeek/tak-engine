@@ -846,9 +846,12 @@ uint64_t gameplayHash(const Vfs& input) {
     // Every gameplay entry the sim consumes (see affectsGameplay), EXCEPT maps --
     // those are per-game, checked separately. Two installs with identical retail
     // gameplay files hash the same; a modified/overridden gameplay file changes it.
+    // TypeRegistry::loadDir reads scripts/<id>.cob (production, corpse rules) and
+    // objects3d/<id>.3do (production transforms, sight and projectile geometry);
+    // every .cob/.3do there is hashed, as none is ever cosmetic.
     std::unordered_map<std::string, std::string> byKey;   // key -> winning path (deduped)
     for (const char* pre : {"units", "unitscb", "canbuild", "features",
-                            "gamedata", "weapons"})
+                            "gamedata", "weapons", "scripts", "objects3d"})
         for (const std::string& p : vfs.list(pre)) {
             if (!affectsGameplay(p)) continue;
             std::string k = MountSet::key(p);
@@ -922,10 +925,11 @@ uint64_t gameplayHash(const Vfs& input) {
         };
         gaf::FeatureBurnTiming burnTiming(vfs);
         static const char* kSimKeys[] = {
-            "animating", "blocking", "category", "damage", "decomposetime",
-            "energy", "featureburnt", "featuredead", "flamable", "footprintx",
-            "footprintz", "indestructible", "isfrozen", "isstone",
-            "reclaimable", "resurrectable", "sparktime", "spreadchance",
+            "animatable", "animating", "blocking", "category", "damage",
+            "decomposetime", "energy", "featureburnt", "featuredead", "flamable",
+            "footprintx", "footprintz", "height", "indestructible", "isfrozen",
+            "isstone", "reclaimable", "resurrectable", "sacredsite", "sparktime",
+            "spreadchance",
         };
         std::map<std::string, std::string> featFiles;   // sorted mount keys
         for (const std::string& p : vfs.list("features")) {
