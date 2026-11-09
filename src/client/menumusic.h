@@ -12,11 +12,13 @@
 #include <atomic>
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
 
 #include "hpi/hpi.h"
+#include "client/musicfile.h"   // tak::music::loadTrack (CUSTOM MUSIC, MP3/FLAC/Ogg)
 #include "util/audiolayout.h"
 #include "client/options.h"   // tak::openAudioDevice / tak::detectOutputChannels
 
@@ -38,15 +40,21 @@ public:
         if (dev_) SDL_UnlockAudioDevice(dev_);
     }
 
-    // Play music/track<n>.wav on a loop. Idempotent: if this track is already
-    // playing, does nothing (so it does NOT restart across menu -> lobby).
+    // Play original track n on a loop -- or the player's own file for it (CUSTOM MUSIC,
+    // tak::music). Idempotent: if this track is already playing, does nothing (so it does
+    // NOT restart across menu -> lobby) unless the file chosen for it changed.
     void start(const hpi::Vfs& vfs, int track) {
-        if (dev_ && track_ == track) return;
+        const std::string file = music::customFile(track);
+        if (dev_ && track_ == track && file_ == file) return;
         stop();
+        vfs_ = &vfs;
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return;
-        std::vector<uint8_t> raw;
-        try { raw = vfs.read("music/track" + std::to_string(track) + ".wav"); } catch (...) { return; }
-        if (!decode(raw)) return;
+        auto pcm = music::loadTrack(vfs, track, audio::kMixRate);
+        if (!pcm) return;
+        src_ = std::move(pcm->samples);
+        rate_ = pcm->rate;
+        srcChannels_ = pcm->channels;
+        file_ = file;
         pos_ = 0;                        // set before the device unpauses (callback reads it)
         if (!openDevice()) { src_.clear(); return; }
         track_ = track;
@@ -90,29 +98,22 @@ public:
 
     bool playing() const { return playing_.load(); }
 
+    // The AUDIO page changed CUSTOM MUSIC: the playing track switches to its new file (or
+    // back to the original) at once.
+    void refresh() {
+        if (vfs_ && track_ >= 0 && music::customFile(track_) != file_) start(*vfs_, track_);
+    }
+
 private:
     friend struct MenuMusicTestAccess;
     // The track as S16 at its own rate (only a rate above 44100 is converted down)
     // and its own channel count, so a mod's 44.1 kHz stereo or 5.1 replacement keeps
     // its quality. fill() lays it onto the device's speakers.
     bool decode(const std::vector<uint8_t>& raw) {
-        SDL_RWops* rw = raw.empty() ? nullptr : SDL_RWFromConstMem(raw.data(), int(raw.size()));
-        SDL_AudioSpec wav{}; Uint8* buf = nullptr; Uint32 len = 0;
-        if (!rw || !SDL_LoadWAV_RW(rw, 1, &wav, &buf, &len)) return false;
-        const int rate = std::min(wav.freq, audio::kMixRate);
-        SDL_AudioCVT cvt;
-        if (wav.channels < 1 || wav.channels > 8 || wav.freq <= 0 ||
-            SDL_BuildAudioCVT(&cvt, wav.format, wav.channels, wav.freq,
-                              AUDIO_S16SYS, wav.channels, rate) < 0) { SDL_FreeWAV(buf); return false; }
-        std::vector<Uint8> work(size_t(len) * size_t(std::max(cvt.len_mult, 1)));
-        std::memcpy(work.data(), buf, len);
-        SDL_FreeWAV(buf);
-        cvt.buf = work.data(); cvt.len = int(len);
-        if (cvt.needed && SDL_ConvertAudio(&cvt) != 0) return false;
-        const size_t bytes = cvt.needed ? size_t(cvt.len_cvt) : len;
-        src_.assign(bytes / 2 / size_t(wav.channels) * size_t(wav.channels), 0);
-        std::memcpy(src_.data(), work.data(), src_.size() * 2);
-        rate_ = rate; srcChannels_ = wav.channels;
+        auto pcm = music::decode(raw, audio::kMixRate);
+        if (!pcm) return false;
+        src_ = std::move(pcm->samples);
+        rate_ = pcm->rate; srcChannels_ = pcm->channels;
         return !src_.empty();
     }
     // Open on the current device at the track's rate, in the device's own speaker
@@ -196,6 +197,8 @@ private:
     size_t pos_ = 0;             // play cursor into src_ (frames); audio thread only
     std::atomic<int> master_{256}, bgm_{128};   // read by the audio thread, set from the main thread
     int track_ = -1;
+    const hpi::Vfs* vfs_ = nullptr;   // where track_ came from (refresh())
+    std::string file_;                // the custom file playing for track_, "" = the original
 };
 
 }  // namespace tak

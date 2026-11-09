@@ -127,6 +127,10 @@ struct Settings {
                                    // (owner: on by default)
     std::string audioDevice;       // output device NAME; "" = system default. Falls back
                                    // to system default if the saved name is gone at startup.
+    // CUSTOM MUSIC (the AUDIO page): the player's own file for an original track, by its
+    // number (music/track<n>.wav), played wherever that track would be -- title screen,
+    // lobby, in game. A track with none plays the original (the default for all).
+    std::map<int, std::string> customMusicTracks;
 
     // ---- voice chat (client/voice.h; separate from the game's audio above) ----
     // Off by default. The push-to-talk key is an ordinary rebindable action (CONTROLS,
@@ -274,6 +278,7 @@ struct Settings {
             && a.dataDir == b.dataDir && a.dataManifest == b.dataManifest
             && a.knownServers == b.knownServers
             && a.audioDevice == b.audioDevice && a.renderer == b.renderer
+            && a.customMusicTracks == b.customMusicTracks
             && a.voiceEnabled == b.voiceEnabled && a.voiceMicDevice == b.voiceMicDevice
             && a.voiceActivation == b.voiceActivation && a.voiceActivationLevel == b.voiceActivationLevel
             && a.voiceOutputSameAsGame == b.voiceOutputSameAsGame && a.voiceOutputDevice == b.voiceOutputDevice
@@ -372,6 +377,15 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.displayScale = cur.displayScale;
     d.displayX11Width = cur.displayX11Width;
     d.displayLogicalWidth = cur.displayLogicalWidth;
+    // Audio has its own screen and its own DEFAULTS (audioDefaults below).
+    d.masterVol = cur.masterVol;
+    d.bgmVol = cur.bgmVol;
+    d.sfxVol = cur.sfxVol;
+    for (int i = 0; i < 8; ++i) d.chanGain[i] = cur.chanGain[i];
+    d.soundVoices = cur.soundVoices;
+    d.evenSoundLevels = cur.evenSoundLevels;
+    d.audioDevice = cur.audioDevice;
+    d.customMusicTracks = cur.customMusicTracks;
     // Voice chat has its own screen and its own DEFAULTS (voiceDefaults below).
     d.voiceEnabled = cur.voiceEnabled;
     d.voiceActivation = cur.voiceActivation;
@@ -382,6 +396,23 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.voiceMicVolume = cur.voiceMicVolume;
     d.voiceMicEnabled = cur.voiceMicEnabled;
     d.voiceOutputVolume = cur.voiceOutputVolume;
+    return d;
+}
+
+// What the AUDIO screen's DEFAULTS means: the current settings with the sound fields
+// reset (volumes, voices, levels, speakers, the system device) and every track back to
+// its original music.
+inline Settings audioDefaults(const Settings& cur) {
+    Settings d = cur;
+    const Settings fresh;
+    d.masterVol = fresh.masterVol;
+    d.bgmVol = fresh.bgmVol;
+    d.sfxVol = fresh.sfxVol;
+    for (int i = 0; i < 8; ++i) d.chanGain[i] = fresh.chanGain[i];
+    d.soundVoices = fresh.soundVoices;
+    d.evenSoundLevels = fresh.evenSoundLevels;
+    d.audioDevice = fresh.audioDevice;
+    d.customMusicTracks = fresh.customMusicTracks;
     return d;
 }
 

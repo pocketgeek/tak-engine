@@ -201,6 +201,7 @@
     }
 
     void GameView::applySettings(const tak::Settings& s) {
+        tak::music::setCustom(s.customMusicTracks);   // CUSTOM MUSIC: the next track plays it
         // Push the display options that render code reads from globals (smooth art,
         // cursor factor, movie deblocking). This is GameView's one "settings changed"
         // hook, so wiring it here reaches the Esc-menu Options and its DEFAULTS button
@@ -235,6 +236,14 @@
         hiddenUnitsMode_ = std::clamp(s.hiddenUnits, 0, tak::hiddenunits::kModeCount - 1);   // Options: units behind scenery
         hiddenFadeOpacity_ = tak::hiddenunits::fadeOpacity(s.hiddenFadeOpacity);
         hotkeys_.load(s.hotkeys);                         // Options: rebindable hotkeys
+    }
+
+    // The AUDIO page (Esc menu > AUDIO): sound device, volumes, speakers, CUSTOM MUSIC.
+    void GameView::openAudioOptions() {
+        if (!settings_) return;
+        options_ = std::make_unique<tak::OptionsScreen>(ren_, *settings_, [this] { applySettings(*settings_); },
+            [this] { saveSettings(*settings_); }, tak::music::sideTracks(vfs_), sounds_.channelCount(),
+            [this] { sounds_.reopenDevice(); });
     }
 
     void GameView::openOptions() {

@@ -116,6 +116,19 @@ Settings loadSettings() {
                 ? sim::PathfindingMode(val[0] - '0') : sim::PathfindingMode::Retail;
         };
 
+        // customMusic.track<n> = hex of the file's path (any character a path may hold).
+        if (key.rfind("customMusic.track", 0) == 0) {
+            const int track = std::atoi(key.c_str() + 17);
+            std::string path;
+            bool valid = track >= 1 && track <= 99 && val.size() % 2 == 0 && val.size() <= 8192;
+            auto digit = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1; };
+            for (size_t i = 0; valid && i < val.size(); i += 2) {
+                const int a = digit(val[i]), b = digit(val[i + 1]);
+                if (a < 0 || b < 0) valid = false; else path += char(a * 16 + b);
+            }
+            if (valid && !path.empty() && path.find('\0') == path.npos) s.customMusicTracks[track] = path;
+            continue;
+        }
         if(key=="mods.gamePack" || key=="mods.cosmeticPack") {
             readPackValue(val,key=="mods.gamePack"?s.gameModPacks:s.cosmeticModPacks);
             continue;
@@ -318,6 +331,12 @@ std::string serializeSettings(const Settings& s) {
     o << "streamFps = " << s.streamFps << "\n";
     o << "streamCpuEncoder = " << (s.streamCpuEncoder ? 1 : 0) << "\n";
     o << "audioDevice = " << s.audioDevice << "\n";
+    for (const auto& [track, path] : s.customMusicTracks) {
+        static constexpr char hex[] = "0123456789abcdef";
+        o << "customMusic.track" << track << " = ";
+        for (unsigned char c : path) o << hex[c >> 4] << hex[c & 15];
+        o << "\n";
+    }
     o << "voiceEnabled = " << (s.voiceEnabled ? 1 : 0) << "\n";
     o << "voiceActivation = " << (s.voiceActivation ? 1 : 0) << "\n";
     o << "voiceActivationLevel = " << std::clamp(s.voiceActivationLevel, 0, 100) << "\n";

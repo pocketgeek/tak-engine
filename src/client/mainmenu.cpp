@@ -141,7 +141,10 @@ struct MainMenu::Impl {
     // The SETTINGS menu overlay -- the lower-right menu button opens THIS (OPTIONS / CONTROLS)
     // instead of jumping straight into Options, mirroring the in-game Esc GAME MENU.
     bool settingsMenu_ = false;
-    SDL_FRect setBtnRect_[6]{};        // OPTIONS / CONTROLS / VOICE CHAT / BENCHMARK / LOAD REPLAY / STREAMING
+    // By id: OPTIONS / CONTROLS / VOICE CHAT / BENCHMARK / LOAD REPLAY / STREAMING / AUDIO
+    // (shown in kSettingsOrder: AUDIO under OPTIONS).
+    SDL_FRect setBtnRect_[7]{};
+    static constexpr int kSettingsOrder[7] = {0, 6, 1, 2, 3, 4, 5};
     SDL_FRect menuBackRect_{};         // the BACK button of SETTINGS, BENCHMARK and LOAD REPLAY (set each render)
     VoiceEngine* voice_ = nullptr;     // main()'s voice engine (MainMenu::setVoice)
 
@@ -1272,8 +1275,8 @@ struct MainMenu::Impl {
         SDL_FRect dim{0, 0, float(winW), float(winH)};
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 150);
         SDL_RenderFillRectF(ren, &dim);
-        const int nBtn = 6;
-        const float u = menuUnit(winW, winH, 388, 400);
+        const int nBtn = 7;
+        const float u = menuUnit(winW, winH, 388, 450);
         const float bw = 320 * u, gap = 16 * u, pad = 34 * u, titlePx = 3.2f * u;
         const float titleH = 7 * titlePx + 22 * u;
         // Buttons shrink on a short window rather than run off it.
@@ -1289,9 +1292,10 @@ struct MainMenu::Impl {
         shadowText("SETTINGS", px0 + (pw - tw("SETTINGS", titlePx)) / 2, py0 + pad, titlePx, {235, 225, 180, 255});
         int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
         { float lx, ly; SDL_RenderWindowToLogical(ren, mx, my, &lx, &ly); mx = int(lx); my = int(ly); }
-        const char* labels[nBtn] = {"OPTIONS", "CONTROLS", "VOICE CHAT", "BENCHMARK", "LOAD REPLAY", "YOUTUBE STREAMING"};
+        const char* labels[nBtn] = {"OPTIONS", "CONTROLS", "VOICE CHAT", "BENCHMARK", "LOAD REPLAY", "YOUTUBE STREAMING",
+                                    "AUDIO"};
         float by = py0 + pad + titleH;
-        for (int i = 0; i < nBtn; ++i) {
+        for (int i : kSettingsOrder) {
             SDL_FRect r{px0 + pad, by, bw, bh};
             setBtnRect_[i] = r;
             bool hot = mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
@@ -1717,7 +1721,17 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         }
         // Debug: TAK_SHOT_OPTIONS captures the Options screen as this launch opens it
         // (its GAME DATA FOLDER row free, or greyed by --data / the launch folder).
-        if (settings && tak::devFlag("TAK_SHOT_OPTIONS")) {
+        // TAK_SHOT_OPTIONS=audio[:<wheel steps>] captures the AUDIO page instead, scrolled.
+        if (const char* opt = tak::devEnv("TAK_SHOT_OPTIONS"); settings && opt && std::string(opt).rfind("audio", 0) == 0) {
+            OptionsScreen o(d_->ren, *settings, [] {}, [] {}, music::sideTracks(d_->vfs), 2);
+            o.render(w, h);
+            const char* colon = std::strchr(opt, ':');
+            for (int k = colon ? std::atoi(colon + 1) : 0; k > 0; --k) {
+                SDL_Event wheel{}; wheel.type = SDL_MOUSEWHEEL; wheel.wheel.y = -1;
+                o.input(wheel, w, h);
+            }
+            o.render(w, h);
+        } else if (settings && tak::devFlag("TAK_SHOT_OPTIONS")) {
             OptionsScreen o(d_->ren, *settings, [] {}, [] {}, 2, {}, {}, d_->dataFolder_);
             o.render(w, h);
         }
@@ -1967,7 +1981,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     auto hit = [&](const SDL_FRect& r) { return fx >= r.x && fx <= r.x + r.w && fy >= r.y && fy <= r.y + r.h; };
                     SDL_Renderer* ren = d_->ren;
                     // Each opens a page: the menu-button click (menuclick.h).
-                    for (int i = 0; i < 6; ++i)
+                    for (int i = 0; i < 7; ++i)
                         if (hit(d_->setBtnRect_[i]) && (i != 5 || streaming)) d_->sfx_.play(menuclick::kForward);
                     if (hit(d_->menuBackRect_)) {          // BACK -> the title screen, as Esc
                         d_->sfx_.play(menuclick::kBack);
@@ -1982,6 +1996,17 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                             settings->dataManifest = disk.dataManifest;
                         }
                         openGeneralOptions();
+                    } else if (hit(d_->setBtnRect_[6])) {   // AUDIO -> its own page of Options
+                        d_->settingsMenu_ = false;
+                        fromSettings = true;
+                        d_->options_ = std::make_unique<OptionsScreen>(ren, *settings,
+                            [this, music, settings] {   // live: volumes, and CUSTOM MUSIC on the playing track
+                                if (music) music->setVolume(settings->masterVol, settings->bgmVol);
+                                music::setCustom(settings->customMusicTracks);
+                                if (music) music->refresh();
+                            },
+                            [settings] { saveSettings(*settings); }, music::sideTracks(d_->vfs), 0,
+                            [music] { if (music) music->reopen(); });   // live output-device switch
                     } else if (hit(d_->setBtnRect_[2])) {   // VOICE CHAT -> its own page of Options
                         d_->settingsMenu_ = false;
                         fromSettings = true;

@@ -11,10 +11,13 @@
 
 #include <algorithm>
 #include <functional>
+#include <future>
+#include <map>
 #include <string>
 #include <vector>
 
 #include "client/datafolderpick.h"
+#include "client/musicfile.h"
 #include "client/promptbox.h"
 #include "client/settings.h"
 #include "client/uitext.h"
@@ -57,9 +60,9 @@ const std::string& currentAudioDevice();
 SDL_AudioDeviceID openAudioDevice(int iscapture, const SDL_AudioSpec* want,
                                   SDL_AudioSpec* got, int allowed);
 
-// Which screen an OptionsScreen shows: the general OPTIONS, or VOICE CHAT (its own page
-// in the same overlay, with its own DEFAULTS; see buildVoice()).
-enum class OptionsPage { General, Voice };
+// Which screen an OptionsScreen shows: the general OPTIONS, VOICE CHAT or AUDIO (each its
+// own page in the same overlay, with its own DEFAULTS; see buildVoice(), buildAudio()).
+enum class OptionsPage { General, Voice, Audio };
 
 // What the VOICE CHAT page reads from the host's voice engine (client/voice.h), so the
 // screen itself needs no engine. Every hook is optional.
@@ -95,6 +98,13 @@ public:
     OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
                   std::function<void()> onSave, VoicePageHooks voice,
                   std::function<void()> onHotkeys = {});
+
+    // The AUDIO page: the sound device, volumes and speakers, and CUSTOM MUSIC -- a file of
+    // the player's own for any original track (musicSides: each side's tracks, as the
+    // install lists them; tak::music::sideTracks).
+    OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
+                  std::function<void()> onSave, std::vector<music::SideTracks> musicSides,
+                  int audioChannels = 0, std::function<void()> onAudioDevice = {});
 
     ~OptionsScreen() {
         flushPending();   // a name being typed, or a slider still held, when the host closes it
@@ -148,7 +158,7 @@ public:
 
 private:
     struct Control {
-        enum Kind { Section, Slider, Toggle, Button, Dropdown, PlayerName, Folder, Meter } kind;
+        enum Kind { Section, Slider, Toggle, Button, Dropdown, PlayerName, Folder, Meter, MusicFile } kind;
         std::string label;
         float lo = 0, hi = 1;
         std::function<float()> get;              // Dropdown: the selected option index
@@ -162,11 +172,13 @@ private:
         std::function<std::vector<std::string>()> help;   // optional lines shown while hovered
         std::function<float()> mark;             // Meter: a threshold tick, 0..1 (unset or < 0 = none)
         SDL_FRect row{};                          // filled by layout()
+        int track = 0;                            // MusicFile: the original track it replaces
     };
 
     bool handle(const SDL_Event& e, int winW, int winH);   // input() less the flush on leaving
     void build(int audioChannels);
     void buildVoice();                            // the VOICE CHAT page's rows
+    void buildAudio();                            // the AUDIO page's rows
     void layout(int winW, int winH);
     void commit(Control& c, float mx);            // set a slider from a mouse x
     void persist() { if (onSave_) onSave_(); }    // write the settings file now
@@ -213,7 +225,8 @@ private:
     // definition -- see tak::preferenceDefaults. They used to be two hand-maintained
     // lists that kept drifting apart.
     bool atDefaults() const {
-        return page_ == OptionsPage::Voice ? s_ == tak::voiceDefaults(s_) : s_ == tak::preferenceDefaults(s_);
+        return page_ == OptionsPage::Voice ? s_ == tak::voiceDefaults(s_)
+             : page_ == OptionsPage::Audio ? s_ == tak::audioDefaults(s_) : s_ == tak::preferenceDefaults(s_);
     }
 
     SDL_Renderer* ren_;
@@ -249,6 +262,18 @@ private:
     SDL_FRect folderButton(const Control& c) const;   // the row's CHANGE button: the only click target
     void drawRestartPrompt(int winW, int winH);
     bool restartPromptInput(const SDL_Event& e);   // true = leave Options (RESTART NOW)
+    // CUSTOM MUSIC rows (AUDIO page): CHOOSE runs the file picker on a worker, which also
+    // tries the file, so a file that will not play says so at once (musicNote_).
+    std::vector<music::SideTracks> musicSides_;
+    std::future<std::pair<std::string, std::string>> musicPick_;   // (path, why it will not play)
+    int musicPickTrack_ = 0;
+    std::map<int, std::string> musicNote_;   // track -> why its file will not play
+    float musicLabelW_ = 0;                  // widest track label at 2.0 (per u): the file boxes line up
+    void clickMusic(const Control& c, float mx, float my);
+    void pollMusicPick();
+    void drawMusicRow(const Control& c);
+    SDL_FRect musicChooseButton(const Control& c) const;
+    SDL_FRect musicClearButton(const Control& c) const;
     PromptBox defaultsPrompt_;          // DEFAULTS asks first: RESET TO DEFAULTS? YES / NO
     void drawDefaultsPrompt(int winW, int winH);
     void defaultsPromptInput(const SDL_Event& e);

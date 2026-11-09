@@ -92,6 +92,7 @@ int main() {
     flips("chanGain[0]",     [](Settings& s) { s.chanGain[0] = 0.5f; });
     flips("chanGain[7]",     [](Settings& s) { s.chanGain[7] = 0.5f; });
     flips("audioDevice",     [](Settings& s) { s.audioDevice = "some-device"; });
+    flips("customMusicTracks", [](Settings& s) { s.customMusicTracks[3] = "/music/a.flac"; });
     flips("voiceEnabled",    [](Settings& s) { s.voiceEnabled = !s.voiceEnabled; });
     flips("voiceMicDevice",  [](Settings& s) { s.voiceMicDevice = "a-mic"; });
     flips("voiceOutputSameAsGame", [](Settings& s) { s.voiceOutputSameAsGame = !s.voiceOutputSameAsGame; });
@@ -268,7 +269,16 @@ int main() {
         reset("unitShadows",      d.unitShadows == fresh.unitShadows);
         reset("smoothArt",        d.smoothArt == fresh.smoothArt);
         reset("videoDeblock",     d.videoDeblock == fresh.videoDeblock);
-        reset("masterVol",        d.masterVol == fresh.masterVol);
+        keep("audio (own page)",  d.masterVol == cur.masterVol);
+        // ...and the AUDIO screen's DEFAULTS resets the sound fields and puts every track back
+        // to its original music, keeping everything else.
+        Settings withMusic = cur;
+        withMusic.customMusicTracks[15] = "/music/menu.mp3";
+        withMusic.audioDevice = "speakers";
+        const Settings a = tak::audioDefaults(withMusic);
+        reset("audio (own page)", a.masterVol == fresh.masterVol && a.customMusicTracks.empty() && a.audioDevice.empty());
+        keep("non-audio on audio DEFAULTS", a.uiScale == cur.uiScale && a.voiceEnabled == cur.voiceEnabled);
+        keep("music on Options DEFAULTS", tak::preferenceDefaults(withMusic).customMusicTracks == withMusic.customMusicTracks);
         reset("uiScale",          d.uiScale == fresh.uiScale);
         reset("textureFilter",    d.textureFilter == fresh.textureFilter && d.textureFilter == 2);
         reset("tacticalDots",     d.tacticalDots == fresh.tacticalDots && d.tacticalDots);
@@ -641,6 +651,17 @@ int main() {
         saved.evenSoundLevels = false;
         check("even: save", tak::saveSettings(saved));
         check("even: off kept", !tak::loadSettings().evenSoundLevels);
+        // CUSTOM MUSIC: each track's file (any path: spaces, quotes, UTF-8); none by default.
+        check("music: default original", tak::Settings{}.customMusicTracks.empty());
+        saved.customMusicTracks[15] = "/home/a b/It's \xc3\xa9t\xc3\xa9.mp3";
+        saved.customMusicTracks[2] = "C:\\Music\\theme.flac";
+        check("music: save", tak::saveSettings(saved));
+        const Settings back = tak::loadSettings();
+        check("music: kept", back.customMusicTracks == saved.customMusicTracks);
+        check("music: bad hex ignored", [&] {
+            { std::ofstream(path) << "customMusic.track4 = zz\ncustomMusic.track0 = 41\n"; }
+            return tak::loadSettings().customMusicTracks.empty();
+        }());
         std::error_code ec;
         std::filesystem::remove(path, ec);
     }

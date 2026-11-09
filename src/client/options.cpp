@@ -6,6 +6,8 @@
 #include "client/hidpi.h"
 #include "client/cliprect.h"
 #include "client/datafolder.h"
+#include "client/dirpicker.h"
+#include "util/u8path.h"
 #include "client/gpuvram.h"
 #include "client/hotkeys.h"
 #include "client/renderdriver.h"
@@ -16,6 +18,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -193,6 +197,15 @@ OptionsScreen::OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void(
     if (voice_.monitor) voice_.monitor(true);   // the MIC LEVEL meter runs while this is open
 }
 
+OptionsScreen::OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
+                             std::function<void()> onSave, std::vector<music::SideTracks> musicSides,
+                             int audioChannels, std::function<void()> onAudioDevice)
+    : ren_(ren), s_(s), onChange_(std::move(onChange)), onSave_(std::move(onSave)),
+      onAudioDevice_(std::move(onAudioDevice)), musicSides_(std::move(musicSides)) {
+    page_ = OptionsPage::Audio;
+    build(audioChannels > 0 ? audioChannels : detectOutputChannels());
+}
+
 // Rebuild the speaker sliders (etc.) after a device change. Deferred to input()/render()
 // so it never runs while a caller still holds a reference into ctls_.
 void OptionsScreen::applyPendingRebuild() {
@@ -357,11 +370,7 @@ void OptionsScreen::buildVoice() {
         if (c.kind == Control::Dropdown || c.kind == Control::Meter) voiceLabelW_ = std::max(voiceLabelW_, uiTextWidth(c.label, 2.0f));
 }
 
-void OptionsScreen::build(int channels) {
-    ctls_.clear();   // rebuildable: a live device switch re-runs this with a new channel count
-    channels_ = channels;
-    if (page_ == OptionsPage::Voice) { buildVoice(); return; }
-    std::fprintf(stderr, "Options: %d speaker sliders\n", channels);
+void OptionsScreen::buildAudio() {
     auto section = [&](const char* label) { ctls_.push_back({Control::Section, label, 0, 0, {}, {}, {}, {}, {}}); };
     auto slider = [&](const char* label, float lo, float hi, std::function<float()> get,
                       std::function<void(float)> set, std::function<std::string(float)> fmt) {
@@ -370,35 +379,14 @@ void OptionsScreen::build(int channels) {
     auto toggle = [&](const char* label, std::function<float()> get, std::function<void(float)> set) {
         ctls_.push_back({Control::Toggle, label, 0, 1, std::move(get), std::move(set), {}, {}, {}});
     };
-    // A dropdown: `options()` lists the display choices, get() is the selected index,
-    // set(index) applies the choice. Rendered closed as a chip + arrow; clicking opens
-    // a pop-up list.
     auto dropdown = [&](const char* label, std::function<std::vector<std::string>()> options,
                         std::function<float()> get, std::function<void(float)> set) {
         ctls_.push_back({Control::Dropdown, label, 0, 1, std::move(get), std::move(set),
                          {}, {}, std::move(options)});
     };
+    const int channels = channels_;
 
-    section("PLAYER (NEW GAMES)");
-    ctls_.push_back({Control::PlayerName, "PLAYER NAME", 0, 0, {}, {}, {}, {}, {}});
-
-    // GAME DATA: the retail install this launch reads, shared with Cartographer. A
-    // change is saved at once and applied by restarting (client/datafolder.h); the row
-    // is greyed wherever that is unsafe or would not take.
-    section("GAME DATA");
-    ctls_.push_back({Control::Folder, "DATA FOLDER", 0, 0, {}, {}, {}, {}, {}});
-    ctls_.back().enabled = [this] { return folder_.locked.empty(); };
-    ctls_.back().help = [this] {
-        std::vector<std::string> out = {"IN USE: " + folder_.inUse};
-        if (dataFolderNeedsRestart(s_.dataDir, folder_.inUse)) out.push_back("> AFTER A RESTART: " + s_.dataDir);
-        out.push_back(folder_.locked.empty()
-            ? "THE TOTAL ANNIHILATION: KINGDOMS INSTALL THE GAME READS. CARTOGRAPHER USES THE SAME ONE. "
-              "CLICK TO CHOOSE ANOTHER. THE GAME RESTARTS TO LOAD IT."
-            : folder_.locked);
-        return out;
-    };
-
-    section("AUDIO");
+    section("SOUND");
     // Output device: "System Default" plus every current output device. On startup a
     // saved-but-missing device auto-falls-back to system (see setAudioDevice); here the
     // user picks one from the list.
@@ -457,6 +445,71 @@ void OptionsScreen::build(int channels) {
         slider(label.c_str(), 0, 1, [this, i] { return s_.chanGain[i]; },
                [this, i](float v) { s_.chanGain[i] = v; }, [](float v) { return pctOf(v, 1); });
     }
+
+
+    // CUSTOM MUSIC: a file of the player's own for any original track, played wherever that
+    // track plays (tak::music). ORIGINAL (CLEAR) plays the original.
+    section("CUSTOM MUSIC");
+    for (const auto& side : musicSides_)
+        for (size_t k = 0; k < side.tracks.size(); ++k) {
+            const int track = side.tracks[k];
+            std::string label = side.side + " TRACK " + std::to_string(k + 1);
+            if (track == music::kMenuTrack) label += " (TITLE)";   // also the title screen's and lobby's
+            ctls_.push_back({Control::MusicFile, label, 0, 0, {}, {}, {}, {}, {}});
+            ctls_.back().track = track;
+            ctls_.back().help = [track] {
+                std::vector<std::string> out{"PLAYS IN PLACE OF ORIGINAL TRACK " + std::to_string(track) +
+                                             " WHEREVER IT PLAYS. CHOOSE A WAV, MP3, FLAC OR OGG FILE, OR CLEAR TO PLAY THE ORIGINAL."};
+                if (track == music::kMenuTrack) out.push_back("THIS TRACK ALSO PLAYS ON THE TITLE SCREEN AND IN THE LOBBY.");
+                return out;
+            };
+        }
+    musicLabelW_ = 0;
+    for (const auto& c : ctls_)
+        if (c.kind == Control::MusicFile) musicLabelW_ = std::max(musicLabelW_, uiTextWidth(c.label, 2.0f));
+}
+
+void OptionsScreen::build(int channels) {
+    ctls_.clear();   // rebuildable: a live device switch re-runs this with a new channel count
+    channels_ = channels;
+    if (page_ == OptionsPage::Voice) { buildVoice(); return; }
+    if (page_ == OptionsPage::Audio) { buildAudio(); return; }
+    std::fprintf(stderr, "Options: %d speaker sliders\n", channels);
+    auto section = [&](const char* label) { ctls_.push_back({Control::Section, label, 0, 0, {}, {}, {}, {}, {}}); };
+    auto slider = [&](const char* label, float lo, float hi, std::function<float()> get,
+                      std::function<void(float)> set, std::function<std::string(float)> fmt) {
+        ctls_.push_back({Control::Slider, label, lo, hi, std::move(get), std::move(set), std::move(fmt), {}, {}});
+    };
+    auto toggle = [&](const char* label, std::function<float()> get, std::function<void(float)> set) {
+        ctls_.push_back({Control::Toggle, label, 0, 1, std::move(get), std::move(set), {}, {}, {}});
+    };
+    // A dropdown: `options()` lists the display choices, get() is the selected index,
+    // set(index) applies the choice. Rendered closed as a chip + arrow; clicking opens
+    // a pop-up list.
+    auto dropdown = [&](const char* label, std::function<std::vector<std::string>()> options,
+                        std::function<float()> get, std::function<void(float)> set) {
+        ctls_.push_back({Control::Dropdown, label, 0, 1, std::move(get), std::move(set),
+                         {}, {}, std::move(options)});
+    };
+
+    section("PLAYER (NEW GAMES)");
+    ctls_.push_back({Control::PlayerName, "PLAYER NAME", 0, 0, {}, {}, {}, {}, {}});
+
+    // GAME DATA: the retail install this launch reads, shared with Cartographer. A
+    // change is saved at once and applied by restarting (client/datafolder.h); the row
+    // is greyed wherever that is unsafe or would not take.
+    section("GAME DATA");
+    ctls_.push_back({Control::Folder, "DATA FOLDER", 0, 0, {}, {}, {}, {}, {}});
+    ctls_.back().enabled = [this] { return folder_.locked.empty(); };
+    ctls_.back().help = [this] {
+        std::vector<std::string> out = {"IN USE: " + folder_.inUse};
+        if (dataFolderNeedsRestart(s_.dataDir, folder_.inUse)) out.push_back("> AFTER A RESTART: " + s_.dataDir);
+        out.push_back(folder_.locked.empty()
+            ? "THE TOTAL ANNIHILATION: KINGDOMS INSTALL THE GAME READS. CARTOGRAPHER USES THE SAME ONE. "
+              "CLICK TO CHOOSE ANOTHER. THE GAME RESTARTS TO LOAD IT."
+            : folder_.locked);
+        return out;
+    };
 
     // DISPLAY: the window / output device itself.
     section("DISPLAY");
@@ -732,7 +785,8 @@ void OptionsScreen::layout(int winW, int winH) {
     auto rowH = [&](Control::Kind k) {
         return k == Control::Section ? 30 * u_ : k == Control::Folder ? 74 * u_ : 36 * u_;
     };
-    float panelW = std::min(660 * u_, winW * 0.72f);
+    // The AUDIO page is wider, for the music file names.
+    float panelW = page_ == OptionsPage::Audio ? std::min(1000 * u_, winW * 0.92f) : std::min(660 * u_, winW * 0.72f);
     float titleH = 3.4f * 7 * u_ + 26 * u_;
     float footerH = 52 * u_;    // DEFAULTS / BACK buttons, fixed at the panel bottom
     contentH_ = 0;
@@ -843,6 +897,7 @@ bool OptionsScreen::handle(const SDL_Event& e, int winW, int winH) {
     applyPendingRebuild();   // fold in a pending device-change rebuild before this event
     layout(winW, winH);
     pollFolder();
+    pollMusicPick();
     if (restartPrompt_.open) return restartPromptInput(e);
     if (defaultsPrompt_.open) { defaultsPromptInput(e); return false; }
     // The folder dialog is up (in its own window): nothing here may change underneath it.
@@ -973,6 +1028,7 @@ bool OptionsScreen::handle(const SDL_Event& e, int winW, int winH) {
                 if (in(folderButton(c), mx, my)) clickFolder();
                 return false;
             }
+            if (c.kind == Control::MusicFile) { clickMusic(c, mx, my); return false; }
             if (c.kind == Control::Dropdown) { refreshDevices(); openDrop_ = int(i); dropScroll_ = 0; return false; }   // fresh A-Z list
         }
         return false;
@@ -1017,6 +1073,7 @@ void OptionsScreen::render(int winW, int winH) {
     applyPendingRebuild();   // in case the change came between input() and this frame
     layout(winW, winH);
     pollFolder();            // a folder pick finishes while the player is not touching anything
+    pollMusicPick();         // likewise a music file pick
     SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
 
     // Dim the whole screen, then the panel.
@@ -1025,7 +1082,7 @@ void OptionsScreen::render(int winW, int winH) {
     SDL_SetRenderDrawColor(ren_, 24, 26, 34, 245); SDL_RenderFillRectF(ren_, &panel_);
     SDL_SetRenderDrawColor(ren_, 120, 130, 160, 255); SDL_RenderDrawRectF(ren_, &panel_);
 
-    const char* title = page_ == OptionsPage::Voice ? "VOICE CHAT" : "OPTIONS";
+    const char* title = page_ == OptionsPage::Voice ? "VOICE CHAT" : page_ == OptionsPage::Audio ? "AUDIO" : "OPTIONS";
     float tpx = 3.4f * u_;
     uiText(ren_, title, panel_.x + (panel_.w - uiTextWidth(title, tpx)) / 2,
                   panel_.y + 13 * u_, tpx, {235, 225, 180, 255});
@@ -1113,6 +1170,8 @@ void OptionsScreen::render(int winW, int winH) {
             uiText(ren_,text,field.x+6*u_,field.y+(field.h-7*px)/2,px,{225,230,240,255});
         } else if (c.kind == Control::Folder) {
             drawFolderRow(c);
+        } else if (c.kind == Control::MusicFile) {
+            drawMusicRow(c);
         } else if (c.kind == Control::Button) {
             const bool live = !c.enabled || c.enabled();
             uiText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx,
@@ -1275,6 +1334,9 @@ void OptionsScreen::render(int winW, int winH) {
 void OptionsScreen::drawDefaultsPrompt(int winW, int winH) {
     const std::vector<std::string> lines = page_ == OptionsPage::Voice
         ? std::vector<std::string>{"EVERY VOICE CHAT SETTING GOES BACK TO ITS DEFAULT."}
+        : page_ == OptionsPage::Audio
+        ? std::vector<std::string>{"EVERY SOUND SETTING GOES BACK TO ITS DEFAULT,",
+                                   "AND EVERY TRACK TO ITS ORIGINAL MUSIC."}
         : std::vector<std::string>{"EVERY OPTION HERE GOES BACK TO ITS DEFAULT.",
                                    "YOUR PLAYER NAME AND GAME DATA FOLDER ARE KEPT."};
     defaultsPrompt_.render(ren_, panel_, u_, winW, winH, "RESET TO DEFAULTS?", lines, "YES", "NO");
@@ -1284,7 +1346,8 @@ void OptionsScreen::defaultsPromptInput(const SDL_Event& e) {
     if (defaultsPrompt_.input(e) != 1) return;   // NO / Esc: nothing changes
     // One definition per page, shared with atDefaults().
     const std::string deviceWas = currentAudioDevice();
-    s_ = page_ == OptionsPage::Voice ? tak::voiceDefaults(s_) : tak::preferenceDefaults(s_);
+    s_ = page_ == OptionsPage::Voice ? tak::voiceDefaults(s_)
+       : page_ == OptionsPage::Audio ? tak::audioDefaults(s_) : tak::preferenceDefaults(s_);
     // The sound device goes back to the system default: switch to it now, as picking it in
     // the SOUND DEVICE list does, and only if the device in use really changes. The voice
     // devices need nothing here: the host applies them from the settings on every change.
@@ -1417,6 +1480,102 @@ bool OptionsScreen::restartPromptInput(const SDL_Event& e) {
     if (restartPrompt_.input(e) != 1) return false;
     restartRequested_ = true;   // every other change is already saved
     return true;
+}
+
+}  // namespace tak
+
+namespace tak {
+
+// ---- CUSTOM MUSIC rows ------------------------------------------------------------------
+// LABEL ............ [ chosen file / ORIGINAL ] [CHOOSE] [CLEAR]
+
+SDL_FRect OptionsScreen::musicClearButton(const Control& c) const {
+    const float bw = 80 * u_;
+    return {c.row.x + c.row.w - bw, c.row.y + 5 * u_, bw, 24 * u_};
+}
+
+SDL_FRect OptionsScreen::musicChooseButton(const Control& c) const {
+    const SDL_FRect clear = musicClearButton(c);
+    const float bw = 100 * u_;
+    return {clear.x - 8 * u_ - bw, c.row.y + 5 * u_, bw, 24 * u_};
+}
+
+void OptionsScreen::clickMusic(const Control& c, float mx, float my) {
+    auto in = [](const SDL_FRect& r, float x, float y) { return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h; };
+    if (in(musicClearButton(c), mx, my)) {
+        if (s_.customMusicTracks.erase(c.track)) {
+            musicNote_.erase(c.track);
+            if (onChange_) onChange_();
+            if (onSave_) onSave_();
+        }
+        return;
+    }
+    if (!in(musicChooseButton(c), mx, my) || musicPick_.valid()) return;
+    // Start where this track's file is, else where the last chosen one is.
+    std::string start;
+    auto folderOf = [](const std::string& f) { const auto cut = f.find_last_of("/\\"); return cut == f.npos ? std::string() : f.substr(0, cut); };
+    if (const auto it = s_.customMusicTracks.find(c.track); it != s_.customMusicTracks.end()) start = folderOf(it->second);
+    else if (!s_.customMusicTracks.empty()) start = folderOf(s_.customMusicTracks.rbegin()->second);
+    musicPickTrack_ = c.track;
+    musicPick_ = std::async(std::launch::async, [title = c.label, start]() -> std::pair<std::string, std::string> {
+        const std::string path = pickAudioFile("MUSIC FOR " + title, start);
+        if (path.empty()) return {};
+        // Try it now, so a file that will not play says so here and not in a game.
+        std::ifstream in(tak::u8path(path), std::ios::binary);
+        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::string why;
+        if (bytes.empty()) why = "cannot read the file";
+        else if (!music::decode(bytes, 44100, &why)) {}
+        else why.clear();
+        return {path, why};
+    });
+}
+
+void OptionsScreen::pollMusicPick() {
+    if (!musicPick_.valid() || musicPick_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+    auto [path, why] = musicPick_.get();
+    if (path.empty()) return;   // cancelled
+    s_.customMusicTracks[musicPickTrack_] = path;
+    if (why.empty()) musicNote_.erase(musicPickTrack_); else musicNote_[musicPickTrack_] = why;
+    std::fprintf(stderr, "options: custom music for track %d: %s%s%s\n", musicPickTrack_, path.c_str(),
+                 why.empty() ? "" : " -- will not play: ", why.c_str());
+    if (onChange_) onChange_();
+    if (onSave_) onSave_();
+}
+
+void OptionsScreen::drawMusicRow(const Control& c) {
+    const float fpx = 2.0f * u_, dpx = 1.6f * u_;
+    uiText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx, {225, 230, 240, 255});
+    const SDL_FRect choose = musicChooseButton(c), clear = musicClearButton(c);
+    const auto it = s_.customMusicTracks.find(c.track);
+    const bool chosen = it != s_.customMusicTracks.end();
+    // The file: its name (the folder is in the hover help's world, not the row's), red when
+    // it is gone or will not play.
+    std::string text = "ORIGINAL";
+    SDL_Color col{120, 126, 140, 255};
+    if (chosen) {
+        const auto cut = it->second.find_last_of("/\\");
+        text = cut == std::string::npos ? it->second : it->second.substr(cut + 1);
+        std::error_code ec;
+        if (!std::filesystem::exists(tak::u8path(it->second), ec)) { text = "MISSING: " + text; col = {240, 130, 120, 255}; }
+        else if (const auto note = musicNote_.find(c.track); note != musicNote_.end()) {
+            text = "WILL NOT PLAY: " + text; col = {240, 130, 120, 255};
+        } else col = {215, 225, 245, 255};
+    }
+    const float cx = c.row.x + musicLabelW_ * u_ + 18 * u_;   // one column for every track's box
+    SDL_FRect chip{cx, c.row.y + 5 * u_, std::max(60 * u_, choose.x - 8 * u_ - cx), 24 * u_};
+    SDL_SetRenderDrawColor(ren_, 35, 40, 56, 255); SDL_RenderFillRectF(ren_, &chip);
+    SDL_SetRenderDrawColor(ren_, 110, 120, 150, 255); SDL_RenderDrawRectF(ren_, &chip);
+    uiText(ren_, uiTextFit(text, dpx, chip.w - 12 * u_), chip.x + 6 * u_, chip.y + (chip.h - 7 * dpx) / 2, dpx, col);
+    auto button = [&](const SDL_FRect& b, const char* t, bool live) {
+        SDL_SetRenderDrawColor(ren_, live ? 52 : 34, live ? 60 : 38, live ? 82 : 46, 255); SDL_RenderFillRectF(ren_, &b);
+        SDL_SetRenderDrawColor(ren_, live ? 130 : 70, live ? 140 : 76, live ? 170 : 92, 255); SDL_RenderDrawRectF(ren_, &b);
+        uiText(ren_, t, b.x + (b.w - uiTextWidth(t, fpx)) / 2, b.y + (b.h - 7 * fpx) / 2, fpx,
+               live ? SDL_Color{215, 225, 245, 255} : SDL_Color{110, 115, 125, 255});
+    };
+    const bool picking = musicPick_.valid();
+    button(choose, picking && musicPickTrack_ == c.track ? "..." : "CHOOSE", !picking);
+    button(clear, "CLEAR", chosen);
 }
 
 }  // namespace tak

@@ -89,6 +89,43 @@ inline std::string pickDirectory(const std::string& title, const std::string& st
 #endif
 }
 
+// Pop up the OS "open file" dialog for an audio file (WAV, MP3, FLAC, Ogg). Returns the
+// chosen absolute path, or "" if cancelled or no picker is available. `start` seeds the
+// folder where the platform supports it. Blocks like pickDirectory: call it from a worker.
+inline std::string pickAudioFile(const std::string& title, const std::string& start) {
+#if defined(_WIN32)
+    std::string ps =
+        "powershell -NoProfile -STA -Command \""
+        "Add-Type -AssemblyName System.Windows.Forms;"
+        "[Console]::OutputEncoding=New-Object Text.UTF8Encoding $false;"
+        "$f=New-Object System.Windows.Forms.OpenFileDialog;"
+        "$f.Title=" + dpPowerShellQuote(title) + ";"
+        "$f.Filter='Audio files (*.wav;*.mp3;*.flac;*.ogg)|*.wav;*.mp3;*.flac;*.ogg|All files (*.*)|*.*';"
+        + (start.empty() ? std::string() : "$f.InitialDirectory=" + dpPowerShellQuote(start) + ";") +
+        "if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Out.Write($f.FileName)}\"";
+    std::string picked = dpRunCapture(ps);
+    if (picked.rfind("\xEF\xBB\xBF", 0) == 0) picked.erase(0, 3);
+    return picked;
+#elif defined(__APPLE__)
+    (void)start;
+    std::string t;
+    for (char c : title) { if (c == '"' || c == '\\') t += '\\'; t += c; }
+    return dpRunCapture("osascript -e 'try' -e " +
+                        dpShellQuote("POSIX path of (choose file with prompt \"" + t + "\" of type {\"public.audio\"})") +
+                        " -e 'end try' 2>/dev/null");
+#else
+    const std::string s = start.empty() ? std::string("\"$HOME\"") : dpShellQuote(start);
+    if (dpHaveCmd("kdialog"))
+        return dpRunCapture("kdialog --title " + dpShellQuote(title) + " --getopenfilename " + s +
+                            " " + dpShellQuote("*.wav *.mp3 *.flac *.ogg|Audio files") + " 2>/dev/null");
+    if (dpHaveCmd("zenity"))
+        return dpRunCapture("zenity --file-selection --title=" + dpShellQuote(title) +
+                            " --file-filter=" + dpShellQuote("Audio files | *.wav *.mp3 *.flac *.ogg") +
+                            (start.empty() ? std::string() : " --filename=" + dpShellQuote(start + "/")) + " 2>/dev/null");
+    return "";
+#endif
+}
+
 // True if a native folder picker is available on this system (so the caller can fall back
 // to a clear stderr instruction rather than silently failing).
 inline bool haveDirPicker() {

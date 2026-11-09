@@ -261,6 +261,7 @@ public:
     // Open the in-game Options overlay (from the Esc menu). onChange applies audio,
     // camera, UI scale and window state live; the host saves on close.
     void openOptions();
+    void openAudioOptions();   // Esc menu > AUDIO
     // Open the hotkey-config overlay (from the Options screen's CONTROLS button).
     void openHotkeys();
     // Voice chat (client/voice.h): main()'s engine, or null (headless, benchmark, no

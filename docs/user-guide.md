@@ -237,7 +237,8 @@ The **Settings** button opens:
 
 | Entry | What it does |
 | --- | --- |
-| **Options** | Audio, display, graphics, interface and camera settings. See [Options](#options). |
+| **Options** | Display, graphics, interface and camera settings. See [Options](#options). |
+| **Audio** | Sound device, volumes, speakers and custom music. See [Audio](#audio). |
 | **Controls** | Rebind command, selection, view, emote and push-to-talk keys. |
 | **Voice Chat** | Turn voice chat on and choose the microphone, voice output and volumes. See [Voice chat](#voice-chat). |
 | **Benchmark** | A repeatable performance test. See [Benchmark](#benchmark). |
@@ -270,7 +271,7 @@ the details.
 The version number is shown on the title screen.
 
 In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
-**Options**, **Controls**, **Voice Chat** and **Surrender**. Replays, spectators and a
+**Options**, **Audio**, **Controls**, **Voice Chat** and **Surrender**. Replays, spectators and a
 finished game have **Main Menu** in place of Surrender.
 **Surrender** (click twice to confirm) ends your part in the game and shows the
 defeat screen with the match's statistics; your units go the way the room's forfeit
@@ -1887,7 +1888,7 @@ game. Changes apply and are saved immediately; there is no Save button
 slider is saved when you let go of it, a dropdown when you pick a choice, and your player name when you press
 Enter or click elsewhere. **Defaults** asks first (**Reset to defaults?**
 **Yes** / **No**), then puts the options back to their defaults; it leaves your
-player name, data folder, key bindings and voice chat settings alone. It also sets UI Scale and Cursor Size
+player name, data folder, key bindings, audio and voice chat settings alone. It also sets UI Scale and Cursor Size
 back to their defaults, undoing the one-time enlargement made by Ignore Windows
 Display Scaling, Native Retina Resolution or Native Wayland, so raise them again
 on a scaled or Retina display.
@@ -1926,6 +1927,10 @@ is the one both use next time.
 
 ### Audio
 
+Sound and music have their own page: **Audio** in **Settings** on the main menu, or
+**Esc → Audio** in a game. It works like Options, with its own **Defaults**, which
+puts the sound settings back and every track back to its original music.
+
 | Option | Default | What it does |
 | --- | --- | --- |
 | **Sound device** | System default | The output device. You can switch while playing. |
@@ -1935,6 +1940,17 @@ is the one both use next time.
 | **Speaker** sliders | 100% | One per speaker channel on your device, for surround setups. |
 | **Sound voices** | 128 | How many sound effects can play at once, 8 to 256. The original game played 32. When all are busy, a new sound replaces a less important one, as in the original. |
 | **Even out sound levels** | On | Raises sound effects recorded much quieter than the rest (by at most 10 dB, never to clipping), such as the Creon units' cries, so they are not lost in a fight. Off plays every sound at its own level, as the original game did. |
+
+**Custom music** lists every original track by side, as your install's side data
+does (*Aramon track 1* … *Creon track 5*; Iron Plague moves some tracks between
+sides). Each plays its **Original** music until you choose a file for it.
+**Choose** picks a file for a track: WAV, MP3, FLAC or Ogg Vorbis. It then
+plays wherever that track would, in games and for spectators, and *Veruna track 4
+(title)* also on the title screen and in the lobby. **Clear** goes back to the
+original. A file is tried when you choose it; one that will not play is marked
+**Will not play**, one that has been moved or deleted **Missing**, and either way
+the original plays instead. Long files are fine: the next track is prepared while
+the current one plays.
 
 World sounds are full volume inside the view and fade with distance outside
 it, falling silent once a sound is as far beyond the nearest edge of the view as
@@ -3249,7 +3265,7 @@ set the line to `renderer = metal`, what 0.9.9 and earlier used.
 
 ### There is no sound, or sound comes from the wrong device
 
-Choose the device under **Options → Audio → Sound device**. If a saved device is
+Choose the device under **Settings → Audio → Sound device** (**Esc → Audio** in a game). If a saved device is
 unplugged, the game falls back to the system default.
 
 ### Voice chat does not work

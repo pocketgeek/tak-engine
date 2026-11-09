@@ -3105,6 +3105,7 @@
                 SDL_PushEvent(&event);
             });
             btn("OPTIONS", [this] { exitMenu_ = false; openOptions(); });
+            btn("AUDIO", [this] { exitMenu_ = false; openAudioOptions(); });
             btn("CONTROLS", [this] { exitMenu_ = false; openHotkeys(); });   // hotkey rebinding
             btn("VOICE CHAT", [this] { exitMenu_ = false; openVoiceOptions(); });
             if (canSurrender) btn(surrenderArmed_ ? "CONFIRM SURRENDER" : "SURRENDER", [this] {

@@ -94,8 +94,13 @@ static void testOptions(SDL_Renderer* ren) {
         check(s.unitShadows != shadows && changes == 1, "SHADOWS toggles live");
         check(saves == 1 && loadSettings().unitShadows == s.unitShadows, "a toggle is saved at once, no SAVE");
 
-        // A slider: live on every drag step, saved once when let go.
-        if (const SDL_FRect* r = bring(o, "MASTER VOLUME")) {
+        // A slider: live on every drag step, saved once when let go. MASTER VOLUME is on the
+        // AUDIO page, with the rest of the sound settings.
+        check(o.rowRect("MASTER VOLUME") == nullptr, "the sound settings are not on the OPTIONS page");
+        OptionsScreen audio(ren, s, [&] { ++changes; }, save, std::vector<music::SideTracks>{}, 2);
+        audio.render(W, H);
+        if (const SDL_FRect* r = bring(audio, "MASTER VOLUME")) {
+            OptionsScreen& o = audio;
             const int before = loadSettings().masterVol;
             const float y = r->y + r->h / 2;
             send(o, SDL_MOUSEBUTTONDOWN, r->x + r->w * 0.20f, y);
@@ -108,6 +113,7 @@ static void testOptions(SDL_Renderer* ren) {
             send(o, SDL_MOUSEMOTION, r->x + r->w * 0.70f, y, 0);   // no button: not a drag
             check(saves == 2 && s.masterVol <= 132, "moving the mouse after the release changes nothing");
         }
+        o.render(W, H);
 
         // A dropdown pick: saved at once.
         if (const SDL_FRect* r = bring(o, "GPU MEMORY LIMIT")) {
@@ -159,8 +165,9 @@ static void testOptions(SDL_Renderer* ren) {
         check(click(o, o.defaultsRect()) == false && o.defaultsYesRect().w == 0, "at defaults, DEFAULTS does nothing");
     }
 
-    // DEFAULTS puts the sound device back to the system default AND re-opens audio on it
-    // now, as picking it in the SOUND DEVICE list does -- only if the device really changes.
+    // The AUDIO page's DEFAULTS puts the sound device back to the system default AND
+    // re-opens audio on it now, as picking it in the SOUND DEVICE list does -- only if the
+    // device really changes.
     {
         const auto devs = listAudioDevices(0);
         check(!devs.empty(), "the dummy audio driver lists an output device");
@@ -171,7 +178,7 @@ static void testOptions(SDL_Renderer* ren) {
             s.audioDevice = devs[0];
             setAudioDevice(s.audioDevice);
             check(currentAudioDevice() == devs[0], "the chosen device is the one in use");
-            OptionsScreen o(ren, s, [&] { ++changes; }, save, 2, {}, [&] { ++reopens; });
+            OptionsScreen o(ren, s, [&] { ++changes; }, save, std::vector<music::SideTracks>{}, 2, [&] { ++reopens; });
             o.render(W, H);
             reset(o);
             check(s.audioDevice.empty() && currentAudioDevice().empty(), "DEFAULTS puts the device in use back to the system default");

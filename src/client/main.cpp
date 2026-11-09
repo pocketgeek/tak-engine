@@ -716,6 +716,7 @@ int main(int argc, char** argv) {
     // Persisted Options (audio/camera/display prefs). CLI flags still win where they
     // apply; the file is the source of truth for anything not passed on the CLI.
     tak::Settings settings = tak::loadSettings();
+    tak::music::setCustom(settings.customMusicTracks);   // CUSTOM MUSIC, from the first note
     // Finish any replay a crash, kill or power cut left mid-recording, so it is
     // listed and playable like any other (net/replaywriter.h). Recordings still
     // live in another running client are locked and skipped.

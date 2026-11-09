@@ -14,6 +14,7 @@
 #include "client/retailsound.h"
 #include "client/options.h"   // tak::detectOutputChannels / tak::openAudioDevice
 #include "hpi/hpi.h"          // tak::hpi::Vfs
+#include "client/musicfile.h" // tak::music::loadTrack (CUSTOM MUSIC, MP3/FLAC/Ogg)
 #include "tdf/tdf.h"          // tak::tdf::parseText (SoundClasses::load)
 
 #include <algorithm>
@@ -25,6 +26,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <map>
 #include <optional>
 #include <random>
@@ -899,10 +901,9 @@ public:
         std::vector<int> want = tracks;
         if (want.empty())
             for (int i = 1; i <= 20; ++i) want.push_back(i);
-        for (int n : want) {
-            std::string path = "music/track" + std::to_string(n) + ".wav";
-            if (vfs.has(path)) playlist_.push_back(path);
-        }
+        for (int n : want)   // an original the install has, or a custom file for it
+            if (vfs.has("music/track" + std::to_string(n) + ".wav") || !tak::music::customFile(n).empty())
+                playlist_.push_back(n);
         std::fprintf(stderr, "music: %zu faction tracks, audio=%s\n", playlist_.size(),
                      dev_ ? "yes" : "NO DEVICE");
         if (!playlist_.empty() && dev_) {
@@ -912,12 +913,21 @@ public:
         }
     }
 
-    // Advance to the next track when the current one finishes (call per frame).
+    // Advance to the next track when the current one finishes (call per frame). The next
+    // one was decoded in the background meanwhile (a custom MP3 or FLAC takes a moment);
+    // if it is not ready yet, the music waits a frame or two rather than the game.
     void pollMusic() {
-        if (musicDone_ && !playlist_.empty()) {
+        if (!musicDone_ || playlist_.empty()) return;
+        if (playlist_.size() == 1 && !music_.samples.empty()) {   // one track: play it again
+            SDL_LockAudioDevice(dev_);
+            musicPos_ = 0;
             musicDone_ = false;
-            loadTrack((musicTrack_ + 1) % playlist_.size());
+            SDL_UnlockAudioDevice(dev_);
+            return;
         }
+        if (nextMusic_.valid() && nextMusic_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+        musicDone_ = false;
+        loadTrack((musicTrack_ + 1) % playlist_.size());
     }
 
     void setMusicVolume(int v) { musicVol_ = std::clamp(v, 0, 256); }
@@ -951,22 +961,29 @@ private:
         // At the track's own rate and channels: the retail tracks are 22050 Hz stereo
         // (decoded from IMA ADPCM, kept at 22050: half the memory of 44100), a mod's
         // replacement keeps its 44.1 kHz or its 5.1; mix() steps and lays it out.
-        std::vector<uint8_t> raw;
-        if (vfs_) { try { raw = vfs_->read(playlist_[idx]); } catch (const std::exception&) {} }
-        auto pcm = convertWav(raw.data(), raw.size());
-        if (!pcm) {
-            std::fprintf(stderr, "music: decoding %s failed: %s\n", playlist_[idx].c_str(),
-                         SDL_GetError());
-            return;
+        // CUSTOM MUSIC: the player's own file for this track, if set (tak::music).
+        std::optional<tak::music::Pcm16> pcm;
+        if (nextMusic_.valid() && nextMusicIdx_ == idx) pcm = nextMusic_.get();
+        else if (vfs_) pcm = tak::music::loadTrack(*vfs_, playlist_[idx], kMixRate);
+        if (nextMusic_.valid()) nextMusic_.get();   // a stale prefetch (the list changed)
+        if (!pcm) return;   // loadTrack said why
+        // Decode the one after while this one plays.
+        if (vfs_ && playlist_.size() > 1) {
+            nextMusicIdx_ = (idx + 1) % playlist_.size();
+            nextMusic_ = std::async(std::launch::async, [vfs = vfs_, track = playlist_[nextMusicIdx_]] {
+                return tak::music::loadTrack(*vfs, track, kMixRate);
+            });
         }
         SDL_LockAudioDevice(dev_);
-        music_ = std::move(*pcm);
+        music_.samples = std::move(pcm->samples);
+        music_.rate = pcm->rate;
+        music_.channels = pcm->channels;
         musicStep_ = stepFor(double(music_.rate) / kMixRate);
         musicPos_ = 0;
         musicTrack_ = idx;
         musicDone_ = false;
         SDL_UnlockAudioDevice(dev_);
-        std::fprintf(stderr, "music: now playing %s\n", playlist_[idx].c_str());
+        std::fprintf(stderr, "music: now playing track%d\n", playlist_[idx]);   // (loadTrack named a custom file)
     }
 
     std::map<std::string, std::string> index_;
@@ -976,7 +993,9 @@ private:
     int voiceLimit_ = kRetailVoices;   // channels_[0, voiceLimit_) take new sounds
     bool evenOut_ = false;             // EVEN OUT SOUND LEVELS
     uint64_t soundSequence_=0;
-    std::vector<std::string> playlist_;
+    std::vector<int> playlist_;    // original track numbers (music/track<n>.wav)
+    std::future<std::optional<tak::music::Pcm16>> nextMusic_;   // the next track, decoding
+    size_t nextMusicIdx_ = 0;
     Pcm music_;                    // the current track, at its own rate and channels
     uint64_t musicPos_ = 0;        // 32.32 position in music_'s frames
     uint64_t musicStep_ = kUnitStep;   // music_.rate / kMixRate, 32.32
