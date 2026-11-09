@@ -14,6 +14,8 @@
 #include <string>
 #include <vector>
 
+union SDL_Event;
+
 namespace tak {
 
 // Modifier bits we model (normalized from SDL's left/right KMOD_* pairs).
@@ -41,6 +43,7 @@ enum class Act {
     PushToTalk,
     MakePoster,
     StreamingPanel,
+    ToggleFullscreen,
     Count
 };
 
@@ -96,6 +99,16 @@ private:
 // keyboard: a plain character key is the field's then, not the panel's.
 bool streamingPanelPress(const std::map<std::string, std::string>& overrides, int32_t key,
                          uint16_t sdlMod, bool typing);
+// The same for TOGGLE FULLSCREEN, which every screen's event loop reads (menu, lobby,
+// game, briefing, results).
+bool fullscreenPress(const std::map<std::string, std::string>& overrides, int32_t key,
+                     uint16_t sdlMod, bool typing);
+// Flips `fullscreen` and the event's window when this event is the TOGGLE FULLSCREEN
+// press; the caller saves the setting. Never while the Hotkeys screen waits for a key
+// to bind (hotkeyCaptureActive), so the key itself can be bound.
+bool toggleFullscreenKey(const SDL_Event& e, const std::map<std::string, std::string>& overrides,
+                         bool& fullscreen);
+inline bool hotkeyCaptureActive = false;
 
 // Read/write one binding as a settings override (only stores when != default; an
 // explicit unbind stores "NONE"). Keeps the map minimal and forward-compatible.

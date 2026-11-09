@@ -1515,6 +1515,7 @@ units in its group; that a builder's do too is TAK Engine's own.)
 | **F1** | Unit information for the selected unit. |
 | **F4** | Player names, kills, losses and score; with teams of two or more, grouped by team (see [Scoring](#scoring)). |
 | **F9** | YouTube streaming setup (rebindable). |
+| **F11** | Switch between fullscreen and a window, on every screen (rebindable; the same as **Fullscreen** in Options). |
 | **Pause** | Pause or resume. This pauses the game for every player. |
 | **+** / **−** | Game speed, as in the original: one level per press from −9 (0.1×) through NORMAL (1×) to +10 (2×): level *d* runs at (*d*+10)/10 of normal speed. **=** and the keypad **+**/**−** work too. In a replay they set the playback speed. A banner shows the new level, for example **GAME SPEED NORMAL** or **GAME SPEED +5**. The new speed takes effect at once, for spectators too. Only the host can change it, and only if **Allow speed change** was on. In a campaign mission you can always change it. |
 | **Enter** | Open chat; **Enter** sends, **Esc** cancels. Also where you type [power codes](#power-codes). Chat works in live games, single player included, but not in replays. |
@@ -1961,7 +1962,7 @@ missed are silent while the game catches up.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| **Fullscreen** | On | Borderless fullscreen. |
+| **Fullscreen** | On | Borderless fullscreen. **F11** switches it on any screen. |
 | **VSync** | On | Match the frame rate to the display. While it is on, the game also waits for each display refresh itself if the graphics driver does not. |
 | **Max FPS** | 60 | Frame-rate cap when VSync is off: 30–240, or **Unlimited** at the far right of the slider. Greyed out while VSync is on, because the display then sets the frame rate. |
 | **Native Wayland** | Auto | Linux only. **Auto** opens a native Wayland window on any Wayland desktop (GNOME, KDE Plasma, Sway and other wlroots desktops, Hyprland), so the game draws at the screen's real resolution at any display scale, 125%, 150% and 200% included, instead of an X11 window that many desktops enlarge and blur. On GNOME, Auto keeps X11 if the libdecor library (which draws the window's title bar there) is not installed. On an X11 desktop the game always uses X11. **On** uses Wayland whenever there is a Wayland desktop; **Off** always uses X11. Takes effect after a restart; the row's help says which one is running. If Wayland cannot start, the game opens on X11 by itself. Switching keeps the interface the same size on screen: the game measures whether its X11 window had real pixels (KDE Plasma's default, and Hyprland or GNOME set up that way) or was enlarged by the desktop. In the first case UI Scale and Cursor Size stay exactly as you set them; in the second they are multiplied by the display scale the first time the Wayland window opens, and divided again if you switch back. Cartographer follows the same setting and keeps its UI Scale and window size the same way. |

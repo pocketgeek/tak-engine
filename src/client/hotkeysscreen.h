@@ -24,6 +24,7 @@ class HotkeysScreen {
 public:
     HotkeysScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
                   std::function<void()> onSave);
+    ~HotkeysScreen() { hotkeyCaptureActive = false; }
 
     // Feed one SDL event. Returns true when the user leaves (BACK, or Esc while not
     // capturing). While a row is armed, the next key press is captured as its binding.

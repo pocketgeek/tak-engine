@@ -55,6 +55,8 @@ const std::vector<HotkeyDef>& hotkeyDefs() {
         {Act::UnitInfo,       "view.unitinfo",      "UNIT INFO",       "VIEW",      {SDLK_F1, 0}},
         // Read by the streaming panel itself, at the title screen too (streamingPanelPress).
         {Act::StreamingPanel,"view.streaming",     "STREAMING PANEL", "VIEW",      {SDLK_F9, 0}},
+        // Read by every screen's event loop, the title screen's too (fullscreenPress).
+        {Act::ToggleFullscreen,"view.fullscreen",  "FULLSCREEN",      "VIEW",      {SDLK_F11, 0}},
         {Act::Disco,          "emote.disco",        "DISCO",           "EMOTES",    {SDLK_d, HK_SHIFT}},
         {Act::Headbang,       "emote.headbang",     "HEADBANG",        "EMOTES",    {SDLK_h, HK_SHIFT}},
         // Voice chat, held while talking (client/voice.h). Space is free in the game:
@@ -156,12 +158,33 @@ void setChordOverride(std::map<std::string, std::string>& overrides, Act a, KeyC
     overrides[d.id] = c.bound() ? chordName(c) : "NONE";
 }
 
-bool streamingPanelPress(const std::map<std::string, std::string>& overrides, int32_t key,
-                         uint16_t sdlMod, bool typing) {
-    const KeyChord c = effectiveChord(overrides, Act::StreamingPanel);
+static bool globalPress(const std::map<std::string, std::string>& overrides, Act a, int32_t key,
+                        uint16_t sdlMod, bool typing) {
+    const KeyChord c = effectiveChord(overrides, a);
     if (!c.bound() || c.key != key || normMod(sdlMod) != c.mod) return false;
     const bool character = key >= SDLK_SPACE && key <= SDLK_z;
     return !(typing && character && !(c.mod & (HK_CTRL | HK_ALT)));
+}
+
+bool streamingPanelPress(const std::map<std::string, std::string>& overrides, int32_t key,
+                         uint16_t sdlMod, bool typing) {
+    return globalPress(overrides, Act::StreamingPanel, key, sdlMod, typing);
+}
+
+bool fullscreenPress(const std::map<std::string, std::string>& overrides, int32_t key,
+                     uint16_t sdlMod, bool typing) {
+    return globalPress(overrides, Act::ToggleFullscreen, key, sdlMod, typing);
+}
+
+bool toggleFullscreenKey(const SDL_Event& e, const std::map<std::string, std::string>& overrides,
+                         bool& fullscreen) {
+    if (e.type != SDL_KEYDOWN || e.key.repeat || hotkeyCaptureActive ||
+        !fullscreenPress(overrides, e.key.keysym.sym, e.key.keysym.mod, SDL_IsTextInputActive()))
+        return false;
+    fullscreen = !fullscreen;
+    if (SDL_Window* w = SDL_GetWindowFromID(e.key.windowID))
+        SDL_SetWindowFullscreen(w, fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+    return true;
 }
 
 }  // namespace tak

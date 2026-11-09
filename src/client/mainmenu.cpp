@@ -1648,6 +1648,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) continue;   // ignore the WM close button; use the Exit door
+            // TOGGLE FULLSCREEN (F11 by default) works on every screen.
+            if (settings && toggleFullscreenKey(e, settings->hotkeys, settings->fullscreen)) {
+                saveSettings(*settings);
+                continue;
+            }
             // Mouse events arrive in window points; our hit-rects are in output pixels.
             // Map with SDL_RenderWindowToLogical -- reliable on Wayland fractional scaling,
             // where the size getters report window==drawable yet pointer events are in a

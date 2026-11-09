@@ -14,6 +14,7 @@
 #include "client/font.h"
 #include "client/guiart.h"
 #include "client/menumusic.h"
+#include "client/hotkeys.h"
 #include "client/settings.h"
 #include "gui/gui.h"
 #include "util/png.h"
@@ -61,6 +62,7 @@ bool BriefingScreen::run(SDL_Renderer* ren,const hpi::Vfs& vfs,const std::string
         SDL_Event e;
         while(SDL_PollEvent(&e)) {
             if(e.type==SDL_QUIT)continue; // consistent with the game's WM-close policy
+            if(settings && toggleFullscreenKey(e,settings->hotkeys,settings->fullscreen)) {saveSettings(*settings);continue;}
             if(e.type==SDL_KEYDOWN) {
                 const auto key=e.key.keysym.sym;
                 if(key==SDLK_ESCAPE || key==SDLK_RETURN || key==SDLK_KP_ENTER || key==SDLK_SPACE)return true;

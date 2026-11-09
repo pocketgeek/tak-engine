@@ -2139,6 +2139,11 @@ int main(int argc, char** argv) {
                 SDL_RenderWindowToLogical(ren, e.button.x, e.button.y, &lx, &ly);
                 e.button.x = int(lx); e.button.y = int(ly);
             }
+            // TOGGLE FULLSCREEN (F11 by default), in game as on the menu.
+            if (tak::toggleFullscreenKey(e, settings.hotkeys, settings.fullscreen)) {
+                tak::saveSettings(settings);
+                continue;
+            }
             if (gameView && streaming.input(e,ww,wh)) continue;
             if (mapView) mapView->input(e);
             if (modelView) modelView->input(e);

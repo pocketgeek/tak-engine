@@ -57,6 +57,11 @@ void HotkeysScreen::layout(int winW, int winH) {
 }
 
 bool HotkeysScreen::input(const SDL_Event& e, int winW, int winH) {
+    // Tell the global key handlers (toggleFullscreenKey) while a row waits for its key.
+    struct CaptureFlag {
+        const int& capture;
+        ~CaptureFlag() { hotkeyCaptureActive = capture >= 0; }
+    } captureFlag{capture_};
     layout(winW, winH);
 
     if (defaultsPrompt_.open) {   // RESET TO DEFAULTS? takes every event while it is up

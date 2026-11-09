@@ -20,6 +20,7 @@
 #include "client/menumusic.h"
 #include "client/menuclick.h"
 #include "client/menusfx.h"
+#include "client/hotkeys.h"
 #include "client/settings.h"
 #include "gui/gui.h"
 
@@ -238,6 +239,10 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT || chosen) continue;
+            if (settings && toggleFullscreenKey(e, settings->hotkeys, settings->fullscreen)) {
+                saveSettings(*settings);
+                continue;
+            }
             if (e.type == SDL_KEYDOWN) {
                 SDL_Keycode k = e.key.keysym.sym;
                 if (k == SDLK_ESCAPE) choose(ResultChoice::Menu, g.menuSound);

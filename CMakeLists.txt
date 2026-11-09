@@ -3402,7 +3402,8 @@ if(TAK_BUILD_CLIENT)
     add_test(NAME campaign_presentation COMMAND campaign_presentation_test)
     add_executable(screen_lifecycle_test tools/screen_lifecycle_test.cpp
         src/client/loadscreen.cpp src/client/resultscreen.cpp src/client/campaignscreen.cpp
-        src/client/guiart.cpp src/client/cursors.cpp src/video/bink.cpp)
+        src/client/guiart.cpp src/client/cursors.cpp src/video/bink.cpp
+        src/client/hotkeys.cpp src/client/settings.cpp)
     target_compile_definitions(screen_lifecycle_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(screen_lifecycle_test PRIVATE tak-uifont tak-formats tak_ffmpeg ${_tak_sdl2})
     if(TAK_TEST_DATA)
