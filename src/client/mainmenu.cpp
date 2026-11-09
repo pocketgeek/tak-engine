@@ -829,8 +829,16 @@ struct MainMenu::Impl {
     int rememberedRow0() const { return kRowLan + int(lanGames.size()); }
     int lanIndex() const { return serverSel >= kRowLan && serverSel < rememberedRow0() ? serverSel - kRowLan : -1; }
     bool serverLocal() const { return serverSel == kRowLocal; }
-    // The rows that sign in to an account (the others need a name only).
+    // The rows that sign in to an account. The others take a player name, and their
+    // password box is the GAME's password: optional, set by the LOCAL SERVER host
+    // (it fills the create screen) and given by a joiner to get into a locked game.
     bool serverAccount() const { return serverSel < kRowLocal || serverSel >= rememberedRow0(); }
+    // CONNECT (START/CONNECT) is live once there is a name, an account's password,
+    // and a typed address for CUSTOM.
+    bool canConnect() const {
+        return !loginUser.empty() && (!serverAccount() || !loginPass.empty()) &&
+               (!serverCustom() || !serverText.empty());
+    }
     // Take in the LAN announcements, keeping the picked row on the same server.
     void pollLan() {
         const int lan = lanIndex(), remembered = serverSel >= rememberedRow0() ? serverSel - rememberedRow0() : -1;
@@ -843,7 +851,6 @@ struct MainMenu::Impl {
             serverSel = at == lanGames.end() ? 0 : kRowLan + int(at - lanGames.begin());
             if (at == lanGames.end()) lanSelNonce = 0;
         }
-        if (!serverAccount() && field == 3) field = 2;
     }
     // A failed launch handed back by setFailure() before run(); applied (the screen it
     // came from reopened) at the top of run(). notice_ is the modal panel over that
@@ -951,7 +958,6 @@ struct MainMenu::Impl {
         serverSel = std::clamp(i, 0, serverRows() - 1);
         // Keep a remembered row picked by the keyboard in view.
         lanSelNonce = lanIndex() >= 0 ? lanGames[size_t(lanIndex())].announce.nonce : 0;
-        if (!serverAccount() && field == 3) field = 2;
         if (serverSel >= rememberedRow0()) {
             const int k = serverSel - rememberedRow0();
             if (k < serverScroll) serverScroll = k;
@@ -964,15 +970,15 @@ struct MainMenu::Impl {
     }
     // Tab order: the address box only participates while CUSTOM is selected.
     void cycleField(int dir) {
-        const int lo = serverCustom() ? 1 : 2, hi = serverAccount() ? 3 : 2, n = hi - lo + 1;
-        field = std::clamp(field, lo, hi);
-        field = lo + ((field - lo + dir) % n + n) % n;
+        const int lo = serverCustom() ? 1 : 2;
+        field = field < lo ? lo : field;
+        field = lo + ((field - lo + dir) % (4 - lo) + (4 - lo)) % (4 - lo);
     }
     std::string* activeField() {
         switch (field) {
             case 1: return serverCustom() ? &serverText : nullptr;
             case 2: return &loginUser;
-            case 3: return serverAccount() ? &loginPass : nullptr;
+            case 3: return &loginPass;
             default: return nullptr;
         }
     }
@@ -1019,13 +1025,28 @@ struct MainMenu::Impl {
         const int remembered = int(serverItems.size()) - 1;
         const int shownRows = std::min(remembered, kServerRowsShown);
         serverScroll = std::clamp(serverScroll, 0, std::max(0, remembered - kServerRowsShown));
-        const float rowH = 40, pw = 640;
+        // 900 wide at least; wider when a row's name (a server, or a LAN game and its
+        // map) needs it, up to the title art's width -- and never past the window.
+        float pw = 900;
+        {
+            float need = 0;
+            const auto& rows = serverItems;
+            for (size_t k = 0; k < rows.size(); ++k) need = std::max(need, uiTextWidth(rows[k], 2.4f) + 140);
+            for (const auto& g : lanGames)
+                need = std::max(need, uiTextWidth(g.announce.game, 2.4f) + 16 + uiTextWidth(g.announce.map, 1.8f) + 140);
+            if (serverCustom()) need = std::max(need, uiTextWidth(serverText, 3.0f) + 30);
+            float artScale = 0, artX = 0, artY = 0;
+            layout(winW, winH, artScale, artX, artY);
+            pw = std::clamp(need + 60, pw, std::max(pw, 640.0f * artScale));
+            pw = std::min(pw, float(winW) - 40);
+        }
+        const float rowH = 40;
         const float errH = serverError.empty() ? 0 : 26;
         // The default and CUSTOM rows, the address box under CUSTOM when it is picked,
         // LOCAL SERVER and the LAN games, the remembered rows on show (+ a gap before
-        // them), then the two account fields (label + box each) and the hint line.
+        // them), then the two account fields side by side (label + box) and the hint line.
         float ph = 78 + errH + (3 + float(lanGames.size())) * rowH + (serverCustom() ? 56 : 0) +
-                   (shownRows ? shownRows * rowH + 8 : 0) + 152 + 64;
+                   (shownRows ? shownRows * rowH + 8 : 0) + 82 + 64;
         float x0 = (winW - pw) / 2, y0 = (winH - ph) / 2;
         SDL_SetRenderDrawColor(ren, 28, 30, 40, 245);
         SDL_FRect panel{x0, y0, pw, ph}; SDL_RenderFillRectF(ren, &panel);
@@ -1083,8 +1104,9 @@ struct MainMenu::Impl {
                 blockText("HOST", r.x + r.w - 110, r.y + 13, 1.6f, {150, 165, 145, 255});
             if (lan >= 0) {   // a game heard on the network: LAN and its seats
                 const auto& a = lanGames[size_t(lan)].announce;
-                const std::string seats = "LAN " + std::to_string(a.players) + "/" + std::to_string(a.capacity);
-                blockText(seats, r.x + r.w - 110, r.y + 13, 1.6f, {150, 175, 200, 255});
+                const std::string seats = (a.locked ? "LOCK " : "LAN ") + std::to_string(a.players) + "/" + std::to_string(a.capacity);
+                blockText(seats, r.x + r.w - 110, r.y + 13, 1.6f,
+                          a.locked ? SDL_Color{230, 200, 120, 255} : SDL_Color{150, 175, 200, 255});
             }
             if (rememberedRow) {   // a remembered server can be forgotten
                 SDL_FRect del{r.x + r.w - 104, r.y + 5, 96, r.h - 10};
@@ -1143,17 +1165,12 @@ struct MainMenu::Impl {
         // -- which also means the hint below has to say so, or a new player will
         // sit here looking for a SIGN UP button that does not exist.
         ry += 10;
-        auto textField = [&](const char* label, const std::string& text, bool mask,
-                             bool focused, SDL_FRect& out, bool enabled = true) {
-            blockText(label, x0 + 30, ry, 1.8f, enabled ? SDL_Color{170, 178, 195, 255} : SDL_Color{95, 100, 115, 255});
-            SDL_FRect box{x0 + 30, ry + 18, pw - 60, 42};
-            if (!enabled) {   // not asked for: a dim, empty box that takes no clicks
-                SDL_SetRenderDrawColor(ren, 22, 23, 30, 255); SDL_RenderFillRectF(ren, &box);
-                SDL_SetRenderDrawColor(ren, 50, 54, 68, 255); SDL_RenderDrawRectF(ren, &box);
-                out = {0, 0, 0, 0};
-                ry += 70;
-                return;
-            }
+        // The name and the password side by side, half the panel each.
+        const float fieldW = (pw - 60 - 20) / 2;
+        auto textField = [&](float fx, const char* label, const std::string& text, bool mask,
+                             bool focused, SDL_FRect& out) {
+            blockText(label, fx, ry, 1.8f, {170, 178, 195, 255});
+            SDL_FRect box{fx, ry + 18, fieldW, 42};
             SDL_SetRenderDrawColor(ren, 16, 18, 26, 255);
             SDL_RenderFillRectF(ren, &box);
             SDL_SetRenderDrawColor(ren, focused ? 150 : 90, focused ? 175 : 100,
@@ -1167,7 +1184,7 @@ struct MainMenu::Impl {
                 // character would be readable over someone's shoulder, and the
                 // block font has no bullet.
                 SDL_SetRenderDrawColor(ren, 215, 220, 235, 255);
-                for (size_t i = 0; i < text.size(); ++i) {
+                for (size_t i = 0; i < std::min(text.size(), size_t((box.w - 30) / adv)); ++i) {
                     SDL_FRect pip{tx + float(i) * adv + 1, box.y + 17, px * 3, px * 3};
                     SDL_RenderFillRectF(ren, &pip);
                 }
@@ -1175,16 +1192,18 @@ struct MainMenu::Impl {
                 blockText(shown, tx, box.y + (box.h - 7 * px - uiTextDescent(px)) / 2, px, {230, 235, 245, 255});
             }
             if (focused && (SDL_GetTicks() / 500) % 2 == 0) {
-                float cx = tx + (mask ? float(text.size()) * adv : uiTextWidth(shown, px) + 2);
+                float cx = tx + (mask ? float(std::min(text.size(), size_t((box.w - 30) / adv))) * adv
+                                      : uiTextWidth(shown, px) + 2);
                 SDL_SetRenderDrawColor(ren, 230, 235, 245, 255);
                 SDL_FRect car{cx, box.y + 10, 3, 22}; SDL_RenderFillRectF(ren, &car);
             }
             out = box;
-            ry += 70;
         };
         const bool account = serverAccount();
-        textField(account ? "ACCOUNT NAME" : "PLAYER NAME", loginUser, false, field == 2, loginUserRect);
-        textField(account ? "PASSWORD" : "PASSWORD (NOT NEEDED)", loginPass, true, field == 3, loginPassRect, account);
+        textField(x0 + 30, account ? "ACCOUNT NAME" : "PLAYER NAME", loginUser, false, field == 2, loginUserRect);
+        textField(x0 + 30 + fieldW + 20, account ? "PASSWORD" : "GAME PASSWORD (OPTIONAL)", loginPass, true, field == 3,
+                  loginPassRect);
+        ry += 70;
         blockText(account ? "A NEW NAME IS REGISTERED WHEN YOU SIGN IN"
                   : serverLocal() ? "STARTS A SERVER HERE: PLAYERS ON YOUR NETWORK CAN JOIN"
                                   : "A GAME ON YOUR NETWORK: NO ACCOUNT NEEDED",
@@ -1204,8 +1223,11 @@ struct MainMenu::Impl {
                       bright ? SDL_Color{230, 238, 250, 255} : SDL_Color{185, 190, 205, 255});
             out = b;
         };
-        button(x0 + 30, 210, serverLocal() ? "START/CONNECT" : "CONNECT", serverConnectRect, true);
-        button(x0 + 256, 150, "BACK", serverBackRect, true);
+        // Greyed, and deaf to clicks, until canConnect().
+        // BACK at the left, CONNECT (START/CONNECT) at the right, as the lobby's footers.
+        button(x0 + 30, 150, "BACK", serverBackRect, true);
+        button(x0 + pw - 30 - 210, 210, serverLocal() ? "START/CONNECT" : "CONNECT", serverConnectRect, canConnect());
+        if (!canConnect()) serverConnectRect = {0, 0, 0, 0};
     }
 
     // The layout unit of SETTINGS, BENCHMARK and LOAD REPLAY: the Options screen's (1x at
@@ -1573,10 +1595,16 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         menuPicked = true;
         const std::string p = pick;
         if (p == "singleplayer") return Choice::SinglePlayer;
-        // lanhost:<name> = LOCAL SERVER + START/CONNECT; lanjoin:<name>@<address> = a LAN
-        // game picked from the list (its tcp:// address), for the LAN tests.
+        // lanhost:<name>[:<game password>] = LOCAL SERVER + START/CONNECT;
+        // lanjoin:<name>[:<game password>]@<address> = a LAN game picked from the list
+        // (its tcp:// address), for the LAN tests.
+        auto namePass = [&](const std::string& text) {
+            const size_t colon = text.find(':');
+            d_->loginUser = text.substr(0, colon);
+            d_->loginPass = colon == std::string::npos ? std::string() : text.substr(colon + 1);
+        };
         if (p.rfind("lanhost:", 0) == 0) {
-            d_->loginUser = p.substr(8); d_->chosenConnect_ = Connect::LanHost;
+            namePass(p.substr(8)); d_->chosenConnect_ = Connect::LanHost;
             return Choice::Multiplayer;
         }
         // connect:<name>:<password>@<address> = CONNECT to a typed server address.
@@ -1588,7 +1616,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             return Choice::Multiplayer;
         }
         if (p.rfind("lanjoin:", 0) == 0 && p.find('@') != std::string::npos) {
-            d_->loginUser = p.substr(8, p.find('@') - 8); d_->chosenConnect_ = Connect::LanJoin;
+            namePass(p.substr(8, p.find('@') - 8)); d_->chosenConnect_ = Connect::LanJoin;
             if (serverOut) *serverOut = "tcp://" + p.substr(p.find('@') + 1);
             return Choice::Multiplayer;
         }
@@ -1797,7 +1825,6 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         d_->field = 3;
                         return false;
                     }
-                    if (!d_->serverAccount()) tak::crypto::wipe(d_->loginPass);   // a LAN game takes none
                     d_->chosenConnect_ = d_->serverLocal() ? MainMenu::Connect::LanHost
                                        : d_->serverAccount() ? MainMenu::Connect::Server : MainMenu::Connect::LanJoin;
                     SDL_StopTextInput();
@@ -1816,7 +1843,9 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                                 (std::isalnum(ch) || ch == '.' || ch == ':' || ch == '-'))
                                 *f += char(ch);
                         } else if (d_->field == 2) {
-                            if (f->size() < tak::auth::kMaxUsername &&
+                            // 16 at most: the name a room and the game show (accounts may
+                            // be 20 long; the multiplayer screens fit 16).
+                            if (f->size() < std::min<size_t>(16, tak::auth::kMaxUsername) &&
                                 (std::isalnum(ch) || ch == '_' || ch == '-' || ch == '.'))
                                 *f += char(ch);
                         } else {
@@ -1827,7 +1856,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 } else if (e.type == SDL_KEYDOWN) {
                     SDL_Keycode k = e.key.keysym.sym;
                     const bool shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
-                    if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
+                    if ((k == SDLK_RETURN || k == SDLK_KP_ENTER) && d_->canConnect()) {
                         d_->sfx_.play(menuclick::kOk);
                         if (connect()) { d_->flushSfx(w, h); return Choice::Multiplayer; }
                     }
@@ -1876,7 +1905,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         d_->field = 1;
                     }
                     if (in(d_->loginUserRect)) d_->field = 2;
-                    if (in(d_->loginPassRect) && d_->serverAccount()) d_->field = 3;
+                    if (in(d_->loginPassRect)) d_->field = 3;
                     if (in(d_->serverConnectRect)) {
                         d_->sfx_.play(menuclick::kOk);
                         if (connect()) { d_->flushSfx(w, h); return Choice::Multiplayer; }

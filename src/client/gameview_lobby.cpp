@@ -137,7 +137,7 @@ float createOptionPx(float maxW) {
         bool started = false;
         for (const auto& g : mp_->games()) {
             if (g.running) { started = true; continue; }
-            mp_->joinGame(g.id, "");
+            mp_->joinGame(g.id, joinPass_);
             lanJoinSent_ = true;
             return;
         }
@@ -600,7 +600,7 @@ float createOptionPx(float maxW) {
             createUnitCap_ = pref.unitCap == 250 || pref.unitCap == 500 || pref.unitCap == 1000 || pref.unitCap == 2000
                 ? uint16_t(pref.unitCap) : 2000;
             createFog_ = uint8_t(pref.fog);
-            if (!lanHost_) createName_ = pref.name;   // a LOCAL SERVER game keeps its host's name
+            if (!lanHost_) createName_ = pref.name.substr(0, 16);   // a LOCAL SERVER game keeps its host's name
             mapSort_ = pref.mapSort; mapSortDir_ = pref.mapSortDir;
             if (!mapList_.empty()) sortMapList();
             if (tak::mapgen::isGeneratedMapId(pref.generator)) {
@@ -1026,8 +1026,10 @@ float createOptionPx(float maxW) {
             SDL_SetRenderDrawColor(ren_, 12, 14, 20, 200); SDL_RenderFillRectF(ren_, &band);
             blockText(note, pvx + (pvW - blockWidth(note, 1.6f)) / 2, pvy + pvH / 2 - 7, 1.6f, {200, 205, 220, 255});
         }
-        if (mapPreviewTex_ && mapPreviewW_ > 0 && !genPreviewPending_)
+        if (mapPreviewTex_ && mapPreviewW_ > 0 && !genPreviewPending_) {
             lobbyHots_.push_back({pbox, [this] { openBigMap(); }});   // full window
+            drawClickHint(pbox);
+        }
         if (!mapPreviewDims_.empty())
             blockText(mapPreviewDims_, pvx, pvy + pvH + 8, 1.6f, {160, 165, 180, 255});
         // Keep the generator action below the preview and map description.
@@ -1766,9 +1768,22 @@ float createOptionPx(float maxW) {
                     colors.push_back(slot >= 0 ? room.slots[slot].color : -1);
             drawStartMarkers(dst, colors);
             roomPreviewColors_ = std::move(colors);
-            if (!genPreviewPending_) lobbyHots_.push_back({box, [this] { openBigMap(); }});   // the map, full window
+            if (!genPreviewPending_) {
+                lobbyHots_.push_back({box, [this] { openBigMap(); }});   // the map, full window
+                drawClickHint(box);
+            }
         }
         SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &box);
+    }
+
+    // Under the pointer, a preview that opens the full-window map says so: CLICK on a
+    // dark band across its middle.
+    void GameView::drawClickHint(const SDL_FRect& box) {
+        if (!lbHot(box)) return;
+        const char* note = "CLICK";
+        const SDL_FRect band{box.x, box.y + box.h / 2 - 12, box.w, 24};
+        SDL_SetRenderDrawColor(ren_, 12, 14, 20, 190); SDL_RenderFillRectF(ren_, &band);
+        blockText(note, box.x + (box.w - blockWidth(note, 1.6f)) / 2, band.y + 6, 1.6f, {225, 230, 240, 255});
     }
 
     void GameView::openBigMap() {
@@ -1907,8 +1922,13 @@ float createOptionPx(float maxW) {
                 }
         } else if (e.type == SDL_TEXTINPUT && lbField_) {
             std::string* f = lbFieldBuf();
-            if (f && f->size() < 24) {
-                if (lbField_ == 5) {
+            // A typed game name is 16 at most (the game list and the LAN rows show it whole);
+            // only a LOCAL SERVER's own "<name>'s Game" runs past it.
+            const size_t cap = lbField_ == 1 ? 16 : 24;
+            if (f && f->size() < cap) {
+                if (lbField_ == 1) {
+                    for (unsigned char c : std::string(e.text.text)) if (f->size() < cap) *f += char(c);
+                } else if (lbField_ == 5) {
                     for (unsigned char c : std::string(e.text.text))
                         if (f->size() < 24 && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
                             (c >= '0' && c <= '9') || c == ' ' || c == '-' || c == '_')) *f += char(c);

@@ -285,7 +285,7 @@ setting says, and any allies and opponents play on.
    numbered start positions and how many players it supports. **Name**, **Players** and
    **Size** sort the list, and typing in **Filter** beside them keeps only the maps
    whose name contains the text (upper or lower case alike). You can also choose
-   **Generate Random Map**. Click the preview to see the whole map, its ground,
+   **Generate Random Map**. Click the preview (it says **CLICK** under the pointer) to see the whole map, its ground,
    trees and rocks, filling the window; **Back** or **Esc** returns. The preview in
    the game room opens the same view, for every player in the room; the game still
    starts for you if the host starts it while you are looking.
@@ -2261,9 +2261,10 @@ host's game mods are sent automatically.
    [Local server](#local-server)), and under them the servers you have signed in to
    before (up to 64, most recent first; the mouse wheel scrolls them); **DELETE**
    forgets one.
-3. Enter an **account name** and **password** and click **CONNECT**. A name the
+3. Enter an **account name** and **password** and click **CONNECT** (it stays greyed
+   until both are typed). A name the
    server has not seen before is registered the first time you sign in; there
-   is no separate sign-up. An address typed without `tls://` or `tcp://` is tried
+   is no separate sign-up. Names are at most 16 characters. An address typed without `tls://` or `tcp://` is tried
    encrypted (TLS) first and then unencrypted; with `tls://` or `tcp://` only that
    is tried, and if it fails the reason is shown in red.
 4. In the game browser, click a game to join it, or click **CREATE** to make
@@ -2307,14 +2308,16 @@ refuses to start the game, the reason appears in red under the buttons.
 ### Local server
 
 **LOCAL SERVER** in **CONNECT TO SERVER** hosts a game on your own computer for
-players on the same network, with no accounts. Type a **player name** (it cannot be
-blank; no password is needed) and click **START/CONNECT**: the game starts a server
-on your computer and opens the game setup with the game named *Name's Game*. When
-you click **CREATE**, it is announced on your network about once a second until it
-starts.
+players on the same network, with no accounts. Type a **player name** and, if you
+want the game locked, a **GAME PASSWORD (OPTIONAL)**, then click **START/CONNECT**:
+the game starts a server on your computer and opens the game setup with the game
+named *Name's Game* and your password already filled in (other game names are at most
+16 characters). When you click **CREATE**,
+it is announced on your network about once a second until it starts.
 
 Everyone else on the network sees it listed under **LOCAL SERVER** with its map and
-seats (**LAN 2/8**). They pick it, type a name and click **CONNECT**, and go
+seats (**LAN 2/8**, or **LOCK 2/8** when it has a password). They pick it, type a
+name (and the game password for a locked game) and click **CONNECT**, and go
 straight into your room. If the game is full, has a password or has already
 started, they are told why. Typing your computer's address under **CUSTOM...** also
 works and goes straight into the room too.

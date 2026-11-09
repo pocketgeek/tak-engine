@@ -3075,6 +3075,7 @@ void Server::announceLan(uint64_t now) {
         for (int i = 0; i < std::min(r.cap, int(kMaxSlots)); ++i)
             if (r.slots[i].type == 1 || r.slots[i].type == 2) ++a.players;
         a.capacity = uint8_t(r.cap);
+        a.locked = !r.password.empty();
         beacon_.send(a);
         return;
     }

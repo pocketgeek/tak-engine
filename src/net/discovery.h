@@ -21,6 +21,7 @@ struct LanAnnounce {
     uint16_t port = 0;      // its TCP port
     std::string game, host, map;
     uint8_t players = 0, capacity = 0;
+    bool locked = false;    // the game has a password
 };
 
 std::vector<uint8_t> encodeAnnounce(const LanAnnounce& a);

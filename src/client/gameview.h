@@ -233,7 +233,11 @@ public:
     void setSinglePlayer() { lobbyScreen_ = LobbyScreen::Create; singlePlayer_ = true; }
     // LOCAL SERVER from the CONNECT screen: the host opens on the create screen with the
     // game already named; BACK there leaves for the menu (the server is this session's).
-    void setLanHost(const std::string& gameName) { lobbyScreen_ = LobbyScreen::Create; createName_ = gameName; lanHost_ = true; }
+    void setLanHost(const std::string& gameName, const std::string& password) {
+        lobbyScreen_ = LobbyScreen::Create; createName_ = gameName; createPass_ = password; lanHost_ = true;
+    }
+    // The game password typed on the CONNECT screen, for joining a LAN host's game.
+    void setLanJoinPassword(const std::string& password) { joinPass_ = password; }
     void prepareLobbyMaps(tak::LoadScreen& progress) { buildMapList(&progress); }
     // Return-to-menu request: a lobby/in-game action sets this; main()'s outer loop
     // tears the session down and re-shows the front-end menu.
@@ -4194,6 +4198,7 @@ private:
     // a scenario that places its own forces, whose starts no slot takes.
     void drawRoomPreview(const SDL_FRect& box, bool authored);
     void openBigMap();                      // the map of the preview on show (mapPreviewFor_)
+    void drawClickHint(const SDL_FRect& box);   // CLICK over a hovered preview that opens it
     void drawBigMap(int winW, int winH);
 
     void drawCreate(int winW, int winH);

@@ -133,6 +133,12 @@ int pickLanPort() {
     tak::net::netStartup();
     int fd = int(socket(AF_INET, SOCK_STREAM, 0));
     if (fd >= 0) {
+#ifndef _WIN32
+        // As the server binds it (listenOn): connections lingering in TIME_WAIT from an
+        // earlier game must not make the port look taken.
+        int one = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&one), sizeof one);
+#endif
         sockaddr_in a{}; a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_ANY); a.sin_port = htons(7677);
         const bool free = ::bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0;
         tak::net::sockClose(fd);
@@ -1279,6 +1285,7 @@ int main(int argc, char** argv) {
     // heard on the network: both go by the player's name alone.
     auto connectKind = tak::MainMenu::Connect::Server;
     bool lanHosting = false;
+    std::string lanGamePass;   // a LAN game's password: the host's for its game, a joiner's to get in
     if (mode == "menu") {
         if (dataRoot.empty()) { std::fprintf(stderr, "menu: needs --data <retail-install-dir>\n"); return 1; }
         std::string menuServer;
@@ -1384,7 +1391,10 @@ int main(int argc, char** argv) {
             playerName = loginUser;
             if (settings.accountName != loginUser) { settings.accountName = loginUser; tak::saveSettings(settings); }
             loginUser.clear();
+            lanGamePass = loginPass;   // that box was the GAME password here
             tak::crypto::wipe(loginPass);
+        } else {
+            tak::crypto::wipe(lanGamePass);
         }
         if (lanHosting) {
             rememberServer.clear(); lastServer.clear();   // this session's own server: nothing to go back to
@@ -1718,10 +1728,15 @@ int main(int argc, char** argv) {
                                 gameView->setCanReturnToMenu(); }   // in-game menu can return to it
                 if (!campaignStem.empty()) gameView->setMissionStem(campaignStem);   // autoMode 8 hosts this mission
                 else if (menuInteractive) gameView->setSinglePlayer();  // menu SP: SP-flavoured lobby, Create-first
-                else if (lanHosting) gameView->setLanHost(playerName + "'s Game");   // LOCAL SERVER: its host
+                // LOCAL SERVER: its host, the game "<name>'s Game" -- the one game name
+                // allowed past 16 characters (a 16-character name keeps its 's Game).
+                else if (lanHosting) gameView->setLanHost(playerName + "'s Game", lanGamePass);
                 else if (benchmarkLaunch) {   // menu Benchmark: all-AI watch run + metrics
                     gameView->setBenchmark(benchmarkLevel, settings.benchmarkPathfinding, settings.benchmarkSpeed);
                 }
+                // A LAN game's password, for getting into its game if it asks one.
+                if (!lanHosting) gameView->setLanJoinPassword(lanGamePass);
+                tak::crypto::wipe(lanGamePass);
             }
             if (lobbyLoading) {
                 gameView->prepareLobbyMaps(*lobbyLoading);
@@ -2927,8 +2942,9 @@ int main(int argc, char** argv) {
                     // TAK_SHOT_CLICKS="x,y;x,y" taps those points, one per armed pass,
                     // before the capture -- enough to walk a menu into the state worth
                     // photographing (the lobby's map picker needs two clicks). An "S"
-                    // prefix ("S120,700") holds Shift for that click. A "W<ms>" entry
-                    // waits that long before the next one (a room to fill, a map to verify).
+                    // prefix ("S120,700") holds Shift for that click; an "M" prefix only moves
+                    // the pointer there (a hover). A "W<ms>" entry waits that long before the
+                    // next one (a room to fill, a map to verify).
                     static size_t clickIdx = 0;
                     static bool clickShift = false;
                     static uint64_t clickWaitUntil = 0;
@@ -2942,7 +2958,7 @@ int main(int argc, char** argv) {
                     bool clickSent = false;
                     if (const char* cl = tak::devEnv("TAK_SHOT_CLICKS")) {
                         std::vector<std::pair<int, int>> pts;
-                        std::vector<bool> shifted;
+                        std::vector<bool> shifted, moveOnly;
                         std::vector<int> waits;   // > 0: a "W<ms>" pause, not a click
                         std::string acc(cl);
                         size_t p0 = 0;
@@ -2951,13 +2967,15 @@ int main(int argc, char** argv) {
                             std::string one = acc.substr(p0, e == std::string::npos ? std::string::npos : e - p0);
                             const bool sh = !one.empty() && (one[0] == 'S' || one[0] == 's');
                             if (sh) one.erase(0, 1);
+                            const bool mv = !one.empty() && (one[0] == 'M' || one[0] == 'm');
+                            if (mv) one.erase(0, 1);
                             size_t c = one.find(',');
                             if (!one.empty() && (one[0] == 'W' || one[0] == 'w')) {
-                                pts.push_back({0, 0}); shifted.push_back(false);
+                                pts.push_back({0, 0}); shifted.push_back(false); moveOnly.push_back(false);
                                 waits.push_back(std::max(1, std::atoi(one.c_str() + 1)));
                             } else if (c != std::string::npos) {
                                 pts.push_back({std::atoi(one.c_str()), std::atoi(one.c_str() + c + 1)});
-                                shifted.push_back(sh); waits.push_back(0);
+                                shifted.push_back(sh); moveOnly.push_back(mv); waits.push_back(0);
                             }
                             if (e == std::string::npos) break;
                             p0 = e + 1;
@@ -2973,12 +2991,14 @@ int main(int argc, char** argv) {
                             ev.type = SDL_MOUSEMOTION;
                             ev.motion.x = pts[clickIdx].first; ev.motion.y = pts[clickIdx].second;
                             SDL_PushEvent(&ev);
-                            ev.type = SDL_MOUSEBUTTONDOWN;
-                            ev.button.button = SDL_BUTTON_LEFT;
-                            ev.button.x = pts[clickIdx].first; ev.button.y = pts[clickIdx].second;
-                            SDL_PushEvent(&ev);
-                            ev.type = SDL_MOUSEBUTTONUP;
-                            SDL_PushEvent(&ev);
+                            if (!moveOnly[clickIdx]) {
+                                ev.type = SDL_MOUSEBUTTONDOWN;
+                                ev.button.button = SDL_BUTTON_LEFT;
+                                ev.button.x = pts[clickIdx].first; ev.button.y = pts[clickIdx].second;
+                                SDL_PushEvent(&ev);
+                                ev.type = SDL_MOUSEBUTTONUP;
+                                SDL_PushEvent(&ev);
+                            }
                             ++clickIdx;
                             clickSent = true;
                             shotArmed = false;   // let it land, then try again next pass
