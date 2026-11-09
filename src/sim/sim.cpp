@@ -8836,16 +8836,21 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     }
     // Shots from here keep stopping short of the target on something they
     // cannot destroy (noteShotImpact): a ground mover free to leave its post
-    // walks to a spot with a clear shot. So does a Hold Position unit whose
-    // auto target interrupted a movement order (an attack-move, a patrol, a
-    // move queued behind it): it is on its way anyway. If no spot is left in
-    // reach it drops the target and goes on with that movement (the scans
-    // will not pick the target again from this spot). Hold Position with
-    // nothing to go on with stays and fires on, as retail.
+    // walks to a spot with a clear shot. So does any unit the player ordered
+    // to attack this target, whatever its stance (2026-11-08: Defensive, the
+    // shipped stance of most units, is moveState 0, and those attackers fired
+    // into a ridge for good after walking up to the target), and a Hold
+    // Position unit whose auto target interrupted a movement order (an
+    // attack-move, a patrol, a move queued behind it): it is on its way
+    // anyway. If no spot is left in reach it drops an auto target and goes on
+    // with that movement (the scans will not pick the target again from this
+    // spot). Hold Position with nothing to go on with stays and fires on at
+    // what it picked itself, as retail.
     if (!airRun && !hovering && sel && !sel->melee && inReach && u.type->canMove &&
         !u.type->canFly && !u.type->isStructure() && shotBlockedHere(u,*target)) {
         const bool onTheWay = u.orders.front().autoTarget && movementQueued(u);
-        if ((u.moveState != 0 || onTheWay) && repositionForShot(u,*target,slot)) return;
+        const bool ordered = !u.orders.front().autoTarget;
+        if ((u.moveState != 0 || onTheWay || ordered) && repositionForShot(u,*target,slot)) return;
         if (onTheWay && (u.searchFailed || u.repositions >= kMaxRepositions)) {
             if(u.scriptAimTarget)clearScriptWeaponTarget(u);
             dropLeg(u);

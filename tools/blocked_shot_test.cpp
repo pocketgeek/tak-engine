@@ -500,14 +500,16 @@ int main(int argc, char** argv) {
         const Outcome free = run(vfs, reg, obstacle, 1, kTicks);
         std::printf("  %-10s hold position: %s\n", name, describe(held).c_str());
         std::printf("  %-10s maneuver:      %s\n", name, describe(free).c_str());
-        check(held.shortShots >= 3 && held.damage == 0 && held.moved < 8,
-              obstacle == Obstacle::Ridge ? "ridge: the shot is blocked, and Hold Position stays and fires on"
-                                          : "campfires: the shot is blocked, and Hold Position stays and fires on");
+        // An ordered attack walks to a clear shot on Hold Position (Defensive) too.
+        check(held.shortShots >= 3 && held.repositions >= 1 && held.damage > 0,
+              obstacle == Obstacle::Ridge ? "ridge: the shot is blocked, and an ordered Hold Position archer walks to a clear shot"
+                                          : "campfires: the shot is blocked, and an ordered Hold Position archer walks to a clear shot");
         check(free.repositions >= 1 && free.damage > 0 && free.shortShots <= 4,
               obstacle == Obstacle::Ridge ? "ridge: the archer walks to a clear shot and hurts the target"
                                           : "campfires: the archer walks to a clear shot and hurts the target");
         if (mode == sim::PathfindingMode::Legion)
-            check(free.legionMoves > held.legionMoves, "the walk is Legion's", std::to_string(free.legionMoves));
+            check(free.legionMoves > 0 && held.legionMoves > 0, "the walks are Legion's",
+                  std::to_string(free.legionMoves) + "/" + std::to_string(held.legionMoves));
     }
     // A long building: the crest in front of its long face blocks the shot.
     {
@@ -515,12 +517,13 @@ int main(int argc, char** argv) {
         const Outcome free = runCastle(vfs, reg, 1, kTicks);
         std::printf("  castle     hold position: %s\n", describe(held).c_str());
         std::printf("  castle     maneuver:      %s\n", describe(free).c_str());
-        check(held.shortShots >= 3 && held.damage == 0 && held.moved < 8,
-              "castle: a crest in front of its long face blocks the shot, and Hold Position stays and fires on");
+        check(held.shortShots >= 3 && held.repositions >= 1 && held.damage > 0,
+              "castle: a crest in front of its long face blocks the shot, and an ordered Hold Position archer walks to a clear shot");
         check(free.repositions >= 1 && free.damage > 0 && free.shortShots <= 4,
               "castle: the archer counts those shots blocked, walks to a clear shot and hurts the castle");
         if (mode == sim::PathfindingMode::Legion)
-            check(free.legionMoves > held.legionMoves, "the walk is Legion's", std::to_string(free.legionMoves));
+            check(free.legionMoves > 0 && held.legionMoves > 0, "the walks are Legion's",
+                  std::to_string(free.legionMoves) + "/" + std::to_string(held.legionMoves));
     }
     // Fire Wagon flames against a lodestone behind a standing stone.
     const WagonOutcome hold = runWagon(vfs, reg, Wagon::Hold, kTicks);
