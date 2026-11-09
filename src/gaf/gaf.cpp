@@ -83,7 +83,13 @@ Frame decodeSingle(const std::vector<uint8_t>& d, const FrameHeader& h, const Pa
                     uint8_t code = d[p++];
                     if (code & 1) {
                         x += code >> 1;                       // transparent run
-                    } else if (code & 2) {
+                        continue;
+                    }
+                    // A repeat's colour byte and a literal's bytes must lie inside this
+                    // scanline (which `need` above has placed inside the buffer).
+                    uint32_t operands = (code & 2) ? 1 : (code >> 2) + 1;
+                    if (operands > end - p) throw std::runtime_error("RLE run past its scanline");
+                    if (code & 2) {
                         uint8_t v = d[p++];                   // repeat run
                         for (int n = (code >> 2) + 1; n-- > 0;)
                             putIndexed(fr, x++, y, v, h.transparency, pal);
