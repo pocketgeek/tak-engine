@@ -3063,8 +3063,8 @@
             // go the room's forfeit way, and main() shows the defeat's result screen.
             const bool canSurrender = canReturnToMenu_ && mp_ && !watchOnly() && outcome_ == 0 &&
                                       mp_->state() == tak::net::MpClient::State::InGame;
-            // RESUME, YOUTUBE STREAMING, GRAPHICS, USER INTERFACE, GAME, AUDIO, CONTROLS and
-            // VOICE CHAT, then SURRENDER, MAIN MENU or (launched without the menu) QUIT.
+            // RESUME, GAME, GRAPHICS, USER INTERFACE, AUDIO, VOICE CHAT, CONTROLS and YOUTUBE
+            // STREAMING, then SURRENDER, MAIN MENU or (launched without the menu) QUIT.
             const int nBtn = 8 + (canSurrender ? 1 : 0) + (canReturnToMenu_ && !canSurrender ? 1 : 0) +
                              (!canReturnToMenu_ ? 1 : 0);
             const float bw = 280, pad = 32, titlePx = 3.0f;
@@ -3102,17 +3102,17 @@
                 by += bh + gap;
             };
             btn("RESUME", [this] { exitMenu_ = false; surrenderArmed_ = false; });
+            btn("GAME", [this] { exitMenu_ = false; openOptions(tak::OptionsPage::Game); });
+            btn("GRAPHICS", [this] { exitMenu_ = false; openOptions(tak::OptionsPage::Graphics); });
+            btn("USER INTERFACE", [this] { exitMenu_ = false; openOptions(tak::OptionsPage::Interface); });
+            btn("AUDIO", [this] { exitMenu_ = false; openAudioOptions(); });
+            btn("VOICE CHAT", [this] { exitMenu_ = false; openVoiceOptions(); });
+            btn("CONTROLS", [this] { exitMenu_ = false; openHotkeys(); });   // hotkey rebinding
             btn("YOUTUBE STREAMING", [this] {
                 exitMenu_ = false;
                 SDL_Event event{};event.type=SDL_USEREVENT;event.user.code=tak::kStreamingEvent;
                 SDL_PushEvent(&event);
             });
-            btn("GRAPHICS", [this] { exitMenu_ = false; openOptions(tak::OptionsPage::Graphics); });
-            btn("USER INTERFACE", [this] { exitMenu_ = false; openOptions(tak::OptionsPage::Interface); });
-            btn("GAME", [this] { exitMenu_ = false; openOptions(tak::OptionsPage::Game); });
-            btn("AUDIO", [this] { exitMenu_ = false; openAudioOptions(); });
-            btn("CONTROLS", [this] { exitMenu_ = false; openHotkeys(); });   // hotkey rebinding
-            btn("VOICE CHAT", [this] { exitMenu_ = false; openVoiceOptions(); });
             if (canSurrender) btn(surrenderArmed_ ? "CONFIRM SURRENDER" : "SURRENDER", [this] {
                 if (!std::exchange(surrenderArmed_, true)) return;
                 outcome_ = -1;   // main() sends the Leave on the way out

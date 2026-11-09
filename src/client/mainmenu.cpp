@@ -142,9 +142,10 @@ struct MainMenu::Impl {
     // instead of jumping straight into Options, mirroring the in-game Esc GAME MENU.
     bool settingsMenu_ = false;
     // By id: GRAPHICS / CONTROLS / VOICE CHAT / BENCHMARK / LOAD REPLAY / STREAMING / AUDIO /
-    // USER INTERFACE / GAME, shown in kSettingsOrder (the Options pages first).
+    // USER INTERFACE / GAME, shown in kSettingsOrder: GAME, GRAPHICS, USER INTERFACE, AUDIO,
+    // VOICE CHAT, CONTROLS, BENCHMARK, LOAD REPLAY, YOUTUBE STREAMING.
     SDL_FRect setBtnRect_[9]{};
-    static constexpr int kSettingsOrder[9] = {0, 7, 8, 6, 1, 2, 3, 4, 5};
+    static constexpr int kSettingsOrder[9] = {8, 0, 7, 6, 2, 1, 3, 4, 5};
     SDL_FRect menuBackRect_{};         // the BACK button of SETTINGS, BENCHMARK and LOAD REPLAY (set each render)
     VoiceEngine* voice_ = nullptr;     // main()'s voice engine (MainMenu::setVoice)
 

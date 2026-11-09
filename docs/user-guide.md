@@ -237,12 +237,12 @@ The **Settings** button opens:
 
 | Entry | What it does |
 | --- | --- |
+| **Game** | Player name, game data folder and camera. See [Options](#options). |
 | **Graphics** | Display and graphics settings. See [Options](#options). |
 | **User Interface** | Interface and cursor settings. See [Options](#options). |
-| **Game** | Player name, game data folder and camera. See [Options](#options). |
 | **Audio** | Sound device, volumes, speakers and custom music. See [Audio](#audio). |
-| **Controls** | Rebind command, selection, view, emote and push-to-talk keys. |
 | **Voice Chat** | Turn voice chat on and choose the microphone, voice output and volumes. See [Voice chat](#voice-chat). |
+| **Controls** | Rebind command, selection, view, emote and push-to-talk keys. |
 | **Benchmark** | A repeatable performance test. See [Benchmark](#benchmark). |
 | **Load Replay** | Watch a recorded game. See [Replays](#replays). |
 | **YouTube Streaming** | Stream your game. See [streaming](streaming.md). |
@@ -272,8 +272,8 @@ the details.
 
 The version number is shown on the title screen.
 
-In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
-**Graphics**, **User Interface**, **Game**, **Audio**, **Controls**, **Voice Chat** and **Surrender**. Replays, spectators and a
+In a game, **Esc** opens the game menu: **Resume**, **Game**, **Graphics**,
+**User Interface**, **Audio**, **Voice Chat**, **Controls**, **YouTube Streaming** and **Surrender**. Replays, spectators and a
 finished game have **Main Menu** in place of Surrender.
 **Surrender** (click twice to confirm) ends your part in the game and shows the
 defeat screen with the match's statistics; your units go the way the room's forfeit
