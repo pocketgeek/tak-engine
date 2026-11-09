@@ -3167,7 +3167,7 @@ int main(int argc,char** argv) {
                 // yards 35 (9080,4424) and 476 (7880,5816) open onto the sea.
                 sim::World w;
                 sim::MatchConfig config;config.vfs=&vfs;config.roomMapRevealed=true;   // FOG OF WAR: EXPLORED, the room default
-                config.mapPath="~gen1~090001000000000000000300030003020000ffff000104496e74656c20393331302044656c6c";
+                config.mapPath="~gen1~0a0001000000000000000300030003020000ffff000104000000496e74656c20393331302044656c6c";
                 config.slots={{true,4,0,2.0f},{true,0,1,2.0f}};
                 config.startMode=sim::StartMode::BySlot;config.startSeed=1853210448u;
                 const auto starts=sim::setupMatch(w,reg,config);

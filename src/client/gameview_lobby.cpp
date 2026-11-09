@@ -426,8 +426,7 @@ float createOptionPx(float maxW) {
         char dims[48];
         std::snprintf(dims, sizeof dims, "%d x %d   %d PLAYER", W / 32, H / 32, int(gp.players));
         mapPreviewDims_ = dims;
-        if (gp.formatVer >= 3)
-            genPreviewInfo_ = "WATER: " + std::to_string(g.waterPercent) + "%  MANA: " + std::to_string(manaSpots);
+        genPreviewInfo_ = "WATER: " + std::to_string(g.waterPercent) + "%  MANA: " + std::to_string(manaSpots);
         genPreviewScattered_ = g.scatteredMana;
 
     }
@@ -459,6 +458,9 @@ float createOptionPx(float maxW) {
             case 2: genParams_.manaDensity = v; break;
             case 3: genParams_.waterDensity = v; break;
             case 4: genParams_.reliefDensity = v; break;
+            case 6: genParams_.plateauDensity = v; break;
+            case 7: genParams_.mountainDensity = v; break;
+            case 8: genParams_.townDensity = v; break;
             default:   // SCATTERED MANA snaps to its five levels
                 genParams_.manaScatter = uint8_t(t * float(tak::mapgen::kScatterLevels - 1) + 0.5f); break;
         }
@@ -870,9 +872,11 @@ float createOptionPx(float maxW) {
             genParams_.players = uint8_t(2 + (genParams_.players - 2 + direction + 7) % 7);
             applyGenParams();
         }); py += kRowH + kGap * 2;   // a wider break between the pickers and the sliders
-        auto slider = [&](int idx, const char* label, uint8_t val, bool enabled = true) {
-            blockText(label, px, py, 1.6f, {180, 185, 195, 255});
-            float bx = px, by = py + 16, bw = kBtnW, bh = 14;
+        // Nine sliders in two half-width columns; each level reads at the right end of
+        // its label line, where the bar's column ends.
+        int column = 0;
+        auto slider = [&](int idx, const char* label, uint8_t val, bool enabled = true, const char* off = "AUTO") {
+            const float bx = px + column * (kHalfW + kGap), by = py + 16, bw = kHalfW, bh = 14;
             genSliderRect_[idx] = enabled ? SDL_FRect{bx, by, bw, bh} : SDL_FRect{};
             SDL_FRect bar{bx, by, bw, bh};
             SDL_SetRenderDrawColor(ren_, 30, 34, 46, 255); SDL_RenderFillRectF(ren_, &bar);
@@ -882,27 +886,41 @@ float createOptionPx(float maxW) {
             SDL_FRect handle{bx + bw * t - 3, by - 2, 6, bh + 4};
             SDL_SetRenderDrawColor(ren_, 200, 220, 200, 255); if (enabled) SDL_RenderFillRectF(ren_, &handle);
             SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &bar);
-            // Short level names: a longer one would run into the preview column.
             static const char* kScatterShort[tak::mapgen::kScatterLevels] = {"NONE", "MIN", "MED", "HIGH", "MAX"};
-            const std::string level = idx==2 ? "+" + std::to_string(tak::mapgen::extraManaRounds(val)) + "/P" :
+            const std::string level = !enabled ? off : idx==2 ? "+" + std::to_string(tak::mapgen::extraManaRounds(val)) + "/P" :
                 idx==5 ? kScatterShort[std::min<int>(genParams_.manaScatter, tak::mapgen::kScatterLevels - 1)] :
-                !enabled ? "AUTO" : val == 0 ? "NONE" : val < 86 ? "LOW" : val < 171 ? "MED" : "HIGH";
-            blockText(level, bx + bw + 8, py + 14, 1.5f, {160, 165, 180, 255});
-            py += kSliderH + kGap;
+                val == 0 ? "NONE" : val < 86 ? "LOW" : val < 171 ? "MED" : "HIGH";
+            const float levelW = blockWidth(level, 1.3f);
+            // The label shrinks, if it must, to leave the level its room on the line.
+            blockText(label, bx, py + 2, tak::uiTextFitPx(label, 1.3f, bw - levelW - 8), {180, 185, 195, 255});
+            blockText(level, bx + bw - levelW, py + 2, 1.3f, {160, 165, 180, 255});
+            if (++column == 2) { column = 0; py += kSliderH + kGap; }
         };
+        const uint8_t world = genParams_.mapType, layout = genParams_.layout;
         slider(0, "FORESTS", genParams_.treeDensity);
-        slider(1, "ROCK CLUSTERS", genParams_.rockDensity);
-        slider(2, "EXTRA MANA SPOTS", genParams_.manaDensity);
-        // Neutral spots scattered by AREA, apart from the per-player extra spots above
-        // (a level, not a count: the same level puts four times as many on a map twice
-        // as wide). Five notches, NONE..MAX; MAX = a six-spot home's density.
+        slider(1, "ROCKS", genParams_.rockDensity);
+        slider(2, "EXTRA MANA", genParams_.manaDensity);
+        // Neutral spots scattered by AREA, apart from the per-player extra spots (a
+        // level, not a count: the same level puts four times as many on a map twice as
+        // wide). Five notches, NONE..MAX; MAX = a six-spot home's density.
         slider(5, "SCATTERED MANA", uint8_t(genParams_.manaScatter * 255 / (tak::mapgen::kScatterLevels - 1)));
-        slider(3, "WATER AMOUNT", genParams_.waterDensity, !tak::mapgen::automaticWater(genParams_.layout));
-        slider(4, genParams_.layout==tak::mapgen::Highlands?"HIGHLAND AMOUNT":"AUTHORED HILLS", genParams_.reliefDensity, genParams_.layout!=tak::mapgen::Maze);
-        lbBtn(px, py, 110, kRowH, "RE-ROLL SEED", true, [this] {
+        slider(3, "WATER", genParams_.waterDensity, !tak::mapgen::automaticWater(layout));
+        slider(4, layout==tak::mapgen::Highlands?"HIGHLANDS":"HILLS", genParams_.reliefDensity, layout!=tak::mapgen::Maze);
+        // v10 retail kits. Maze walls and Creon highlands are the layout's own high
+        // ground; Veruna ships no mountain kit.
+        slider(6, "PLATEAUS", genParams_.plateauDensity, !tak::mapgen::automaticPlateaus(layout) &&
+               tak::mapgen::kitAvailable(world, tak::mapgen::KitPlateaus));
+        slider(7, "MOUNTAINS", genParams_.mountainDensity, tak::mapgen::kitAvailable(world, tak::mapgen::KitMountains), "NONE");
+        slider(8, world==tak::mapgen::Zhon?"VILLAGES":"TOWNS", genParams_.townDensity,
+               tak::mapgen::kitAvailable(world, tak::mapgen::KitTowns), "NONE");
+        // The seed button shares the last row with TOWNS.
+        py += 8;
+        px += kHalfW + kGap;
+        lbBtn(px, py, kHalfW, kRowH, "RE-ROLL SEED", true, [this] {
             genParams_.seed = genParams_.seed * 6364136223846793005ULL + 1442695040888963407ULL;
             applyGenParams();
         });
+        px -= kHalfW + kGap;
       }
 
         // Preview panel, right of the list / params column. A real map shows its
@@ -1536,6 +1554,10 @@ float createOptionPx(float maxW) {
                 blockText(shape,x,y+98,1.1f,infoColor);
                 blockText(terrain,x,y+112,1.1f,infoColor);
                 blockText("MAP SEED: "+std::to_string(gp.seed)+"  SCATTERED MANA: "+scatter,x,y+126,1.1f,infoColor);
+                const auto kit=[&](uint8_t v,uint8_t which){return tak::mapgen::kitAvailable(gp.mapType,which)?level(v):"NONE";};
+                blockText(std::string("PLATEAUS: ")+(tak::mapgen::automaticPlateaus(gp.layout)?"AUTO":kit(gp.plateauDensity,tak::mapgen::KitPlateaus))+
+                          "  MOUNTAINS: "+kit(gp.mountainDensity,tak::mapgen::KitMountains)+
+                          (gp.mapType==tak::mapgen::Zhon?"  VILLAGES: ":"  TOWNS: ")+kit(gp.townDensity,tak::mapgen::KitTowns),x,y+140,1.1f,infoColor);
             } catch(const std::exception&) {} // Invalid map IDs cannot start.
         }
         // chat panel on the right (multiplayer only -- there's no one to chat with in SP)
@@ -1718,7 +1740,7 @@ float createOptionPx(float maxW) {
             if (forward) { if (lbField_ == 5) applyGenParams(); lbField_ = 0; SDL_StopTextInput(); }
             float mx, my; lobbyMouse(mx, my);
             if (forward && ptIn(mapThumbRect_, mx, my)) { mapDrag_ = true; return; }   // grab the thumb
-            for (int gi = 0; gi < 6; ++gi)   // grab a density slider
+            for (int gi = 0; gi < 9; ++gi)   // grab a density slider
                 if (forward && ptIn(genSliderRect_[gi], mx, my)) { genSlider_ = gi; setGenSlider(gi, mx); return; }
             for (auto& hot : lobbyHots_)
                 if (ptIn(hot.rect, mx, my)) {

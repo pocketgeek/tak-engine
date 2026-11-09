@@ -2748,7 +2748,7 @@ private:
     static constexpr float mapListW() { return kLobbyW - kCreateMargin - 192.0f - 12.0f - (kCreateMargin + 320.0f); }
     int genPreviewScattered_ = 0;   // v9 neutral spots the preview roll placed
     int genSlider_ = -1;
-    SDL_FRect genSliderRect_[6]{};
+    SDL_FRect genSliderRect_[9]{};
     void applyGenParams();             // re-encode genParams_ -> mpMapId_
     void setGenSlider(int i, float mx);  // drag a density slider from a panel-x
     SDL_FRect mapListRect_{};          // the list box (rows area) -- wheel target

@@ -190,9 +190,11 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 318, "replay format 11 is kept under protocol 318");
-    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 318");
-    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 318");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 319, "replay format 11 is kept under protocol 319");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 319");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 319");
+    // 319 is random-map recipe v10: a v9 recipe no longer regenerates its map.
+    check(!supportedReplayProtocol(15, 318), "previous protocol (random-map recipe v9) is refused");
     // 318 lets an ordered attacker leave a blocked firing spot whatever its stance (hashed);
     // 317 fires Legion's ranged attack rings up to three bodies deep and more (hashed).
     check(!supportedReplayProtocol(15, 316), "previous protocol (Legion's one-deep firing rings) is refused");

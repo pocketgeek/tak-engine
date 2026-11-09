@@ -19,7 +19,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 318;      // 318: an ordered attacker leaves a blocked firing spot whatever its stance
+constexpr uint32_t kNetVersion = 319;      // 319: random maps v10 (retail plateau/mountain/town kits; v8/v9 recipes refused)
+                                           // 318: an ordered attacker leaves a blocked firing spot whatever its stance
                                            // 317: Legion's ranged attack rings fire up to three bodies deep and more
                                            // (buildRing's thick band 0, walkInRing; hashed Ring::thick)
                                            // 316: chat and voice reach spectators only when the player ticks them

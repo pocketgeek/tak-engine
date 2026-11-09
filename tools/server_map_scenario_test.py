@@ -41,7 +41,7 @@ SEAT_TWO = b'Seat player 2 in the lobby to play this scenario'
 
 
 def recipe():
-    return '~gen1~' + (struct.pack('<HQBHH', 8, 1234, 0, 128, 128) + bytes([2, 0, 0, 1, 0, 0, 0])).hex()
+    return '~gen1~' + (struct.pack('<HQBHH', 10, 1234, 0, 128, 128) + bytes([2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0])).hex()
 
 
 def create(peer, map_id, scenario, capacity=4, random_starts=0, stress=0, benchmark=0, mission=''):

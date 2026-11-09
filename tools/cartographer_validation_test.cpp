@@ -73,20 +73,24 @@ int main() {
         fields[0]="18446744073709551616";
         check(!cart::parseGeneratorFields(fields,parsed,generatorError) && tak::mapgen::encodeMapId(parsed)==original,"seed overflow leaves settings unchanged");
         for(int layout=tak::mapgen::Maze;layout<tak::mapgen::kLayouts;++layout) {
-            auto themed=params;themed.formatVer=6;
+            auto themed=params;
             auto themeFields=cart::generatorFields(themed);themeFields[2]=tak::mapgen::layoutName(layout);
             check(cart::parseGeneratorFields(themeFields,themed,generatorError),"themed editor layout rejected");
             check(tak::mapgen::sanitize(themed).layout==layout,"themed editor layout lost");
-            themed.formatVer=5;
-            check(!cart::parseGeneratorFields(themeFields,themed,generatorError),"legacy editor accepts new theme");
         }
         {
-            auto legacy=params;legacy.formatVer=8;auto legacyFields=cart::generatorFields(legacy);
-            check(legacyFields[8]=="None" && cart::parseGeneratorFields(legacyFields,legacy,generatorError) && legacy.formatVer==8,"v8 recipe kept exactly");
-            legacyFields[8]="Max";
-            check(cart::parseGeneratorFields(legacyFields,legacy,generatorError) && legacy.formatVer==9 &&
-                  tak::mapgen::decodeMapId(tak::mapgen::encodeMapId(legacy)).manaScatter==tak::mapgen::ScatterMax,"scattered mana upgrades a v8 recipe");
-            legacyFields[8]="Lots";check(!cart::parseGeneratorFields(legacyFields,legacy,generatorError),"unknown scattered mana level accepted");
+            // v10 kit amounts: edited, range-checked, and carried in the recipe.
+            auto kits=params;auto kitFields=cart::generatorFields(kits);
+            kitFields[8]="Max";kitFields[9]="0";kitFields[10]="200";kitFields[11]="255";
+            check(cart::parseGeneratorFields(kitFields,kits,generatorError) && kits.manaScatter==tak::mapgen::ScatterMax &&
+                  kits.plateauDensity==0 && kits.mountainDensity==200 && kits.townDensity==255,"kit amounts parse");
+            const auto decoded=tak::mapgen::decodeMapId(tak::mapgen::encodeMapId(kits));
+            check(decoded.plateauDensity==0 && decoded.mountainDensity==200 && decoded.townDensity==255,"kit amounts ride in the recipe");
+            kitFields[8]="Lots";check(!cart::parseGeneratorFields(kitFields,kits,generatorError),"unknown scattered mana level accepted");
+            kitFields[8]="None";kitFields[10]="256";check(!cart::parseGeneratorFields(kitFields,kits,generatorError),"kit amount range checked");
+            // A recipe from an older generator cannot be regenerated: say so.
+            check(!cart::restoreGeneratorRecipe("~gen1~080001000000000000000100030003020000ff608003","",restored,generatorError) &&
+                  generatorError.find("older random-map generator")!=std::string::npos,"older recipe gets a clear error");
         }
         fields=cart::generatorFields(params);fields[3]="256";
         check(!cart::parseGeneratorFields(fields,parsed,generatorError),"density range checked");

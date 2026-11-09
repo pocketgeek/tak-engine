@@ -94,8 +94,8 @@ def cli_checks(binary, root):
 
 
 def create_room(peer, name, private=False):
-    recipe = '~gen1~' + (struct.pack('<HQBHH', 8, 1234, 0, 128, 128) +
-                        bytes([2, 0, 0, 1, 0, 0, 0])).hex()
+    recipe = '~gen1~' + (struct.pack('<HQBHH', 10, 1234, 0, 128, 128) +
+                        bytes([2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0])).hex()
     peer.send('CreateGame', auth.field(name) + auth.field('') + auth.field(recipe) +
               auth.field('') + options() + bytes([2, 0, int(private)]))
     result = peer.receive('JoinResult')

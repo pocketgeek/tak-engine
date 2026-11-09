@@ -78,7 +78,7 @@ def main():
         root = Path(tmp)
         with server(a.server.resolve(), a.data.resolve(), root) as (port, h, process):
             with contextlib.closing(login(port, h, 'Host')) as p:
-                recipe = '~gen1~' + (struct.pack('<HQBHH', 8, 1234, 0, 128, 128) + bytes([2, 0, 0, 1, 0, 0, 0])).hex()
+                recipe = '~gen1~' + (struct.pack('<HQBHH', 10, 1234, 0, 128, 128) + bytes([2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0])).hex()
                 # max players 8, host spectates (takes no slot), private
                 p.send('CreateGame', auth.field('pacing') + auth.field('') + auth.field(recipe) + auth.field('') +
                        options(10) + bytes([8, 1, 1]))

@@ -906,6 +906,7 @@ std::string gen1Text() {
                p.widthCells = p.heightCells = 256;
                p.waterDensity = 0;
                p.reliefDensity = 0;
+               p.plateauDensity = p.mountainDensity = p.townDensity = 0;
                return p;
            }()) +
            "\ntype inf mover 2 2500 10 1.8\ngroup A 0 inf 48 rect 40 40 70 70\ngroup B 1 inf 48 rect 180 180 210 210\n"
@@ -1120,7 +1121,7 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
         determinism(gated, "data", 100, data);
         // The user's map (movement_orders_test's recipe family) with the real install.
         const auto user = tak::scn::parse(
-            "scn 1\nname user-gen1\nplayers 2\nmap gen1 ~gen1~080001000000000000000100030003020000ff608003\n"
+            "scn 1\nname user-gen1\nplayers 2\nmap gen1 ~gen1~0a0001000000000000000100030003020000ff60800300000000\n"
             "type inf mover 2 2500 10 1.8\ngroup A 0 inf 32 rect 100 100 124 124\nat 0 move A 160 160\n",
             "user-gen1");
         roundTrip(tak::scn::format(user), "user-gen1");

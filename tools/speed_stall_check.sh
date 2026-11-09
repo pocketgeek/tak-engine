@@ -48,7 +48,7 @@ for _ in $(seq 1 90); do grep -qi listening "$work/server.log" && break; sleep 1
 if [ "$MODE" = watch ]; then
   TAK_MP_WATCH=1 TAK_MP_AIS=8 TAK_AI_LEVEL=4 TAK_LEGION=1 TAK_FOG=2 TAK_RANDOM_STARTS=2 \
     timeout $(( SECS * 3 + 120 )) taskset -c "$CPUS" "$BUILD/takclient" game \
-    "~gen1~09000100000000000000038001800108ffffffffff0004" --data "$DATA" --server 127.0.0.1 \
+    "~gen1~0a000100000000000000038001800108ffffffffff0004000000" --data "$DATA" --server 127.0.0.1 \
     --serverport "$PORT" --mphost --time "$SECS" > "$work/client.log" 2>&1
 else
   timeout $(( SECS * 3 + 120 )) taskset -c "$CPUS" "$BUILD/takclient" game "Inner Circle" --data "$DATA" \

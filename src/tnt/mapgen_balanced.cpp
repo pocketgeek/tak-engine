@@ -116,7 +116,8 @@ std::vector<Point> planStarts(const Params& p) {
 }
 }
 
-Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
+namespace {
+Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
     Result r;r.starts=planStarts(p);
     for(size_t i=0;i<r.starts.size();++i)for(size_t j=0;j<i;++j) {
         const int dx=r.starts[i].first-r.starts[j].first,dz=r.starts[i].second-r.starts[j].second;
@@ -171,7 +172,6 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
         if (!automaticWater(p.layout)&&p.waterDensity) {
             const int threshold=p.layout==Lakes ? 75+int(p.waterDensity)*90/255 : 25+int(p.waterDensity)*115/255;
             water=int(fractal(p.seed,x*32,z*32,std::max(w,h)))<threshold;
-            if (p.formatVer<5&&p.layout==Lakes&&(x<1||z<1||x>sw-1||z>sh-1)) water=false;
         }
         if (p.layout==Ports) water=x>=3 && x<=sw-3 && z>=3 && z<=sh-3;
         if (p.layout==Riverlands) {
@@ -240,12 +240,8 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
     };
     // Sorted path lookup and explicit variant order keep output independent of
     // archive enumeration and standard-library hash-table iteration order.
-    std::map<std::string,tnt::Map> cache;
-    const auto load=[&](const std::string& path)->const tnt::Map* {
-        auto it=cache.find(path);if(it!=cache.end())return &it->second;
-        if (!vfs.has(path))return nullptr;
-        return &cache.emplace(path,tnt::Map::load(vfs.read(path),path)).first->second;
-    };
+    SectionCache sections(vfs);
+    const auto load=[&](const std::string& path)->const tnt::Map* {return sections.load(path);};
     const auto stamp=[&](const tnt::Map& piece,int x0,int z0) {
         for (int z=0;z<piece.height;++z) for (int x=0;x<piece.width;++x) {
             const size_t src=size_t(z)*piece.width+x,dst=size_t(z0+z)*w+x0+x;
@@ -275,8 +271,9 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
     }
     // Themed uplands use complete authored cliff/hillside pieces, not painted
     // blockers or height-only walls. A low corner uses the shore kit's wet role.
+    std::vector<uint8_t> high(wet.size(),0);
     if (p.layout==Maze || p.layout==Highlands) {
-        std::vector<uint8_t> high(wet.size(),1);
+        high.assign(wet.size(),1);
         const auto carve=[&](int x,int z) {
             for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx)
                 if(x+dx>=0&&z+dz>=0&&x+dx<=sw&&z+dz<=sh)
@@ -305,8 +302,8 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
                 corridor({3+4*x,3+4*z},{3+4*n.first,3+4*n.second});stack.push_back(n);
             }
             // Extend edge corridors to the boundary rather than enclosing the
-            // entire battlefield in an unbroken cliff wall. Keep old recipes stable.
-            if(p.formatVer>=7) {
+            // entire battlefield in an unbroken cliff wall.
+            {
                 for(int x=0;x<cols;++x) {
                     corridor({3+4*x,3},{3+4*x,0});
                     corridor({3+4*x,3+4*(rows-1)},{3+4*x,sh});
@@ -353,6 +350,353 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
             stamp(*piece,x*32,z*32);
         }
     }
+    // ---- v10 retail kits: cliff-edged plateaus, mountain ranges and towns ----------
+    // All three are assembled from whole retail sections by marching squares on the
+    // section-corner grid, exactly like the coast. Each draws from its own random
+    // stream and runs only when its amount is non-zero, so a recipe with all three
+    // at zero is the v9 map. Plateau corners keep clear of homes, water and the
+    // reserved army routes; the final walking-distance validation still decides.
+    const auto& spec=kKitSpec[p.mapType];
+    const int corners=(sw+1)*(sh+1);
+    std::vector<uint8_t> kitCell(cells);        // 1: plateau/mountain section, 2: town
+    std::vector<uint8_t> kitTop(cells);         // walkable plateau top (scenery, see below)
+    const auto maskCase=[&](const std::vector<uint8_t>& mask,int x,int z) {const size_t i=size_t(z)*(sw+1)+x;
+        return int(mask[i]|(mask[i+1]<<1)|(mask[i+sw+1]<<2)|(mask[i+sw+2]<<3));};
+    const auto cleanPinches=[&](std::vector<uint8_t>& mask) {
+        for(bool again=true;again;) {again=false;
+            for(int z=0;z<sh;++z)for(int x=0;x<sw;++x) {const int c=maskCase(mask,x,z);
+                if(c==6||c==9) {mask[size_t(z)*(sw+1)+x+(c==6)]=0;again=true;}}}
+    };
+    // Choose a variant whose west and north rims best meet what is already there,
+    // then vary by position among equally good ones.
+    const auto pick=[&](const std::vector<KitPiece>& pieces,int x0,int z0,uint64_t salt)->const KitPiece* {
+        const KitPiece* best=nullptr;int bestScore=1<<30;
+        for(size_t i=0;i<pieces.size();++i) {
+            const auto& piece=*pieces[i].map;int seam=0;
+            if(x0>0)for(int z=0;z<piece.height;++z)
+                seam=std::max(seam,std::abs(int(piece.heights[size_t(z)*piece.width])-int(m.heights[size_t(z0+z)*w+x0-1])));
+            if(z0>0)for(int x=0;x<piece.width;++x)
+                seam=std::max(seam,std::abs(int(piece.heights[size_t(x)])-int(m.heights[size_t(z0-1)*w+x0+x])));
+            const int score=(seam/8)*4096+int(latticeVal(p.seed^salt,x0*7+int(i),z0*13+int(i))*16+i)%4096;
+            if(score<bestScore){bestScore=score;best=&pieces[i];}
+        }
+        return best;
+    };
+    const auto stampKit=[&](const tnt::Map& piece,int x0,int z0,uint8_t kind) {
+        stamp(piece,x0,z0);
+        for(int z=0;z<piece.height;++z)for(int x=0;x<piece.width;++x)kitCell[size_t(z0+z)*w+x0+x]=kind;
+    };
+    const auto complete=[](const CaseKit& kit,bool centre) {
+        for(int c:{1,2,3,4,5,7,8,10,11,12,13,14})if(kit[size_t(c)].empty())return false;
+        return !centre || !kit[15].empty();
+    };
+    const auto nearStart=[&](int x,int z,int d) {
+        for(auto [sx,sz]:r.starts)if(std::abs(x*32-sx)<=d&&std::abs(z*32-sz)<=d)return true;
+        return false;
+    };
+    // A corner may rise when no water corner touches it, it is clear of every home,
+    // and no reserved route passes within 24 cells (sampled as Highlands does).
+    std::vector<uint8_t> allowHigh(size_t(corners),0);
+    for(int z=0;z<=sh;++z)for(int x=0;x<=sw;++x) {
+        bool ok=!nearStart(x,z,48);
+        for(int dz=-1;ok&&dz<=1;++dz)for(int dx=-1;dx<=1;++dx) {
+            const int nx=std::clamp(x+dx,0,sw),nz=std::clamp(z+dz,0,sh);
+            if(wet[size_t(nz)*(sw+1)+nx]){ok=false;break;}
+        }
+        for(int dz=-24;ok&&dz<=24;dz+=8)for(int dx=-24;dx<=24;dx+=8) {
+            const int nx=x*32+dx,nz=z*32+dz;
+            if(nx>=0&&nz>=0&&nx<w&&nz<h&&(reserved[size_t(nz)*w+nx]&1)){ok=false;break;}
+        }
+        allowHigh[size_t(z)*(sw+1)+x]=uint8_t(ok);
+    }
+    const bool ownPlateaus=!automaticPlateaus(p.layout);
+    CaseKit edges;
+    if(ownPlateaus&&(p.plateauDensity||p.mountainDensity)&&kitAvailable(p.mapType,KitPlateaus)) {
+        edges=edgeKit(sections,spec);
+        CaseKit rims;   // every rim role needs a piece of the main family
+        for(int c=0;c<16;++c)for(const auto& piece:edges[size_t(c)])if(!piece.alternate)rims[size_t(c)].push_back(piece);
+        if(!complete(rims,false)||!load(spec.top))edges={};
+    }
+    const bool raise=!kitEmpty(edges);
+    // Mountains: a named marching kit (Creon's on snow), or Zhon's standalone spires.
+    CaseKit mountainKit=p.mountainDensity?namedKit(sections,spec.mountains,32,false):CaseKit{};
+    if(spec.mountainFill&&mountainKit[15].empty())if(const auto* fill=load(spec.mountainFill))mountainKit[15].push_back({fill,false,false});
+    if(!complete(mountainKit,true))mountainKit={};
+    const auto peaks=p.mountainDensity?standaloneKit(sections,spec.peaks):std::vector<const tnt::Map*>{};
+    CaseKit snowKit;
+    if(!kitEmpty(mountainKit)&&spec.snowLine) {
+        snowKit=namedKit(sections,spec.snowLine,16,false);
+        const auto* fill=load(spec.snowFill);
+        if(fill&&fill->width==16)snowKit[15].push_back({fill,false,false});
+        if(!complete(snowKit,true))mountainKit={};
+    }
+    const bool rangeKit=!kitEmpty(mountainKit),spireKit=!peaks.empty();
+    // A mountain core needs plateau all around it: one corner of plateau beyond the
+    // range, two where a snow line must fit between the range and the plateau rim.
+    const int moat=spec.snowLine?2:1;
+    std::vector<uint8_t> mountain(size_t(corners),0),kitHigh(size_t(corners),0);
+    uint64_t kitRng=p.seed^0x6b6974733130ULL;
+    const int span=std::max(w,h);
+    if(raise&&p.plateauDensity) {
+        // Low-frequency blobs; the amount sets how much of the eligible ground rises.
+        const int threshold=196-int(p.plateauDensity)*76/255;
+        for(int z=0;z<=sh;++z)for(int x=0;x<=sw;++x) {
+            const size_t i=size_t(z)*(sw+1)+x;
+            if(allowHigh[i]&&int(fractal(p.seed^0x706c617465617553ULL,x*32,z*32,span*3/2))>=threshold)kitHigh[i]=1;
+        }
+        // A lone corner would make a 2x2-section pimple; plateaus need some breadth.
+        for(int z=0;z<=sh;++z)for(int x=0;x<=sw;++x) {
+            auto& corner=kitHigh[size_t(z)*(sw+1)+x];if(!corner)continue;
+            int neighbours=0;
+            for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx)
+                if((dx||dz)&&x+dx>=0&&z+dz>=0&&x+dx<=sw&&z+dz<=sh)neighbours+=kitHigh[size_t(z+dz)*(sw+1)+x+dx];
+            if(!neighbours)corner=0;
+        }
+    }
+    if((rangeKit||spireKit)&&(raise||!ownPlateaus)) {
+        const int threshold=212-int(p.mountainDensity)*72/255;
+        for(int z=moat;z<=sh-moat;++z)for(int x=moat;x<=sw-moat;++x) {
+            if(int(fractal(p.seed^0x6d6f756e7461696eULL,x*32,z*32,span/2))<threshold)continue;
+            bool ok=true;   // raised layouts need room to raise; themed ones existing high ground
+            for(int dz=-moat;ok&&dz<=moat;++dz)for(int dx=-moat;dx<=moat;++dx) {
+                const size_t j=size_t(z+dz)*(sw+1)+x+dx;
+                if(ownPlateaus?!allowHigh[j]:!high[j]){ok=false;break;}
+            }
+            if(!ok)continue;
+            mountain[size_t(z)*(sw+1)+x]=1;
+            if(ownPlateaus)for(int dz=-moat;dz<=moat;++dz)for(int dx=-moat;dx<=moat;++dx)kitHigh[size_t(z+dz)*(sw+1)+x+dx]=1;
+        }
+    }
+    if(raise) {
+        cleanPinches(kitHigh);
+        for(size_t i=0;i<kitHigh.size();++i)if(kitHigh[i])high[i]=1;
+    }
+    // Keep only cores still fully surrounded after cleanup; Zhon's spires are single
+    // sections, so they become isolated cores, at most one per section.
+    const auto& top=high;
+    for(int z=0;z<=sh;++z)for(int x=0;x<=sw;++x) {
+        auto& core=mountain[size_t(z)*(sw+1)+x];if(!core)continue;
+        for(int dz=-moat;core&&dz<=moat;++dz)for(int dx=-moat;dx<=moat;++dx) {
+            const int nx=x+dx,nz=z+dz;
+            if(nx<0||nz<0||nx>sw||nz>sh||!top[size_t(nz)*(sw+1)+nx]){core=0;break;}
+        }
+    }
+    if(spireKit&&!rangeKit) {
+        // One spire per core: thin the cores so no two share a section.
+        for(int z=0;z<=sh;++z)for(int x=0;x<=sw;++x) {
+            auto& core=mountain[size_t(z)*(sw+1)+x];if(!core)continue;
+            for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx)
+                if((dz||dx)&&(dz<0||(dz==0&&dx<0))&&x+dx>=0&&z+dz>=0&&x+dx<=sw&&mountain[size_t(z+dz)*(sw+1)+x+dx])core=0;
+        }
+    } else cleanPinches(mountain);
+    // ---- plateau edges and ramps --------------------------------------------------
+    std::vector<uint8_t> ramp(size_t(sw)*sh,0);
+    if(raise) {
+        // Each plateau gets walkable ramps, retail hillside/ramp pieces that the
+        // validation class can climb, spaced around its rim. Worlds whose edge kit
+        // is all slope (Creon) are walkable everywhere anyway.
+        std::vector<int> component(size_t(corners),-1);int components=0;
+        for(int start=0;start<corners;++start) {
+            if(!kitHigh[size_t(start)]||component[size_t(start)]>=0)continue;
+            std::vector<int> queue{start};component[size_t(start)]=components;
+            for(size_t head=0;head<queue.size();++head) {
+                const int x=queue[head]%(sw+1),z=queue[head]/(sw+1);
+                for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx) {
+                    const int nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>sw||nz>sh)continue;
+                    const int n=nz*(sw+1)+nx;
+                    if(kitHigh[size_t(n)]&&component[size_t(n)]<0){component[size_t(n)]=components;queue.push_back(n);}
+                }
+            }
+            std::vector<std::pair<uint64_t,int>> candidates;
+            for(int z=0;z<sh;++z)for(int x=0;x<sw;++x) {
+                const int c=maskCase(high,x,z);
+                if(c!=3&&c!=5&&c!=10&&c!=12)continue;
+                bool walkable=false;for(const auto& piece:edges[size_t(c)])walkable|=piece.walkable;
+                if(!walkable||component[size_t((z+(c==3?0:1))*(sw+1)+x+(c==10?1:0))]!=components)continue;
+                // The section the ramp climbs to must be open plateau, not a mountain.
+                const int tx=x+(c==5?-1:c==10?1:0),tz=z+(c==3?-1:c==12?1:0);
+                if(tx<0||tz<0||tx>=sw||tz>=sh||maskCase(high,tx,tz)!=15||maskCase(mountain,tx,tz))continue;
+                candidates.push_back({splitmix(kitRng),z*sw+x});
+            }
+            std::sort(candidates.begin(),candidates.end());
+            const int want=std::min(4,1+int(queue.size())/10);int placed=0;
+            for(auto [order,at]:candidates) {
+                if(placed==want)break;
+                const int x=at%sw,z=at/sw;bool spaced=true;
+                for(int dz=-2;spaced&&dz<=2;++dz)for(int dx=-2;dx<=2;++dx)
+                    if(x+dx>=0&&z+dz>=0&&x+dx<sw&&z+dz<sh&&ramp[size_t(z+dz)*sw+x+dx]){spaced=false;break;}
+                if(spaced){ramp[size_t(at)]=1;++placed;}
+            }
+            ++components;
+        }
+        r.plateaus=components;
+        for(int z=0;z<sh;++z)for(int x=0;x<sw;++x) {
+            const int c=maskCase(high,x,z);
+            if(!c||!maskCase(kitHigh,x,z))continue;
+            if(c==15){stampKit(*load(spec.top),x*32,z*32,1);continue;}
+            // Rims come from the main edge family (cliffs, preferring the ones an army
+            // cannot climb); a ramp takes a climbable piece. Hillsides are ramps only:
+            // as plain rim they would meet the cliff family along mixed edges.
+            const bool isRamp=ramp[size_t(z)*sw+x];
+            std::vector<KitPiece> choice;
+            for(const auto& piece:edges[size_t(c)])
+                if(isRamp?piece.walkable:(!piece.alternate&&!piece.walkable))choice.push_back(piece);
+            if(choice.empty())for(const auto& piece:edges[size_t(c)])if(!piece.alternate)choice.push_back(piece);
+            if(choice.empty())choice=edges[size_t(c)];
+            stampKit(*pick(choice,x*32,z*32,0x72696d)->map,x*32,z*32,1);
+        }
+    }
+    // ---- mountain ranges and spires ------------------------------------------------
+    if(rangeKit||spireKit) {
+        std::vector<uint8_t> range(size_t(sw)*sh,0);
+        for(int z=0;z<sh;++z)for(int x=0;x<sw;++x)range[size_t(z)*sw+x]=maskCase(mountain,x,z)?1:0;
+        if(spec.snowLine&&rangeKit) {
+            // Creon's ranges stand on snow: snow covers each range section and half a
+            // section around it, and the 256px snow-line kit blends it into the plateau.
+            const int sw2=sw*2,sh2=sh*2;std::vector<uint8_t> snow(size_t(sw2+1)*(sh2+1),0),grown;
+            for(int z=0;z<sh;++z)for(int x=0;x<sw;++x)if(range[size_t(z)*sw+x])
+                for(int dz=0;dz<=2;++dz)for(int dx=0;dx<=2;++dx)snow[size_t(z*2+dz)*(sw2+1)+x*2+dx]=1;
+            grown=snow;
+            for(int z=0;z<=sh2;++z)for(int x=0;x<=sw2;++x)if(snow[size_t(z)*(sw2+1)+x])
+                for(auto [dx,dz]:std::array<Point,4>{{{1,0},{-1,0},{0,1},{0,-1}}})   // rounded, not square
+                    if(x+dx>=0&&z+dz>=0&&x+dx<=sw2&&z+dz<=sh2)grown[size_t(z+dz)*(sw2+1)+x+dx]=1;
+            for(int z=0;z<sh2;++z)for(int x=0;x<sw2;++x) {
+                if(range[size_t(z/2)*sw+x/2])continue;
+                const size_t i=size_t(z)*(sw2+1)+x;
+                const int c=grown[i]|(grown[i+1]<<1)|(grown[i+sw2+1]<<2)|(grown[i+sw2+2]<<3);
+                if(c&&!snowKit[size_t(c)].empty())stamp(*pick(snowKit[size_t(c)],x*16,z*16,0x736e6f77)->map,x*16,z*16);
+            }
+        }
+        // Ranges count as connected groups of range sections.
+        std::vector<uint8_t> seen(range.size(),0);
+        for(int z=0;z<sh;++z)for(int x=0;x<sw;++x) {
+            if(!range[size_t(z)*sw+x])continue;
+            const int c=maskCase(mountain,x,z);
+            if(rangeKit) stampKit(*pick(mountainKit[size_t(c)],x*32,z*32,0x6d746e)->map,x*32,z*32,1);
+            else if(c==1||c==2||c==4||c==8) {
+                // A spire core touches four sections; the spire stands in the one
+                // to the core's south-east, which is plateau all around.
+                if(c!=1)continue;
+                stampKit(*peaks[size_t(splitmix(kitRng)%peaks.size())],x*32,z*32,1);
+                ++r.mountains;continue;
+            } else continue;
+            if(seen[size_t(z)*sw+x])continue;
+            ++r.mountains;std::vector<int> queue{z*sw+x};seen[size_t(z)*sw+x]=1;
+            for(size_t head=0;head<queue.size();++head) {
+                const int qx=queue[head]%sw,qz=queue[head]/sw;
+                for(auto [dx,dz]:std::array<Point,4>{{{1,0},{-1,0},{0,1},{0,-1}}}) {
+                    const int nx=qx+dx,nz=qz+dz;
+                    if(nx<0||nz<0||nx>=sw||nz>=sh||!range[size_t(nz)*sw+nx]||seen[size_t(nz)*sw+nx])continue;
+                    seen[size_t(nz)*sw+nx]=1;queue.push_back(nz*sw+nx);
+                }
+            }
+        }
+    }
+    // Scenery may dress open plateau tops the kits built (Maze and Highlands keep
+    // their v9 look); mana stays on the low ground, where every player can reach it.
+    for(int z=0;z<sh;++z)for(int x=0;x<sw;++x) {
+        if(maskCase(kitHigh,x,z)!=15||kitCell[size_t(z*32)*w+x*32]!=1)continue;
+        bool open=true;   // not a range section, nor (on snow) beside one
+        const int ring=spec.snowLine?1:0;
+        for(int dz=-ring;open&&dz<=ring;++dz)for(int dx=-ring;dx<=ring;++dx)
+            if(x+dx>=0&&z+dz>=0&&x+dx<sw&&z+dz<sh&&maskCase(mountain,x+dx,z+dz)){open=false;break;}
+        if(open)for(int dz=0;dz<32;++dz)for(int dx=0;dx<32;++dx)kitTop[size_t(z*32+dz)*w+x*32+dx]=1;
+    }
+    // ---- towns ---------------------------------------------------------------------
+    // Retail settlements: the walled-town kit around paved road, filled with the
+    // world's cobbles and houses with their real TDF footprints. The painted walls carry no blockers, as in retail. Zhon
+    // has no settlement sections, so its villages are tents, huts and a bonfire.
+    if(p.townDensity&&kitAvailable(p.mapType,KitTowns)) {
+        const CaseKit lowKit=namedKit(sections,spec.lowTowns,32,true);
+        const CaseKit highKit=namedKit(sections,spec.highTowns,32,true);
+        const tnt::Map* lowFill=spec.lowTownFill?load(spec.lowTownFill):nullptr;
+        const tnt::Map* highFill=spec.highTownFill?load(spec.highTownFill):nullptr;
+        const bool lowWalls=complete(lowKit,false)&&lowFill,highWalls=complete(highKit,false)&&highFill&&raise;
+        const bool village=!lowWalls&&spec.buildings.n>0&&!spec.lowTowns;
+        const int want=std::max(1,int(p.townDensity)*sw*sh/(255*40));
+        std::vector<uint8_t> used(size_t(sw)*sh,0);
+        for(int town=0;town<want&&(lowWalls||village||highWalls);++town) {
+            for(int attempt=0;attempt<48;++attempt) {
+                // Corner rectangle a x b; its sections form an (a+1) x (b+1) town.
+                // Prefer 3x3 to 4x4-section towns; small ones only when nothing larger fits.
+                const int smallest=attempt<32?2:1;
+                const int a=smallest+int(splitmix(kitRng)%uint64_t(4-smallest)),b=smallest+int(splitmix(kitRng)%uint64_t(4-smallest));
+                const int tx=1+int(splitmix(kitRng)%uint64_t(std::max(1,sw-a))),tz=1+int(splitmix(kitRng)%uint64_t(std::max(1,sh-b)));
+                if(tx+a>sw||tz+b>sh)continue;
+                const bool onHigh=highWalls&&(town%2==1||!lowWalls);
+                bool good=true;
+                for(int z=tz-1;good&&z<tz+b;++z)for(int x=tx-1;x<tx+a;++x) {
+                    // Space the towns a section apart, on plain ground of one level.
+                    for(int dz=-1;good&&dz<=1;++dz)for(int dx=-1;dx<=1;++dx)
+                        if(x+dx>=0&&z+dz>=0&&x+dx<sw&&z+dz<sh&&used[size_t(z+dz)*sw+x+dx]){good=false;break;}
+                    if(!good)break;
+                    if(cellCase(x,z)||maskCase(mountain,x,z)){good=false;break;}
+                    if(onHigh?(maskCase(kitHigh,x,z)!=15||maskCase(high,x,z)!=15):maskCase(high,x,z)!=0){good=false;break;}
+                    for(int dz=0;good&&dz<32;dz+=4)for(int dx=0;dx<32;dx+=4) {
+                        const size_t i=size_t(z*32+dz)*w+x*32+dx;
+                        if((reserved[i]&2)||claim[i]||(!onHigh&&kitCell[i])||m.heights[i]!=(onHigh?spec.high:land)){good=false;break;}
+                    }
+                }
+                if(!good)continue;
+                for(int z=tz-1;z<tz+b;++z)for(int x=tx-1;x<tx+a;++x)used[size_t(z)*sw+x]=1;
+                const int x0=(tx-1)*32,z0=(tz-1)*32,x1=(tx+a)*32,z1=(tz+b)*32;
+                if(!village) {
+                    const CaseKit& kit=onHigh?highKit:lowKit;
+                    for(int z=tz-1;z<tz+b;++z)for(int x=tx-1;x<tx+a;++x) {
+                        // A section's corners inside the corner rectangle are paved.
+                        const int c=(z>=tz&&x>=tx?1:0)|(z>=tz&&x+1<tx+a?2:0)|(z+1<tz+b&&x>=tx?4:0)|(z+1<tz+b&&x+1<tx+a?8:0);
+                        if(c==0)continue;
+                        if(c==15){stampKit(onHigh?*highFill:*lowFill,x*32,z*32,2);continue;}
+                        // Retail gate pieces carry a road out to the section edge, where
+                        // it would stop dead in the grass; plain walls are used instead.
+                        std::vector<KitPiece> choice;
+                        for(const auto& piece:kit[size_t(c)])if(!piece.gate)choice.push_back(piece);
+                        if(choice.empty())continue;
+                        stampKit(*pick(choice,x*32,z*32,0x746f776e)->map,x*32,z*32,2);
+                    }
+                }
+                // Houses go on the paved inside, clear of the wall band and of every
+                // reserved lane; a village rings its bonfire with tents and huts.
+                const int area=(x1-x0)*(z1-z0),houses=std::max(2,area/(village?700:420));
+                const int level=onHigh?spec.high:land;
+                const auto paved=[&](int x,int z,int fx,int fz,int margin) {
+                    for(int dz=-margin;dz<fz+margin;++dz)for(int dx=-margin;dx<fx+margin;++dx) {
+                        const int nx=x+dx,nz=z+dz;
+                        if(nx<x0||nz<z0||nx>=x1||nz>=z1)return false;
+                        const size_t i=size_t(nz)*w+nx;
+                        if(claim[i]||(reserved[i]&1)||m.heights[i]!=level||(!village&&m.features[i]!=0xfffb))return false;
+                    }
+                    return true;
+                };
+                const int cx=(x0+x1)/2,cz=(z0+z1)/2;
+                if(village&&spec.buildings.n>0) {
+                    const char* fire=spec.buildings.p[spec.buildings.n-1];
+                    if(const auto* f=sizeOf(fire);f&&paved(cx-f->x/2,cz-f->z/2,f->x,f->z,2))putFeature(cx-f->x/2,cz-f->z/2,fire);
+                }
+                for(int placed=0,tries=0;placed<houses&&tries<houses*30;++tries) {
+                    const int n=spec.buildings.n-(village?2:0);
+                    const char* name=spec.buildings.p[splitmix(kitRng)%uint64_t(std::max(1,n))];
+                    const auto* f=sizeOf(name);if(!f)continue;
+                    int x,z;
+                    if(village) {   // a loose ring around the fire
+                        const auto [dx,dz]=kCompass[size_t(splitmix(kitRng)%8)];const int rad=10+int(splitmix(kitRng)%10);
+                        x=cx+dx*rad/1000-f->x/2;z=cz+dz*rad/1000-f->z/2;
+                    } else {
+                        x=x0+int(splitmix(kitRng)%uint64_t(std::max(1,x1-x0-f->x)));z=z0+int(splitmix(kitRng)%uint64_t(std::max(1,z1-z0-f->z)));
+                    }
+                    if(!paved(x,z,f->x,f->z,village?1:3))continue;
+                    putFeature(x,z,name);++placed;
+                }
+                // Nothing else is placed in a town: no mana, scenery or hills.
+                for(int z=z0;z<z1;++z)for(int x=x0;x<x1;++x) {
+                    const size_t i=size_t(z)*w+x;
+                    if(village){const int dx=x-cx,dz=z-cz;if(dx*dx+dz*dz>24*24)continue;kitCell[i]=2;}
+                    claim[i]=1;
+                }
+                ++r.towns;break;
+            }
+        }
+    }
     // Authored relief: copy artwork AND its matching heights. Only self-contained
     // low-ground patches with near-level edges are admitted. No invisible mesas.
     std::vector<const tnt::Map*> hills;
@@ -361,7 +705,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
         for(const auto& path:paths) {
             const auto key=hpi::MountSet::key(path);
             if(!key.ends_with(".tnt"))continue;
-            if(p.formatVer>=6) {
+            {
                 // Audited retail surface families: matching height alone does
                 // not make Veruna grass breakers fit sand, or Taros cobbles fit
                 // low ground. These kits have no surrounding transition here.
@@ -389,7 +733,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
             const int nx=x+dx,nz=z+dz;
             if(nx<0||nz<0||nx>=w||nz>=h){good=false;break;}
             const size_t i=size_t(nz)*w+nx;
-            if(reserved[i]||relief[i]||claim[i]||m.heights[i]!=land||cellCase(nx/32,nz/32)!=0){good=false;break;}
+            if(reserved[i]||relief[i]||claim[i]||kitCell[i]||m.heights[i]!=land||cellCase(nx/32,nz/32)!=0){good=false;break;}
         }
         if(!good)continue;
         stamp(piece,x,z);++r.reliefPatches;
@@ -428,7 +772,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
                 break;
             }
         }
-        if (p.formatVer >= 4 && count < 3) {
+        if (count < 3) {
             // Authored offsets often collide with the lodestone yard or a reserved
             // approach. Move the appropriate arc outward instead of leaving bare
             // mana. Keep its orientation and use the real footprint throughout.
@@ -556,7 +900,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
     // stream: the scenery draws after it are unchanged. Each site's approach is
     // reserved along the nearest home's walking-distance field until it joins an
     // existing lane, so later scenery cannot wall it in.
-    if(const int pitch=p.formatVer>=9?scatterPitch(p.manaScatter):0) {
+    if(const int pitch=scatterPitch(p.manaScatter)) {
         const int nx=std::max(1,w/pitch),nz=std::max(1,h/pitch);
         std::vector<Point> chosen(size_t(nx)*nz,{-1,-1});
         std::vector<Point> sites;
@@ -641,6 +985,29 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
             if(reserved[size_t(z+dz)*w+x+dx]&1)good=false;
         if(good)putFeature(x,z,name);
     }
+    // Kit plateau tops get their own forests and rocks from the same fields, on
+    // their own random stream; a ramp-less top is scenery only.
+    uint64_t topRng=p.seed^0x746f707363656e65ULL;
+    for(int z=1;z<h-4;++z)for(int x=1;x<w-4;++x) {
+        const size_t i=size_t(z)*w+x;
+        if(!kitTop[i]||claim[i]||(reserved[i]&1))continue;
+        const uint64_t roll=splitmix(topRng);
+        const int forest=int(noise(p.seed^0x715921,x,z,24))+(p.layout==Jungle?60:0);
+        const int rocks=int(noise(p.seed^0x359742,x,z,18));
+        const char* name=nullptr;
+        if(forest>125&&int(roll%10000)<int(p.treeDensity)*(forest-110)*4/160)
+            name=palette.trees.p[(roll>>24)%palette.trees.n];
+        else if(rocks>145&&int((roll>>12)%10000)<int(p.rockDensity)*(rocks-130)*3/160)
+            name=palette.rocks.p[std::min((roll>>24)%palette.rocks.n,(roll>>34)%palette.rocks.n)];
+        if(!name)continue;
+        const auto* f=sizeOf(name);if(!f)continue;
+        bool good=true;
+        for(int dz=-1;good&&dz<=f->z;++dz)for(int dx=-1;dx<=f->x;++dx) {
+            const size_t j=size_t(z+dz)*w+x+dx;
+            if(!kitTop[j]||claim[j]||m.heights[j]!=spec.high){good=false;break;}
+        }
+        if(good)putFeature(x,z,name);
+    }
     // Final footprint-aware validation sees scenery exactly as the simulation
     // will. Failure is explicit; an invalid map is never silently launched.
     ground.markClearanceDirty();
@@ -689,5 +1056,22 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
     const auto water=std::count_if(m.heights.begin(),m.heights.end(),[&](int height){return height<m.seaLevel;});
     r.waterPercent=int(water*100/cells);
     return r;
+}
+}
+
+Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
+    // Kit terrain can leave too little room for a fair map: a plateau where an
+    // expansion round needed space, or a range across the only way to a deposit.
+    // Retry with half the kit amounts, then none. Still deterministic, and the
+    // last attempt is exactly the v9 terrain.
+    Params attempt=p;
+    for(int tries=0;;++tries) {
+        try {Result r=generateOnce(attempt,vfs);r.kitFallback=tries;return r;}
+        catch(const std::runtime_error&) {
+            if(!attempt.plateauDensity&&!attempt.mountainDensity&&!attempt.townDensity)throw;
+            if(tries==0) {attempt.plateauDensity/=2;attempt.mountainDensity/=2;attempt.townDensity/=2;}
+            else attempt.plateauDensity=attempt.mountainDensity=attempt.townDensity=0;
+        }
+    }
 }
 } // namespace tak::mapgen

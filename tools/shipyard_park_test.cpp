@@ -55,7 +55,7 @@ Rect footprint(const sim::Unit& u) {
 bool intersects(const Rect& a,const Rect& b) {return a.x<b.x+b.w && b.x<a.x+a.w && a.z<b.z+b.h && b.z<a.z+a.h;}
 
 // The reported room: generated map, 8 seats; the start spots it used.
-constexpr auto kRecipe="~gen1~09000100000000000000038001800108ffffffffff0004";
+constexpr auto kRecipe="~gen1~0a000100000000000000038001800108ffffffffff0004000000";
 const std::vector<std::pair<float,float>> kStarts{{4352,1792},{5376,3328},{4352,4352},{3328,5376},
     {1792,4352},{768,3328},{1792,1792},{3328,768}};
 

@@ -370,7 +370,7 @@ struct Editor : Session {
 
     // --- Modal dialogs (dialogs.cpp) ------------------------------------------
     enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_RULENAME, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING, M_CHECKING, M_ISSUES, M_MODEL_LOADING, M_MODEL, M_OBJECTS, M_SYMMETRIZE, M_PREFERENCES, M_NEWAIMOD };
-    static constexpr int kMaxFields = 12;
+    static constexpr int kMaxFields = 15;
     std::function<void()> confirmAction;   // M_CONFIRM: run on OK
     Modal modal = M_NONE;
     std::string mfOriginal[kMaxFields];
@@ -396,8 +396,6 @@ struct Editor : Session {
     bool regeneratingCurrent=false;
     std::array<std::string,4> generatorDraft;
     std::vector<std::string> generatorLayouts,generatorScatter;
-    const std::vector<std::string> oldGeneratorLayouts={tak::mapgen::layoutName(0),tak::mapgen::layoutName(1),tak::mapgen::layoutName(2)};
-    const std::vector<std::string> legacyGeneratorLayouts={tak::mapgen::layoutName(0)};
     const char* mLabel[kMaxFields] = {};
     std::string mTitle,modalError;
     int mN = 0;                              // active field count

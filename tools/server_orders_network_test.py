@@ -140,7 +140,7 @@ def main():
         root = Path(tmp)
         with server(a.server.resolve(), a.data.resolve(), root) as (port, h, process):
             with contextlib.closing(login(port, h, 'Orders')) as p, contextlib.closing(login(port, h, 'Observer')) as observer:
-                recipe = '~gen1~' + (struct.pack('<HQBHH', 8, 1234, 0, 128, 128) + bytes([2, 0, 0, 1, 0, 0, 0])).hex()
+                recipe = '~gen1~' + (struct.pack('<HQBHH', 10, 1234, 0, 128, 128) + bytes([2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0])).hex()
                 p.send('CreateGame', auth.field('orders') + auth.field('') + auth.field(recipe) + auth.field('') + options() + bytes([2, 0, 0]))
                 p.receive('JoinResult'); values = lobby(p.receive('LobbyState'))[3][0][0]
                 p.send('SlotUpdate', bytes([0, 1, values[1], values[2], values[3], 1, values[5]]))

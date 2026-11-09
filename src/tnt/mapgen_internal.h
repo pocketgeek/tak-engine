@@ -4,6 +4,12 @@
 #include "tnt/mapgen.h"
 #include <algorithm>
 #include <array>
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace tak::hpi { class Vfs; }
 
 namespace tak::mapgen::detail {
 
@@ -251,6 +257,90 @@ constexpr std::array<RingSpec, kMapTypes> kRing = {{
 // low-ground boundary before stamping artwork and heights together.
 constexpr const char* kReliefDir[]={"Sections/Aramon/Low Hills/","Sections/Taros/Low Specials/",
     "Sections/Veruna/Low Specials/","Sections/Zhon/Low Specials Jungle/","sections/creon/low tile breakers/"};
+
+// ---- v10 retail terrain kits ---------------------------------------------------
+// Every retail kit below is a set of whole 512px sections authored to interlock on
+// the section grid by marching squares: a piece's case says which of its corners
+// (bit0 NW, bit1 NE, bit2 SW, bit3 SE) lie inside the shape -- high ground for a
+// plateau edge, mountain for a range, road-paved town for a settlement. Plateau
+// edges are classified from their authored corner HEIGHTS, towns from their ROAD
+// cells, and mountains (whose blockers are too ragged to classify) from the
+// retail role names. See docs/random-map-generation.md for the survey.
+struct KitSpec {
+    uint8_t low, high;              // the kit's authored low-ground and plateau levels
+    const char* edges[2];           // cliffs + hillsides (straight walkable ones become ramps)
+    const char* top;                // plateau fill
+    const char* mountains;          // named marching kit standing on the plateau
+    const char* mountainFill;       // interior piece, when the kit has no centre role
+    const char* snowLine;           // Creon: 256px snow-line kit around its snowbound mountains
+    const char* snowFill;
+    const char* peaks;              // Zhon: standalone mountain sections (no marching kit)
+    const char* lowTowns; const char* lowTownFill;
+    const char* highTowns; const char* highTownFill;
+    Span buildings;                 // town feature palette (real TDF footprints decide fit)
+};
+constexpr const char* kAraTown[] = {"AraHut01","AraHut02","AraHut03","AraHut04","AraHut05","AraHut06","AraHut07",
+    "AraHut08","AraHut09","AraHut10","AraHut11","AraHut12","AraBuild01","AraBuild02","AraBuild03",
+    "AraWell01","AraWell02","AraWell03","AraWell04","AraCart01","AraCart02","AraCart03","AraCart04","AraFount01"};
+constexpr const char* kTarTown[] = {"TarHut01","TarHut02","TarHut03","TarHut04","TarHut05","TarBuild01","TarBuild02",
+    "TarBuild03","TarDev04","TarDev05","TarDev06","TarDev07","TarDev08","TarDev09"};
+constexpr const char* kVerTown[] = {"VerHut01","VerHut02","VerHut03","VerHut04","VerHut05","VerHut06","VerHut07",
+    "VerHut08","VerHut09","VerHut10","VerBuild05","VerBuild08","VerWell","VerLamp01","VerFountain01"};
+// Zhon has no settlement sections: its villages are retail tents, huts and bonfires.
+constexpr const char* kZonTown[] = {"ZonHut01","ZonHut02","ZonHut03","ZonHut04","ZonHut05","ZonHut06","ZonHut07",
+    "ZonHut08","ZonHut09","ZonHut10","ZonHut11","ZonFire01","ZonFire02"};
+constexpr const char* kCreTown[] = {"CreHouse01","CreHouse02","CreHouse03","CreHouse05","CreHouse07","CreBuild06",
+    "CreBuild07","CreBuild08","CreBuild09","CreCart01"};
+constexpr std::array<KitSpec, kMapTypes> kKitSpec = {{
+    {80, 200, {"Sections/Aramon/Low to High Cliffs/", "Sections/Aramon/Low to High Hillsides/"},
+     "Sections/Aramon/High Flats/alightgr_200.TNT", "Sections/Aramon/High Mountains/", nullptr, nullptr, nullptr, nullptr,
+     "Sections/Aramon/Low Towns/", "Sections/Aramon/Low Flats/cobb_80.TNT",
+     "Sections/Aramon/High Towns/", "Sections/Aramon/High Flats/cobb_200.TNT", {kAraTown, 24}},
+    {62, 235, {"Sections/Taros/Low to High Cliffs/", "Sections/Taros/Low to High Hillsides/"},
+     "Sections/Taros/High Flats/high_ground.TNT", "Sections/Taros/High Mountains/", nullptr, nullptr, nullptr, nullptr,
+     "Sections/Taros/Low Towns/", "Sections/Taros/Low Flats/low cobbles.TNT",
+     "Sections/Taros/High Towns/", "Sections/Taros/High Flats/high cobbles.TNT", {kTarTown, 14}},
+    // Veruna ships no mountain kit; its High Specials are craters and outcrops.
+    {62, 200, {"Sections/Veruna/Low to High Cliffs/", nullptr},
+     "Sections/Veruna/High Flats/int_200.TNT", nullptr, nullptr, nullptr, nullptr, nullptr,
+     "Sections/Veruna/Low Towns/", "Sections/Veruna/Low Flats/s_cobbflat.TNT",
+     "Sections/Veruna/High Towns/", "Sections/Veruna/High Flats/i_cobbflat.TNT", {kVerTown, 15}},
+    // Zhon's jungle cliffs rise to its mountain plateau; its mountain-top kit is a
+    // ridge set rather than a marching kit, so the standalone spires stand alone.
+    {63, 215, {"Sections/Zhon/Low to High Cliffs Jungle/", nullptr},
+     "Sections/Zhon/High Flats/mountainplateau230.TNT", nullptr, nullptr, nullptr, nullptr, "Sections/Zhon/High Specials/mt",
+     nullptr, nullptr, nullptr, nullptr, {kZonTown, 13}},
+    // Creon's hillsides are walkable slopes; its mountains stand on snow.
+    {80, 250, {"sections/creon/hillsides/", nullptr},
+     "sections/creon/flatties/highland512.tnt", "sections/creon/mountains/", "sections/creon/flatties/intmt512.tnt",
+     "sections/creon/snow line/", "sections/creon/flatties/snow256.tnt", nullptr,
+     "sections/creon/low towns/", "sections/creon/flatties/chunglo.tnt",
+     "sections/creon/high towns/", "sections/creon/flatties/chunghi.tnt", {kCreTown, 10}},
+}};
+// Every directory or file the kits read, for the multiplayer data hash.
+std::vector<std::string> kitDirectories();
+
+// Sorted, cached section loads (independent of archive enumeration order).
+class SectionCache {
+public:
+    explicit SectionCache(const hpi::Vfs& vfs) : vfs_(vfs) {}
+    const tnt::Map* load(const std::string& path);
+    std::vector<std::string> list(const std::string& prefix) const;   // sorted *.tnt
+private:
+    const hpi::Vfs& vfs_;
+    std::map<std::string, std::unique_ptr<tnt::Map>> cache_;
+};
+
+// alternate: from a kit's second edge family (hillsides), used only as a ramp.
+struct KitPiece { const tnt::Map* map = nullptr; bool walkable = false, gate = false, alternate = false; };
+using CaseKit = std::array<std::vector<KitPiece>, 16>;
+inline bool kitEmpty(const CaseKit& k) { for (const auto& v : k) if (!v.empty()) return false; return true; }
+// Plateau edges by corner height; straight pieces a large army can climb are walkable.
+CaseKit edgeKit(SectionCache& cache, const KitSpec& spec);
+// Mountain / snow-line / town kits by retail role name (towns also by road corners).
+CaseKit namedKit(SectionCache& cache, const char* dir, int size, bool towns);
+// Standalone sections (Zhon spires) from a path prefix.
+std::vector<const tnt::Map*> standaloneKit(SectionCache& cache, const char* prefix);
 
 // Even compass directions (integer, scaled by 1000) for start-position rings.
 constexpr std::array<std::pair<int, int>, 8> kCompass = {{

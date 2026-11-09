@@ -11,7 +11,7 @@ seed 1
 players 8
 crusades on
 wanderers off
-map gen1 ~gen1~080001000000000000000100030003020000ff608003
+map gen1 ~gen1~0a0001000000000000000100030003020000ff60800300000000
 type zontroll fbi zontroll
 type zongob fbi zongob
 type zonter fbi zonter

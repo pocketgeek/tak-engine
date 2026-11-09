@@ -196,7 +196,7 @@ def cpuCase(port, h, root, process, peers):
 
 
 def setupRoom(alice, bob, carol):
-    recipe = '~gen1~' + (struct.pack('<HQBHH', 8, 1234, 0, 128, 128) + bytes([2, 0, 0, 1, 0, 0, 0])).hex()
+    recipe = '~gen1~' + (struct.pack('<HQBHH', 10, 1234, 0, 128, 128) + bytes([2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0])).hex()
     alice.send('CreateGame', auth.field('slow') + auth.field('') + auth.field(recipe) + auth.field('') +
                options() + bytes([4, 0, 0]))
     assert alice.receive('JoinResult').num('<B') == 1

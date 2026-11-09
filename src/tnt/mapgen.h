@@ -5,8 +5,8 @@
 // client and the server referee build the BYTE-IDENTICAL map from the same seed --
 // the generated terrain/features feed the hashed lockstep sim, so it must agree on
 // every peer. The parameters ride inside the mapId string ("~gen1~<hex>"), which the
-// lobby threads to every peer. Protocol 222 supports v8 explicit extra-mana rounds;
-// protocol 278 adds v9 scattered neutral mana (v8 ids still regenerate unchanged).
+// lobby threads to every peer. Version 10 adds the retail cliff/plateau, mountain
+// and town kits; older recipes are refused (their saved .kmp maps stay playable).
 
 #include "tnt/tnt.h"
 
@@ -36,8 +36,15 @@ const char* scatterName(uint8_t level);
 // Jittered-grid pitch in cells for a level (0 = none): one candidate per pitch^2.
 int scatterPitch(uint8_t level);
 
+// v10 retail terrain kits a world can assemble (some worlds lack one; see kitAvailable).
+enum Kit : uint8_t { KitPlateaus, KitMountains, KitTowns, kKits };
+bool kitAvailable(uint8_t world, uint8_t kit);
+// Layouts that supply their own high ground (Maze walls, Creon highlands) ignore the
+// plateau amount; mountains and towns still apply.
+bool automaticPlateaus(uint8_t layout);
+
 struct Params {
-    uint16_t formatVer = 9;
+    uint16_t formatVer = 10;
     uint64_t seed = 1;
     std::string name;               // v5: optional ASCII map title, up to 24 characters
     uint8_t  mapType = Aramon;
@@ -50,12 +57,19 @@ struct Params {
     uint8_t  layout = Mainland;
     uint8_t  reliefDensity = 128;    // authored hill patch density; 0 = flat
     uint8_t  manaScatter = ScatterNone;   // v9: ManaScatter level for neutral spots
+    // v10 retail kits, 0 = none. All three at 0 reproduce the v9 terrain exactly.
+    uint8_t  plateauDensity = 72;    // cliff-edged plateaus (with walkable ramps)
+    uint8_t  mountainDensity = 56;   // mountain ranges (raised on their own plateau)
+    uint8_t  townDensity = 64;       // walled settlements / Zhon hut villages
 };
 
 struct Result {
     tak::tnt::Map map;
     int waterPercent = 0, reliefPatches = 0;
     int scatteredMana = 0;   // v9 neutral spots placed (not part of any player's rounds)
+    int plateaus = 0, mountains = 0, towns = 0;   // v10 kit placements (components/ranges/towns)
+    // v10: 0 = kits as requested; 1 = halved, 2 = dropped, because a fair map did not fit.
+    int kitFallback = 0;
     // v3: one open-water harbor per island; cells suitable for naval construction.
     std::vector<std::pair<int, int>> harbors;
     std::vector<std::pair<int, int>> starts;   // start positions in 16px CELL coords (x, z)
@@ -65,7 +79,9 @@ struct Result {
 // the Params to/from the hex payload. friendlyLabel is what the UI shows.
 bool        isGeneratedMapId(const std::string& id);
 std::string encodeMapId(const Params& p);
-Params      decodeMapId(const std::string& id);     // sane defaults on a malformed id
+// Sane defaults on a malformed id. An id from an older generator keeps its version,
+// which generate() refuses ("generate a new map"); the menus upgrade it on edit.
+Params      decodeMapId(const std::string& id);
 std::string friendlyLabel(const Params& p);
 
 // The generator. Deterministic in the params + the install's prefab sections

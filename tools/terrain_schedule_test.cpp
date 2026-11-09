@@ -30,6 +30,7 @@ int main(int argc,char** argv) try {
     {
         auto vfs=tak::hpi::mountRetailRoot(argv[1]);
         tak::mapgen::Params gp;gp.seed=7;gp.widthCells=gp.heightCells=1024;
+        gp.plateauDensity=gp.mountainDensity=gp.townDensity=0;   // the v9 terrain these gates were set on
         const std::string mapId=tak::mapgen::encodeMapId(gp);
         constexpr int W=1200,H=900;
         auto* target=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,1280,960);

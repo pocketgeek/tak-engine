@@ -519,7 +519,18 @@ The Retail AI always plays the campaign's computer opponents: see
 - **Size** and **player count**, up to 64 × 64. The sizes on offer depend on the
   layout and the player count: larger player counts need bigger maps, and themed
   layouts start at 16 × 16 (24 × 24 for 5–8 players).
-- **Water**, **highland**, **forest** and **rock** amounts.
+- **Forests**, **Rocks**, **Water** and **Hills** amounts (on Creon Highlands the
+  Hills slider is **Highlands**, the amount of high ground).
+- **Plateaus**, **Mountains** and **Towns**: terrain built from the original
+  game's own sections for that world. Plateaus are cliff-edged high ground with
+  walkable ramps (Creon's are gentle, walkable hillsides); mountains are
+  impassable ranges standing on their own plateau (Creon's on snow, Zhon's as
+  rock spires); towns are walled settlements with houses, or tent-and-hut
+  villages on Zhon. As in the original game, armies can cross a town's painted
+  walls. Veruna has no mountains in the original sections, so its Mountains
+  slider reads NONE; Taros Maze and Creon Highlands make their own high ground,
+  so Plateaus reads AUTO there. Bases, home mana and army routes always stay on
+  level, connected ground.
 - **Extra Mana Spots**: 0 to 6 extra spots per player, added fairly. Terrain can
   limit how many fair rounds fit, so the preview shows the real total.
 - **Scattered Mana**: a second slider, separate from the per-player extra spots,
@@ -543,16 +554,17 @@ inside a base, and are spread evenly but not mirrored. Islands maps need ships
 or flyers to reach other players. The preview updates when you release a slider
 and counts the scattered spots in its MANA total, with a separate SCATTERED
 line for the neutral ones; in the game room the map settings list the Scattered
-Mana level beside the map seed. When the game starts, the map is saved on
+Mana level beside the map seed, and the Plateaus, Mountains and Towns amounts
+below it. When the game starts, the map is saved on
 every player's computer and on the server, so it appears in the map list later.
 See [random map generation](random-map-generation.md) for the rules it follows.
 
-The generator is version 9. A recipe (seed and settings) from generator
-version 8 still makes exactly the same map; older recipes are not supported. A
+The generator is version 10. Recipes (seed and settings) from older versions
+are not supported any more: the game asks you to generate a new map. A
 generated map you have saved as a `.kmp` always plays, whatever made it.
 Rebuilding a map from its recipe needs the same game data.
 
-![The single-player screen with Generate Random Map open: Type Aramon and Layout Mainland, then Size 12 × 12 and Players 4 on one row, the Forests, Rock Clusters, Extra Mana Spots, Scattered Mana (at High), Water Amount and Authored Hills sliders and Re-roll Seed. The preview shows four numbered starts and reads WATER: 0% MANA: 57](img/guide/random-map-lobby.jpg)
+![The single-player screen with Generate Random Map open: Type Aramon and Layout Mainland, then Size 12 × 12 and Players 4 on one row, the Forests, Rocks, Extra Mana, Scattered Mana (at High), Water, Hills, Plateaus, Mountains and Towns sliders in two columns and Re-roll Seed. The preview shows four numbered starts and reads WATER: 0% MANA: 57](img/guide/random-map-lobby.jpg)
 
 *The random map settings in the single-player lobby, with Scattered Mana at
 High. Size and Players share a row.*

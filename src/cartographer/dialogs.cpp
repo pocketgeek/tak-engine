@@ -49,16 +49,19 @@ void cart::Editor::openModal(Modal m, int unitIdx) {
         mLabel[0] = "SCENARIO NAME"; mf[0] = scenario.missionName;        mfNumeric[0] = false;
         mLabel[1] = "DESCRIPTION";   mf[1] = scenario.missionDescription; mfNumeric[1] = false;
     } else if(m==M_GENERATOR) {
-        mTitle="RANDOM MAP SETTINGS";mN=12;
+        mTitle="RANDOM MAP SETTINGS";mN=15;
         const auto fields=cart::generatorFields(generatorParams);
         const char* labels[]={"SEED (REPRODUCIBLE)","PLAYERS (2-8)","LAYOUT","TREES (0-255)","ROCKS (0-255)","MANA (0-255)","WATER INTENSITY (0-255)","RELIEF (0-255)"};
         for(int i=0;i<8;++i) {mf[i]=fields[i];mLabel[i]=labels[i];mfNumeric[i]=i!=2;}
-        mfChoices[2]=generatorParams.formatVer<3?&legacyGeneratorLayouts:generatorParams.formatVer<6?&oldGeneratorLayouts:&generatorLayouts;
-        if(generatorParams.formatVer<3)mLabel[2]="LAYOUT (LEGACY RECIPE)";
+        mfChoices[2]=&generatorLayouts;
         mLabel[8]="WIDTH (1-64 UNITS)";mf[8]=generatorDraft[1];mfNumeric[8]=true;
         mLabel[9]="HEIGHT (1-64 UNITS)";mf[9]=generatorDraft[2];mfNumeric[9]=true;
         mLabel[10]="WORLD";mf[10]=generatorDraft[3];mfNumeric[10]=false;mfChoices[10]=&kWorldOpts;
         mLabel[11]="SCATTERED MANA (BY MAP AREA)";mf[11]=fields[8];mfNumeric[11]=false;mfChoices[11]=&generatorScatter;
+        // v10 retail kits (Maze and Highlands raise their own high ground).
+        mLabel[12]="PLATEAUS (0-255)";mf[12]=fields[9];mfNumeric[12]=true;
+        mLabel[13]="MOUNTAINS (0-255)";mf[13]=fields[10];mfNumeric[13]=true;
+        mLabel[14]="TOWNS (0-255)";mf[14]=fields[11];mfNumeric[14]=true;
     } else if(m==M_SYMMETRIZE) {
         setupSymmetrizeFields();
     } else if(m==M_PREFERENCES) {
@@ -233,7 +236,9 @@ void cart::Editor::openGeneratorRecipe() {
 void cart::Editor::applyModal() {
     const auto applying=modal;modalError.clear();
     if(modal==M_GENERATOR) {
-        cart::GeneratorFields fields;for(int i=0;i<8;++i)fields[i]=mf[i];fields[8]=mf[11];std::string error;
+        cart::GeneratorFields fields;for(int i=0;i<8;++i)fields[i]=mf[i];fields[8]=mf[11];
+        for(int i=9;i<12;++i)fields[size_t(i)]=mf[i+3];
+        std::string error;
         auto nextParams=generatorParams;
         if(!cart::parseGeneratorFields(fields,nextParams,error)) {modalError=error;return;}
         for(int i=8;i<10;++i) {
@@ -920,8 +925,10 @@ void cart::Editor::drawModal() {
         }
     } else if (modal != M_NONE) {
         // N-field dialog; height fits the field count.
-        int ph = modal==M_OPENPATH?420:modal==M_SCENARIO?300:70+mN*40+(modal==M_PREFERENCES?84:modal==M_NEWAIMOD?36:0);
-        const int panelWidth=(modal==M_OPENPATH || modal==M_SCENARIO)?560:modal==M_PREFERENCES || modal==M_NEWAIMOD?460:320;
+        // The generator's fifteen fields go in two columns.
+        const int rows=modal==M_GENERATOR?(mN+1)/2:mN;
+        int ph = modal==M_OPENPATH?420:modal==M_SCENARIO?300:70+rows*40+(modal==M_PREFERENCES?84:modal==M_NEWAIMOD?36:0);
+        const int panelWidth=(modal==M_OPENPATH || modal==M_SCENARIO)?560:modal==M_PREFERENCES || modal==M_NEWAIMOD?460:modal==M_GENERATOR?600:320;
         const auto errorLines=cart::TextEdit::lines(modalError,(panelWidth-36)/6);
         const int errorHeight=modalError.empty()?0:int(errorLines.size())*12+8;
         ph+=errorHeight;
@@ -940,7 +947,10 @@ void cart::Editor::drawModal() {
         }
         if (modal == M_UNIT && editUnit >= 0 && editUnit < int(units.size()))
             cart::drawText(ren, units[size_t(editUnit)].type, ct.x, ct.y - 16, 1, 200, 200, 200);
+        const SDL_Rect panel=ct;
         for (int i = 0; i < mN; ++i) {
+            ct=panel;
+            if(modal==M_GENERATOR) {const int column=i/rows;ct.w=(panel.w-20)/2;ct.x=panel.x+column*(ct.w+20);ct.y=panel.y-column*rows*40;}
             if(modal==M_SCENARIO && i==1)
                 mBox[i]=cart::drawTextArea(ren,ct.x,ct.y+40,ct.w,160,"DESCRIPTION (SHIFT+ENTER: NEW LINE)",mf[i],mfocus==i,fieldEditor,descriptionScroll,descriptionFollowCaret);
             else if(mfChoices[i] && mfEditableChoice[i]) {
@@ -955,6 +965,7 @@ void cart::Editor::drawModal() {
                 mBox[i] = cart::drawField(ren, ct.x, ct.y + i * 40, ct.w, mLabel[i],
                                           mf[i], mfocus == i,mfocus==i?&fieldEditor:nullptr);
         }
+        ct=panel;
         if(modal==M_NEWAIMOD) {
             cart::drawText(ren,"No map is opened: the AI Profiles window edits this pack's ai/ files.",ct.x,ct.y+42,1,190,200,215);
             cart::drawText(ren,"Nothing is written until SAVE TO PACK makes mods/game/<name>/ai/.",ct.x,ct.y+56,1,190,200,215);

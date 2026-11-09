@@ -76,6 +76,7 @@ int main(int argc,char** argv) try {
         mapgen::Params params;
         params.widthCells=params.heightCells=uint16_t(gen);
         params.treeDensity=255;
+        params.plateauDensity=params.mountainDensity=params.townDensity=0;
         config.mapPath=mapgen::encodeMapId(params);
     } else config.mapPath=hpi::findMap(vfs,mapName);
     if (config.mapPath.empty()) throw std::invalid_argument("map not found: "+mapName);

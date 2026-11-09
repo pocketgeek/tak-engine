@@ -1,16 +1,20 @@
 # Random map generation
 
-The current engine uses generator version 9. The map ID carries the
-seed, optional title and parameters in `~gen1~` followed by hexadecimal bytes;
-the first two payload bytes identify the generator version. Version 9 adds one
-byte, the scattered-mana level, before the title; it changes nothing else, so a
-version-8 ID still decodes (as None) and regenerates byte-identically. Version 8 makes
-the extra-mana control request 0–6 additional spots per player, independently
-of map area, and samples expansion candidates near their owner's home so
-large maps do not lose rounds to sparse whole-map sampling. Clients and servers
-must run the same engine version (see the
-[CHANGELOG](../CHANGELOG.md) for which versions play together). Recipes older than version 8 cannot be regenerated;
-previously saved `.kmp` maps remain ordinary playable maps.
+The current engine uses generator version 10. The map ID carries the seed,
+optional title and parameters in `~gen1~` followed by hexadecimal bytes; the first
+two payload bytes identify the generator version. Version 10 adds three bytes, the
+**Plateaus**, **Mountains** and **Towns** amounts, after the scattered-mana level
+and before the title, and assembles the retail terrain kits described below. With
+all three at zero a version-10 map is byte-identical to the version-9 map of the
+same settings (checked on 75 recipes covering every world and layout).
+
+Older recipes are not regenerated: a version-8 or version-9 ID still decodes, keeping
+its version, and the generator refuses it with "Random-map recipe version N is no
+longer supported ...; generate a new map". The game setup screen and Cartographer
+upgrade a remembered recipe when it is edited; Cartographer's Regenerate explains
+that the map came from an older generator. Previously saved `.kmp` maps remain
+ordinary playable maps. Clients and servers must run the same engine version
+(protocol 319 introduced version 10; see the [CHANGELOG](../CHANGELOG.md)).
 
 ## Layout and placement
 
@@ -22,7 +26,9 @@ previously saved `.kmp` maps remain ordinary playable maps.
   aircraft. Water allocation is automatic.
 - **Taros Maze:** seeded branching corridors between retail cliff walls. Home
   clearings join the maze; this is a traversable battlefield, not a puzzle with
-  exactly one route. Water and standalone hill controls are automatic.
+  exactly one route. Water and standalone hill controls are automatic; the
+  maze walls are its plateaus, and Taros mountains appear only where a wall
+  block is wide enough to hold one.
 - **Veruna Ports:** coastal settlements around a shared deep-water basin, with
   land routes around its perimeter. Every start has a validated harbor suitable
   for a Sea Fort and ship departure. Water allocation is automatic. These are
@@ -32,7 +38,9 @@ previously saved `.kmp` maps remain ordinary playable maps.
 - **Zhon Clearings:** dense jungle stands surrounding home clearings and reserved
   army paths. The forest slider still controls the amount of added vegetation.
 - **Creon Highlands:** broad authored hillsides and high ground around connected
-  lowland routes. Highland Amount controls coverage; water is disabled.
+  lowland routes. The Highlands slider (in place of Hills) controls coverage;
+  water is disabled, and Plateaus does not apply. Creon mountains may stand on
+  the highlands.
 
 In the game setup screen each biome offers its own themed fourth layout.
 Cartographer lists the themed layouts by faction; selecting one sets its biome.
@@ -75,10 +83,78 @@ features. Hills use standalone low-ground sections whose edges match the
 surrounding elevation; their artwork and heights are copied together. Unsafe
 or unavailable relief pieces are omitted, never replaced with invisible raised
 ground. Available pieces and free space limit hill variety, particularly on
-small islands with large reserved home areas. This does not attempt to assemble
-every retail cliff, plateau, town, or mountain kit. Maze and Highlands explicitly
-assemble compatible Taros cliff and Creon hillside sections with their matching
-high-ground fills. Those extra section assets participate in the data hash.
+small islands with large reserved home areas. Maze and Highlands assemble
+compatible Taros cliff and Creon hillside sections with their matching
+high-ground fills, exactly as in version 9. Version 10 assembles the retail
+cliff/plateau, mountain and town kits on every layout (next section). All
+section assets the generators read participate in the data hash.
+
+### Retail terrain kits (version 10)
+
+**How retail builds them.** Every shipped multiplayer map is tiled entirely from
+the 512-pixel sections in `sections.hpi` / `IPSections.hpi` (each section is one
+terrain JPG). Matching every map block's JPG key back to its section shows how the
+kits are used: *Low to High Cliffs* (and *Hillsides*) pieces ring a *High Flats*
+fill, *High Mountains* stand on that plateau, and *Low/High Towns* are walled,
+road-flagged settlements around a cobbled fill. Each kit is a marching-squares set
+like the coast: a piece's role says which of its four corners lie inside the shape.
+The generator reads them that way:
+
+- **Plateau edges** are classified from their authored corner heights (the nearer
+  of the kit's low and plateau level). An edge between two low corners must sit at
+  the low level along its outer two rows, because it meets walkable ground; a mixed
+  edge always meets another edge piece. Zhon's south-facing jungle cliffs stop a
+  little short of the plateau level at their rim (retail lays them against the
+  plateau fill all the same), so their role comes from the name (`1ne` outer,
+  `2sw` inner, `rampe`). Dead ends, voided fills and Veruna's quarry pit are left out.
+- **Ramps**: each straight edge piece is tested with the engine's own terrain
+  classifier between flat low and high ground. Those that the generator's
+  validation class (six cells wide, slope 16) can climb are ramps; the rest are
+  cliffs. Every plateau gets 1–4 spaced ramps (one per ten plateau corners), each
+  leading onto open plateau, never into a mountain. A second edge family
+  (Aramon's and Taros's *Hillsides*) supplies ramps only: as plain rim it would
+  meet the cliffs along mixed edges, so the rims always come from the cliff kit.
+- **Mountains** use the retail role names (their blockers are too ragged to
+  classify); a range is a corner mask with plateau all around it, so each range
+  stands on its own plateau even when Plateaus is zero.
+- **Towns** are classified from their road-flagged corners, which must agree with
+  the role name. Gate pieces are not used: their road runs out to the section edge
+  and would stop dead in the grass. As in retail, the painted walls carry no
+  blockers. Houses and other town features use their real TDF footprints on the
+  paved inside, three cells clear of the wall band and of every reserved lane.
+
+| World | Plateaus (edge kit, fill, levels) | Mountains | Towns |
+| --- | --- | --- | --- |
+| Aramon | *Low to High Cliffs* + *Hillsides* (ramps on N/S/E/W), *alightgr_200*, 80→200 | *High Mountains* (all 13 roles) | *Low Towns* on *cobb_80*; *High Towns* on *cobb_200* on plateaus; houses, wells, carts, fountain |
+| Taros | *Low to High Cliffs* + *Hillsides* (ramps N/S/W), *high_ground*, 62→235 | *High Mountains* (13 roles) | *Low Towns* on *low cobbles*; *High Towns* on *high cobbles*; hovels, buildings, stocks, impalers |
+| Veruna | *Low to High Cliffs* (its walkable variants are the ramps), *int_200*, 62→200 | **none**: Veruna ships no mountain kit; its *High Specials* are craters and outcrops, not blocking mountains | *Low Towns* on *s_cobbflat*; *High Towns* on *i_cobbflat*; houses, huts, wells, lamps, fountain |
+| Zhon | *Low to High Cliffs Jungle*, *mountainplateau230*, 63→215 (ramps S/E/W) | standalone spires *High Specials/mt1–mt4*: Zhon's *High Mountains* (`mttp_`) are a ridge set crossing edge midpoints, not a marching kit | **villages**: Zhon has no settlement sections (*Low Plazas Jungle* are stepped temple platforms on a dirt palette that does not border the jungle fill), so a village is retail tents, huts and a bonfire in a clearing |
+| Creon | *hillsides* (all walkable slopes), *highland512*, 80→250 | *mountains* (+ *intmt512* centre) on snow: the 256-pixel *snow line* kit blends half a section of *snow256* around each range into the highland | *low towns* on *chunglo*; *high towns* on *chunghi*; houses and civic buildings |
+
+**Placement and fairness.** Plateau corners come from a low-frequency noise field and
+are only allowed where no water corner touches them, more than 48 cells from every
+start (so the 24×24 construction square and the home deposits stay on level low
+ground) and more than 24 cells from every reserved army route; a lone high corner is
+dropped. Mountain cores need room for their plateau around them (two corners on
+Creon, for the snow line). Maze and Highlands keep their own high ground: their
+mountains go only where it already surrounds the core, and the Plateaus amount does
+not apply. Towns take plain ground of one level (low, or a plateau top), at least a
+section from other towns, outside every home economy; nothing else is placed in a
+town. Expansion and scattered mana stay on the low ground, where walking distances are
+compared; plateau tops get trees and rocks from the same forest fields. The final
+walking-distance validation is unchanged and sees mountains, cliffs and houses as the
+simulation will. If kit terrain leaves no room for a fair map, the generator retries
+deterministically with half the kit amounts, then none (`Result::kitFallback`); the
+5×4-layout sweep of 1,280 maps (2–8 players, 16×16 to 32×32, default and maximum
+amounts) never needed it.
+
+**Controls.** The game setup screen shows the nine sliders in two columns: Forests,
+Rocks, Extra Mana, Scattered Mana, Water, Hills (Highlands on Creon Highlands),
+Plateaus, Mountains and Towns (Villages on Zhon). Plateaus reads AUTO on Maze and
+Highlands; Mountains reads NONE on Veruna. Defaults: Plateaus 72, Mountains 56,
+Towns 64 of 255, about two plateaus, one range and one town on a 16×16 map. The game
+room lists the three amounts under the map seed; Cartographer's generator dialog has
+PLATEAUS, MOUNTAINS and TOWNS fields (0–255).
 
 The version-6 relief audit excludes Veruna grass-covered Breaker pieces from
 sandy terrain and Taros cobblestone-edged unique23/25/27 pieces from bare low
@@ -144,8 +220,9 @@ map is subsequently treated as an authored map.
 ## Reproducibility and verification
 
 All generation decisions use integer arithmetic and fixed traversal orders.
-Prefab discovery is sorted. Version 8's asset-free synthetic golden is
-`6bf977a42891c638`. The multiplayer gameplay-data hash includes the
+Prefab discovery is sorted. The asset-free synthetic golden is
+`6bf977a42891c638`, unchanged since version 8 (the synthetic install has no kit
+sections, so the default kit amounts are a no-op there). The multiplayer gameplay-data hash includes the
 coast and relief sections used by the generators, as well as its existing
 feature-definition checks. It therefore detects differences in the source
 height/feature planes, not just differences in unit stats.
@@ -161,6 +238,7 @@ Run the focused tests with:
 ./build/mapgen_test /path/to/tak_data --mana
 ./build/mapgen_test /path/to/tak_data --themes
 ./build/mapgen_test /path/to/tak_data --ports
+./build/mapgen_test /path/to/tak_data --kits
 ```
 
 The asset-free test has a fixed generated-map hash and deliberately non-square
@@ -175,8 +253,13 @@ Sea Fort's build menu on a generated Islands map of every world, in both
 balance modes. `--mana` checks the extra-mana slider's complete rounds.
 CTest includes the asset-free test; a configured `TAK_TEST_DATA` additionally
 includes the smaller retail-map roster, extra-mana, naval production, themed
-layout and Ports checks (`mapgen_roster`, `mapgen_mana`, `mapgen_naval`,
-`mapgen_themes`, `mapgen_ports`).
+layout, Ports and kit checks (`mapgen_roster`, `mapgen_mana`, `mapgen_naval`,
+`mapgen_themes`, `mapgen_ports`, `mapgen_kits`). `--kits` generates every world on
+Mainland, Lakes, Islands and its themed layout with 2, 5 and 8 players at 32×32, at
+the default and maximum kit amounts: it checks determinism, that no kit had to be
+reduced, an independent flood that cliffs never cut a start off, that every section
+whose tiles are one whole kit piece carries that piece's heights exactly, and that
+each world builds exactly the kits the survey above says it has.
 
 The development audit also compared 30 version-1/version-2 maps against the
 pre-change generator, with identical heights, features, tile references, names,

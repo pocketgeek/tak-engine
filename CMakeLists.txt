@@ -145,6 +145,7 @@ add_library(tak-formats
   src/tnt/ota.cpp
   src/tnt/mapgen.cpp
   src/tnt/mapgen_balanced.cpp
+  src/tnt/mapgen_kits.cpp
   src/tdo/tdo.cpp
   src/tdf/tdf.cpp
   src/cob/cob.cpp
@@ -1830,6 +1831,7 @@ if(TAK_TEST_DATA)
     set_tests_properties(mapgen mapgen_mana PROPERTIES TIMEOUT 180)
     add_test(NAME mapgen_naval COMMAND mapgen_test "${TAK_TEST_DATA}" --naval)
     add_test(NAME mapgen_themes COMMAND mapgen_test "${TAK_TEST_DATA}" --themes)
+    add_test(NAME mapgen_kits COMMAND mapgen_test "${TAK_TEST_DATA}" --kits)
     add_test(NAME mapgen_ports COMMAND mapgen_test "${TAK_TEST_DATA}" --ports)
     add_test(NAME campaign_roster COMMAND campaign_test "${TAK_TEST_DATA}")
     add_test(NAME structure_combat COMMAND structure_combat_test "${TAK_TEST_DATA}")

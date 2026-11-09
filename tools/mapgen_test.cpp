@@ -1,4 +1,5 @@
 #include "tnt/mapgen.h"
+#include "tnt/mapgen_internal.h"
 #include "hpi/hpi.h"
 #include "sim/sim.h"
 #include "sim/matchsetup.h"
@@ -7,6 +8,7 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <map>
 #include <stdexcept>
 
 namespace {
@@ -47,22 +49,16 @@ void manaSlider(const tak::hpi::Vfs& vfs) {
         }
     }
 }
-// v9 scattered neutral mana. An id written before v9 must regenerate exactly as
-// it did; each level must scale with map AREA (not player count), roughly double
-// the level below, and Max must approach a six-spot home's density (6 / 87^2).
+// v9 scattered neutral mana. None must leave the map exactly as it was; each level
+// must scale with map AREA (not player count), roughly double the level below, and
+// Max must approach a six-spot home's density (6 / 87^2).
 void scatteredMana(const tak::hpi::Vfs& vfs) {
     using namespace tak::mapgen;
-    Params legacy;legacy.formatVer=8;legacy.players=8;legacy.seed=0xfedcba9876543210ULL;
-    legacy.waterDensity=legacy.reliefDensity=0;legacy.treeDensity=legacy.rockDensity=legacy.manaDensity=255;
-    const auto legacyId=encodeMapId(legacy);
-    const auto decoded=decodeMapId(legacyId);
-    check(decoded.formatVer==8 && decoded.manaScatter==ScatterNone && encodeMapId(decoded)==legacyId,"v8 id does not round-trip");
-    const auto old=generate(decoded,vfs);
-    check(hash(old)==0x6bf977a42891c638ULL && old.scatteredMana==0,"v8 id no longer regenerates its map");
-    auto current=legacy;current.formatVer=Params{}.formatVer;
-    check(hash(generate(current,vfs))==hash(old),"scattered mana None changed the map");
-    legacy.manaScatter=ScatterMax;
-    check(sanitize(legacy).manaScatter==ScatterNone,"v8 recipe accepted scattered mana");
+    Params base;base.players=8;base.seed=0xfedcba9876543210ULL;
+    base.waterDensity=base.reliefDensity=0;base.treeDensity=base.rockDensity=base.manaDensity=255;
+    base.plateauDensity=base.mountainDensity=base.townDensity=0;
+    const auto none=generate(base,vfs);
+    check(hash(none)==0x6bf977a42891c638ULL && none.scatteredMana==0,"scattered mana None changed the map");
     Params named;named.name=std::string(24,'n');named.manaScatter=ScatterHigh;
     const auto namedId=encodeMapId(named);
     check(decodeMapId(namedId).manaScatter==ScatterHigh && decodeMapId(namedId).name==named.name,"v9 codec mismatch");
@@ -116,9 +112,12 @@ void syntheticMaps() {
     }
     check(tak::mapgen::extraManaRounds(0)==0 && tak::mapgen::extraManaRounds(128)==3 &&
           tak::mapgen::extraManaRounds(255)==6,"extra mana endpoints/default changed");
-    tak::mapgen::Params old;old.formatVer=7;bool refused=false;
-    try {tak::mapgen::generate(old,vfs);}catch(const std::runtime_error&) {refused=true;}
-    check(refused,"obsolete map recipe silently regenerated with different rules");
+    for(uint16_t version:{7,8,9}) {
+        tak::mapgen::Params old;old.formatVer=version;bool refused=false;
+        try {tak::mapgen::generate(old,vfs);}
+        catch(const std::runtime_error& e) {refused=std::string(e.what()).find("generate a new map")!=std::string::npos;}
+        check(refused,"obsolete map recipe silently regenerated with different rules");
+    }
     for(int players=2;players<=8;++players) {
         tak::mapgen::Params p;p.players=players;p.seed=0xfedcba9876543210ULL;
         p.waterDensity=p.reliefDensity=0;p.treeDensity=p.rockDensity=p.manaDensity=255;
@@ -126,6 +125,10 @@ void syntheticMaps() {
         const auto repeated=tak::mapgen::generate(tak::mapgen::decodeMapId(tak::mapgen::encodeMapId(p)),vfs);
         check(hash(r)==hash(repeated),"synthetic map not deterministic");
         check(r.waterPercent==0&&r.reliefPatches==0,"dry flat synthetic map changed terrain");
+        // The synthetic install has no kit sections: the default kit amounts are a no-op.
+        check(r.plateaus==0&&r.mountains==0&&r.towns==0&&r.kitFallback==0,"kits appeared without their sections");
+        auto bare=p;bare.plateauDensity=bare.mountainDensity=bare.townDensity=0;
+        check(hash(tak::mapgen::generate(bare,vfs))==hash(r),"kit amounts changed a map without kit sections");
         if(players==8) {
             check(hash(r)==0x6bf977a42891c638ULL,"cross-platform generator golden changed");
             std::printf("synthetic generator golden: %016llx\n",(unsigned long long)hash(r));
@@ -160,6 +163,9 @@ void verify(const tak::mapgen::Params& input,const tak::mapgen::Result& r) {
     check(p.waterDensity||tak::mapgen::automaticWater(p.layout)||r.waterPercent==0,"zero water produced water");
     check(p.layout!=tak::mapgen::Lakes||!p.waterDensity||r.waterPercent>0,"lake layout has no water");
     check(p.reliefDensity||r.reliefPatches==0,"zero relief produced hills");
+    check(p.plateauDensity||p.mountainDensity||tak::mapgen::automaticPlateaus(p.layout)||r.plateaus==0,"zero plateaus produced plateaus");
+    check(p.mountainDensity||r.mountains==0,"zero mountains produced mountains");
+    check(p.townDensity||r.towns==0,"zero towns produced towns");
     for(size_t i=0;i<r.starts.size();++i) {
         const auto [x,z]=r.starts[i];
         for(size_t j=0;j<i;++j) {
@@ -187,7 +193,7 @@ void verify(const tak::mapgen::Params& input,const tak::mapgen::Result& r) {
         check(f<m.featureNames.size(),"invalid feature index");
         if(tak::hpi::MountSet::key(m.featureNames[f]).find("mana")!=std::string::npos)++mana;
     }
-    if (p.formatVer>=4) for (int z=0;z<m.height;++z) for (int x=0;x<m.width;++x) {
+    for (int z=0;z<m.height;++z) for (int x=0;x<m.width;++x) {
         const auto f=m.features[size_t(z)*m.width+x];
         if (f>=m.featureNames.size() || tak::hpi::MountSet::key(m.featureNames[f]).find("mana")==std::string::npos) continue;
         bool ruins=false;
@@ -206,21 +212,28 @@ void verify(const tak::mapgen::Params& input,const tak::mapgen::Result& r) {
 int main(int argc,char** argv) {
     try {
         using namespace tak::mapgen;
-        for(int version:{1,2,3,4,5,6,7,8})for(int layout=0;layout<3;++layout)for(int players=2;players<=8;++players) {
-            Params p;p.formatVer=version;p.layout=layout;p.players=players;p.seed=0xfedcba9876543210ULL;
+        for(int layout=0;layout<3;++layout)for(int players=2;players<=8;++players) {
+            Params p;p.layout=layout;p.players=players;p.seed=0xfedcba9876543210ULL;
             p.widthCells=768;p.heightCells=640;
+            p.plateauDensity=uint8_t(players*30);p.mountainDensity=uint8_t(255-players);p.townDensity=uint8_t(layout*100);
             const auto id=encodeMapId(p);const auto d=decodeMapId(id);const auto expected=sanitize(p);
-            check(d.seed==p.seed&&d.players==p.players&&d.widthCells==expected.widthCells&&d.heightCells==expected.heightCells,"seed codec mismatch");
-            if(version>=2)check(d.treeDensity==p.treeDensity&&d.rockDensity==p.rockDensity,"density codec mismatch");
-            if(version>=3)check(d.layout==p.layout,"layout codec mismatch");
+            check(d.formatVer==10&&d.seed==p.seed&&d.players==p.players&&d.widthCells==expected.widthCells&&d.heightCells==expected.heightCells,"seed codec mismatch");
+            check(d.treeDensity==p.treeDensity&&d.rockDensity==p.rockDensity&&d.layout==p.layout,"density/layout codec mismatch");
+            check(d.plateauDensity==p.plateauDensity&&d.mountainDensity==p.mountainDensity&&d.townDensity==p.townDensity,"kit codec mismatch");
         }
+        // Older recipes keep their version on decode, so generate() refuses them
+        // instead of silently building a different map from the same seed.
+        for(const auto& [old,version]:std::array<std::pair<const char*,int>,3>{{
+                {"~gen1~080001000000000000000100030003020000ff608003",8},
+                {"~gen1~09000100000000000000038001800108ffffffffff0004",9},
+                {"~gen1~0700010000000000000001000300030200",7}}})
+            check(decodeMapId(old).formatVer==version,"older recipe lost its version");
         // A high-bit seed, invalid input and legacy identifiers must not wrap
         // dimensions or allow a new layout to reinterpret an old seed.
         for(int layout=Maze;layout<kLayouts;++layout) {
             Params p;p.layout=layout;p.name="Themed";
             const auto d=decodeMapId(encodeMapId(p));
             check(d.layout==layout && themedLayout(d.mapType)==layout,"theme codec/world mismatch");
-            p.formatVer=5;check(sanitize(p).layout<=Islands,"legacy recipe accepts new layout");
         }
         Params invalid;invalid.widthCells=0;invalid.heightCells=65535;invalid.players=255;invalid.layout=255;
         auto sane=sanitize(invalid);check(sane.players==8&&sane.widthCells>=384&&sane.heightCells==2048,"sanitize bounds");
@@ -231,8 +244,9 @@ int main(int argc,char** argv) {
         check(sanitize(named).name == "badnametest", "unsafe map name");
         named.name = std::string(100, 'a');
         check(decodeMapId(encodeMapId(named)).name.size() == 24, "map name length");
-        named.formatVer = 4;
-        check(decodeMapId(encodeMapId(named)).name.empty(), "legacy recipe gained name");
+        named.name = std::string(24, 'z');named.plateauDensity = 255;
+        check(decodeMapId(encodeMapId(named)).name == named.name && decodeMapId(encodeMapId(named)).plateauDensity == 255,
+              "longest name with kits round trip");
         syntheticMaps();
         if(argc<2){std::puts("mapgen codec/bounds passed (retail sweep takes a data path)");return 0;}
         const auto vfs=tak::hpi::mountRetailRoot(argv[1]);
@@ -255,6 +269,89 @@ int main(int argc,char** argv) {
                 check(previous>6,"roomy authored map never added extra mana");
             }
             std::puts("extra mana slider passed");return 0;
+        }
+        if(argc>2 && std::string(argv[2])=="--kits") {
+            // v10 retail kits on every world and layout: deterministic, fair (the
+            // generator's own checks plus an independent flood below), and every
+            // stamped kit section carries its retail heights with its artwork.
+            std::map<uint32_t,const tak::tnt::Map*> pieceByKey;
+            tak::mapgen::detail::SectionCache sections(vfs);
+            for(const auto& dir:tak::mapgen::detail::kitDirectories())
+                for(const auto& path:tak::hpi::MountSet::key(dir).ends_with(".tnt")?std::vector<std::string>{dir}:sections.list(dir))
+                    if(const auto* piece=sections.load(path);piece&&piece->width==32&&piece->height==32)
+                        if(std::all_of(piece->tileKeys.begin(),piece->tileKeys.end(),[&](uint32_t k){return k==piece->tileKeys[0];}))
+                            pieceByKey.emplace(piece->tileKeys[0],piece);
+            int seen[kMapTypes][kKits]={};
+            for(int world=0;world<kMapTypes;++world)
+            for(int layout:{int(Mainland),int(Lakes),int(Islands),int(themedLayout(uint8_t(world)))})
+            for(int players:{2,5,8})for(int seed=1;seed<=2;++seed)for(int amount:{-1,255}) {
+                Params p;p.mapType=uint8_t(world);p.layout=uint8_t(layout);p.players=uint8_t(players);p.seed=uint64_t(seed);
+                p.widthCells=p.heightCells=1024;
+                if(amount>=0)p.plateauDensity=p.mountainDensity=p.townDensity=uint8_t(amount);
+                p=sanitize(p);
+                const auto begin=std::chrono::steady_clock::now();
+                const auto r=generate(p,vfs);verify(p,r);
+                const double seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-begin).count();
+                check(hash(r)==hash(generate(decodeMapId(encodeMapId(p)),vfs)),"kit recipe not deterministic");
+                check(r.kitFallback==0,"kits had to be reduced to fit a fair map");
+                seen[world][KitPlateaus]+=r.plateaus;seen[world][KitMountains]+=r.mountains;seen[world][KitTowns]+=r.towns;
+                const auto& m=r.map;
+                // Independent flood with the generator's validation class: every start
+                // reaches every other (not across Islands' sea) and all of its mana.
+                tak::sim::NavGrid::Limits limits;limits.maxSlope=16;limits.maxWaterDepth=0;
+                tak::sim::NavGrid ground(m.heights,m.width,m.height,m.seaLevel,limits);
+                std::vector<uint8_t> blocked(m.heights.size());
+                for(size_t i=0;i<blocked.size();++i)blocked[i]=m.features[i]==0xfffc;
+                for(int z=0;z<m.height;++z)for(int x=0;x<m.width;++x) {
+                    const auto f=m.features[size_t(z)*m.width+x];if(f>=m.featureNames.size())continue;
+                    const auto name=tak::hpi::MountSet::key(m.featureNames[f]);
+                    if(name.find("mana")!=std::string::npos)continue;
+                    // Blocking scenery: a conservative 3x3 claim (real footprints are smaller or equal for trees/rocks).
+                    if(name.find("tree")!=std::string::npos||name.find("rock")!=std::string::npos||name.find("henge")!=std::string::npos)
+                        for(int dz=0;dz<2;++dz)for(int dx=0;dx<2;++dx)if(x+dx<m.width&&z+dz<m.height)blocked[size_t(z+dz)*m.width+x+dx]=1;
+                }
+                ground.setObstacles(&blocked);
+                std::vector<int> d(m.heights.size(),-1),q;
+                const auto [sx,sz]=r.starts[0];d[size_t(sz)*m.width+sx]=0;q.push_back(sz*m.width+sx);
+                for(size_t head=0;head<q.size();++head) {
+                    const int x=q[head]%m.width,z=q[head]/m.width;
+                    for(auto [dx,dz]:std::array<std::pair<int,int>,4>{{{1,0},{-1,0},{0,1},{0,-1}}}) {
+                        const int nx=x+dx,nz=z+dz;
+                        if(nx<0||nz<0||nx>=m.width||nz>=m.height||d[size_t(nz)*m.width+nx]>=0||!ground.fits(nx,nz,2))continue;
+                        d[size_t(nz)*m.width+nx]=d[size_t(z)*m.width+x]+1;q.push_back(nz*m.width+nx);
+                    }
+                }
+                if(p.layout!=Islands)for(auto [x,z]:r.starts)check(d[size_t(z)*m.width+x]>=0,"cliffs cut a start off");
+                // Art and heights together: a section whose tiles are one whole kit
+                // piece must carry that piece's heights exactly.
+                int sectionsChecked=0;
+                for(int sz2=0;sz2<m.height/32;++sz2)for(int sx2=0;sx2<m.width/32;++sx2) {
+                    const size_t first=size_t(sz2*16)*m.blocksX+sx2*16;
+                    const auto it=pieceByKey.find(m.tileKeys[first]);if(it==pieceByKey.end())continue;
+                    bool whole=true;
+                    for(int bz=0;whole&&bz<16;++bz)for(int bx=0;bx<16;++bx) {
+                        const size_t b=size_t(sz2*16+bz)*m.blocksX+sx2*16+bx,pb=size_t(bz)*16+bx;
+                        if(m.tileKeys[b]!=it->second->tileKeys[pb]||m.tileCols[b]!=it->second->tileCols[pb]||m.tileRows[b]!=it->second->tileRows[pb]){whole=false;break;}
+                    }
+                    if(!whole)continue;
+                    ++sectionsChecked;
+                    for(int z=0;z<32;++z)for(int x=0;x<32;++x)
+                        check(m.heights[size_t(sz2*32+z)*m.width+sx2*32+x]==it->second->heights[size_t(z)*32+x],"kit section artwork without its heights");
+                }
+                std::printf("kits world=%d layout=%s players=%d seed=%d amount=%d plateaus=%d mountains=%d towns=%d sections=%d %.2fs\n",
+                            world,layoutName(uint8_t(layout)),players,seed,amount,r.plateaus,r.mountains,r.towns,sectionsChecked,seconds);
+                std::fflush(stdout);
+            }
+            for(int world=0;world<kMapTypes;++world) {
+                check(seen[world][KitPlateaus]>0,"a world never raised a plateau");
+                check(seen[world][KitTowns]>0,"a world never built a town");
+                check((seen[world][KitMountains]>0)==kitAvailable(uint8_t(world),KitMountains),"mountains disagree with the kit survey");
+            }
+            // All three at zero is the v9 terrain: no kit sections at all.
+            Params zero;zero.plateauDensity=zero.mountainDensity=zero.townDensity=0;zero.widthCells=zero.heightCells=768;
+            const auto plain=generate(zero,vfs);
+            check(plain.plateaus==0&&plain.mountains==0&&plain.towns==0,"zero kit amounts still placed kits");
+            std::puts("retail terrain kits passed");return 0;
         }
         if(argc>2&&(std::string(argv[2])=="--naval"||std::string(argv[2])=="--ports")) {
             for(bool crusades:{false,true}) {
@@ -355,6 +452,7 @@ int main(int argc,char** argv) {
             Params p;p.mapType=world;p.layout=layout;p.players=players;p.seed=seed;
             p.widthCells=p.heightCells=size;
             p.treeDensity=p.rockDensity=p.manaDensity=p.waterDensity=p.reliefDensity=density;
+            p.plateauDensity=p.mountainDensity=p.townDensity=uint8_t(density);
             try {
                 const auto r=generate(p,vfs);verify(p,r);patches+=r.reliefPatches;
                 if(argc>2&&std::string(argv[2])=="--hashes")
