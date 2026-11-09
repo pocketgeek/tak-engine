@@ -2677,6 +2677,17 @@ private:
     uint64_t lanJoinAtMs_ = 0;
     std::string lanJoinError_;
     void lanJoinStep();
+    bool lanLeavePrompt_ = false;   // the host's LEAVE, asking before it closes the game for the others
+    int lanOthersInRoom() const;
+    void leaveRoom();
+    void drawLanLeavePrompt(int winW, int winH);
+    // Someone else's LOCAL SERVER dropped the connection without a word: its host closed
+    // the game (quit, or LEAVE from the room) -- the server stops with the host's session.
+    bool lanHostGone() const {
+        // (a killed server resets the connection rather than closing it on Windows)
+        return mp_ && mp_->lanServer() && !lanHost_ &&
+               (mp_->error().empty() || mp_->error() == "peer closed" || mp_->error().starts_with("recv failed"));
+    }
     bool spSpectate_ = false;      // SP: watch the AIs (host takes no slot)
     bool specAutoSeated_ = false;  // SP spectate: one-shot -- fill every open slot with a random-race AI
     bool externalLobbyMusic_ = false;   // front-end owns the lobby BGM -> suppress ours

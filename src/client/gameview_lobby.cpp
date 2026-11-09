@@ -92,11 +92,12 @@ float createOptionPx(float maxW) {
             // MpClient preserves the server's Reject reason (e.g. "protocol version
             // mismatch (server 28 / client 29)") -- and give the player a way OUT.
             float my = winH / 2.0f - 40;
-            const char* head = lanJoinError_.empty() ? "DISCONNECTED" : "CANNOT JOIN";
-            blockText(head, cx - blockWidth(head, 2.6f) / 2, my, 2.6f, {255, 130, 110, 255});
-            std::string why = !lanJoinError_.empty() ? lanJoinError_
+            std::string why = !lanJoinError_.empty() ? lanJoinError_ : lanHostGone() ? std::string("the host closed the game")
                             : mp_->error().empty() ? std::string("the server closed the connection")
                                                    : mp_->error();
+            const char* head = !lanJoinError_.empty() ? "CANNOT JOIN"
+                             : why == "the host closed the game" ? "GAME CLOSED" : "DISCONNECTED";
+            blockText(head, cx - blockWidth(head, 2.6f) / 2, my, 2.6f, {255, 130, 110, 255});
             // Long reasons (version-mismatch text) wrap onto two centred lines.
             auto rows = tak::uiTextWrap(why, 1.8f, 600);
             const std::string l1 = rows[0];
@@ -106,7 +107,8 @@ float createOptionPx(float maxW) {
             blockText(l1, cx - blockWidth(l1, 1.8f) / 2, my + 34, 1.8f, {215, 218, 228, 255});
             if (!l2.empty())
                 blockText(l2, cx - blockWidth(l2, 1.8f) / 2, my + 56, 1.8f, {215, 218, 228, 255});
-            lbBtn(cx - 90, my + (l2.empty() ? 78.0f : 96.0f), 180, 32, "BACK TO MENU", true,
+            // A LAN game's BACK returns to the CONNECT screen (main reopens it).
+            lbBtn(cx - 90, my + (l2.empty() ? 78.0f : 96.0f), 180, 32, mp_->lanServer() ? "BACK" : "BACK TO MENU", true,
                   [this] { menuRequested_ = true; });
             return;
         }
@@ -120,9 +122,47 @@ float createOptionPx(float maxW) {
             return;
         }
         if (st != tak::net::MpClient::State::InRoom) modsScreen_ = false;   // left the room: back to it next time
-        if (st == tak::net::MpClient::State::InRoom) { if (modsScreen_) drawModsScreen(winW, winH); else drawRoom(winW, winH); }
+        if (st != tak::net::MpClient::State::InRoom) lanLeavePrompt_ = false;
+        if (st == tak::net::MpClient::State::InRoom) {
+            if (modsScreen_) drawModsScreen(winW, winH); else drawRoom(winW, winH);
+            if (lanLeavePrompt_) drawLanLeavePrompt(winW, winH);
+        }
         else if (lobbyScreen_ == LobbyScreen::Create) drawCreate(winW, winH);
         else drawBrowser(winW, winH);
+    }
+
+    // The other humans seated in the room: who a LOCAL SERVER host's LEAVE turns out.
+    int GameView::lanOthersInRoom() const {
+        const auto& room = mp_->room();
+        int n = 0;
+        for (int i = 0; i < tak::net::kMaxSlots; ++i) n += i != room.mySlot && room.slots[i].type == 1;
+        return n;
+    }
+
+    void GameView::leaveRoom() {
+        mp_->leaveGame();
+        lobbyScreen_ = singlePlayer_ || lanHost_ ? LobbyScreen::Create : LobbyScreen::Browser;
+        spSpectate_ = false;
+        mpReadied_ = false; mpStarted_ = false; specAutoSeated_ = false;
+        lanLeavePrompt_ = false;
+    }
+
+    // LEAVE WILL CLOSE THE GAME FOR N PLAYERS: YES leaves (the server closes the room for
+    // everyone), NO stays. Over the room, which takes no clicks while it is open.
+    void GameView::drawLanLeavePrompt(int winW, int winH) {
+        lobbyHots_.clear();
+        SDL_FRect dim{0, 0, float(winW), float(winH)};
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 160); SDL_RenderFillRectF(ren_, &dim);
+        const float pw = 520, ph = 150, px = (winW - pw) / 2, py = (winH - ph) / 2;
+        SDL_FRect panel{px, py, pw, ph};
+        SDL_SetRenderDrawColor(ren_, 28, 30, 40, 250); SDL_RenderFillRectF(ren_, &panel);
+        SDL_SetRenderDrawColor(ren_, 190, 160, 110, 255); SDL_RenderDrawRectF(ren_, &panel);
+        const int n = lanOthersInRoom();
+        const std::string line = "LEAVE WILL CLOSE THE GAME FOR " + std::to_string(n) + (n == 1 ? " PLAYER." : " PLAYERS.");
+        blockText(line, px + (pw - blockWidth(line, 1.8f)) / 2, py + 30, 1.8f, {225, 215, 170, 255});
+        blockText("LEAVE?", px + (pw - blockWidth("LEAVE?", 1.8f)) / 2, py + 58, 1.8f, {225, 215, 170, 255});
+        lbBtn(px + pw / 2 - 140, py + ph - 50, 120, 30, "YES", true, [this] { leaveRoom(); });
+        lbBtn(px + pw / 2 + 20, py + ph - 50, 120, 30, "NO", true, [this] { lanLeavePrompt_ = false; });
     }
 
     void GameView::lanJoinStep() {
@@ -1508,10 +1548,10 @@ float createOptionPx(float maxW) {
         if (mp_->startPending() || mp_->starting()) lbBtn(bx, y, 130, 30, "STARTING...", true, nullptr, {70, 110, 70, 255});
         else lbBtn(bx, y, 130, 30, "START", canStart, [this] { mp_->startGame(); }, {70, 110, 70, 255});
         lbBtn(bx + 142, y, 120, 30, "LEAVE", true, [this] {
-            mp_->leaveGame();
-            lobbyScreen_ = singlePlayer_ ? LobbyScreen::Create : LobbyScreen::Browser;
-            spSpectate_ = false;
-            mpReadied_ = false; mpStarted_ = false; specAutoSeated_ = false; });
+            // A LOCAL SERVER's host leaving closes the game for everyone: ask first.
+            if (lanHost_ && lanOthersInRoom() > 0) { lanLeavePrompt_ = true; return; }
+            leaveRoom();
+        });
         // Room readiness also includes game mods and other players. A
         // completed local map is not progress to display while packs change;
         // their status is already shown beside the pack list.

@@ -450,7 +450,7 @@
             if (reconnectUntilMs_) return true;   // still away: nothing to send or simulate
         } else if (!mp_->poll()) {
             if (beginReconnect()) return true;
-            netError_ = mp_->error().empty() ? "disconnected" : mp_->error();
+            netError_ = lanHostGone() ? "the host closed the game" : mp_->error().empty() ? "disconnected" : mp_->error();
             return false;
         }
         if (mp_->desynced()) { netError_ = mp_->desyncReason(); return false; }
@@ -1364,6 +1364,7 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
     // the link goes, so there is nothing to come back to.
     bool GameView::beginReconnect() {
         if (!mp_ || !mp_->canReconnect() || spectating_ || replayMode_ || outcome_ != 0) return false;
+        if (lanHostGone()) return false;   // a LOCAL SERVER went with its host: nothing to reconnect to
         const int mine = mp_->room().mySlot;
         bool others = false;
         for (int i = 0; i < tak::net::kMaxSlots; ++i)
@@ -1401,7 +1402,7 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
         if (mp_->state() == S::Done) {
             if (!mp_->canReconnect() || now >= reconnectUntilMs_) {
                 reconnectUntilMs_ = 0;
-                netError_ = mp_->error().empty() ? "disconnected" : mp_->error();
+                netError_ = lanHostGone() ? "the host closed the game" : mp_->error().empty() ? "disconnected" : mp_->error();
                 return false;
             }
             if (now >= reconnectNextMs_) { reconnectNextMs_ = now + 2000; mp_->reconnect(); }
@@ -1426,7 +1427,11 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
         // Reconnecting after the link dropped mid-game: mpStep owns it (a reconnect
         // passes through Lobby, which must not read as the lobby branches below).
         if (reconnectUntilMs_) return mpStep();
-        if (!mp_->poll()) { if (beginReconnect()) return true; netError_ = mp_->error(); return false; }
+        if (!mp_->poll()) {
+            if (beginReconnect()) return true;
+            netError_ = lanHostGone() ? "the host closed the game" : mp_->error();
+            return false;
+        }
         S st = mp_->state();
         if (st == S::Done) {
             if (beginReconnect()) return true;

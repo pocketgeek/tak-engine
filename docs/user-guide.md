@@ -2325,6 +2325,14 @@ started game (listed **LIVE**, which can no longer be joined) is watched at once
 if its host allows spectators. Typing your computer's address under **CUSTOM...** also
 works and goes straight into the room too.
 
+The game lives on your computer, so leaving closes it for everyone. **LEAVE** in the
+room asks first when others are in it (*LEAVE WILL CLOSE THE GAME FOR 2 PLAYERS*),
+then closes it and takes you back to the game setup; **BACK** there, quitting the
+game or closing the window stops the server and returns you to **CONNECT TO
+SERVER**. The other players see *the host closed the game*, and their **BACK** goes
+to **CONNECT TO SERVER** as well. In a game already started, they are told the same
+and leave it from the game menu (Esc).
+
 The local server is unencrypted and has no accounts, so use it only on a network
 you trust. It listens on port 7677 when that is free (another free port otherwise)
 and announces on UDP port 7678; your firewall may ask to let `takserver` through.

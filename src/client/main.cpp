@@ -1223,6 +1223,7 @@ int main(int argc, char** argv) {
     tak::PresentationPacer streamPacer;
     tak::SessionFailure menuFailure;   // failed menu launch -> shown where it came from
     tak::ResultChoice afterResult = tak::ResultChoice::Menu;   // a skirmish result's right door
+    bool lanReturnToConnect = false;   // a LAN game (hosted or joined) ended: back to CONNECT, not the title
     std::string lastServer;                                    // the server its game was on
     // The last password login's sign-in token (src/net/auth.h): GAME SELECT's way back
     // to the game list. In memory only, and revoked when the app quits.
@@ -1316,6 +1317,7 @@ int main(int argc, char** argv) {
             // plaintext server, or one refused), it is the CONNECT screen: the password
             // is never kept, so it has to be typed again.
             const auto next = std::exchange(afterResult, tak::ResultChoice::Menu);
+            if (std::exchange(lanReturnToConnect, false) && next == tak::ResultChoice::Menu) menu.reopenConnect("");
             if (next == tak::ResultChoice::GameSelect) {
                 const auto address = tak::parseServerAddress(lastServer);
                 tokenLaunch = address && sessionToken.heldFor(address->host, address->port);
@@ -3173,6 +3175,11 @@ int main(int argc, char** argv) {
     // Session ended: tear down any single-player local server, then either loop back
     // to the menu or exit the app.
     localServer.stop();
+    // A LAN game (a LOCAL SERVER hosted here, or one joined or watched) goes back to the
+    // CONNECT screen, where its list is.
+    if (origin == tak::LaunchOrigin::Multiplayer && !tokenLaunch &&
+        (lanHosting || connectKind == tak::MainMenu::Connect::LanJoin || connectKind == tak::MainMenu::Connect::LanSpectate))
+        lanReturnToConnect = true;
     // Destroy the session's views NOW (not at scope end below): the renderer is
     // reused across sessions, so their GPU textures must be freed before the next
     // session budgets against gpuvram. The log line is the leak canary -- healthy

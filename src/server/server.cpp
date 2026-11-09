@@ -1637,6 +1637,23 @@ void Server::leaveRoom(Client& c, const char* reason) {
     bool wasHost = (r->hostId == c.id);
     c.validationId=0;c.deferredMapOffer.reset();
     c.state = Client::Lobby; c.roomId = 0; c.slot = -1; c.loaded = false;
+    // A LOCAL SERVER's room is its host's: it closes with them, and everyone still in
+    // it is told so (their clients go back to the CONNECT screen).
+    if (!r->running && wasHost && lan_) {
+        std::vector<uint32_t> others(r->spectators.begin(), r->spectators.end());
+        for (int i = 0; i < kMaxSlots; ++i)
+            if (r->slotClient[i] >= 0 && uint32_t(r->slotClient[i]) != c.id) others.push_back(uint32_t(r->slotClient[i]));
+        rooms_.erase(rid);
+        for (uint32_t id : others)
+            if (auto it = clients_.find(id); it != clients_.end()) {
+                Client& o = *it->second;
+                o.state = Client::Lobby; o.roomId = 0; o.slot = -1; o.loaded = false;
+                sendReject(o, "the host closed the game");
+                o.conn.fail("host closed the game");
+            }
+        std::fprintf(stderr, "game %u closed by its host (%zu others)\n", rid, others.size());
+        return;
+    }
     // If the host left in the lobby, pass host to the next human (or dissolve).
     if (!r->running && wasHost) {
         int next = -1;
