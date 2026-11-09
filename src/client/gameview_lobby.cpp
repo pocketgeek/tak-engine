@@ -369,7 +369,8 @@ float createOptionPx(float maxW) {
         const tak::tnt::Map& m = g.map;
         const int W = m.width, H = m.height, sea = m.seaLevel;
         if (W <= 0 || H <= 0 || m.heights.size() < size_t(W) * H) return;
-        const int cap = 192, mx = std::max(W, H);
+        // As many texels as the largest create preview (288), so it is never stretched.
+        const int cap = 288, mx = std::max(W, H);
         const int TW = std::max(1, W * cap / mx), TH = std::max(1, H * cap / mx);
         // World-flavoured land tint (loosely matches each world's ground section art).
         static const uint8_t landRGB[tak::mapgen::kMapTypes][3] = {
@@ -396,7 +397,7 @@ float createOptionPx(float maxW) {
                 }
             }
         // Feature dots -- sparse, so plot every one lest the downsample drop it. A
-        // Sacred Stone (the mana spot) gets a bold 2x2 gold marker; Standing Stones
+        // Sacred Stone (the mana spot) gets a bold 3x3 gold marker; Standing Stones
         // (ruins) are muted; rocks grey; trees dark green.
         int manaSpots=0;
         for (int cz = 0; cz < H; ++cz)
@@ -407,8 +408,8 @@ float createOptionPx(float maxW) {
                 int tx = cx * TW / W, ty = cz * TH / H;
                 if (tak::hpi::MountSet::key(nm).find("mana") != std::string::npos) {          // sacred spot: gold
                     ++manaSpots;
-                    for (int dy = 0; dy <= 1; ++dy)
-                        for (int dx = 0; dx <= 1; ++dx) put(tx + dx, ty + dy, 250, 224, 82);
+                    for (int dy = 0; dy <= 2; ++dy)
+                        for (int dx = 0; dx <= 2; ++dx) put(tx + dx, ty + dy, 250, 224, 82);
                 } else if (nm.find("Henge") != std::string::npos) put(tx, ty, 176, 162, 132);  // ruins: stone
                 else if (nm.find("Rock") != std::string::npos) put(tx, ty, 150, 148, 140);      // rock: grey
                 else put(tx, ty, 28, 66, 28);                                                   // tree: dark green
@@ -550,23 +551,21 @@ float createOptionPx(float maxW) {
         // forces start: those two rows read SCENARIO / FIXED and are not clickable (retail
         // greyed the same boxes while Use Map Script was ticked). The saved choices stay.
         const bool scenarioOn = createScenarioOn();
-        // Single player has only the page title over its columns, which start just under
-        // it: the option buttons level with the map list's sort buttons. Multiplayer heads
-        // its column CREATE GAME, then the name and password fields and the MAP line.
-        float x = kCreateMargin, y = singlePlayer_ ? 60 : 70;   // the left margin = the right one
-        if (!singlePlayer_) { blockText("CREATE GAME", x, y, 2.2f, {200, 205, 220, 255}); y += 34; }
+        // Only the page title is over the columns, which start just under it: the first
+        // row level with the map list's sort buttons. Multiplayer puts the name and
+        // password fields and the MAP line above its option buttons.
+        float x = kCreateMargin, y = 60;   // the left margin = the right one
         // A private single-player game needs no name or password.
         if (!singlePlayer_) {
             lbField(x, y, 260, "GAME NAME", createName_, 1); y += 44;
             lbField(x, y, 260, "PASSWORD (OPTIONAL)", createPass_, 2); y += 44;
         }
         if (!singlePlayer_) { blockText(std::string("MAP: ") + mapTitle(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 28; }
-        // Option rows: single player's are the map column's rhythm (24 high, 6 apart, as
-        // TYPE / LAYOUT / SIZE). Multiplayer's ten rows, under the name and password
-        // fields, are 24 high at a 25 pitch to stay clear of the BACK/CREATE footer (at
-        // 30 they would reach 14 px into it). One column: every row kOptW wide (clear of
-        // the map list at x 400) and every label at optPx (createOptionPx), whatever it says.
-        const float kRow = singlePlayer_ ? 30 : 25, kRowH = 24;
+        // Option rows: the map column's rhythm (24 high, 6 apart, as TYPE / LAYOUT /
+        // SIZE). Multiplayer's ten, under the name and password fields, end at 470, clear
+        // of the BACK/CREATE footer. One column: every row kOptW wide (clear of the map
+        // list) and every label at optPx (createOptionPx), whatever it says.
+        const float kRow = 30, kRowH = 24;
         constexpr float kOptW = 300;
         const float optPx = createOptionPx(kOptW - 12);
         auto option = [&](const std::string& label, bool enabled, std::function<void(int)> cycle) {
@@ -686,10 +685,9 @@ float createOptionPx(float maxW) {
             mapPrefApplied_ = true;
             syncCreateScenario();
         }
-        // hy: the columns' heading line; single player has no headings, so its sort
-        // buttons (hy + 20) sit level with the first option button (y 60).
-        float lx = kCreateMargin + 320, hy = singlePlayer_ ? 40 : 90;   // 20 right of the 300-wide option column
-        if (!singlePlayer_) blockText("SELECT MAP", lx, hy, 1.8f, {200, 205, 220, 255});
+        // hy: where a heading line would be; the columns have none, so the sort buttons
+        // (hy + 20) sit level with the first option row (y 60).
+        float lx = kCreateMargin + 320, hy = 40;   // 20 right of the 300-wide option column
         // Toggle between the map list and the random-map generator.
         bool gen = tak::mapgen::isGeneratedMapId(mpMapId_);
 
@@ -743,8 +741,8 @@ float createOptionPx(float maxW) {
                 }});
             }
         }
-        // Single player's list reaches down to y 480, above the BACK/CREATE footer.
-        const float boxX = lx, boxY = hy + 46, boxW = mapListW(), boxH = singlePlayer_ ? 480 - boxY : 344, rowH = 24, sbW = 12;
+        // The list reaches down to y 480, above the BACK/CREATE footer.
+        const float boxX = lx, boxY = hy + 46, boxW = mapListW(), boxH = 480 - boxY, rowH = 24, sbW = 12;
         // The rows on show: every map, or those whose title or name holds the FILTER text
         // (case-insensitive).
         std::vector<int> shown;
@@ -833,9 +831,8 @@ float createOptionPx(float maxW) {
         const float kRowH = 24, kGap = 6, kBtnW = 300;
         const float kSliderH = 30;   // label (11) + 5 + bar (14)
         const float kHalfW = (kBtnW - kGap) / 2;
-        // Multiplayer: level with the map list's box top. Single player, with no headings:
-        // level with the first option button, where the list's sort buttons sit.
-        float px = lx, py = singlePlayer_ ? hy + 20 : hy + 46;
+        // Where the list's sort buttons sit, level with the first option row.
+        float px = lx, py = hy + 20;
         lbField(px, py, kBtnW, "MAP NAME (OPTIONAL)", genParams_.name, 5); py += 44;
         lbCycle(px, py, kBtnW, kRowH, std::string("TYPE:  ") + kTypeName[genParams_.mapType % tak::mapgen::kMapTypes],
               true, [this](int direction) { genParams_.mapType = uint8_t((genParams_.mapType + direction + tak::mapgen::kMapTypes) % tak::mapgen::kMapTypes);
@@ -926,9 +923,18 @@ float createOptionPx(float maxW) {
         // Preview panel, right of the list / params column. A real map shows its
         // embedded minimap; a generated map shows a live thumbnail rolled from its
         // seed (both go through buildMapPreview -> mapPreviewTex_).
-        // Against the right margin; the map list widens to 12 short of it.
-        const float pvW = 192, pvH = 192, pvx = kLobbyW - kCreateMargin - pvW, pvy = hy + 46;
-        if (!singlePlayer_) blockText("PREVIEW", pvx, hy, 1.8f, {200, 205, 220, 255});
+        // Against the right margin; the map list widens to 12 short of it. Beside the
+        // generator's narrower panel the preview grows into the free space: as wide as
+        // the gap from the 300-wide panel (plus 20) to the margin, top level with the
+        // panel's, and as tall as leaves room for the lines and button under it above
+        // the footer at 500 (multiplayer adds four lines of notes).
+        float pvW = 192, pvy = hy + 46;
+        if (gen) {
+            pvy = hy + 20;
+            const float under = singlePlayer_ ? 94 : 162;
+            pvW = std::min(kLobbyW - kCreateMargin - (lx + 320), kLobbyH - 48 - pvy - under);
+        }
+        const float pvH = pvW, pvx = kLobbyW - kCreateMargin - pvW;
         SDL_FRect pbox{pvx, pvy, pvW, pvH};
         SDL_SetRenderDrawColor(ren_, 18, 20, 28, 255); SDL_RenderFillRectF(ren_, &pbox);
         if (mapPreviewFor_ != mapPath_) buildMapPreview(mapPath_);
@@ -939,7 +945,8 @@ float createOptionPx(float maxW) {
             SDL_RenderCopyF(ren_, mapPreviewTex_, nullptr, &dst);
             drawStartMarkers(dst);   // no slots yet: the room tints them
         } else {
-            blockText(gen ? "GENERATING" : "NO PREVIEW", pvx + 34, pvy + pvH / 2 - 7, 1.6f,
+            const char* none = gen ? "GENERATING" : "NO PREVIEW";
+            blockText(none, pvx + (pvW - blockWidth(none, 1.6f)) / 2, pvy + pvH / 2 - 7, 1.6f,
                       {120, 125, 140, 255});
         }
         SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &pbox);
@@ -951,13 +958,13 @@ float createOptionPx(float maxW) {
             if (!genPreviewError_.empty())
                 blockText("CHECK RETAIL DATA", pvx, pvy + pvH + 46, 1.4f, {220, 140, 120, 255});
             if (!singlePlayer_) {   // the generator's notes (single player shows none)
-                blockText("3 HOME MANA SPOTS EACH", pvx, pvy + pvH + 106, 1.3f, {160, 175, 160, 255});
-                blockText("EXTRAS NEED FREE SPACE", pvx, pvy + pvH + 124, 1.3f, {160, 175, 160, 255});
+                blockText("3 HOME MANA SPOTS EACH", pvx, pvy + pvH + 104, 1.3f, {160, 175, 160, 255});
+                blockText("EXTRAS NEED FREE SPACE", pvx, pvy + pvH + 120, 1.3f, {160, 175, 160, 255});
                 if (genParams_.manaScatter)
-                    blockText("SCATTERED: " + std::to_string(genPreviewScattered_) + " NEUTRAL", pvx, pvy + pvH + 160,
+                    blockText("SCATTERED: " + std::to_string(genPreviewScattered_) + " NEUTRAL", pvx, pvy + pvH + 152,
                               1.3f, {160, 175, 160, 255});
                 if (genParams_.layout == tak::mapgen::Islands || genParams_.layout == tak::mapgen::Ports)
-                    blockText("SIZE RESERVES SEA LANES", pvx, pvy + pvH + 142, 1.3f, {160, 175, 160, 255});
+                    blockText("SIZE RESERVES SEA LANES", pvx, pvy + pvH + 136, 1.3f, {160, 175, 160, 255});
             }
         }
         // Keep the generator action below the preview and map description.
@@ -1632,7 +1639,7 @@ float createOptionPx(float maxW) {
 
     void GameView::drawStartMarkers(const SDL_FRect& img, const std::vector<int>& colorOfStart) {
         if (mapPreviewStarts_.empty() || img.w <= 0 || img.h <= 0) return;
-        // Sized from the preview, so the 192 px create preview and the room's smaller
+        // Sized from the preview, so the create preview (192 to 288 px) and the room's smaller
         // one both read: a black rim and a white ring keep it legible on any terrain.
         const float r = std::clamp(std::min(img.w, img.h) * 0.06f, 7.0f, 11.0f);
         auto disc = [&](float cx, float cy, float rad, SDL_Color c) {
