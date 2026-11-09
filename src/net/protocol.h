@@ -809,7 +809,10 @@ enum class Msg : uint8_t {
     JoinResult,         // S->C: ok+slot or error reason
     LeaveGame,          // C->S
     SlotUpdate,         // C->S: slot edit (own, or any if host)
-    LobbyState,         // S->C: full slot table + settings (broadcast)
+    LobbyState,         // S->C: full slot table + settings (broadcast). In a running game too, as
+                        // the host changes: hostId is the connection holding the host's powers (the
+                        // host's seat's, or a successor's); none of the room's (0, or one gone) while
+                        // nobody connected holds them.
     Chat,               // both: text
     Kick,               // C->S (host): slot
     StartGame,          // C->S (host)
@@ -834,7 +837,7 @@ enum class Msg : uint8_t {
     MissionOutcome,     // S->C: campaign mission won/lost (int8: +1 victory, -1 defeat)
     SetPause,           // C->S (host/only-human): u8 want -- pause or resume the game.
                         // Distinct from the disconnect wait (Msg::Waiting): it never
-                        // expires, because nobody is disconnected.
+                        // expires, because nobody is disconnected; it ends if the host leaves.
     // account login (SCRAM-SHA-256; see src/net/auth.h). APPENDED, not slotted in
     // beside Hello where they belong logically: these values are written into
     // replay files, so renumbering the existing ones would break every replay
@@ -903,6 +906,9 @@ enum class Msg : uint8_t {
     Reseated,           // S->C: u8 slot, u64 rotated resume token, u32 fromTick, u32 logEnd. The
                         // answer to a good Rejoin: the client keeps its world, and the bundles
                         // from fromTick follow (those before logEnd are history it catches up on).
+                        // Before them come what no bundle carries: LobbyState (the room as it is
+                        // now: the game speed, and the host -- this new connection when the seat is
+                        // the host's), Pause while the host has the game paused, then Waiting.
     // The sign-in token (src/net/auth.h), on an encrypted connection only. Answered by
     // AuthResult; a failure counts against the login throttle.
     AuthToken,          // C->S: username, token  (sign in with it, instead of AuthBegin)

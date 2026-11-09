@@ -94,7 +94,9 @@ bool MpClient::reconnect() {
     voice_.clear(); voiceListenSent_ = 0;
     pingsOut_.clear(); voiceBaseRtt_ = UINT32_MAX;
     voiceHeld_ = voiceOpen_ = voiceRestart_ = voiceSlowRtt_ = false;
-    waiting_.clear();
+    // The server re-tells a reseated client the room as it is now: the wait, the host's
+    // pause, and (LobbyState) the speed and the host.
+    waiting_.clear(); paused_ = false;
     // A short connect timeout: this runs on the render thread, and is retried.
     if (!conn_.connect(host_, port_, 1500)) { err_ = conn_.error(); state_ = State::Done; return false; }
     state_ = State::Connecting;
@@ -608,14 +610,18 @@ void MpClient::onFrame(const Frame& f) {
             if (!r.ok) break;
             room_ = std::move(incoming);
             room_.mySlot = keep;
-            if(oldGameMods!=room_.opts.gameMods && room_.hostId==myId_){mapPackage_.reset();mapOfferedRoom_=mapReadyRoom_=0;}
+            // A room's map and game mods are settled when it starts: a player made the host
+            // in a running game (its host left, or reconnected under a new id) keeps the
+            // packages its world was built from and offers none.
+            const bool hosting = room_.hostId == myId_ && (state_ == State::Lobby || state_ == State::InRoom);
+            if(oldGameMods!=room_.opts.gameMods && hosting){mapPackage_.reset();mapOfferedRoom_=mapReadyRoom_=0;}
             if(!room_.opts.gameMods)resetModTransfer();
-            else if(room_.hostId==myId_ && modOfferedRoom_!=room_.id)offerMods();
+            else if(hosting && modOfferedRoom_!=room_.id)offerMods();
             gameSpeed_ = room_.opts.speed;
             if (state_ == State::Lobby) state_ = State::InRoom;
             if (!room_.mission.empty() || mapgen::isGeneratedMapId(room_.mapId)) {
                 mapReadyRoom_ = room_.id; mapStatus_ = "MAP READY";
-            } else if (room_.hostId == myId_ && mapOfferedRoom_ != room_.id) {
+            } else if (hosting && mapOfferedRoom_ != room_.id) {
                 try {
                     if (!mapPackage_) mapPackage_ = maps::build(roomDataVfs(), room_.mapId);
                     send(Msg::MapOffer, maps::offer(room_.id, room_.mapId, *mapPackage_));
