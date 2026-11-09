@@ -861,14 +861,9 @@
             }
             untouched("order buttons");
             selection_={builder};frame();frame();
-            check(!iconRects_.empty(),"a selected builder's build row is on show");
-            for (const auto& [r,type]:std::vector<std::pair<SDL_FRect,const tak::sim::UnitType*>>(iconRects_)) {
-                (void)type;
-                clickAt(r.x+r.w/2,r.y+r.h/2);
-                clickAt(r.x+r.w/2,r.y+r.h/2,SDL_BUTTON_RIGHT);
-                check(selection_==std::vector<int>{builder},"a build icon press does not reach the map");
-            }
-            untouched("build icons");
+            // A watcher gets no build menu at all (2026-11-08): no row, no icons.
+            check(iconRects_.empty() && buildMenuRect_.w<=0,"a selected builder shows no build row");
+            untouched("a builder selected");
             // A reclaimer's right press would arm the area drag.
             mouse(SDL_MOUSEBUTTONDOWN,vw*0.5f,H*0.25f,SDL_BUTTON_RIGHT);
             check(!rightDrag_,"a right press arms no reclaim drag");

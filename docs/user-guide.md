@@ -1380,11 +1380,12 @@ stays where it is and keeps firing, as in the original game, and looks again
 after three more blocked shots, in case the target has moved. A unit that
 picked the target on its own while on the move (an attack-move, a patrol or a
 queued move) does not stand and fire on: when it finds no spot, or has used up
-its three, it drops the target and carries on with its orders. Units on
-**Hold Position** move for this only while such a movement order waits behind
-the target (the Creon Fire Wagon starts on Hold Position, so this is what lets
-a Fire Wagon on an attack-move get round a standing stone); with nothing queued
-they fire on from where they stand. Buildings, flyers and melee units never move
+its three, it drops the target and carries on with its orders. A unit you
+ordered to attack the target moves for this whatever its stance. Units on
+**Hold Position** that picked the target themselves move for this only while
+such a movement order waits behind the target (the Creon Fire Wagon starts on
+Hold Position, so this is what lets a Fire Wagon on an attack-move get round a
+standing stone); with nothing queued they fire on from where they stand. Buildings, flyers and melee units never move
 for this. A unit that is not under an attack order stops firing at that target
 and picks another one. This is new behaviour; the original game had no such
 check, and its units fire into the hill or rock until their orders change.
@@ -2323,14 +2324,14 @@ give orders.
 
 You can select any unit you can see, of any player. Click it, drag a box, or
 double-click for every unit of that type on screen. The interface then shows
-that unit's player: the order panel, the build row and its queues, the mana bulb
-and income, and that player's order lines and queued buildings, in that side's
-art. With nothing selected you get the plain view: the minimap, the match-wide
+that unit's player: the order panel, the mana bulb and income, and that player's
+order lines and queued buildings, in that side's art. A selected builder's build
+menu is not shown. With nothing selected you get the plain view: the minimap, the match-wide
 numbers and the **F4** board.
 
 - Selecting never makes a unit answer, and nothing you press acts on it. Right
-  clicks do nothing, and the order and build buttons show what the unit is doing
-  but ignore clicks. There are no sounds, no order cursors and no messages.
+  clicks do nothing, and the order buttons show what the unit is doing but
+  ignore clicks. There are no sounds, no order cursors and no messages.
 - A selection holds one player's units. A box keeps the player with the most units
   in it (the lower player number on a tie), and Shift+click on another player's
   unit replaces the selection.

@@ -6501,7 +6501,6 @@
         if (!b) return false;   // selection can change before the next HUD draw
         for (const auto& [r, bt] : iconRects_) {
             if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
-            if (watchOnly()) return true;   // read-only: swallowed, no tone, no arming
             playClickTone();
             if (!bt) return true;   // consume the click even if it can't act
             uint16_t mod = SDL_GetModState();

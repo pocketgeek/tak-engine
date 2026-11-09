@@ -800,7 +800,8 @@
     }
 
     const UnitR* GameView::selectedBuilder() const {
-        if (selection_.size() != 1) return nullptr;
+        // A watcher (spectator or replay) gets no build menu: no row, no icons, no hotkeys.
+        if (watchOnly() || selection_.size() != 1) return nullptr;
         const auto* u = frameUnitP(selection_.front());
         return u && u->alive() && u->type && u->type->isBuilder ? u : nullptr;
     }
