@@ -1732,11 +1732,13 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 o.input(wheel, w, h);
             }
             o.render(w, h);
-        } else if (settings && tak::devFlag("TAK_SHOT_OPTIONS")) {   // =graphics|interface|game (default)
+        } else if (settings && tak::devFlag("TAK_SHOT_OPTIONS")) {   // =graphics|interface|voice|game (default)
             const std::string page = tak::devEnv("TAK_SHOT_OPTIONS");
-            OptionsScreen o(d_->ren, *settings, [] {}, [] {}, 2, {}, {}, d_->dataFolder_,
-                            page == "graphics" ? OptionsPage::Graphics : page == "interface" ? OptionsPage::Interface
-                                                                                             : OptionsPage::Game);
+            OptionsScreen o = page == "voice"
+                ? OptionsScreen(d_->ren, *settings, [] {}, [] {}, VoicePageHooks{}, {})
+                : OptionsScreen(d_->ren, *settings, [] {}, [] {}, 2, {}, {}, d_->dataFolder_,
+                                page == "graphics" ? OptionsPage::Graphics : page == "interface" ? OptionsPage::Interface
+                                                                                                 : OptionsPage::Game);
             o.render(w, h);
             if (const char* hover = tak::devEnv("TAK_SHOT_HOVER")) {   // =x,y: the pointer there (hover help)
                 SDL_Event m{}; m.type = SDL_MOUSEMOTION;

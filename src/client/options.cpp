@@ -225,7 +225,7 @@ void OptionsScreen::buildVoice() {
     refreshDevices();
     auto section = [&](const char* label) { ctls_.push_back({Control::Section, label, 0, 0, {}, {}, {}, {}, {}}); };
     auto on = [this] { return s_.voiceEnabled; };
-    auto ptt = [this] { return s_.voiceEnabled && !s_.voiceActivation; };
+    auto ptt = [this] { return s_.voiceEnabled && s_.voiceMicEnabled && !s_.voiceActivation; };
     auto activation = [this] { return s_.voiceEnabled && s_.voiceMicEnabled && s_.voiceActivation; };
 
     section("GENERAL");
@@ -236,16 +236,25 @@ void OptionsScreen::buildVoice() {
             "TALK TO THE OTHER PLAYERS, BY PUSH TO TALK OR VOICE ACTIVATION. OFF BY DEFAULT.",
             "WHO HEARS YOU IS SET PER PLAYER IN THE DIPLOMACY SCREEN'S VOICE COLUMN, LIKE CHAT."};
     };
+    section("MICROPHONE");
+    auto micOn = [this] { return s_.voiceEnabled && s_.voiceMicEnabled; };
+    ctls_.push_back({Control::Toggle, "MICROPHONE", 0, 1, [this] { return s_.voiceMicEnabled ? 1.0f : 0.0f; },
+                     [this](float v) { s_.voiceMicEnabled = v > 0.5f; }, {}, {}, {}});
+    ctls_.back().enabled = on;
+    ctls_.back().help = [] {
+        return std::vector<std::string>{
+            "OFF TURNS YOUR MICROPHONE OFF: NOTHING IS SENT, BY PUSH TO TALK OR VOICE ACTIVATION.",
+            "YOU STILL HEAR THE OTHER PLAYERS."};
+    };
     ctls_.push_back({Control::Dropdown, "TALK MODE", 0, 1, [this] { return s_.voiceActivation ? 1.0f : 0.0f; },
                      [this](float idx) { s_.voiceActivation = idx > 0.5f; }, {}, {},
                      [] { return std::vector<std::string>{"Push to Talk", "Voice Activation"}; }});
-    ctls_.back().enabled = on;
+    ctls_.back().enabled = micOn;   // nothing to send with the microphone off
     ctls_.back().help = [] {
         return std::vector<std::string>{
             "PUSH TO TALK (THE DEFAULT) SENDS WHILE YOU HOLD THE KEY.",
             "VOICE ACTIVATION SENDS BY ITSELF WHILE THE MIC LEVEL REACHES THE ACTIVATION LEVEL."};
     };
-
     ctls_.push_back({Control::Button, "PUSH TO TALK", 0, 0, {}, {}, {}, [this] { if (onHotkeys_) onHotkeys_(); }, {}});
     ctls_.back().enabled = ptt;
     ctls_.back().note = [this] {
@@ -257,16 +266,6 @@ void OptionsScreen::buildVoice() {
     ctls_.back().help = [] {
         return std::vector<std::string>{
             "HOLD IT TO TALK. CHANGE IT IN CONTROLS (CLICK HERE). NEVER WHILE TYPING IN A TEXT BOX."};
-    };
-    section("MICROPHONE");
-    auto micOn = [this] { return s_.voiceEnabled && s_.voiceMicEnabled; };
-    ctls_.push_back({Control::Toggle, "MICROPHONE", 0, 1, [this] { return s_.voiceMicEnabled ? 1.0f : 0.0f; },
-                     [this](float v) { s_.voiceMicEnabled = v > 0.5f; }, {}, {}, {}});
-    ctls_.back().enabled = on;
-    ctls_.back().help = [] {
-        return std::vector<std::string>{
-            "OFF TURNS YOUR MICROPHONE OFF: NOTHING IS SENT, BY PUSH TO TALK OR VOICE ACTIVATION.",
-            "YOU STILL HEAR THE OTHER PLAYERS."};
     };
     // A saved device that is not plugged in stays in the list (so the choice still shows)
     // and is noted; the engine meanwhile uses the system default.
