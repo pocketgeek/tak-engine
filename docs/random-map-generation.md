@@ -203,13 +203,12 @@ and blocker cell attributes are retained; scenery sliders control additional
 scatter rather than removing authored features from those sections.
 
 Water amount is a noise intensity, not a requested coverage percentage. Its zero
-endpoint is dry on Mainland/Lakes; the preview reports measured coverage.
+endpoint is dry on Mainland/Lakes.
 Islands and themed fixed-water layouts show automatic water allocation instead
 of an ineffective slider.
 The extra-mana slider requests **0–6 additional spots per player**; its label
 shows the requested count (`+3/P` at the default). It never removes the three
-guaranteed home deposits. The preview reports the **actual total mana spots**
-and water coverage. Small maps and constrained layouts can fit fewer complete
+guaranteed home deposits. Small maps and constrained layouts can fit fewer complete
 rounds than requested, so the actual count can stop increasing once space is
 exhausted. Raising the slider retains the earlier rounds; it does not place
 partial rounds that favor some players. Cartographer's Mana density field uses
@@ -238,7 +237,7 @@ field until it joins an approach already known to lead home, so scenery cannot
 wall it in; the final check requires every scattered spot to be reachable from
 some start. The generator's layouts are fair rather than mirror-symmetric, and
 scattered spots follow the same rule: they are spread evenly but are not
-mirrored, and they never enter a home economy. The preview counts them.
+mirrored, and they never enter a home economy.
 
 Generated terrain ignores terrain replacements bundled with unrelated downloaded
 maps. Explicit user overrides retain their precedence, and authored maps retain

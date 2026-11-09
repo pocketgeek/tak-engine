@@ -535,7 +535,8 @@ The Retail AI always plays the campaign's computer opponents: see
   but only when every player gets an equally distant one. Bases, home mana and army
   routes always stay on level, connected ground.
 - **Extra Mana Spots**: 0 to 6 extra spots per player, added fairly. Terrain can
-  limit how many fair rounds fit, so the preview shows the real total.
+  limit how many fair rounds fit, so a map can get fewer than the slider asks for
+  (the gold dots on the preview are its mana spots).
 - **Scattered Mana**: a second slider, separate from the per-player extra spots,
   with five notches: None, Minimum, Medium, High or Max. Neutral spots spread
   over open ground away from the bases. It is a density, so a bigger map gets
@@ -554,9 +555,8 @@ time.
 Every player gets a flat base area, clear routes for armies and three home mana
 spots. Every mana spot the generator places has ruins around it. Scattered spots are always reachable from some start, never
 inside a base, and are spread evenly but not mirrored. Islands maps need ships
-or flyers to reach other players. The preview updates when you release a slider
-and counts the scattered spots in its MANA total, with a separate SCATTERED
-line for the neutral ones; in the game room the map settings list the Scattered
+or flyers to reach other players. The preview updates when you release a slider;
+in the game room the map settings list the Scattered
 Mana level beside the map seed, and the Plateaus, Mountains and Towns amounts
 below it. When the game starts, the map is saved on
 every player's computer and on the server, so it appears in the map list later.
@@ -567,7 +567,7 @@ are not supported any more: the game asks you to generate a new map. A
 generated map you have saved as a `.kmp` always plays, whatever made it.
 Rebuilding a map from its recipe needs the same game data.
 
-![The single-player screen with Generate Random Map open: Type Aramon and Layout Mainland, then Size 12 × 12 and Players 4 on one row, the Forests, Rocks, Extra Mana, Scattered Mana (at High), Water, Hills, Plateaus, Mountains and Towns sliders in two columns and Re-roll Seed. The preview shows four numbered starts and reads WATER: 0% MANA: 54](img/guide/random-map-lobby.jpg)
+![The single-player screen with Generate Random Map open: Type Aramon and Layout Mainland, then Size 12 × 12 and Players 4 on one row, the Forests, Rocks, Extra Mana, Scattered Mana (at High), Water, Hills, Plateaus, Mountains and Towns sliders in two columns and Re-roll Seed. The preview shows four numbered starts](img/guide/random-map-lobby.jpg)
 
 *The random map settings in the single-player lobby, with Scattered Mana at
 High. Size and Players share a row.*

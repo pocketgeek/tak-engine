@@ -76,9 +76,9 @@ float createOptionPx(float maxW) {
         // already offset to this panel); RenderClear would ignore the viewport.
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         float cx = winW / 2.0f;
-        // Single player is titled as the door that opens it (PlayComputer's caption).
+        // Titled as the door that opens it (PlayComputer's and PlayPlayer's captions).
         const char* title = modsScreen_ && mp_ && mp_->state() == tak::net::MpClient::State::InRoom ? "MODS"
-                          : singlePlayer_ ? "PLAY THE MACHINE" : "TA:KINGDOMS  MULTIPLAYER";
+                          : singlePlayer_ ? "PLAY THE MACHINE" : "PLAY AN OPPONENT";
         blockText(title, cx - blockWidth(title, 2.6f) / 2, 24, 2.6f, {210, 200, 150, 255});
         if (!mp_) return;
         auto st = mp_->state();
@@ -313,7 +313,7 @@ float createOptionPx(float maxW) {
         mapPreviewStarts_.clear();
         mapPreviewWorldW_ = mapPreviewWorldH_ = 0;
         if (tntPath.empty()) return;
-        genPreviewInfo_.clear(); genPreviewError_.clear(); genPreviewScattered_ = 0;
+        genPreviewError_.clear();
         if (tak::mapgen::isGeneratedMapId(tntPath)) {
             try { buildGenPreview(tntPath); }
             catch (const std::exception& e) { genPreviewError_ = e.what(); }
@@ -399,7 +399,6 @@ float createOptionPx(float maxW) {
         // Feature dots -- sparse, so plot every one lest the downsample drop it. A
         // Sacred Stone (the mana spot) gets a bold 3x3 gold marker; Standing Stones
         // (ruins) are muted; rocks grey; trees dark green.
-        int manaSpots=0;
         for (int cz = 0; cz < H; ++cz)
             for (int cx = 0; cx < W; ++cx) {
                 uint16_t fi = m.features[size_t(cz) * W + cx];
@@ -407,7 +406,6 @@ float createOptionPx(float maxW) {
                 const std::string& nm = m.featureNames[fi];
                 int tx = cx * TW / W, ty = cz * TH / H;
                 if (tak::hpi::MountSet::key(nm).find("mana") != std::string::npos) {          // sacred spot: gold
-                    ++manaSpots;
                     for (int dy = 0; dy <= 2; ++dy)
                         for (int dx = 0; dx <= 2; ++dx) put(tx + dx, ty + dy, 250, 224, 82);
                 } else if (nm.find("Henge") != std::string::npos) put(tx, ty, 176, 162, 132);  // ruins: stone
@@ -427,8 +425,6 @@ float createOptionPx(float maxW) {
         char dims[48];
         std::snprintf(dims, sizeof dims, "%d x %d   %d PLAYER", W / 32, H / 32, int(gp.players));
         mapPreviewDims_ = dims;
-        genPreviewInfo_ = "WATER: " + std::to_string(g.waterPercent) + "%  MANA: " + std::to_string(manaSpots);
-        genPreviewScattered_ = g.scatteredMana;
 
     }
 
@@ -926,13 +922,12 @@ float createOptionPx(float maxW) {
         // Against the right margin; the map list widens to 12 short of it. Beside the
         // generator's narrower panel the preview grows into the free space: as wide as
         // the gap from the 300-wide panel (plus 20) to the margin, top level with the
-        // panel's, and as tall as leaves room for the lines and button under it above
-        // the footer at 500 (multiplayer adds four lines of notes).
+        // panel's, and as tall as leaves room for the size line and button under it
+        // above the footer at 500.
         float pvW = 192, pvy = hy + 46;
         if (gen) {
             pvy = hy + 20;
-            const float under = singlePlayer_ ? 94 : 162;
-            pvW = std::min(kLobbyW - kCreateMargin - (lx + 320), kLobbyH - 48 - pvy - under);
+            pvW = std::min(kLobbyW - kCreateMargin - (lx + 320), kLobbyH - 48 - pvy - 58);
         }
         const float pvH = pvW, pvx = kLobbyW - kCreateMargin - pvW;
         SDL_FRect pbox{pvx, pvy, pvW, pvH};
@@ -944,6 +939,11 @@ float createOptionPx(float maxW) {
             SDL_FRect dst{pvx + (pvW - iw) / 2, pvy + (pvH - ih) / 2, iw, ih};
             SDL_RenderCopyF(ren_, mapPreviewTex_, nullptr, &dst);
             drawStartMarkers(dst);   // no slots yet: the room tints them
+        } else if (gen && !genPreviewError_.empty()) {
+            // A recipe the retail data cannot build: the reason in the box.
+            for (const auto& [line, y, color] : {std::tuple{"MAP UNAVAILABLE", -16.0f, SDL_Color{180, 185, 195, 255}},
+                                                 std::tuple{"CHECK RETAIL DATA", 4.0f, SDL_Color{220, 140, 120, 255}}})
+                blockText(line, pvx + (pvW - blockWidth(line, 1.4f)) / 2, pvy + pvH / 2 + y, 1.4f, color);
         } else {
             const char* none = gen ? "GENERATING" : "NO PREVIEW";
             blockText(none, pvx + (pvW - blockWidth(none, 1.6f)) / 2, pvy + pvH / 2 - 7, 1.6f,
@@ -952,23 +952,8 @@ float createOptionPx(float maxW) {
         SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &pbox);
         if (!mapPreviewDims_.empty())
             blockText(mapPreviewDims_, pvx, pvy + pvH + 8, 1.6f, {160, 165, 180, 255});
-        if (gen) {
-            blockText(genPreviewError_.empty() ? genPreviewInfo_ : "MAP UNAVAILABLE", pvx, pvy + pvH + 28,
-                      1.4f, {180, 185, 195, 255});
-            if (!genPreviewError_.empty())
-                blockText("CHECK RETAIL DATA", pvx, pvy + pvH + 46, 1.4f, {220, 140, 120, 255});
-            if (!singlePlayer_) {   // the generator's notes (single player shows none)
-                blockText("3 HOME MANA SPOTS EACH", pvx, pvy + pvH + 104, 1.3f, {160, 175, 160, 255});
-                blockText("EXTRAS NEED FREE SPACE", pvx, pvy + pvH + 120, 1.3f, {160, 175, 160, 255});
-                if (genParams_.manaScatter)
-                    blockText("SCATTERED: " + std::to_string(genPreviewScattered_) + " NEUTRAL", pvx, pvy + pvH + 152,
-                              1.3f, {160, 175, 160, 255});
-                if (genParams_.layout == tak::mapgen::Islands || genParams_.layout == tak::mapgen::Ports)
-                    blockText("SIZE RESERVES SEA LANES", pvx, pvy + pvH + 136, 1.3f, {160, 175, 160, 255});
-            }
-        }
         // Keep the generator action below the preview and map description.
-        lbCycle(pvx, pvy + pvH + (gen ? 68 : 32), pvW, 26, gen ? "PICK AN EXISTING MAP" : "GENERATE RANDOM MAP", true,
+        lbCycle(pvx, pvy + pvH + 32, pvW, 26, gen ? "PICK AN EXISTING MAP" : "GENERATE RANDOM MAP", true,
               [this, gen](int) {
                   if (gen) { mpMapId_.clear(); mapPath_.clear(); }  // drop back to the list
                   else applyGenParams();                           // encode the current gen params

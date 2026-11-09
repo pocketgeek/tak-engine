@@ -2737,7 +2737,7 @@ private:
     // which slider is being dragged (0=doodad 1=mana 2=water, -1=none), and the three
     // slider bar rects for drag hit-testing.
     tak::mapgen::Params genParams_{};
-    std::string genPreviewInfo_, genPreviewError_;
+    std::string genPreviewError_;
     // The create screen's map list filter (lobby text field 6): the maps whose title or
     // name contains it, case-insensitively.
     std::string mapFilter_;
@@ -2746,7 +2746,6 @@ private:
     static constexpr float kCreateMargin = 16.0f;
     // The map list's width: from its column (the margin + 320) to 12 short of the preview.
     static constexpr float mapListW() { return kLobbyW - kCreateMargin - 192.0f - 12.0f - (kCreateMargin + 320.0f); }
-    int genPreviewScattered_ = 0;   // v9 neutral spots the preview roll placed
     int genSlider_ = -1;
     SDL_FRect genSliderRect_[9]{};
     void applyGenParams();             // re-encode genParams_ -> mpMapId_
