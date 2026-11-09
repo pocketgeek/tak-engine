@@ -220,6 +220,7 @@
         mapView_.setZoomSpeed(s.mouseZoomSpeed);
         edgeScrollSpeed_ = s.edgeScrollSpeed;
         edgeScrollOn_ = s.edgeScroll;
+        mouseZoomOn_ = s.mouseZoom;   // off: prepare() holds retail's 1:1 view
         uiScale_ = s.uiScale;
         screenShake_ = s.screenShake;                     // Options: camera shake
         buildBarAlign_ = std::clamp(s.buildBarAlign, 0, 2);   // Options: build-menu row
@@ -231,7 +232,7 @@
         setTextureFilter(s.textureFilter);
         healthBars_ = std::clamp(s.healthBars, 0, 2);
         statsPanel_ = s.statsPanel;                       // Options: minimap-strip readout
-        tacticalDotsOpt_ = s.tacticalDots;                // Options: zoomed-out unit dots
+        tacticalDotsOpt_ = s.tacticalDots && s.mouseZoom; // Options: zoomed-out unit dots (none at retail 1:1)
         tacticalDotsZoom_ = s.tacticalDotsZoom;
         hiddenUnitsMode_ = std::clamp(s.hiddenUnits, 0, tak::hiddenunits::kModeCount - 1);   // Options: units behind scenery
         hiddenFadeOpacity_ = tak::hiddenunits::fadeOpacity(s.hiddenFadeOpacity);
@@ -2290,12 +2291,27 @@
         cosmeticStep(dt);
     }
 
+    // Retail draws the map at native 1:1 scale: zoom there, keeping the centre of the world
+    // viewport rather than zooming toward the pointer (Shift+Z, and MOUSE ZOOM turned off).
+    void GameView::retailZoom(int winW, int winH, bool notice) {
+        const float cx=float(mapViewW(winW))*0.5f;
+        const float cy=float(mapViewH(winH))*0.5f;
+        const float oldZoom=std::max(mapView_.zoom(),1e-3f);
+        const float wx=mapView_.offX()+cx/oldZoom;
+        const float wz=mapView_.offY()+cy/oldZoom;
+        mapView_.setZoom(1.0f);
+        mapView_.clampZoom(mapViewW(winW),mapViewH(winH));   // a map smaller than the view: fill it
+        const float z=mapView_.zoom();
+        mapView_.setOffset(wx-cx/z,wz-cy/z);
+        if(notice){notice_="RETAIL ZOOM";noticeTimer_=2;}
+    }
+
     void GameView::prepare(int winW, int winH) {
         if (watchOnly() && !inLobbyPhase())   // the interface of the player on show
             if (const int shown = hudPlayer(); shown >= 0) showSideArt(framePlayer(shown).side);
         if (initialCamera_ && !inLobbyPhase() && !spectating_ && !replayMode_) {
             const auto [x,z]=*initialCamera_;
-            float initialZoom=1.25f;
+            float initialZoom=mouseZoomOn_ ? 1.25f : 1.0f;   // MOUSE ZOOM off: retail's 1:1
             // Reproducible render profiling through the normal network path.
             // devEnv is disabled in release; ordinary starting views stay fixed.
             if (const char* zoom=tak::devEnv("TAK_PROFILE_ZOOM"))
@@ -2306,6 +2322,13 @@
             initialCamera_.reset();
         }
 
+        // MOUSE ZOOM off: retail's 1:1 view, or just enough zoom to fill the window on a map
+        // smaller than it -- held every frame, so a resized window keeps the rule. (The
+        // benchmark's and the poster's own cameras are left alone.)
+        if (!mouseZoomOn_ && !benchmarkMode_ && !poster_ && winW > 0 && winH > 0) {
+            const float want = std::max(1.0f, mapView_.minZoom(mapViewW(winW), mapViewH(winH)));
+            if (std::abs(mapView_.zoom() - want) > 1e-4f) retailZoom(winW, winH, false);
+        }
         mapView_.ensureChunks(mapViewW(winW), mapViewH(winH));
         updateWorldFilter();   // after the camera settles, before anything draws
         if (!miniTex_) buildMinimap();
@@ -3829,19 +3852,7 @@
             case tak::Act::ToggleCounts: showCounts_ = !showCounts_; return true;
             case tak::Act::MakePoster: if (powerCodesOn()) startPoster(); return true;   // +MakePoster
             case tak::Act::UnitInfo: toggleUnitInfo(); return true;
-            case tak::Act::RetailZoom: {
-                // Retail draws the map at native 1:1 scale. Preserve the centre
-                // of the world viewport rather than zooming toward the pointer.
-                const float cx=float(mapViewW(winW_))*0.5f;
-                const float cy=float(mapViewH(winH_))*0.5f;
-                const float oldZoom=std::max(mapView_.zoom(),1e-3f);
-                const float wx=mapView_.offX()+cx/oldZoom;
-                const float wz=mapView_.offY()+cy/oldZoom;
-                mapView_.setZoom(1.0f);
-                mapView_.setOffset(wx-cx,wz-cy);
-                notice_="RETAIL ZOOM";noticeTimer_=2;
-                return true;
-            }
+            case tak::Act::RetailZoom: retailZoom(winW_, winH_, true); return true;
             case tak::Act::FullScreenRadar:
                 // A VIEW action, so it belongs here and not in the order switch
                 // below -- that one returns early when nothing is selected, and

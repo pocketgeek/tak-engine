@@ -1738,6 +1738,13 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                             page == "graphics" ? OptionsPage::Graphics : page == "interface" ? OptionsPage::Interface
                                                                                              : OptionsPage::Game);
             o.render(w, h);
+            if (const char* hover = tak::devEnv("TAK_SHOT_HOVER")) {   // =x,y: the pointer there (hover help)
+                SDL_Event m{}; m.type = SDL_MOUSEMOTION;
+                m.motion.x = std::atoi(hover);
+                if (const char* comma = std::strchr(hover, ',')) m.motion.y = std::atoi(comma + 1);
+                o.input(m, w, h);
+                o.render(w, h);
+            }
         }
         // Debug: TAK_SHOT_MENU=settings|benchmark|replay captures that panel.
         if (const char* m = tak::devEnv("TAK_SHOT_MENU")) {

@@ -627,14 +627,25 @@ void OptionsScreen::build(int channels) {
            [&](float v) { s_.treeSway = v > 0.5f; });
     // Zoomed far out, draw every unit as a minimap-style player-coloured dot instead
     // of its model (not in retail). Fog and selection behave exactly as for models.
-    toggle("TACTICAL DOTS", [&] { return s_.tacticalDots ? 1.0f : 0.0f; },
+    // Dots show only zoomed out, so with MOUSE ZOOM off (the map held at its own size)
+    // they read OFF, greyed, and the game ignores them -- the saved choice is untouched
+    // and comes back with MOUSE ZOOM.
+    toggle("TACTICAL DOTS", [&] { return s_.tacticalDots && s_.mouseZoom ? 1.0f : 0.0f; },
            [&](float v) { s_.tacticalDots = v > 0.5f; });
+    ctls_.back().enabled = [&] { return s_.mouseZoom; };
+    const auto needsZoom = [this] {
+        return s_.mouseZoom ? std::vector<std::string>{}
+                            : std::vector<std::string>{"OFF WHILE MOUSE ZOOM IS OFF: DOTS SHOW ONLY WHEN THE MAP IS ZOOMED OUT,",
+                                                       "AND WITHOUT MOUSE ZOOM IT STAYS AT ITS OWN SIZE. YOUR CHOICE COMES BACK WITH MOUSE ZOOM."};
+    };
+    ctls_.back().help = needsZoom;
     // When dots take over, as a position along the zoom-out range: 0% = only fully
     // zoomed out, 100% = from normal size outwards (client/tacticaldots.h).
     slider("TACTICAL DOTS ZOOM", 0, 100, [&] { return float(s_.tacticalDotsZoom); },
            [&](float v) { s_.tacticalDotsZoom = std::clamp(int(v + 0.5f), 0, 100); },
-           [](float v) { return pctOf(v, 100); });
-    ctls_.back().enabled = [&] { return s_.tacticalDots; };   // only meaningful with dots on
+           [this](float v) { return s_.mouseZoom ? pctOf(v, 100) : std::string("OFF"); });
+    ctls_.back().enabled = [&] { return s_.tacticalDots && s_.mouseZoom; };   // only meaningful with dots on
+    ctls_.back().help = needsZoom;
     // A unit behind a tree, rock or building, shown anyway (not in retail;
     // client/hiddenunits.h). Three stops; applied live.
     dropdown("HIDDEN UNITS",
@@ -763,8 +774,15 @@ void OptionsScreen::build(int channels) {
            [](float v) { return pctOf(std::round(v * 10) / 10, 1); });
 
     section("CAMERA");
+    toggle("MOUSE ZOOM", [&] { return s_.mouseZoom ? 1.0f : 0.0f; }, [&](float v) { s_.mouseZoom = v > 0.5f; });
+    ctls_.back().help = [] {
+        return std::vector<std::string>{
+            "THE MOUSE WHEEL ZOOMS THE MAP IN AND OUT.",
+            "OFF KEEPS THE ORIGINAL GAME'S VIEW, THE MAP AT ITS OWN SIZE (ZOOMED IN JUST ENOUGH TO FILL THE SCREEN ON A MAP TOO SMALL FOR IT)."};
+    };
     slider("MOUSE ZOOM SPEED", 0.25f, 4.0f, [&] { return s_.mouseZoomSpeed; },
            [&](float v) { s_.mouseZoomSpeed = v; }, [](float v) { return timesFmt(v); });
+    ctls_.back().enabled = [&] { return s_.mouseZoom; };
     toggle("EDGE SCROLLING", [&] { return s_.edgeScroll ? 1.0f : 0.0f; },
            [&](float v) { s_.edgeScroll = v > 0.5f; });
     slider("EDGE SCROLL SPEED", 0.25f, 4.0f, [&] { return s_.edgeScrollSpeed; },
@@ -1086,6 +1104,7 @@ void OptionsScreen::drawHelp(const Control& c) {
         const auto rows = chatbox::wrap(text, maxW, maxW - indent, width);
         for (size_t i = 0; i < rows.size(); ++i) lines.push_back({(i ? "    " : "") + rows[i], mark});
     }
+    if (lines.empty()) return;   // help that has nothing to say right now
     const float h = float(lines.size()) * lineH + 2 * pad - (lineH - 7 * px);
     const float footerTop = panel_.y + panel_.h - 52 * u_;
     float y = c.row.y + c.row.h + 2 * u_;

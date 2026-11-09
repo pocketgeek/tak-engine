@@ -2007,7 +2007,7 @@ missed are silent while the game catches up.
 | **Smooth GUI Art** | On | Sharpens the low-resolution interface art, menus, fonts, cursors and build-menu portraits with an edge-aware upscale. Applies at once. No cost per frame; uses more video memory. |
 | **Smooth Movies** | On | Removes the blocky compression artefacts from the game's movies. |
 | **Trees Sway in Wind** | On | Animated trees and their shadows. |
-| **Tactical Dots** | On | Zoomed far out, every unit is drawn as a dot in its player's colour, like the minimap, instead of its model. Not in the original game. See below. |
+| **Tactical Dots** | On | Zoomed far out, every unit is drawn as a dot in its player's colour, like the minimap, instead of its model. Not in the original game. See below. While **Mouse Zoom** is off it reads **Off**, greyed out with **Tactical Dots Zoom**, since the map is never zoomed out; your choice is kept and comes back with Mouse Zoom. |
 | **Tactical Dots Zoom** | 0% | How far out you must zoom before dots replace models. Greyed out while Tactical Dots is off. See below. |
 | **Hidden Units** | Fade | Units behind trees, rocks and buildings. **Off**: hidden, as in the original game. **Dots**: a unit whose centre is hidden shows its tactical dot on top. **Fade**: a tree, rock or building over a unit fades out. Not in the original game. See below. |
 | **Fade Opacity** | 50% | How visible a faded tree, rock or building stays: 100% no fade, 0% gone. Greyed out unless Hidden Units is Fade. |
@@ -2235,7 +2235,8 @@ mod packs, units), while labels such as **START** stay in capitals.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| **Mouse Zoom Speed** | 1× | Wheel zoom speed. |
+| **Mouse Zoom** | On | The mouse wheel zooms the map. **Off** keeps the original game's view: the map at its own size (1:1), zoomed in only as far as needed to fill the screen on a map smaller than it. The Benchmark's camera still zooms. |
+| **Mouse Zoom Speed** | 1× | Wheel zoom speed (greyed while Mouse Zoom is off). |
 | **Edge Scrolling** | On | Scroll when the cursor touches a screen edge. |
 | **Edge Scroll Speed** | 1× | Edge scrolling speed. |
 | **Cursor Size** | 1× | Cursor size, 1× (the original size) to 8×. |

@@ -152,6 +152,7 @@ struct Settings {
     float mouseZoomSpeed  = 1.0f;  // wheel-zoom sensitivity; 0.25..4.0
     float edgeScrollSpeed = 1.0f;  // edge-scroll rate;       0.25..4.0
     bool  edgeScroll      = true;  // pan when the cursor is at a screen edge
+    bool  mouseZoom       = true;  // the wheel zooms; off = retail's fixed 1:1 view (map permitting)
     int   cursorScale     = 1;     // custom mouse-cursor size multiplier; 1..8 (1 = retail size)
     bool  hardwareCursor  = true; // OS-tracked cursor: stays smooth when the game hitches
     bool  smoothMotion    = true;  // interpolate unit motion between 30Hz sim ticks (glide, not step)
@@ -265,7 +266,7 @@ struct Settings {
             && a.healthBars == b.healthBars && a.statsPanel == b.statsPanel
             && a.masterVol == b.masterVol && a.bgmVol == b.bgmVol && a.sfxVol == b.sfxVol && a.soundVoices == b.soundVoices && a.evenSoundLevels == b.evenSoundLevels
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
-            && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale
+            && a.edgeScroll == b.edgeScroll && a.mouseZoom == b.mouseZoom && a.cursorScale == b.cursorScale
             && a.hardwareCursor == b.hardwareCursor && a.smoothMotion == b.smoothMotion
             && a.playerName == b.playerName && a.accountName == b.accountName
             && a.streamRememberKey == b.streamRememberKey && a.streamLocalCopy == b.streamLocalCopy
@@ -428,7 +429,8 @@ inline Settings uiDefaults(const Settings& cur) {   // UI: interface + cursor
 inline Settings gameDefaults(const Settings& cur) {   // GAME: camera, tactical dots, screen shake (name and data folder kept)
     Settings d = cur;
     const Settings f;
-    d.mouseZoomSpeed = f.mouseZoomSpeed; d.edgeScroll = f.edgeScroll; d.edgeScrollSpeed = f.edgeScrollSpeed;
+    d.mouseZoom = f.mouseZoom; d.mouseZoomSpeed = f.mouseZoomSpeed;
+    d.edgeScroll = f.edgeScroll; d.edgeScrollSpeed = f.edgeScrollSpeed;
     d.tacticalDots = f.tacticalDots; d.tacticalDotsZoom = f.tacticalDotsZoom;
     d.screenShake = f.screenShake;
     return d;

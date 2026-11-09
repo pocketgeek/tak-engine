@@ -72,6 +72,7 @@ int main() {
     flips("treeSway",        [](Settings& s) { s.treeSway = !s.treeSway; });
     flips("screenShake",    [](Settings& s) { s.screenShake = !s.screenShake; });
     flips("tacticalDots",    [](Settings& s) { s.tacticalDots = !s.tacticalDots; });
+    flips("mouseZoom",       [](Settings& s) { s.mouseZoom = !s.mouseZoom; });
     flips("hiddenUnits",     [](Settings& s) { s.hiddenUnits = 1; });
     flips("hiddenUnits 0",   [](Settings& s) { s.hiddenUnits = 0; });
     flips("hiddenFadeOpacity", [](Settings& s) { s.hiddenFadeOpacity = 40; });
@@ -299,7 +300,7 @@ int main() {
             all.smoothMotion = !all.smoothMotion; all.scorecardScale = 1.5f; all.healthBars = 2; all.statsPanel = !all.statsPanel;
             all.buildBarAlign = 2; all.buildBarScale = 2.5f; all.idleBuilders = 3; all.idleBuildersScale = 2.0f;
             all.chatAlign = 1; all.chatScale = 2.0f; all.hardwareCursor = !all.hardwareCursor; all.cursorScale = 5;
-            all.mouseZoomSpeed = 2.0f; all.edgeScroll = !all.edgeScroll; all.edgeScrollSpeed = 3.0f;
+            all.mouseZoomSpeed = 2.0f; all.mouseZoom = !all.mouseZoom; all.edgeScroll = !all.edgeScroll; all.edgeScrollSpeed = 3.0f;
             const Settings pages = tak::gameDefaults(tak::uiDefaults(tak::graphicsDefaults(all)));
             const bool same = pages == tak::preferenceDefaults(all);
             std::printf("  %-23s %s\n", "pages => full reset", same ? "ok" : "FAIL (a field is on no Options page)");

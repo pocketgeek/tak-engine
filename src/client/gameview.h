@@ -692,6 +692,8 @@ public:
     // at a window edge — including the very bottom of the screen (the HUD panel
     // never sits at the extreme edge, so this doesn't fight the build icons).
     void edgeScroll(float dt, float zm);
+    void retailZoom(int winW, int winH, bool notice);   // 1:1, the view's centre kept (Shift+Z; MOUSE ZOOM off)
+    bool mouseZoomOn_ = true;       // Settings::mouseZoom: the wheel zooms
 
     // Real-time per-RENDER-frame work: camera and audio that must stay smooth
     // regardless of the deterministic sim. In a net game the sim (update()) only

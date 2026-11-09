@@ -242,7 +242,7 @@
                                            delta, buildLineWheel_, e.wheel.timestamp, buildLineWheelMs_),
                                        0, tak::client::kBuildLineMaxGap);
             buildLineGapShown_ = 1.5f;
-        } else if (e.type == SDL_MOUSEWHEEL) {
+        } else if (e.type == SDL_MOUSEWHEEL && mouseZoomOn_) {
             // Zoom toward the cursor: keep the world point under the mouse fixed.
             float wx = mapView_.offX() + mouseX_ / mapView_.zoom();
             float wz = mapView_.offY() + mouseY_ / mapView_.zoom();

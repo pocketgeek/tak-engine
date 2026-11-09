@@ -188,6 +188,7 @@ Settings loadSettings() {
         else if (key == "mouseZoomSpeed")  s.mouseZoomSpeed = asFloat(0.25f, 4.0f);
         else if (key == "edgeScrollSpeed") s.edgeScrollSpeed = asFloat(0.25f, 4.0f);
         else if (key == "edgeScroll")      s.edgeScroll = asBool();
+        else if (key == "mouseZoom")       s.mouseZoom = asBool();
         else if (key == "cursorScale")     s.cursorScale = asInt(1, 8);
         else if (key == "hardwareCursor")  s.hardwareCursor = asBool();
         else if (key == "smoothMotion")    s.smoothMotion = asBool();
@@ -319,6 +320,7 @@ std::string serializeSettings(const Settings& s) {
     o << "mouseZoomSpeed = " << s.mouseZoomSpeed << "\n";
     o << "edgeScrollSpeed = " << s.edgeScrollSpeed << "\n";
     o << "edgeScroll = " << (s.edgeScroll ? 1 : 0) << "\n";
+    o << "mouseZoom = " << (s.mouseZoom ? 1 : 0) << "\n";
     o << "cursorScale = " << s.cursorScale << "\n";
     o << "hardwareCursor = " << (s.hardwareCursor ? 1 : 0) << "\n";
     o << "smoothMotion = " << (s.smoothMotion ? 1 : 0) << "\n";
