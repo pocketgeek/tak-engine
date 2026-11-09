@@ -3985,13 +3985,24 @@ if(UNIX AND NOT APPLE)
   install(FILES res/linux/tak-client.desktop
                 res/linux/tak-cartographer.desktop
           DESTINATION share/applications)
+  install(FILES res/linux/us.pgnet.tak_engine.metainfo.xml DESTINATION share/metainfo)
 
   set(CPACK_PACKAGE_NAME "tak-engine")
   set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
   set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
       "Clean-room engine recreation of Total Annihilation: Kingdoms")
+  # The long description, vendor and packager are what package installers show
+  # (CPack's defaults read "Humanity" and "This is an installer created using CPack").
+  set(CPACK_PACKAGE_DESCRIPTION
+      "TAK Engine is a modern, clean-room re-implementation of Total Annihilation: Kingdoms (Cavedog, 1999), written in C++20 with SDL2. It plays the original campaign, skirmishes against the computer and online multiplayer, and includes Cartographer, a port of the original map editor, and takserver, a dedicated multiplayer server.\n\nThe game's data is not included: point the engine at your own retail Total Annihilation: Kingdoms install.")
   set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/pocketgeek/tak-engine")
+  set(CPACK_PACKAGE_VENDOR "Curtis Edge")
   set(CPACK_PACKAGE_CONTACT "Curtis Edge <pocket_geek@pgnet.us>")
+  set(CPACK_RPM_PACKAGE_DESCRIPTION "${CPACK_PACKAGE_DESCRIPTION}")
+  set(CPACK_RPM_PACKAGE_VENDOR "Curtis Edge")
+  set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
+  set(CPACK_RPM_SPEC_MORE_DEFINE "%define packager Curtis Edge <pocket_geek@pgnet.us>")
+  set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Curtis Edge <pocket_geek@pgnet.us>")
   set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
 
   set(CPACK_RPM_PACKAGE_LICENSE "GPL-3.0-or-later")   # SPDX identifier
