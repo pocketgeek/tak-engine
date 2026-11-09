@@ -237,7 +237,7 @@ The **Settings** button opens:
 
 | Entry | What it does |
 | --- | --- |
-| **Game** | Player name, game data folder, camera and tactical dots. See [Options](#options). |
+| **Game** | Player name, game data folder, camera, tactical dots and screen shake. See [Options](#options). |
 | **Graphics** | Display and graphics settings. See [Options](#options). |
 | **User Interface** | Interface and cursor settings. See [Options](#options). |
 | **Audio** | Sound device, volumes, speakers and custom music. See [Audio](#audio). |
@@ -1888,7 +1888,7 @@ The options are on three pages: **Graphics** ([Display](#display) and
 [Graphics](#graphics)), **User Interface** ([Interface](#interface), plus
 **Hardware Cursor** and **Cursor Size** under *Cursor*) and **Game**
 ([Player](#player), [Game data folder](#game-data-folder) and [Camera](#camera), with
-**Tactical Dots** and **Tactical Dots Zoom** at its end).
+**Tactical Dots**, **Tactical Dots Zoom** and **Screen Shake** at its end).
 Open them from **Settings** on the main menu, or from the game menu (**Esc**) in a
 game; sound has its own [Audio](#audio) page. Changes apply and are saved
 immediately; there is no Save button (**Defaults** is at the bottom left, **Back**
