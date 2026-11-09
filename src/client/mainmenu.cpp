@@ -804,7 +804,7 @@ struct MainMenu::Impl {
     }
 
     // ---- minimal block font + multiplayer server-select overlay ---------------
-    // A dropdown: the default server on top, then CUSTOM (with a text field under it),
+    // A dropdown: the default server on top, then NEW SERVER... (with a text field under it),
     // then every server that has connected successfully before (Settings::knownServers,
     // up to 64, most recent first) in a list that scrolls past kServerRowsShown rows.
     static constexpr const char* kDefaultServer = "tak.pgnet.us";
@@ -1086,7 +1086,7 @@ struct MainMenu::Impl {
             SDL_SetRenderDrawColor(ren, sel ? 160 : 90, sel ? 185 : 100, sel ? 235 : 130, 255);
             SDL_RenderDrawRectF(ren, &r);
             const int lan = i >= kRowLan && i < rememberedRow0() ? i - kRowLan : -1;
-            std::string label = i == 0 ? serverItems[0] : i == 1 ? std::string("CUSTOM...")
+            std::string label = i == 0 ? serverItems[0] : i == 1 ? std::string("NEW SERVER...")
                               : i == kRowLocal ? std::string("LOCAL SERVER")
                               : lan >= 0 ? lanGames[size_t(lan)].announce.game
                               : serverItems[size_t(i - rememberedRow0() + 1)];

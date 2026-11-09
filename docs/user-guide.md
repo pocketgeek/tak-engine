@@ -2268,7 +2268,7 @@ player's game stays in step.
   **LOCAL SERVER** once you are in the room, and join with just a name. See
   [Local server](#local-server).
 - **On your own server:** if you would rather host, run `takserver` on a machine
-  your friends can reach and give them its address to type under **CUSTOM...**.
+  your friends can reach and give them its address to type under **NEW SERVER...**.
   Only that machine needs an open port; see [Running a server](#running-a-server)
   and the [public server guide](public-server.md).
 
@@ -2278,12 +2278,12 @@ host's game mods are sent automatically.
 
 ### Joining a game
 
-![The Connect to Server panel: the default server tak.pgnet.us, CUSTOM..., two remembered servers each with a DELETE button, the account name and password fields, the note A NEW NAME IS REGISTERED WHEN YOU SIGN IN, and the CONNECT and BACK buttons](img/mp-connect.jpg)
+![The Connect to Server panel: the default server tak.pgnet.us, NEW SERVER..., two remembered servers each with a DELETE button, the account name and password fields, the note A NEW NAME IS REGISTERED WHEN YOU SIGN IN, and the CONNECT and BACK buttons](img/mp-connect.jpg)
 
 *Signing in to a server.*
 
 1. Click the **Multiplayer** door. The **CONNECT TO SERVER** panel opens.
-2. Click a server in the list, or **CUSTOM...** to type its address. Then come
+2. Click a server in the list, or **NEW SERVER...** to type its address. Then come
    **LOCAL SERVER** and the games announced on your network (see
    [Local server](#local-server)), and under them the servers you have signed in to
    before (up to 64, most recent first; the mouse wheel scrolls them); **DELETE**
@@ -2349,7 +2349,7 @@ straight into your room. If the game is full or has a password, they are told wh
 **SPECTATE**, beside **CONNECT** (greyed until a network game is picked), watches it instead:
 a game still in its room is watched from the moment the host starts it, and a
 started game (listed **LIVE**, which can no longer be joined) is watched at once,
-if its host allows spectators. Typing your computer's address under **CUSTOM...** also
+if its host allows spectators. Typing your computer's address under **NEW SERVER...** also
 works and goes straight into the room too.
 
 The game lives on your computer, so leaving closes it for everyone. **LEAVE** in the
