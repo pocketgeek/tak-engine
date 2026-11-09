@@ -116,6 +116,25 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         const auto* u = world.unit(id);
         return u && u->player == int(c.player);
     };
+    // Whether the unit may take this as a new order: what each verb checks
+    // before anything is cancelled. The front insert below asks first too, as
+    // it rewinds the unit's list -- and a Load's carrier's, which may be any
+    // player's unit -- before it issues the order.
+    auto admits = [&] {
+        switch (c.kind) {
+            case Cmd::Load: return world.canLoadInto(c.unitId, c.targetId);
+            case Cmd::Train: case Cmd::RepeatTrain: case Cmd::Build: case Cmd::BuildManaArea:
+                return producer && world.canProduce(*producer, reg.find(c.type));
+            case Cmd::Assist: {
+                // HelpBuild's own eligibility (World::canHelpBuild -- same owner,
+                // a mobile builder, the build menu when builderlimited).
+                const Unit* site = world.unit(c.targetId);
+                return producer && site && !producer->underConstruction && world.canHelpBuild(*producer, *site);
+            }
+            case Cmd::Resurrect: return world.reviveKind(c.unitId, c.targetId) != 0;
+            default: return true;
+        }
+    };
     // Retail's queue modifiers (net/lockstep.h kQueueFront, kQueueToggle): a
     // player's Shift/Ctrl order on a queued one of its kind takes it back, and
     // Ctrl puts the order at the head of the queue -- for a producer's rally
@@ -157,6 +176,9 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
                 }
                 if (world.removeQueuedMatch(c.unitId, rally, m)) return;
             }
+            // Taking a queued order back (above) is not a new one; a new one the
+            // unit cannot take stops here, before anything is rewound.
+            if (!admits()) return;
             // A Load is the passenger's and the carrier's (World::loadInto queues
             // the carrier's pickup), so Ctrl puts it at the head of both lists.
             const auto* carrier = c.kind == Cmd::Load ? world.unit(c.targetId) : nullptr;
@@ -225,36 +247,24 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
             if (owns(c.unitId)) { world.cancelBuilds(c.unitId); world.stop(c.unitId); }
             break;
         case Cmd::Train:
-            if (owns(c.unitId)) world.train(c.unitId, reg.find(c.type), c.targetId);
+            if (owns(c.unitId) && admits()) world.train(c.unitId, reg.find(c.type), c.targetId);
             break;
         case Cmd::Unqueue:
             if (owns(c.unitId)) world.dequeue(c.unitId, reg.find(c.type), std::max(1, c.targetId));
             break;
         case Cmd::Build:
-            if (owns(c.unitId)) world.queueBuild(c.unitId, reg.find(c.type), c.x, c.z, c.queue);
+            if (owns(c.unitId) && admits()) world.queueBuild(c.unitId, reg.find(c.type), c.x, c.z, c.queue);
             break;
         case Cmd::BuildManaArea:
-            if (owns(c.unitId)) {
-                const auto* b=world.unit(c.unitId);
-                const auto* type=reg.find(c.type);
-                const auto& menu=reg.buildable(b->type ? b->type->id : "");
-                if (b->type && type && (!b->type->builderLimited ||
-                    std::find(menu.begin(),menu.end(),type->id)!=menu.end()))
-                    world.queueManaBuildArea(c.unitId,type,c.x,c.z,c.x2,c.z2,c.queue!=0);
-            }
+            if (owns(c.unitId) && admits())
+                world.queueManaBuildArea(c.unitId, reg.find(c.type), c.x, c.z, c.x2, c.z2, c.queue != 0);
             break;
         case Cmd::Assist:
-            // Help/resume an unfinished unit: HelpBuild's own eligibility
-            // (World::canHelpBuild -- same owner, a mobile builder, the build
-            // menu when builderlimited), checked before anything is cancelled
-            // so a refused order leaves the builder's work alone.
-            if (owns(c.unitId)) {
-                const Unit* b = world.unit(c.unitId);
-                const Unit* site = world.unit(c.targetId);
-                if (b && site && !b->underConstruction && world.canHelpBuild(*b, *site)) {
-                    redirect();
-                    world.assist(c.unitId, c.targetId, c.queue);
-                }
+            // Help/resume an unfinished unit, checked (admits) before anything
+            // is cancelled so a refused order leaves the builder's work alone.
+            if (owns(c.unitId) && admits()) {
+                redirect();
+                world.assist(c.unitId, c.targetId, c.queue);
             }
             break;
         case Cmd::Guard:
@@ -270,7 +280,11 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
             if (owns(c.unitId)) world.setWeapon(c.unitId, c.targetId);
             break;
         case Cmd::RepeatTrain:
-            if (owns(c.unitId)) world.setRepeat(c.unitId, reg.find(c.type));
+            // The type it repeats again ends the repeat: taking work back, not a new order.
+            if (owns(c.unitId)) {
+                const auto* type = reg.find(c.type);
+                if (type && (producer->repeatType == type || admits())) world.setRepeat(c.unitId, type);
+            }
             break;
         case Cmd::Destroy:
             if (owns(c.unitId)) world.destroy(c.unitId);
@@ -302,7 +316,7 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         case Cmd::Resurrect:
             // Checked before anything is cancelled, so a caster that cannot
             // raise that body keeps its work.
-            if (owns(c.unitId) && world.reviveKind(c.unitId, c.targetId)) {
+            if (owns(c.unitId) && admits()) {
                 redirect();
                 world.resurrect(c.unitId, c.targetId, c.queue);
             }

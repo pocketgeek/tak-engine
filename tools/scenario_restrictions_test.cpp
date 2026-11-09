@@ -20,6 +20,11 @@ int main() try {
     for (const char* name:{"soldier","araking","tarnecro"})
         textFile(std::string("units/")+name+".fbi",std::string("[UNITINFO]{\nunitname=")+name+
             ";\nobjectname="+name+";\nmaxdamage=100;\nfootprintx=1;\nfootprintz=1;\ncanmove=1;\nmaxvelocity=1;\nbuilder=1;\nworkertime=100;\n}");
+    // Each builder's menu offers both types: the Use Only list, not the menu, is what
+    // refuses tarnecro below (a player's order takes only a type on the menu).
+    for (const char* builder:{"soldier","araking","tarnecro"})
+        for (const char* name:{"soldier","tarnecro"})
+            textFile(std::string("canbuild/")+builder+"/"+name+".tdf","[Menu]{\npriority=1;\n}");
     tnt::Map map;map.width=map.height=64;map.blocksX=map.blocksY=32;
     map.heights.assign(4096,40);map.features.assign(4096,0xffff);
     map.tileKeys.assign(1024,0);map.tileCols.assign(1024,0);map.tileRows.assign(1024,0);
@@ -29,7 +34,7 @@ int main() try {
     textFile("kmap/restricted.ota",ota);
     textFile("kmap/restricted.tdf","[SOLDIER]{}\n");
     hpi::Vfs vfs;vfs.setMapFiles(files);
-    sim::TypeRegistry registry;registry.loadDir(vfs,"units");
+    sim::TypeRegistry registry;registry.loadDir(vfs,"units");registry.loadBuildTree(vfs,"canbuild");
     const auto* allowed=registry.find("soldier"),*denied=registry.find("tarnecro");
     check(allowed && denied,"test unit types missing");
     sim::MatchConfig config;config.vfs=&vfs;config.mapPath="kmap/restricted.tnt";

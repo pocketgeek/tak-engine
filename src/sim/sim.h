@@ -2461,6 +2461,15 @@ public:
     // not `b`, has b's OWNER (allies do not qualify), and b is a builder with a
     // mover whose build menu holds the site's type when it is builderlimited.
     bool canHelpBuild(const Unit& b, const Unit& site) const;
+    // A player's production order (Train, RepeatTrain, Build, BuildManaArea:
+    // applyCommand asks before anything is queued or cancelled): `b` is a live
+    // builder, `type` is on b's own build menu -- the menu the HUD offers, the
+    // same whoever owns b; retail's MobileBuild tests it too, 0x519850, and
+    // builderlimited narrows only HelpBuild -- and no game restriction forbids
+    // it (buildAllowed). Mission scripts (orderTrain) and the retail AI's base
+    // planner call World::train directly and are not held to the menu; the
+    // server's AIs send commands and are.
+    bool canProduce(const Unit& b, const UnitType* type) const;
     // Retail repair eligibility (0x519d40): a damaged, finished, allied unit
     // other than b, which is a mobile builder; a flying b also needs the
     // target's top above the sea (repairTopAboveSea).

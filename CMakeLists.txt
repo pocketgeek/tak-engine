@@ -1404,6 +1404,11 @@ add_test(NAME local_server COMMAND local_server_test)
 set_tests_properties(local_server PROPERTIES TIMEOUT 30)
 target_link_libraries(server_commands_test PRIVATE tak-formats)
 add_test(NAME server_commands COMMAND server_commands_test)
+# A player's order the sim refuses (a Load it may not board, a type off the
+# producer's build menu) changes nothing, through the server's parser.
+add_executable(command_validation_test tools/command_validation_test.cpp)
+target_link_libraries(command_validation_test PRIVATE tak-formats)
+add_test(NAME command_validation COMMAND command_validation_test)
 # Selection-order transactions at the server (server/orders.h, protocol 267).
 add_executable(server_orders_test tools/server_orders_test.cpp)
 target_link_libraries(server_orders_test PRIVATE tak-formats)
