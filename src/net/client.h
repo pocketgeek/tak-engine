@@ -169,6 +169,8 @@ public:
     // The account we are signed in as -- empty on a server that asks for none.
     // This, not the local settings name, is who the player is in a lobby.
     const std::string& account() const { return account_; }
+    // The server is a player's LOCAL SERVER (takserver --lan): the Welcome said so.
+    bool lanServer() const { return lanServer_; }
 
     // Pump the socket: read frames, dispatch, flush writes. Call every frame.
     // Returns false once the connection is gone (see error()).
@@ -506,6 +508,7 @@ private:
     std::string loginUser_, loginPass_;
     Auth auth_ = Auth::None;
     std::string account_;
+    bool lanServer_ = false;
     struct PendingAuth {
         std::vector<uint8_t> clientNonce, serverNonce, salt;
         uint32_t iters = 0;

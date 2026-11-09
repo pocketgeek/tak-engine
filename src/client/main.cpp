@@ -127,6 +127,20 @@
 
 namespace {
 // Pick a free loopback TCP port by binding to 0 and reading the assignment.
+// The LOCAL SERVER's port: the usual 7677 when nothing else holds it on any interface
+// (so a typed address needs no port), else any free one (the LAN announcement names it).
+int pickLanPort() {
+    tak::net::netStartup();
+    int fd = int(socket(AF_INET, SOCK_STREAM, 0));
+    if (fd >= 0) {
+        sockaddr_in a{}; a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_ANY); a.sin_port = htons(7677);
+        const bool free = ::bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0;
+        tak::net::sockClose(fd);
+        if (free) return 7677;
+    }
+    return 0;
+}
+
 int pickFreePort() {
     tak::net::netStartup();
     int fd = int(socket(AF_INET, SOCK_STREAM, 0));
@@ -145,12 +159,16 @@ int pickFreePort() {
 // --no-auth because there is nobody to sign in AS (this server exists for one
 // player, on one machine), and --local so that concession stays on this machine:
 // an unauthenticated server must not be reachable from the network.
+// lan: the CONNECT screen's LOCAL SERVER instead -- takserver --lan, unencrypted and
+// without accounts on every interface, so players on the network can join it.
 bool spawnLocalServer(tak::LocalServer& server, const std::string& serverBin,
-                      const std::string& dataRoot, int port) {
+                      const std::string& dataRoot, int port, bool lan = false) {
     // It shares this player's per-user map folder (hpi::userMapRoot): a map the client
     // verified (a download, a --play-map copy) is there for the referee too, and
     // nothing is written into the game data folder.
-    std::vector<std::string> args{"--port", std::to_string(port), "--data", dataRoot, "--no-auth", "--local"};
+    std::vector<std::string> args{"--port", std::to_string(port), "--data", dataRoot};
+    if (lan) args.push_back("--lan");
+    else args.insert(args.end(), {"--no-auth", "--local"});
     if (const auto cache = tak::hpi::userMapRoot(); !cache.empty()) {
         const auto text = cache.u8string();
         args.insert(args.end(), {"--map-cache-dir", std::string(text.begin(), text.end())});
@@ -1256,6 +1274,11 @@ int main(int argc, char** argv) {
     // (single-player -> local server + lobby; multiplayer -> connect + browser).
     std::string rememberServer;   // menu-picked MP server; saved to Settings on a
                                   // successful connect (feeds the CONNECT dropdown)
+    bool serverPlainFallback = false;   // no scheme typed: TLS first, then unencrypted
+    // The CONNECT screen's LOCAL SERVER (start one here and host on it) or a LAN game
+    // heard on the network: both go by the player's name alone.
+    auto connectKind = tak::MainMenu::Connect::Server;
+    bool lanHosting = false;
     if (mode == "menu") {
         if (dataRoot.empty()) { std::fprintf(stderr, "menu: needs --data <retail-install-dir>\n"); return 1; }
         std::string menuServer;
@@ -1311,6 +1334,7 @@ int main(int argc, char** argv) {
                 loginUser = menu.chosenAccount();
                 loginPass = menu.chosenPassword();
                 menu.clearPassword();
+                connectKind = menu.chosenConnect();
             }
             // SETTINGS -> LOAD REPLAY. Routed through the ordinary replay launch below
             // by setting the mode here, so the menu path and the debug CLI share one
@@ -1351,7 +1375,20 @@ int main(int argc, char** argv) {
         // overwritten with "game" here.
         if (choice != tak::MainMenu::Choice::Replay) mode = "game";
         if (args.empty()) args.push_back("athri cay");   // fallback map; the lobby has its own map list
-        if (choice == tak::MainMenu::Choice::Multiplayer) {
+        lanHosting = choice == tak::MainMenu::Choice::Multiplayer && !tokenLaunch &&
+                     connectKind == tak::MainMenu::Connect::LanHost;
+        if (choice == tak::MainMenu::Choice::Multiplayer && !tokenLaunch &&
+            connectKind != tak::MainMenu::Connect::Server) {
+            // A LAN game has no accounts: the name is the player, never blank (the
+            // menu checked it), remembered like an account name; no password exists.
+            playerName = loginUser;
+            if (settings.accountName != loginUser) { settings.accountName = loginUser; tak::saveSettings(settings); }
+            loginUser.clear();
+            tak::crypto::wipe(loginPass);
+        }
+        if (lanHosting) {
+            rememberServer.clear(); lastServer.clear();   // this session's own server: nothing to go back to
+        } else if (choice == tak::MainMenu::Choice::Multiplayer) {
             std::string sv = menuServer.empty() ? std::string("127.0.0.1") : menuServer;
             rememberServer = sv;   // remembered (as picked/typed) if the connect succeeds
             lastServer = sv;
@@ -1363,6 +1400,9 @@ int main(int argc, char** argv) {
             }
             serverHost = address->host;
             serverPort = address->port;
+            serverPlainFallback = address->plainFallback;
+            // A LAN game heard on the network is not remembered: it is gone with its host.
+            if (connectKind == tak::MainMenu::Connect::LanJoin) rememberServer.clear();
         } else {
             // Remote credentials belong to that multiplayer session. Leaving the
             // account set makes the client reject the private server's no-auth
@@ -1404,14 +1444,15 @@ int main(int argc, char** argv) {
     if (mode == "game" && serverHost.empty() && !mpHeadless && !localHarness) {
         // Single-player: auto-launch a private local server and play a 1-v-AI game
         // on it (the AI runs server-side). Not visible to other players.
-        int p = pickFreePort();
+        int p = lanHosting ? pickLanPort() : 0;
+        if (p <= 0) p = pickFreePort();
         serverBin = resolveServerBin(argv[0]);
 #ifndef NDEBUG
         // TAK_LOCAL_SERVER_BIN=<path>: run this instead (a missing or failing server
         // exercises the launch-failure path; see the menu_launch_failure test).
         if (const char* bin = tak::devEnv("TAK_LOCAL_SERVER_BIN"); bin && *bin) serverBin = bin;
 #endif
-        if (p <= 0 || !spawnLocalServer(localServer, serverBin, dataRoot, p)) {
+        if (p <= 0 || !spawnLocalServer(localServer, serverBin, dataRoot, p, lanHosting)) {
             std::fprintf(stderr, "single-player: could not launch a local server (%s)\n",
                          serverBin.c_str());
             if (failLaunch("could not start the local server (" + serverBin + ")")) continue;
@@ -1422,9 +1463,9 @@ int main(int argc, char** argv) {
         // (mode 0); CLI single-player creates its room and seats the player unready
         // (mode 7), then also waits for AIs, READY and START unless TAK_SP_AIS is set.
         mpAutoMode = benchmarkLaunch ? 1
-                   : !campaignStem.empty() ? 8 : (menuInteractive ? 0 : 7);
-        std::fprintf(stderr, "single-player: local server on port %d%s\n", p,
-                     !campaignStem.empty() ? " (campaign)" : menuInteractive ? " (lobby)" : "");
+                   : !campaignStem.empty() ? 8 : (menuInteractive || lanHosting ? 0 : 7);
+        std::fprintf(stderr, "%s: local server on port %d%s\n", lanHosting ? "local server" : "single-player", p,
+                     lanHosting ? " (LAN, unencrypted)" : !campaignStem.empty() ? " (campaign)" : menuInteractive ? " (lobby)" : "");
     }
 
     // Connect to the multiplayer server, if requested.
@@ -1468,8 +1509,30 @@ int main(int argc, char** argv) {
         uint64_t lobbyProgressAt=SDL_GetTicks64();
         bool ok = false;
         std::string serverDied;   // the local server exited before it would answer
+        std::string transportWhy;   // a failed connect, said for the transports tried
         for (int attempt = 0; attempt < (localServer.started() ? 200 : 1) && !ok; ++attempt) {
             ok = mp->connect(serverHost, uint16_t(serverPort), playerName);
+            if (!ok && !localServer.started()) {
+                // No scheme typed: TLS, then the same address unencrypted. A host that
+                // cannot be resolved or reached is not tried twice.
+                const std::string shown = serverHost.starts_with("tls://") ? serverHost.substr(6) : serverHost;
+                const std::string at = shown + ":" + std::to_string(serverPort);
+                const std::string first = mp->error();
+                const bool unreachable = first.starts_with("cannot resolve") || first.starts_with("connect failed");
+                if (serverPlainFallback && serverHost.starts_with("tls://") && !unreachable) {
+                    if (lobbyLoading) lobbyLoading->step("Connecting to " + shown + " unencrypted", 35);
+                    ok = mp->connect(shown, uint16_t(serverPort), playerName);
+                    if (ok) serverHost = shown;
+                    else transportWhy = "could not connect to " + at + " with TLS (" + first +
+                                        ") or unencrypted (" + mp->error() + ")";
+                } else if (unreachable) {
+                    transportWhy = first.starts_with("cannot resolve") ? "cannot find the server " + shown
+                                                                       : "no server answered at " + at;
+                } else {
+                    transportWhy = std::string("could not connect to ") +
+                                   (serverHost.starts_with("tls://") ? "tls://" : "tcp://") + at + ": " + first;
+                }
+            }
             if (!ok && localServer.started()) {
                 // A dead server will never listen: say so now, not after the 10 s poll.
                 if (int code = 0; localServer.exited(&code)) {
@@ -1484,6 +1547,7 @@ int main(int argc, char** argv) {
         }
         if (!ok) {
             const std::string why = !serverDied.empty() ? serverDied
+                                  : !transportWhy.empty() ? transportWhy
                                   : mp->error().empty() ? "COULD NOT CONNECT TO " + serverHost
                                                         : mp->error();
             std::fprintf(stderr, "server: %s\n", why.c_str());
@@ -1654,6 +1718,7 @@ int main(int argc, char** argv) {
                                 gameView->setCanReturnToMenu(); }   // in-game menu can return to it
                 if (!campaignStem.empty()) gameView->setMissionStem(campaignStem);   // autoMode 8 hosts this mission
                 else if (menuInteractive) gameView->setSinglePlayer();  // menu SP: SP-flavoured lobby, Create-first
+                else if (lanHosting) gameView->setLanHost(playerName + "'s Game");   // LOCAL SERVER: its host
                 else if (benchmarkLaunch) {   // menu Benchmark: all-AI watch run + metrics
                     gameView->setBenchmark(benchmarkLevel, settings.benchmarkPathfinding, settings.benchmarkSpeed);
                 }

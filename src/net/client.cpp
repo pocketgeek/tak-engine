@@ -35,7 +35,7 @@ bool MpClient::connect(const std::string& host, uint16_t port, const std::string
     crypto::wipe(keys_.serverKey.data(), keys_.serverKey.size());
     forgetResume();
     host_ = host; port_ = port;
-    auth_ = Auth::None; account_.clear(); pend_ = PendingAuth{};
+    auth_ = Auth::None; account_.clear(); pend_ = PendingAuth{}; lanServer_ = false;
     deriveDone_.store(false, std::memory_order_relaxed);
     conn_ = Conn{}; err_.clear();
     resetModTransfer();resetMapTransfer();
@@ -491,12 +491,17 @@ void MpClient::onFrame(const Frame& f) {
         case Msg::Welcome:
             myId_ = r.u32();
             name_ = r.str();
+            lanServer_ = r.u8() == 1;   // absent (0) from a server without the byte
             // A Welcome is NOT a login. If we came here with credentials, the
             // only way in is a verified AuthResult -- otherwise a machine posing
             // as the server could skip the whole exchange and answer our Hello
             // with a bare Welcome, and we would happily play on a connection that
             // proved nothing.
-            if (!loginUser_.empty() && auth_ != Auth::Ok && auth_ != Auth::Created) {
+            // A player's LOCAL SERVER has no accounts at all, and says so: the name is
+            // all it takes, and the password goes nowhere (it was never sent).
+            if (!loginUser_.empty() && auth_ != Auth::Ok && auth_ != Auth::Created && lanServer_) {
+                loginUser_.clear(); crypto::wipe(loginPass_);
+            } else if (!loginUser_.empty() && auth_ != Auth::Ok && auth_ != Auth::Created) {
                 failAuth("the server let us in without checking the account -- "
                          "do not trust this connection");
                 return;

@@ -92,9 +92,10 @@ float createOptionPx(float maxW) {
             // MpClient preserves the server's Reject reason (e.g. "protocol version
             // mismatch (server 28 / client 29)") -- and give the player a way OUT.
             float my = winH / 2.0f - 40;
-            blockText("DISCONNECTED", cx - blockWidth("DISCONNECTED", 2.6f) / 2, my,
-                      2.6f, {255, 130, 110, 255});
-            std::string why = mp_->error().empty() ? std::string("the server closed the connection")
+            const char* head = lanJoinError_.empty() ? "DISCONNECTED" : "CANNOT JOIN";
+            blockText(head, cx - blockWidth(head, 2.6f) / 2, my, 2.6f, {255, 130, 110, 255});
+            std::string why = !lanJoinError_.empty() ? lanJoinError_
+                            : mp_->error().empty() ? std::string("the server closed the connection")
                                                    : mp_->error();
             // Long reasons (version-mismatch text) wrap onto two centred lines.
             auto rows = tak::uiTextWrap(why, 1.8f, 600);
@@ -109,10 +110,39 @@ float createOptionPx(float maxW) {
                   [this] { menuRequested_ = true; });
             return;
         }
+        // Someone else's LOCAL SERVER: into its open game, never the game list.
+        if (st == tak::net::MpClient::State::Lobby && mp_->lanServer() && !lanHost_) {
+            lanJoinStep();
+            if (mp_->state() == tak::net::MpClient::State::Lobby) {
+                const char* note = "JOINING THE GAME...";
+                blockText(note, cx - blockWidth(note, 2.0f) / 2, winH / 2.0f, 2.0f, {200, 200, 210, 255});
+            }
+            return;
+        }
         if (st != tak::net::MpClient::State::InRoom) modsScreen_ = false;   // left the room: back to it next time
         if (st == tak::net::MpClient::State::InRoom) { if (modsScreen_) drawModsScreen(winW, winH); else drawRoom(winW, winH); }
         else if (lobbyScreen_ == LobbyScreen::Create) drawCreate(winW, winH);
         else drawBrowser(winW, winH);
+    }
+
+    void GameView::lanJoinStep() {
+        const uint64_t now = SDL_GetTicks64();
+        auto fail = [&](std::string why) { lanJoinError_ = std::move(why); mp_->disconnect(lanJoinError_); };
+        if (lanJoinSent_) {   // asked: in the room by now, or the server said why not
+            if (!mp_->joinError().empty()) fail(mp_->joinError());
+            return;
+        }
+        if (!lanJoinAtMs_) lanJoinAtMs_ = now;
+        if (now - mpListMs_ > 1000) { mp_->listGames(); mpListMs_ = now; }
+        bool started = false;
+        for (const auto& g : mp_->games()) {
+            if (g.running) { started = true; continue; }
+            mp_->joinGame(g.id, "");
+            lanJoinSent_ = true;
+            return;
+        }
+        if (started) fail("the game on this server has already started");
+        else if (now - lanJoinAtMs_ > 5000) fail("the host has not opened a game on this server yet");
     }
 
     void GameView::drawBrowser(int winW, int winH) {
@@ -517,7 +547,7 @@ float createOptionPx(float maxW) {
         pref.powerCodes = createPowerCodes_;
         pref.unitCap = createUnitCap_;
         pref.fog = createFog_;
-        pref.name = createName_;
+        if (!lanHost_) pref.name = createName_;   // a LOCAL SERVER game is always named for its host
         pref.generated = tak::mapgen::isGeneratedMapId(mpMapId_);
         pref.generator = tak::mapgen::encodeMapId(genParams_);
         pref.mapSort = mapSort_; pref.mapSortDir = mapSortDir_;
@@ -570,7 +600,7 @@ float createOptionPx(float maxW) {
             createUnitCap_ = pref.unitCap == 250 || pref.unitCap == 500 || pref.unitCap == 1000 || pref.unitCap == 2000
                 ? uint16_t(pref.unitCap) : 2000;
             createFog_ = uint8_t(pref.fog);
-            createName_ = pref.name;
+            if (!lanHost_) createName_ = pref.name;   // a LOCAL SERVER game keeps its host's name
             mapSort_ = pref.mapSort; mapSortDir_ = pref.mapSortDir;
             if (!mapList_.empty()) sortMapList();
             if (tak::mapgen::isGeneratedMapId(pref.generator)) {
@@ -701,7 +731,7 @@ float createOptionPx(float maxW) {
         // BACK: multiplayer returns to the game browser it came from; a private
         // single-player game has no browser, so it returns to the menu.
         lbBtn(x, by, bw, 30, "BACK", true, [this] {
-            if (singlePlayer_) menuRequested_ = true;
+            if (singlePlayer_ || lanHost_) menuRequested_ = true;
             else lobbyScreen_ = LobbyScreen::Browser;
         });
 

@@ -231,6 +231,9 @@ public:
     // the Create screen (the browser is empty by design) and mark it single-player
     // (labels change, no password / no game browser).
     void setSinglePlayer() { lobbyScreen_ = LobbyScreen::Create; singlePlayer_ = true; }
+    // LOCAL SERVER from the CONNECT screen: the host opens on the create screen with the
+    // game already named; BACK there leaves for the menu (the server is this session's).
+    void setLanHost(const std::string& gameName) { lobbyScreen_ = LobbyScreen::Create; createName_ = gameName; lanHost_ = true; }
     void prepareLobbyMaps(tak::LoadScreen& progress) { buildMapList(&progress); }
     // Return-to-menu request: a lobby/in-game action sets this; main()'s outer loop
     // tears the session down and re-shows the front-end menu.
@@ -2662,6 +2665,12 @@ private:
     bool menuRequested_ = false;   // set by a MAIN MENU action -> main() returns to the front-end
     bool quitRequested_ = false;   // set by the in-game QUIT button -> main() exits the app
     bool singlePlayer_ = false;    // menu single-player: private local game (SP-flavoured lobby)
+    // A player's LOCAL SERVER (MpClient::lanServer). Its host is lanHost_; anyone else
+    // goes straight into the open game there (lanJoinStep), or is told why not.
+    bool lanHost_ = false, lanJoinSent_ = false;
+    uint64_t lanJoinAtMs_ = 0;
+    std::string lanJoinError_;
+    void lanJoinStep();
     bool spSpectate_ = false;      // SP: watch the AIs (host takes no slot)
     bool specAutoSeated_ = false;  // SP spectate: one-shot -- fill every open slot with a random-race AI
     bool externalLobbyMusic_ = false;   // front-end owns the lobby BGM -> suppress ours

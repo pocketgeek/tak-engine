@@ -26,6 +26,7 @@
 #include "server/roomtick.h"
 #include "server/status.h"
 #include "net/matchconfig.h"
+#include "net/discovery.h"
 #include "tnt/mapgen.h"
 #include "tnt/ota.h"
 #include "net/netcompat.h"
@@ -452,6 +453,10 @@ public:
     void setLimits(tak::srv::Limits limits) {limits_=limits;}
     void closeRegistration() { registrationOpen_=false; }
     void setLoopbackOnly() { loopbackOnly_ = true; }
+    // A player's LOCAL SERVER (--lan): no accounts, plain TCP on every interface; it
+    // announces its open game on the LAN once a second and tells clients in its
+    // Welcome, so a joiner goes straight into that game.
+    void setLan() { lan_ = true; }
     // Load (or start) the account file. Returns false with `err` set if it exists
     // but cannot be read -- starting anyway would mean running an open server
     // while looking like a closed one.
@@ -500,6 +505,12 @@ private:
     std::shared_ptr<tak::net::TlsContext> tlsContext_;
     std::shared_ptr<tak::srv::AcmeCertificates> acme_;
     bool loopbackOnly_ = false;
+    bool lan_ = false;
+    tak::net::LanBeacon beacon_;
+    uint64_t beaconAtMs_ = 0, lanNonce_ = 0;
+    std::map<std::string, std::string> lanMapTitles_;   // map id -> its shown title, for the announcement
+    std::map<std::string, std::string> lanTranslate_;   // translate/*maps.tdf: lowercase key -> English
+    void announceLan(uint64_t now);
     tak::srv::AccountStore accounts_;
     SharedWorkBudget acceptKeys_,lobbyWorkKeys_;
     WorkBudget acceptWork_,commandBytes_,commandCount_,commandLogs_;
@@ -806,7 +817,7 @@ void Server::handshake(Client& c, const Frame& f) {
 
 void Server::sendWelcome(Client& c) {
     c.state = Client::Lobby;
-    Writer w; w.u32(c.id); w.str(c.name);
+    Writer w; w.u32(c.id); w.str(c.name); w.u8(lan_ ? 1 : 0);   // a LAN host's server (a trailing byte older clients ignore)
     c.conn.send(Msg::Welcome, w);
     std::fprintf(stderr, "client %u '%s' joined lobby\n", c.id, c.name.c_str());
 }
@@ -3021,6 +3032,54 @@ void Server::onFrame(Client& c, const Frame& f) {
     }
 }
 
+// The open game (not started, not private) announced once a second: its name, the
+// host's name, the map, seats taken and the room's capacity. Nothing while there is
+// none -- before the host creates it and after it starts.
+void Server::announceLan(uint64_t now) {
+    if (now < beaconAtMs_) return;
+    beaconAtMs_ = now + 1000;
+    if (!lanNonce_) lanNonce_ = std::random_device{}() * 0x9E3779B97F4A7C15ull ^ now;
+    for (const auto& [id, r] : rooms_) {
+        (void)id;
+        if (r.running || r.priv) continue;
+        tak::net::LanAnnounce a;
+        a.version = kNetVersion; a.nonce = lanNonce_; a.port = port_;
+        a.game = r.name;
+        if (const auto host = clients_.find(r.hostId); host != clients_.end()) a.host = host->second->name;
+        if (tak::mapgen::isGeneratedMapId(r.mapId)) a.map = tak::mapgen::friendlyLabel(tak::mapgen::decodeMapId(r.mapId));
+        else {
+            // The map's own title where its .ota spells the same name (as the lobby
+            // shows it: "Ulasem Arena", not the file's "ulasem arena").
+            auto [it, fresh] = lanMapTitles_.try_emplace(r.mapId, r.mapId);
+            auto lower = [](std::string t) { for (auto& c : t) c = char(std::tolower((unsigned char)c)); return t; };
+            if (fresh && lanTranslate_.empty())   // the original maps' English names, as the lobby reads them
+                for (const char* path : {"translate/maps.tdf", "translate/ipmaps.tdf"}) try {
+                    const auto b = retail_.vfs.read(path);
+                    const auto root = tak::tdf::parseText(std::string(b.begin(), b.end()), path);
+                    for (const auto& [key, node] : root.children)
+                        if (const std::string* en = node.value("english"); en && !en->empty()) lanTranslate_[lower(key)] = *en;
+                } catch (const std::exception&) {}
+            if (const auto t = lanTranslate_.find(lower(r.mapId)); fresh && t != lanTranslate_.end() && lower(t->second) == lower(r.mapId))
+                it->second = t->second;
+            else if (fresh) try {
+                const tak::hpi::Vfs& vfs = r.mapVfs ? *r.mapVfs : retail_.vfs;
+                std::string path = tak::hpi::findMap(vfs, r.mapId);
+                if (const auto dot = path.rfind('.'); dot != std::string::npos) path.resize(dot);
+                if (const auto ota = vfs.tryRead(path + ".ota")) {
+                    const auto title = tak::tnt::Scenario::parse(std::string(ota->begin(), ota->end())).missionName;
+                    if (!title.empty() && lower(title) == lower(r.mapId)) it->second = title;
+                }
+            } catch (const std::exception&) {}
+            a.map = it->second;
+        }
+        for (int i = 0; i < std::min(r.cap, int(kMaxSlots)); ++i)
+            if (r.slots[i].type == 1 || r.slots[i].type == 2) ++a.players;
+        a.capacity = uint8_t(r.cap);
+        beacon_.send(a);
+        return;
+    }
+}
+
 int Server::run() {
     std::string err;
     listenFd_ = listenOn(port_, err, loopbackOnly_);
@@ -3088,6 +3147,7 @@ int Server::run() {
         // Timeout = time until the soonest running room's next tick (or 1s idle).
         uint64_t now = nowMs();
         uint64_t soonest = now + (validations_.empty()?1000:10);
+        if (lan_) { announceLan(now); soonest = std::min(soonest, beaconAtMs_); }
         // Only rooms ELIGIBLE to tick may pull the poll deadline in. A paused room
         // is skipped by the tick loop below but its tick deadline still slides into
         // the past, so counting it here pinned the timeout at 0 and span the
@@ -3396,7 +3456,7 @@ static int serverMain(int argc, char** argv) {
     uint32_t fixedSeed = 0;
     bool fixedSeedGiven = false;   // --seed 0 is a pinned seed, not "unset"
     tak::srv::Limits limits;
-    bool noAuth = false, loopbackOnly = false, closedRegistration=false;
+    bool noAuth = false, loopbackOnly = false, closedRegistration=false, lan=false;
     for (int i = 1; i < argc; ++i) {
         try {if(limits.set(argv[i],i+1<argc?argv[i+1]:"")) {++i;continue;}}
         catch(const std::exception& e) {std::fprintf(stderr,"takserver: %s: %s\n",argv[i],e.what());return 1;}
@@ -3441,6 +3501,7 @@ static int serverMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--acme-staging")) {acme.directory="https://acme-staging-v02.api.letsencrypt.org/directory";acmeOption=true;}
         else if (!std::strcmp(argv[i], "--allow-plaintext")) allowPlaintext=true;
         else if (!std::strcmp(argv[i], "--local")) loopbackOnly = true;
+        else if (!std::strcmp(argv[i], "--lan")) { lan = true; noAuth = true; allowPlaintext = true; }
         else if (!std::strcmp(argv[i], "--version") || !std::strcmp(argv[i], "-v")) {
             std::printf("takserver (TAK engine) %s (build %s)\n", tak::kVersion, tak::kBuildId);
             return 0;
@@ -3448,7 +3509,7 @@ static int serverMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--help")) {
             std::printf("usage: takserver --data <retail-install-dir> [--port N]\n"
                         "                 [--replaydir <dir>] [--accounts <file>]\n"
-                        "                 [--no-auth] [--local] [--closed-registration]\n"
+                        "                 [--no-auth] [--local] [--lan] [--closed-registration]\n"
                         "                 [--tls-cert fullchain.pem --tls-key private.pem]\n"
                         "                 [--acme-domain hostname --acme-agree-tos]\n"
                         "                 [--acme-email address] [--acme-state directory] [--acme-staging]\n"
@@ -3477,6 +3538,8 @@ static int serverMain(int argc, char** argv) {
                         "  --no-auth serves anyone who connects, with no account at all. Only\n"
                         "  for a private or LAN server; pair it with --local.\n"
                         "  --local binds loopback only, so nothing off this machine connects.\n"
+                        "  --lan is a player's LOCAL SERVER: --no-auth --allow-plaintext on every\n"
+                        "  interface, announcing its open game on the LAN (UDP 7678) each second.\n"
                         "  --closed-registration allows existing accounts only.\n"
                         "  Limits default to 16 games / 4 running, 10000 accounts, 512 MiB\n"
                         "  shared map memory, 4096 MiB map storage, 256 MiB replay memory\n"
@@ -3494,6 +3557,10 @@ static int serverMain(int argc, char** argv) {
         }
         std::fputs(counts.json().c_str(), stdout);
         return 0;
+    }
+    if (lan && (loopbackOnly || acmeOption || !tlsCert.empty())) {
+        std::fprintf(stderr, "takserver: --lan is an unencrypted LAN server; it cannot be combined with --local or TLS.\n");
+        return 1;
     }
     if(acmeOption && (acme.domain.empty() || !acme.agreeTerms || !tlsCert.empty() || !tlsKey.empty() || allowPlaintext || loopbackOnly || port==80)) {
         std::fprintf(stderr,"takserver: ACME requires --acme-domain and --acme-agree-tos; cannot combine with manual TLS, plaintext, --local, or game port 80.\n");return 1;
@@ -3535,6 +3602,7 @@ static int serverMain(int argc, char** argv) {
     if(acmeOption)s.setAcme(std::make_shared<tak::srv::AcmeCertificates>(acme));
     if(!tlsCert.empty())s.setTls(tak::net::TlsContext::server(tlsCert,tlsKey));
     if (loopbackOnly) s.setLoopbackOnly();
+    if (lan) s.setLan();
     if (closedRegistration) s.closeRegistration();
     if (noAuth) {
         s.setNoAuth();

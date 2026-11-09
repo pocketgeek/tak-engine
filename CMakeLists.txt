@@ -166,6 +166,7 @@ add_library(tak-formats
   src/net/protocol.cpp
   src/net/matchconfig.cpp
   src/net/conn.cpp
+  src/net/discovery.cpp
   src/net/client.cpp
   src/net/replaywriter.cpp
   src/net/mappackage.cpp

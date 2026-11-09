@@ -2235,6 +2235,11 @@ player's game stays in step.
   join it from the game browser. The list opens on the official TAK Engine server,
   `tak.pgnet.us` (marked **DEFAULT**); servers you have used before are listed
   under it.
+- **On your own network:** pick **LOCAL SERVER** and click **START/CONNECT**. The
+  game starts a server on your computer and opens your game's setup, named
+  *Name's Game* after you. Players on the same network see it listed under
+  **LOCAL SERVER** once you are in the room, and join with just a name. See
+  [Local server](#local-server).
 - **On your own server:** if you would rather host, run `takserver` on a machine
   your friends can reach and give them its address to type under **CUSTOM...**.
   Only that machine needs an open port; see [Running a server](#running-a-server)
@@ -2251,12 +2256,16 @@ host's game mods are sent automatically.
 *Signing in to a server.*
 
 1. Click the **Multiplayer** door. The **CONNECT TO SERVER** panel opens.
-2. Click a server in the list, or **CUSTOM...** to type its address. Under
-   them are the servers you have signed in to before (up to 64, most recent
-   first; the mouse wheel scrolls them); **DELETE** forgets one.
+2. Click a server in the list, or **CUSTOM...** to type its address. Then come
+   **LOCAL SERVER** and the games announced on your network (see
+   [Local server](#local-server)), and under them the servers you have signed in to
+   before (up to 64, most recent first; the mouse wheel scrolls them); **DELETE**
+   forgets one.
 3. Enter an **account name** and **password** and click **CONNECT**. A name the
    server has not seen before is registered the first time you sign in; there
-   is no separate sign-up.
+   is no separate sign-up. An address typed without `tls://` or `tcp://` is tried
+   encrypted (TLS) first and then unencrypted; with `tls://` or `tcp://` only that
+   is tried, and if it fails the reason is shown in red.
 4. In the game browser, click a game to join it, or click **CREATE** to make
    one. A game marked **LOCK** needs its password: type it in **PASSWORD (FOR
    LOCKED GAMES)** at the bottom before you click the game. A game marked
@@ -2294,6 +2303,27 @@ Each empty seat it needs is tagged **NEEDED BY SCENARIO**, and **Start** stays
 greyed until they are all filled. A seated player whom the scenario gives no
 units is named in amber (*NO PLACED UNITS: PLAYER N*). If the server still
 refuses to start the game, the reason appears in red under the buttons.
+
+### Local server
+
+**LOCAL SERVER** in **CONNECT TO SERVER** hosts a game on your own computer for
+players on the same network, with no accounts. Type a **player name** (it cannot be
+blank; no password is needed) and click **START/CONNECT**: the game starts a server
+on your computer and opens the game setup with the game named *Name's Game*. When
+you click **CREATE**, it is announced on your network about once a second until it
+starts.
+
+Everyone else on the network sees it listed under **LOCAL SERVER** with its map and
+seats (**LAN 2/8**). They pick it, type a name and click **CONNECT**, and go
+straight into your room. If the game is full, has a password or has already
+started, they are told why. Typing your computer's address under **CUSTOM...** also
+works and goes straight into the room too.
+
+The local server is unencrypted and has no accounts, so use it only on a network
+you trust. It listens on port 7677 when that is free (another free port otherwise)
+and announces on UDP port 7678; your firewall may ask to let `takserver` through.
+It stops when you leave the game. Single player's private server is different: it
+listens on your own computer only (127.0.0.1), so nothing else can reach it.
 
 ### Maps and content
 
@@ -3017,7 +3047,8 @@ directly with `--play-map` (see [Command line](#command-line)). See
 ## Running a server
 
 You only need your own server to host private online games; single-player starts
-one for you automatically.
+one for you automatically, and so does **LOCAL SERVER** for games on your own
+network (see [Local server](#local-server)).
 
 Every package includes the `takserver` dedicated server. The Linux packages
 also include a systemd service with automatic Let's Encrypt certificates; the

@@ -205,11 +205,14 @@ for a private CA. There is deliberately no “ignore certificate errors” optio
 `--local` binds loopback and permits plaintext for a private local client or
 an encrypted tunnel. `--allow-plaintext` explicitly permits an unencrypted
 external listener for a trusted LAN/test environment. It is **not** a public
-Internet deployment setting. To use one from the multiplayer menu, explicitly
-enter `tcp://hostname` (and an optional `:port`). Bare menu hostnames use TLS,
-with no plaintext fallback, except this machine's own loopback addresses
-(`localhost`, `127.x.x.x`, `::1`), which default to plain TCP so a `--local`
-test server works as typed (`tls://127.0.0.1` still forces TLS). Automatically launched single-player servers
+Internet deployment setting. In the multiplayer menu, an address typed without a
+scheme is tried with TLS first and then, if the TLS connection fails (a plaintext
+server), unencrypted; `tls://hostname` or `tcp://hostname` (with an optional
+`:port`) is that transport only. A server that cannot be resolved or reached is not
+retried unencrypted. A player who needs the TLS guarantee on a bare hostname types
+`tls://`. `--lan` is the menu's LOCAL SERVER: `--no-auth --allow-plaintext` on every
+interface, announcing its open game on the LAN (UDP port 7678, once a second) and
+telling clients in its Welcome, so they join that game directly. Automatically launched single-player servers
 keep their private loopback connection. Debug command-line harness connections
 retain their explicit transport behavior. Clients too old to support TLS cannot
 connect to a TLS listener; see [Versions](#versions) for which clients a server

@@ -75,6 +75,11 @@ public:
     const std::string& chosenAccount() const;
     const std::string& chosenPassword() const;
     void clearPassword();
+    // How that Multiplayer choice connects: a server (with an account), this player's
+    // own LOCAL SERVER to start and host on, or a LAN game heard on the network (the
+    // name only; *serverOut is its tcp:// address).
+    enum class Connect { Server, LanHost, LanJoin };
+    Connect chosenConnect() const;
 
     // After run() returns Choice::Benchmark, the picked intensity level (1=Low..5=Absurd).
     int chosenBenchmarkLevel() const;

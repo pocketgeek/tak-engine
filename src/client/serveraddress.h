@@ -6,13 +6,13 @@
 #include <string_view>
 
 namespace tak {
-struct ServerAddress { std::string host; uint16_t port=7677; };
+// host carries a "tls://" prefix for TLS (what Conn::connect reads). plainFallback:
+// no scheme was typed, so after TLS fails the connect is tried again unencrypted.
+struct ServerAddress { std::string host; uint16_t port=7677; bool plainFallback=false; };
 
-// Menu addresses default to verified TLS. Plain TCP is an explicit LAN/testing
-// opt-in (tcp://), and the default for this machine's own loopback addresses
-// (localhost, 127.x.x.x, ::1): that traffic never leaves the machine, and a local
-// test server (takserver --local) speaks plain TCP. tls:// still forces TLS there.
-// The automatically launched local server uses its separate launch path.
+// An address without a scheme is tried with verified TLS first and then, if that
+// fails, unencrypted (a LAN or test server). tls:// or tcp:// is that transport only.
+// The automatically launched local servers use their own launch paths.
 inline std::optional<ServerAddress> parseServerAddress(std::string_view text) {
     const auto first=text.find_first_not_of(" \t\r\n");
     if(first==text.npos)return {};
@@ -36,13 +36,12 @@ inline std::optional<ServerAddress> parseServerAddress(std::string_view text) {
         host=text.substr(0,colon);port=text.substr(colon+1);hasPort=true;
     }
     if(host.empty() || host.find_first_of("[]")!=host.npos)return {};
-    if(!scheme && (host=="localhost" || host=="::1" || host.starts_with("127.")))secure=false;
     unsigned number=7677;
     if(hasPort) {
         const auto parsed=std::from_chars(port.data(),port.data()+port.size(),number);
         if(parsed.ec!=std::errc{} || parsed.ptr!=port.data()+port.size() || number==0 || number>65535)return {};
     }
-    return ServerAddress{(secure?"tls://":"")+std::string(host),uint16_t(number)};
+    return ServerAddress{(secure?"tls://":"")+std::string(host),uint16_t(number),!scheme};
 }
 
 inline std::string formatServerAddress(std::string host,uint16_t port) {
