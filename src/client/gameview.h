@@ -224,21 +224,29 @@ public:
     void manageMusic();
 
     bool inLobbyPhase() const;
-    void setMpMapId(const std::string& id) { mpMapId_ = id; }
+    // The launch's map: the harness rooms' map, and the fallback a room from the remembered
+    // settings opens on when the remembered map cannot be used (roomDefaultMap_).
+    void setMpMapId(const std::string& id) { mpMapId_ = id; roomDefaultMap_ = id; }
     void setScenarioTrace(tak::sim::ScenarioScript::TraceSink sink) {scenarioTrace_=std::move(sink);}
     void setMissionStem(const std::string& s) { missionStem_ = s; }
-    // Single-player from the menu: it's a private local game, so open the lobby on
-    // the Create screen (the browser is empty by design) and mark it single-player
-    // (labels change, no password / no game browser).
-    void setSinglePlayer() { lobbyScreen_ = LobbyScreen::Create; singlePlayer_ = true; }
-    // A private single-player room that opens straight into the room (Cartographer's
-    // --play-map, the debug CLI game): single player -- no READY, no two-human START rule
-    // -- without the create screen.
+    // PLAY THE MACHINE: a private single-player room, opened straight away from the
+    // single-player remembered settings (createRoomFromPrefs). playMap: Cartographer's
+    // --play-map, whose room plays `map` and nothing else -- no CHANGE MAP, LEAVE reads QUIT,
+    // and nothing is remembered.
+    void openSinglePlayerRoom(const std::string& map = {}, bool playMap = false) {
+        singlePlayer_ = true; roomKind_ = RoomKind::SinglePlayer; roomAutoCreate_ = true;
+        roomForcedMap_ = playMap ? map : std::string();
+        rememberRoom_ = !playMap;
+    }
+    // A private single-player room the debug CLI game creates itself (autoMode 7): single
+    // player -- no READY, no two-human START rule -- and nothing remembered.
     void setSinglePlayerFlag() { singlePlayer_ = true; }
-    // LOCAL SERVER from the CONNECT screen: the host opens on the create screen with the
-    // game already named; BACK there leaves for the menu (the server is this session's).
-    void setLanHost(const std::string& gameName, const std::string& password) {
-        lobbyScreen_ = LobbyScreen::Create; createName_ = gameName; createPass_ = password; lanHost_ = true;
+    // LOCAL SERVER from the CONNECT screen: the host's room opens straight away from the
+    // multiplayer remembered settings, named "<name>'s Game" by the server, with the game
+    // password typed on CONNECT. LEAVE closes the game and goes back to CONNECT.
+    void openLanHostRoom(const std::string& password) {
+        lanHost_ = true; roomKind_ = RoomKind::Multiplayer; roomAutoCreate_ = true; rememberRoom_ = true;
+        roomStartPass_ = password;
     }
     // The game password typed on the CONNECT screen, for joining a LAN host's game.
     void setLanJoinPassword(const std::string& password) { joinPass_ = password; }
@@ -2688,7 +2696,6 @@ private:
     float replayAccum_ = 0;
     bool mpReadied_ = false, mpStarted_ = false, mpSetupDone_ = false;
     // interactive lobby UI state
-    enum class LobbyScreen { Browser, Create } lobbyScreen_ = LobbyScreen::Browser;
     bool menuRequested_ = false;   // set by a MAIN MENU action -> main() returns to the front-end
     bool quitRequested_ = false;   // set by the in-game QUIT button -> main() exits the app
     bool singlePlayer_ = false;    // menu single-player: private local game (SP-flavoured lobby)
@@ -2709,40 +2716,17 @@ private:
         return mp_ && mp_->lanServer() && !lanHost_ &&
                (mp_->error().empty() || mp_->error() == "peer closed" || mp_->error().starts_with("recv failed"));
     }
-    bool spSpectate_ = false;      // SP: watch the AIs (host takes no slot)
-    bool specAutoSeated_ = false;  // SP spectate: one-shot -- fill every open slot with a random-race AI
     bool externalLobbyMusic_ = false;   // front-end owns the lobby BGM -> suppress ours
-    // active text field: 1=createName 2=createPass 3=joinPass 4=chat 5=random map name 6=map
-    // filter 7/8=mod filters 9=room name 10=room password (lbFieldBuf)
+    // active text field: 3=joinPass 4=chat 5=random map name 6=map filter 7/8=mod filters
+    // 9=room name 10=room password (lbFieldBuf)
     int lbField_ = 0;
     float lobbyScale_ = 2.0f;               // lobby fit scale (set in render)
     float lobbyOffX_ = 0, lobbyOffY_ = 0;   // lobby centre offset (logical units; set in render)
-    std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
-    bool createCrusades_ = false;
-    bool createDoubleSight_ = false;
-    bool createPowerCodes_ = false;   // POWER CODES (GameOptions::powerCodes)
-    tak::sim::PathfindingMode createPathfindingMode_ = tak::sim::PathfindingMode::Retail;
-    bool createSpeedUnlock_ = false;
-    uint16_t createUnitCap_ = tak::net::GameOptions{}.unitCap;
+    std::string joinPass_, chatDraft_;
 #ifndef NDEBUG
     bool debugDefeatSent_ = false;
 #endif
-    // Fog of war, chosen at CREATE time (0 = not explored, 1 = explored,
-    // 2 = full vision). It is a room setting like the rest, so it belongs where
-    // the room is set up -- the host could previously only change it after the
-    // game already existed. Default matches GameOptions::fogExplored.
-    uint8_t createFog_ = 1;
-    uint8_t createStartMode_ = tak::net::kStartsFixed;   // create dialog: START LOCATIONS (default FIXED, retail)
-    bool createMonarchExp_ = false;   // create dialog: Monarch Expendable (default OFF = monarch matters)
-    bool createAllowSpectators_ = true;   // create dialog (MP): ALLOW SPECTATORS (default ON, as before the option)
-    // Create dialog: MAP SCENARIO. Per map and never saved: it starts OFF
-    // and goes back OFF whenever the selected map changes (syncCreateScenario).
-    bool createMapScenario_ = false;
-    std::string createScenarioFor_;           // mapPath_ the two fields here belong to
-    tak::sim::ScenarioInfo createScenario_;   // the selected map's scenario facts (with registry check)
-    void syncCreateScenario();
-    bool createScenarioOn() const;            // the create choice plays the map's scenario
-    // Whether the create screen offers a map's scenario. A placed unit type
+    // Whether the room and its CHANGE MAP panel offer a map's scenario. A placed unit type
     // this install lacks may come from a game mod pack (ticked by the host in the room,
     // or always enabled), so MissingType is offered (with a warning) when this install
     // has a game pack; the server's START refuses it if no applied pack supplies the
@@ -2764,13 +2748,14 @@ private:
         int area() const { return sizeW * sizeH; }
     };
     std::vector<MapInfo> mapList_;      // cached, sorted per mapSort_
-    // buildMapList ran for this visit to the create screen. An install with no maps would
-    // otherwise rescan -- and stop the previews for the remount -- every frame.
+    // buildMapList ran for this room (the menu's loading screen, or the CHANGE MAP panel's
+    // first open; leaveRoom forgets it). An install with no maps would otherwise rescan --
+    // and stop the previews for the remount -- every frame.
     bool mapListScanned_ = false;
     // Map titles. A map's name (its .tnt stem, the wire id) is often lowercase: Iron
     // Plague's archive stores "maps/ulasem arena.tnt". Retail shows the title from its
     // translate tables (translate/maps.tdf, ipmaps.tdf: [ulasem arena] English = Ulasem
-    // Arena); so do the create screen, the room and the game list. Display only -- the
+    // Arena); so do the room, its CHANGE MAP panel and the game list. Display only -- the
     // id on the wire and in settings.ini stays the name.
     std::unordered_map<std::string, std::string> mapTitles_;   // lowercase name -> English
     bool mapTitlesLoaded_ = false;
@@ -2779,13 +2764,10 @@ private:
     std::string mapTitle(const std::string& id);   // any room/game map id (random maps too)
     int mapSort_ = 0;                  // 0 = name, 1 = players, 2 = size
     int mapSortDir_ = 1;              // 1 = ascending, -1 = descending
-    // Create-screen map picker: a scrollable list box. mapScroll_ is the index of the
+    // The CHANGE MAP panel's map list: a scrollable list box. mapScroll_ is the index of the
     // first visible row; the rest is geometry cached each frame for wheel + scrollbar
     // drag handling in lobbyInput (all in panel-local logical coords).
     int mapScroll_ = 0;
-    void saveCreatePreferences();
-    bool createPrefApplied_ = false;
-    bool mapPrefApplied_ = false;      // adopted settings_->lastMap once this session
     bool mapDrag_ = false;             // dragging the scrollbar thumb
     // Random-map generator ("Generate Random Map" in the picker): the current params,
     // which slider is being dragged (0=doodad 1=mana 2=water, -1=none), and the three
@@ -2821,30 +2803,28 @@ private:
     // data set changes (startMpGame) or goes (the destructor, `teardown`).
     void previewLifetimeProbe(bool teardown);
 #endif
-    // The create screen's map list filter (lobby text field 6): the maps whose title or
+    // The CHANGE MAP panel's map list filter (lobby text field 6): the maps whose title or
     // name contains it, case-insensitively.
     std::string mapFilter_;
-    // The create screen's side margins (the left column, BACK, CREATE, the preview's
-    // right edge): one value both sides.
+    // The full-window map view's and the mods screen's side margins (their BACK and DONE,
+    // the status line): one value both sides.
     static constexpr float kCreateMargin = 16.0f;
-    // The map list's width: from its column (the margin + 320) to 12 short of the preview.
-    static constexpr float mapListW() { return kLobbyW - kCreateMargin - 192.0f - 12.0f - (kCreateMargin + 320.0f); }
     int genSlider_ = -1;
     SDL_FRect genSliderRect_[9]{};
-    void applyGenParams();             // re-encode genParams_ -> mpMapId_
+    void applyGenParams();             // re-encode genParams_ -> the panel's RANDOM candidate (picker_.gen)
     void setGenSlider(int i, float mx);  // drag a density slider from a panel-x
     SDL_FRect mapListRect_{};          // the list box (rows area) -- wheel target
     SDL_FRect mapThumbRect_{};         // the scrollbar thumb -- drag grab
     int mapVisRows_ = 0, mapTotalRows_ = 0;   // for clamping + thumb drag math
     // Selected-map preview (the .tnt's embedded minimap), rebuilt on selection.
     SDL_Texture* mapPreviewTex_ = nullptr;
-    std::string mapPreviewFor_;        // mapPath_ the current preview was built for
+    std::string mapPreviewFor_;        // the map path (or room: key) the current preview was built for
     int mapPreviewW_ = 0, mapPreviewH_ = 0;
     std::string mapPreviewDims_;       // "W x H" cell size, shown under the preview
     // The previewed map's start positions (world px, in StartPosN order) and its world
     // size, read along with the preview so the numbered start markers never reparse.
     std::vector<std::pair<float, float>> mapPreviewStarts_;
-    // The full-window map view a click on a preview opens (create screen or room), and
+    // The full-window map view a click on a preview opens (the room or its panel), and
     // the preview it was opened from (mapPreviewFor_): when that changes -- another map,
     // another screen -- the view closes. Drawn over the lobby, which keeps running
     // underneath; BACK or Esc closes it, and so does the game starting (before the data
@@ -4268,18 +4248,15 @@ private:
     void drawClickHint(const SDL_FRect& box);   // CLICK over a hovered preview that opens it
     void drawBigMap(int winW, int winH);
 
-    void drawCreate(int winW, int winH);
-
     // ==================== the game room ====================
     // drawRoom (gameview_room.cpp) draws the left column -- the name, the slot table, the
     // controls and the rules -- and drawRoomColumn (gameview_lobby.cpp) the right one: the
     // map, its preview, the mods line and the chat. roomStep runs the room's per-frame
     // reactions, while MODS is open too. The CHANGE MAP panel is gameview_mappicker.cpp.
     // A room action that does nothing says why in roomActError_ (a TAK_ROOM_SCRIPT verb then
-    // fails at once); one that is not built yet says kNotImplemented.
+    // fails at once).
     void drawRoom(int winW, int winH);
     using RoomField = tak::RoomField;
-    static constexpr const char* kNotImplemented = "not implemented";
     std::string roomActError_;
     // One frame of the room: its layout and the facts the slot table, the rules and START read.
     struct RoomFrame {
@@ -4302,14 +4279,34 @@ private:
     void drawRoomColumn(const RoomFrame& f, int winH);
     bool roomCanStart(const RoomFrame& f) const;        // START is enabled
     void roomStart();                                   // START
+    void roomSetReady(bool ready);                      // READY / UNREADY (multiplayer)
     void roomSetSlotType(int slot, uint8_t type);       // the host's slot type cell: OPEN, AI or CLOSED
     // The room's per-frame reactions (drawLobby, while InRoom, before the room or MODS
     // draws): the single-player host's own READY, the spectate auto-seat, the CHANGE MAP
     // panel's answer (pickerStep).
     void roomStep();
-    // The browser's CREATE, and a door that opens a room straight away: a room from the room
-    // kind's remembered set.
+    // The browser's CREATE, and a door that opens a room straight away (PLAY THE MACHINE,
+    // LOCAL SERVER, --play-map): a room from the room kind's remembered set, on the first
+    // map of: the --play-map map, the remembered recipe or map, the launch's map
+    // (roomDefaultMap_), the generator's defaults. A remembered map that cannot be used is
+    // passed over with a note (roomOpenNote_). Nothing is written back.
     void createRoomFromPrefs();
+    // A door's room is made by mpAutoStep (autoMode 0) as soon as the lobby is reached
+    // (roomAutoCreate_); roomCreateSent_ while the server has not answered. Both clear in the
+    // room, on a refusal (joinError) and when the connection ends.
+    bool roomAutoCreate_ = false, roomCreateSent_ = false;
+    std::string roomDefaultMap_;   // the launch's map (setMpMapId): the fallback after the remembered one
+    std::string roomStartPass_;    // LOCAL SERVER: the game password typed on CONNECT
+    std::string roomOpenNote_;     // why the remembered map was passed over: the new room's first note
+    int lobbyAutoMode_ = 0;        // mpAutoStep's autoMode: a harness room (not 0) remembers nothing
+    // A room-first session's lobby (PLAY THE MACHINE, LOCAL SERVER host, --play-map, the CLI
+    // game) has no game list: OPENING THE GAME... while its room is made, or why it could
+    // not be, with BACK.
+    void drawRoomOpening(int winW, int winH);
+    // LEAVE (and the LOCAL SERVER prompt's YES): out of the room, to where this session's
+    // rooms come from -- a single-player or LOCAL SERVER session ends (the title screen;
+    // CONNECT TO SERVER; a --play-map run quits), an online one goes back to the game list.
+    void roomLeave();
 
     // ---- room editing (gameview_room.cpp): the host, in its room's lobby ----
     // Which remembered set (Settings::spRoom / mpRoom) the host's changes update, and whether
@@ -4395,7 +4392,7 @@ private:
     bool pickerScanPending_ = false;   // READING MAPS... is on screen; buildMapList runs next frame
     bool lobbyModal_ = false;          // the panel (or the LAN leave prompt) is over the room: nothing under it lights up
     SDL_Point roomPreviewSize_{0, 0};  // the room preview's mapPreviewW_/H_, while the panel owns those
-    // The map list, generator and preview the create screen and the panel share.
+    // The CHANGE MAP panel's map list, generator and preview.
     void drawMapListBox(const SDL_FRect& area, MapPick& sel);
     void drawGeneratorControls(float x, float y);
     void drawPickPreview(const SDL_FRect& box, const std::string& id, const std::string& path, bool withScenario);
@@ -4404,8 +4401,9 @@ private:
     // A ';'-separated list of room actions, run by mpAutoStep in any autoMode after the
     // mode's own seating step: create (in the browser), ai:<slot>, map:<id> (map!:<id> expects
     // a refusal), opt:<rule>=<value>, scenario:<0|1>, watch, sit:<slot>, name:<text>,
-    // pass:<text>, wait:humans=<n>, wait:ready=<n>, start, shot:<png>. Each calls the member
-    // its button calls and ends on its own test, within 10 s (a wait 30 s) or the run fails.
+    // pass:<text>, wait:humans=<n>, wait:ready=<n>, ready, leave, start, shot:<png>. Each calls
+    // the member its button calls and ends on its own test, within 10 s (a wait 30 s) or the run
+    // fails.
     struct RoomScriptStep { std::string text, verb, arg; };
     std::vector<RoomScriptStep> roomScript_;
     bool roomScriptRead_ = false;

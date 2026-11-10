@@ -1,5 +1,5 @@
 #pragma once
-// The create screen's map list FILTER: a map stays listed when its title or its name
+// The CHANGE MAP panel's map list FILTER: a map stays listed when its title or its name
 // contains the typed text, ignoring case. An empty filter lists every map.
 
 #include <cctype>

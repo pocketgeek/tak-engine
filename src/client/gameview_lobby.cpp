@@ -28,46 +28,10 @@
         return slot>=0 && size_t(slot)<geomIndex_.size() ? geomIndex_[size_t(slot)] : -1;
     }
 
-namespace {
-std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
-    std::string name=tak::sim::pathfindingModeName(mode);
-    for(char& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
-    return "PATHFINDING: "+name;
-}
-// START LOCATIONS as the create screen and the room show it (GameOptions::randomStarts).
-std::string startLocationsLabel(uint8_t mode) {
-    switch (tak::net::normalizeStartMode(mode)) {
-    case tak::net::kStartsRandom: return "START LOCATIONS: RANDOM";
-    case tak::net::kStartsBySlot: return "START LOCATIONS: BY SLOT";
-    default: return "START LOCATIONS: FIXED";
-    }
-}
-const char* const kFogName[3] = {"NOT EXPLORED", "EXPLORED", "FULL VISION"};
-// The create screen's option column draws every label at one size: the largest at
-// which every caption any row can show (every state of every row, single player and
-// multiplayer) fits `maxW`. The column then reads as one list, no label needs its own
-// shrink, and cycling a row never resizes its text. Measured in the current UI FONT.
-float createOptionPx(float maxW) {
-    static const char* const kCaptions[] = {
-        "CRUSADES: ON", "CRUSADES: OFF", "DOUBLE SIGHT/RADAR: ON", "DOUBLE SIGHT/RADAR: OFF",
-        "UNIT CAP: 250", "UNIT CAP: 500", "UNIT CAP: 1000", "UNIT CAP: 2000",
-        "MONARCH EXPENDABLE: SCENARIO", "MONARCH EXPENDABLE: ON", "MONARCH EXPENDABLE: OFF",
-        "ALLOW SPEED CHANGE: ON", "ALLOW SPEED CHANGE: OFF", "POWER CODES: ON", "POWER CODES: OFF",
-        "SPECTATE (WATCH AIS): ON", "SPECTATE (WATCH AIS): OFF",
-        "ALLOW SPECTATORS: ON", "ALLOW SPECTATORS: OFF"};
-    float px = tak::uiTextFitPx(pathfindingLabel(tak::sim::PathfindingMode::Retail), 2.0f, maxW);
-    px = tak::uiTextFitPx(pathfindingLabel(tak::sim::PathfindingMode::Legion), px, maxW);
-    for (uint8_t mode = 0; mode < 3; ++mode) px = tak::uiTextFitPx(startLocationsLabel(mode), px, maxW);
-    for (const char* fog : kFogName) px = tak::uiTextFitPx(std::string("FOG OF WAR: ") + fog, px, maxW);
-    for (const char* caption : kCaptions) px = tak::uiTextFitPx(caption, px, maxW);
-    return std::floor(px * 20) / 20;   // a 0.05 step, so rounding never re-overflows
-}
-}  // namespace
-
     void GameView::drawLobby(int winW, int winH) {
         pollGenPreview();   // a random map's preview rolled on its worker
         lobbyHots_.clear();
-        // Map-picker geometry is only live while the create screen is shown; clear it
+        // Map-picker geometry is only live while the CHANGE MAP panel is drawn; clear it
         // so a stale thumb/list rect can't grab clicks or wheel on the other screens.
         mapListRect_ = mapThumbRect_ = chatRect_ = SDL_FRect{0, 0, 0, 0};
         for (auto& rect : genSliderRect_) rect = {};
@@ -134,8 +98,31 @@ float createOptionPx(float maxW) {
             if (lanLeavePrompt_) drawLanLeavePrompt(winW, winH);
             if (!roomShotPath_.empty()) roomShotCapture();   // TAK_ROOM_SCRIPT shot:, as drawn
         }
-        else if (lobbyScreen_ == LobbyScreen::Create) drawCreate(winW, winH);
+        // A room-first session has no game list: its room is on its way, or could not open.
+        else if (singlePlayer_ || lanHost_) drawRoomOpening(winW, winH);
         else drawBrowser(winW, winH);
+    }
+
+    void GameView::drawRoomOpening(int winW, int winH) {
+        const float cx = winW / 2.0f, my = winH / 2.0f - 40;
+        // A refused CreateGame (the server's reason), or a map that could not be built here.
+        const std::string why = !mp_->joinError().empty() ? mp_->joinError() : mp_->createError();
+        if (roomAutoCreate_ || roomCreateSent_ || why.empty()) {
+            const char* note = "OPENING THE GAME...";
+            blockText(note, cx - blockWidth(note, 2.0f) / 2, my + 20, 2.0f, {200, 200, 210, 255});
+        } else {
+            const char* head = "CANNOT OPEN A GAME";
+            blockText(head, cx - blockWidth(head, 2.6f) / 2, my, 2.6f, {255, 130, 110, 255});
+            const auto rows = tak::uiTextWrap(why, 1.8f, 600);
+            for (size_t k = 0; k < rows.size() && k < 2; ++k) {
+                const std::string line = k == 1 && rows.size() > 2 ? tak::uiTextFit(rows[1] + " " + rows[2], 1.8f, 600) : rows[k];
+                blockText(line, cx - blockWidth(line, 1.8f) / 2, my + 34 + 22 * float(k), 1.8f, {215, 218, 228, 255});
+            }
+        }
+        // Always a way back, so a create that is never answered cannot strand the player. A
+        // session from the command line (--play-map, the CLI game) has no menu to go back to.
+        const char* back = !canReturnToMenu_ ? "QUIT" : lanHost_ ? "BACK" : "BACK TO MENU";
+        lbBtn(cx - 90, my + 96, 180, 32, back, true, [this] { menuRequested_ = true; });
     }
 
     // The other humans seated in the room: who a LOCAL SERVER host's LEAVE turns out.
@@ -148,14 +135,20 @@ float createOptionPx(float maxW) {
 
     void GameView::leaveRoom() {
         mp_->leaveGame();
-        lobbyScreen_ = singlePlayer_ || lanHost_ ? LobbyScreen::Create : LobbyScreen::Browser;
-        spSpectate_ = false;
-        mpReadied_ = false; mpStarted_ = false; specAutoSeated_ = false;
+        mpReadied_ = false; mpStarted_ = false;
         lanLeavePrompt_ = false;
+        // Whatever room comes next (this one again too) is seen afresh: nothing it shows
+        // first is a change.
+        roomSeenSeq_ = 0;
         // The CHANGE MAP panel goes, and its map list is read again in the next room: maps
         // received in this one appear there.
         closeMapPicker(); picker_.pickSerial = 0;
         mapListScanned_ = false;
+    }
+
+    void GameView::roomLeave() {
+        leaveRoom();
+        if (singlePlayer_ || lanHost_) menuRequested_ = true;
     }
 
     // LEAVE WILL CLOSE THE GAME FOR N PLAYERS: YES leaves (the server closes the room for
@@ -172,7 +165,7 @@ float createOptionPx(float maxW) {
         const std::string line = "LEAVE WILL CLOSE THE GAME FOR " + std::to_string(n) + (n == 1 ? " PLAYER." : " PLAYERS.");
         blockText(line, px + (pw - blockWidth(line, 1.8f)) / 2, py + 30, 1.8f, {225, 215, 170, 255});
         blockText("LEAVE?", px + (pw - blockWidth("LEAVE?", 1.8f)) / 2, py + 58, 1.8f, {225, 215, 170, 255});
-        lbBtn(px + pw / 2 - 140, py + ph - 50, 120, 30, "YES", true, [this] { leaveRoom(); });
+        lbBtn(px + pw / 2 - 140, py + ph - 50, 120, 30, "YES", true, [this] { roomLeave(); });
         lbBtn(px + pw / 2 + 20, py + ph - 50, 120, 30, "NO", true, [this] { lanLeavePrompt_ = false; });
     }
 
@@ -190,11 +183,13 @@ float createOptionPx(float maxW) {
         for (const auto& g : mp_->games()) {
             if (lanSpectate_) {   // watching: a started game now, a waiting one from its start
                 if (!g.running) { lanWaitingStart_ = true; continue; }
+                roomKind_ = RoomKind::Multiplayer; rememberRoom_ = lobbyAutoMode_ == 0;
                 mp_->spectate(g.id, joinPass_);
                 lanJoinSent_ = true;
                 return;
             }
             if (g.running) { started = true; continue; }
+            roomKind_ = RoomKind::Multiplayer; rememberRoom_ = lobbyAutoMode_ == 0;
             mp_->joinGame(g.id, joinPass_);
             lanJoinSent_ = true;
             return;
@@ -211,8 +206,9 @@ float createOptionPx(float maxW) {
         float x = 60, y = 80, w = winW - 120.0f;
         blockText("GAMES", x, y, 2.2f, {200, 205, 220, 255});
         lbBtn(x + w - 200, y - 6, 95, 26, "REFRESH", true, [this] { mp_->listGames(); });
-        lbBtn(x + w - 100, y - 6, 100, 26, "CREATE", true,
-              [this] { lobbyScreen_ = LobbyScreen::Create; mapListScanned_ = false; });
+        // CREATE opens a room straight away, from the multiplayer remembered settings, named
+        // "<account>'s Game" by the server (the host renames it in the room).
+        lbBtn(x + w - 100, y - 6, 100, 26, "CREATE", !roomCreateSent_, [this] { createRoomFromPrefs(); });
         y += 34;
         // column header
         blockText("NAME", x + 8, y, 1.6f, {130, 135, 150, 255});
@@ -227,7 +223,7 @@ float createOptionPx(float maxW) {
             bool hot = lbHot(row) && !g.running;
             SDL_SetRenderDrawColor(ren_, hot ? 46 : 30, hot ? 52 : 34, hot ? 72 : 44, 255);
             SDL_RenderFillRectF(ren_, &row);
-            blockText(g.name, x + 8, y + 8, 1.8f, {225, 228, 236, 255});
+            blockText(tak::uiTextFit(g.name, 1.8f, 204), x + 8, y + 8, 1.8f, {225, 228, 236, 255});   // up to 32 bytes
             blockText(mapTitle(g.mapId), x + 220, y + 8, 1.6f, {180, 185, 195, 255});
             char pc[32]; std::snprintf(pc, sizeof pc, "%d/%d", g.players, g.capacity);
             blockText(pc, x + w - 200, y + 8, 1.8f, {200, 205, 215, 255});
@@ -240,10 +236,16 @@ float createOptionPx(float maxW) {
                 // refusal puts the reason on the CANNOT JOIN line below.
                 blockText("LIVE", x + w - 158, y + 8, 1.6f, {230, 140, 120, 255});
                 lbBtn(x + w - 96, y + 3, 92, 24, g.allowSpectators ? "WATCH" : "NO WATCH", true,
-                      [this, id = g.id] { mp_->spectate(id, joinPass_); },
+                      [this, id = g.id] {
+                          roomKind_ = RoomKind::Multiplayer; rememberRoom_ = lobbyAutoMode_ == 0;
+                          mp_->spectate(id, joinPass_);
+                      },
                       g.allowSpectators ? SDL_Color{60, 66, 86, 255} : SDL_Color{86, 52, 52, 255});
             } else {
-                lobbyHots_.push_back({row, [this, id = g.id] { mp_->joinGame(id, joinPass_); }});
+                lobbyHots_.push_back({row, [this, id = g.id] {
+                    roomKind_ = RoomKind::Multiplayer; rememberRoom_ = lobbyAutoMode_ == 0;
+                    mp_->joinGame(id, joinPass_);
+                }});
             }
             y += 34;
         }
@@ -480,7 +482,8 @@ float createOptionPx(float maxW) {
         const tak::tnt::Map& m = g.map;
         const int W = m.width, H = m.height, sea = m.seaLevel;
         if (W <= 0 || H <= 0 || m.heights.size() < size_t(W) * H) return out;
-        // As many texels as the largest create preview (288), so it is never stretched.
+        // 288 texels on the long side: the CHANGE MAP panel's previews (220 and 336) and the
+        // room's (up to 360) show it sharp enough without rolling a larger picture.
         const int cap = 288, mx = std::max(W, H);
         const int TW = std::max(1, W * cap / mx), TH = std::max(1, H * cap / mx);
         // World-flavoured land tint (loosely matches each world's ground section art).
@@ -567,17 +570,16 @@ float createOptionPx(float maxW) {
 
     void GameView::applyGenParams() {
         genParams_ = tak::mapgen::sanitize(genParams_);   // grows a side the layout cannot fit
-        // The generator's target: the CHANGE MAP panel's RANDOM candidate while it is open,
-        // else the create screen's choice.
-        std::string& id = picker_.open ? picker_.gen.id : mpMapId_;
-        std::string& path = picker_.open ? picker_.gen.path : mapPath_;
+        // The generator's target: the CHANGE MAP panel's RANDOM candidate.
+        std::string& id = picker_.gen.id;
+        std::string& path = picker_.gen.path;
         auto previous = tak::mapgen::decodeMapId(id);
         previous.name = genParams_.name;
         const bool reusePreview = mapPreviewFor_ == path &&
             tak::mapgen::isGeneratedMapId(id) &&
             tak::mapgen::encodeMapId(previous) == tak::mapgen::encodeMapId(genParams_);
         const std::string next = tak::mapgen::encodeMapId(genParams_);
-        if (picker_.open && next != id) picker_.message.clear();   // a new candidate: the last PICK's answer is old news
+        if (next != id) picker_.message.clear();   // a new candidate: the last PICK's answer is old news
         id = next;
         if (reusePreview) mapPreviewFor_ = id;
         path = id;   // generated: the id IS the path (findMap returns it as-is)
@@ -602,41 +604,6 @@ float createOptionPx(float maxW) {
         }
     }
 
-    void GameView::saveCreatePreferences() {
-        if (!settings_ || !createPrefApplied_ || lobbyScreen_ != LobbyScreen::Create ||
-            (mp_ && mp_->state() != tak::net::MpClient::State::Lobby)) return;
-        // The set of this room's kind: single player and multiplayer remember separately.
-        auto& set = settings_->prefsFor(singlePlayer_);
-        auto pref = set;
-        pref.crusades = createCrusades_;
-        pref.doubleSight = createDoubleSight_;
-        pref.pathfindingMode = createPathfindingMode_;
-        pref.speedUnlock = createSpeedUnlock_;
-        pref.monarchExpendable = createMonarchExp_;
-        pref.randomStarts = createStartMode_;
-        pref.allowSpectators = createAllowSpectators_;
-        pref.powerCodes = createPowerCodes_;
-        pref.unitCap = createUnitCap_;
-        pref.fog = createFog_;
-        pref.generated = tak::mapgen::isGeneratedMapId(mpMapId_);
-        pref.generator = tak::mapgen::encodeMapId(genParams_);
-        pref.mapSort = mapSort_; pref.mapSortDir = mapSortDir_;
-        if (pref == set) return;
-        set = std::move(pref);
-        saveSettings(*settings_);
-    }
-
-    void GameView::syncCreateScenario() {
-        // MAP SCENARIO belongs to one map: every way the selection changes (a list click,
-        // the remembered map, the generator, setMpMapId) lands here and starts it OFF.
-        if (createScenarioFor_ == mapPath_) return;
-        createScenarioFor_ = mapPath_;
-        createMapScenario_ = false;
-        createScenario_ = {};
-        if (!mapPath_.empty() && !tak::mapgen::isGeneratedMapId(mapPath_))
-            createScenario_ = mapScenarioInfo(mapPath_);
-    }
-
     void GameView::scanModPacks() {
         if(!modPacksScanned_){
             const auto root=tak::u8path(installRoot_);
@@ -646,217 +613,6 @@ float createOptionPx(float maxW) {
             alwaysGameMods_=mods_.game?tak::hpi::alwaysEnabledPacks(root,tak::hpi::ModKind::Game):std::vector<std::string>{};
             modPacksScanned_=true;
         }
-    }
-
-    bool GameView::createScenarioOn() const {
-        if (createScenarioFor_ != mapPath_ || tak::mapgen::isGeneratedMapId(mpMapId_)) return false;
-        // An offerable map plays its scenario when chosen; a Test Map copy always does.
-        return createScenario_.active(createMapScenario_ && scenarioOffered(createScenario_));
-    }
-
-    void GameView::drawCreate(int winW, int winH) {
-        (void)winW; (void)winH;
-        if (!createPrefApplied_ && settings_) {
-            const auto& pref = settings_->prefsFor(singlePlayer_);   // this room kind's own set
-            createCrusades_ = pref.crusades;
-            createDoubleSight_ = pref.doubleSight;
-            createPathfindingMode_ = pref.pathfindingMode;
-            createSpeedUnlock_ = pref.speedUnlock;
-            createMonarchExp_ = pref.monarchExpendable;
-            createStartMode_ = uint8_t(std::clamp(pref.randomStarts, 0, 2));
-            createAllowSpectators_ = pref.allowSpectators;
-            createPowerCodes_ = pref.powerCodes;
-            spSpectate_ = false;  // Opt in for each skirmish; never restore from settings.
-            createUnitCap_ = pref.unitCap == 250 || pref.unitCap == 500 || pref.unitCap == 1000 || pref.unitCap == 2000
-                ? uint16_t(pref.unitCap) : 2000;
-            createFog_ = uint8_t(pref.fog);
-            mapSort_ = pref.mapSort; mapSortDir_ = pref.mapSortDir;
-            if (!mapList_.empty()) sortMapList();
-            // The remembered recipe, unless it is one this build cannot make.
-            if (tak::mapgen::isGeneratedMapId(pref.generator)) {
-                try {
-                    genParams_ = tak::mapgen::parseMapId(pref.generator);
-                    if (pref.generated) { applyGenParams(); mapPrefApplied_ = true; }
-                } catch (const std::exception&) { genParams_ = {}; }
-            }
-            createPrefApplied_ = true;
-        }
-        scanModPacks();   // scenarioOffered: may a game pack supply a missing unit type?
-        syncCreateScenario();
-        // While the map's scenario is on, it owns how the game ends and where each seat's
-        // forces start: those two rows read SCENARIO / FIXED and are not clickable (retail
-        // greyed the same boxes while Use Map Script was ticked). The saved choices stay.
-        const bool scenarioOn = createScenarioOn();
-        // Only the page title is over the columns, which start just under it: the first
-        // row level with the map list's sort buttons. Multiplayer puts the name and
-        // password fields and the MAP line above its option buttons.
-        float x = kCreateMargin, y = 60;   // the left margin = the right one
-        // A private single-player game needs no name or password.
-        if (!singlePlayer_) {
-            lbField(x, y, 260, "GAME NAME", createName_, 1); y += 44;
-            lbField(x, y, 260, "PASSWORD (OPTIONAL)", createPass_, 2); y += 44;
-        }
-        if (!singlePlayer_) { blockText(std::string("MAP: ") + mapTitle(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 28; }
-        // Option rows: the map column's rhythm (24 high, 6 apart, as TYPE / LAYOUT /
-        // SIZE). Multiplayer's ten, under the name and password fields, end at 470, clear
-        // of the BACK/CREATE footer. One column: every row kOptW wide (clear of the map
-        // list) and every label at optPx (createOptionPx), whatever it says.
-        const float kRow = 30, kRowH = 24;
-        constexpr float kOptW = 300;
-        const float optPx = createOptionPx(kOptW - 12);
-        auto option = [&](const std::string& label, bool enabled, std::function<void(int)> cycle) {
-            lbCycle(x, y, kOptW, kRowH, label, enabled, std::move(cycle), optPx);
-            y += kRow;
-        };
-        option(createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
-               [this](int) { createCrusades_ = !createCrusades_; });
-        option(createDoubleSight_ ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF", true,
-               [this](int) { createDoubleSight_ = !createDoubleSight_; });
-        option(pathfindingLabel(createPathfindingMode_), true,
-               [this](int direction) { createPathfindingMode_=tak::sim::cyclePathfindingMode(createPathfindingMode_,direction); });
-        option("UNIT CAP: " + std::to_string(createUnitCap_),true,[this](int direction) {
-            static constexpr uint16_t limits[]={250,500,1000,2000};
-            auto at=std::find(std::begin(limits),std::end(limits),createUnitCap_);
-            int index=at==std::end(limits) ? 0 : int(at-std::begin(limits));
-            createUnitCap_=limits[(index+direction+4)%4];
-        });
-        // When OFF, losing your Monarch loses the game (retail commander rule); ON
-        // makes the Monarch just another unit.
-        option(scenarioOn ? "MONARCH EXPENDABLE: SCENARIO"
-               : createMonarchExp_ ? "MONARCH EXPENDABLE: ON"
-                                   : "MONARCH EXPENDABLE: OFF", !scenarioOn,
-               [this](int) { createMonarchExp_ = !createMonarchExp_; });
-        option(createSpeedUnlock_ ? "ALLOW SPEED CHANGE: ON" : "ALLOW SPEED CHANGE: OFF", true,
-               [this](int) { createSpeedUnlock_ = !createSpeedUnlock_; });
-        // POWER CODES (retail's battle-room box): the +codes typed in the chat box work
-        // for every player of this game. Off by default, as in retail. A single-player
-        // spectator plays no army: OFF, greyed, like FOG OF WAR below -- the saved choice
-        // (createPowerCodes_) is left alone and comes back when SPECTATE is turned off.
-        const bool spectating = singlePlayer_ && spSpectate_;
-        option(createPowerCodes_ && !spectating ? "POWER CODES: ON" : "POWER CODES: OFF", !spectating,
-               [this](int) { createPowerCodes_ = !createPowerCodes_; });
-        // SP only: spectate mode -- you take no slot and just watch the AIs fight.
-        // Seat AIs in the slots below, then START.
-        if (singlePlayer_) {
-            option(spSpectate_ ? "SPECTATE (WATCH AIS): ON" : "SPECTATE (WATCH AIS): OFF", true,
-                   [this](int) { spSpectate_ = !spSpectate_; });
-        } else {
-            // MP only: may others WATCH this game once it runs? The server enforces it;
-            // the host can still flip it in the room until START.
-            option(createAllowSpectators_ ? "ALLOW SPECTATORS: ON" : "ALLOW SPECTATORS: OFF", true,
-                   [this](int) { createAllowSpectators_ = !createAllowSpectators_; });
-        }
-        // Fog of war: a room rule, so it is picked here and not only after the
-        // room exists. Display-only (never hashed) -- every peer applies the same
-        // rule, so it stays fair. The room displays this choice as information.
-        // A single-player spectator sees everything: FULL VISION, greyed. The saved
-        // choice (createFog_) is left alone and comes back when SPECTATE is turned off.
-        option(std::string("FOG OF WAR: ") + kFogName[spectating ? 2 : std::min<int>(createFog_, 2)], !spectating,
-               [this](int direction) { createFog_ = uint8_t((createFog_ + direction + 3) % 3); });
-        // Start Locations: also a room rule, picked here like fog so it is set before
-        // the room exists. FIXED = the seated slots take the map's starts in order and
-        // empty slots are skipped, as in retail; RANDOM = the starts are shuffled for
-        // the match; BY SLOT (not retail) = slot N always takes the map's Nth start.
-        // A MAP SCENARIO plays on fixed starts.
-        option(startLocationsLabel(scenarioOn ? tak::net::kStartsFixed : createStartMode_), !scenarioOn,
-               [this](int direction) { createStartMode_ = uint8_t((createStartMode_ + direction + 3) % 3); });
-        // Footer buttons, symmetric: BACK at the bottom-left and CREATE at the
-        // bottom-right, both inset by `x` from their side and at the same height.
-        // BROWSER (MP only) sits just left of CREATE.
-        const float by = kLobbyH - 40, bw = 120;
-        lbBtn(kLobbyW - x - bw, by, bw, 30, "CREATE", !createName_.empty() && genPreviewError_.empty(), [this] {
-            tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0;
-            // Game mods are on in every room (multiplayer works like single player): the
-            // host ticks mods/game packs in the room, and they and the always-enabled
-            // ones are sent to every player. The server turns this off for missions.
-            o.gameMods = 1;
-            mp_->setGameModsAllowed(mods_.game);
-            mp_->setGameModPacks(settings_ ? settings_->prefsFor(singlePlayer_).gamePacks : std::vector<std::string>{});
-            o.doubleSight = createDoubleSight_ ? 1 : 0;
-            o.pathfindingMode = createPathfindingMode_;
-            o.speedUnlock = createSpeedUnlock_ ? 1 : 0;
-            o.unitCap = createUnitCap_;
-            o.monarchExpendable = createMonarchExp_ ? 1 : 0;
-            o.powerCodes = createPowerCodes_ && !(singlePlayer_ && spSpectate_) ? 1 : 0;
-            o.fogExplored = singlePlayer_ && spSpectate_ ? 2 : std::min<uint8_t>(createFog_, 2);
-            // MAP SCENARIO: an offerable map's own scenario, when chosen. A Test Map copy
-            // plays its scenario through its opt-in and sends 0 (the server checks the
-            // verified package either way). Seats and rule regions follow fixed starts.
-            o.mapScenario = !tak::mapgen::isGeneratedMapId(mpMapId_) && createScenarioFor_ == mapPath_ &&
-                scenarioOffered(createScenario_) && createMapScenario_ ? 1 : 0;
-            o.randomStarts = createScenarioOn() ? tak::net::kStartsFixed : createStartMode_;
-            // A private single-player room is never listed, so the rule means nothing
-            // there; leave it at the default rather than a remembered MP choice.
-            o.allowSpectators = singlePlayer_ || createAllowSpectators_ ? 1 : 0;
-            // SP spectate: create as a spectator (no slot) so every slot can be an AI;
-            // the game-start path flags spectating_ + noFog_ from mp_->isSpectator().
-            mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity(o.mapScenario != 0),
-                            singlePlayer_ && spSpectate_, singlePlayer_);
-            specAutoSeated_ = false;   // arm the one-shot auto-seat for this new room
-            // A map that cannot build sends nothing: stay here, where the reason is shown.
-            lobbyScreen_ = singlePlayer_ || !mp_->createError().empty() ? LobbyScreen::Create : LobbyScreen::Browser;
-        });
-        if (!mp_->createError().empty()) {
-            const std::string why = "CANNOT CREATE: " + mp_->createError();
-            blockText(tak::uiTextFit(why, 1.3f, kLobbyW - 2 * x - 2 * bw - 152.0f), x + bw + 20, by + 9, 1.3f, {255, 130, 110, 255});
-        }
-        // BACK: multiplayer returns to the game browser it came from; a private
-        // single-player game has no browser, so it returns to the menu.
-        lbBtn(x, by, bw, 30, "BACK", true, [this] {
-            if (singlePlayer_ || lanHost_) menuRequested_ = true;
-            else lobbyScreen_ = LobbyScreen::Browser;
-        });
-
-        // Map picker (right column): a scrollable list box. Selecting sets both the
-        // wire id (mpMapId_ = bare .tnt stem) and mapPath_, so mpCapacity() recomputes
-        // the chosen map's start-position count.
-        if (mapList_.empty() && !mapListScanned_) buildMapList();
-        // Adopt the remembered map once (persisted across launches), and scroll to it.
-        if (!mapPrefApplied_ && settings_ && !settings_->prefsFor(singlePlayer_).map.empty()) {
-            for (int i = 0; i < int(mapList_.size()); ++i)
-                if (mapList_[size_t(i)].name == settings_->prefsFor(singlePlayer_).map) {
-                    mpMapId_ = mapList_[size_t(i)].name;
-                    mapPath_ = mapList_[size_t(i)].path;
-                    mapScroll_ = std::max(0, i - 3);
-                    break;
-                }
-            mapPrefApplied_ = true;
-            syncCreateScenario();
-        }
-        // hy: where a heading line would be; the columns have none, so the sort buttons
-        // (hy + 20) sit level with the first option row (y 60).
-        float lx = kCreateMargin + 320, hy = 40;   // 20 right of the 300-wide option column
-        // Toggle between the map list and the random-map generator.
-        bool gen = tak::mapgen::isGeneratedMapId(mpMapId_);
-        if (!gen) {
-            // The list (gameview_mappicker.cpp) reaches down to y 480, above the BACK/CREATE
-            // footer. Its selection is picker_.file while the CHANGE MAP panel is closed (the
-            // panel seeds its own when it opens); a click also sets mpMapId_ and mapPath_.
-            picker_.file = {mpMapId_, mapPath_};
-            drawMapListBox({lx, hy + 20, mapListW(), 480 - (hy + 20)}, picker_.file);
-        } else {
-            drawGeneratorControls(lx, hy + 20);   // the random-map params panel (replaces the list)
-        }
-
-        // Preview panel, right of the list / params column, with the map's dims and (a file
-        // map) MAP SCENARIO under it. Against the right margin; the map list widens to 12
-        // short of it. Beside the generator's narrower panel the preview grows into the free
-        // space: as wide as the gap from the 300-wide panel (plus 20) to the margin, top level
-        // with the panel's, and as tall as leaves room for the size line and button under it
-        // above the footer at 500.
-        float pvW = 192, pvy = hy + 46;
-        if (gen) {
-            pvy = hy + 20;
-            pvW = std::min(kLobbyW - kCreateMargin - (lx + 320), kLobbyH - 48 - pvy - 58);
-        }
-        const float pvH = pvW, pvx = kLobbyW - kCreateMargin - pvW;
-        drawPickPreview({pvx, pvy, pvW, pvH}, mpMapId_, mapPath_, true);
-        // Keep the generator action below the preview and map description.
-        lbCycle(pvx, pvy + pvH + 32, pvW, 26, gen ? "PICK AN EXISTING MAP" : "GENERATE RANDOM MAP", true,
-              [this, gen](int) {
-                  if (gen) { mpMapId_.clear(); mapPath_.clear(); }  // drop back to the list
-                  else applyGenParams();                           // encode the current gen params
-              });
     }
 
     // The mods screen (the room's MODS... button): COSMETIC and GAME side by side over the
@@ -969,19 +725,12 @@ float createOptionPx(float maxW) {
         }
         column(1, "GAME MODS", availableGameMods_, mp_->gameModPacks(), host ? alwaysGame : std::vector<std::string>{},
                gameModFilter_, 8, host && gameOn && !mp_->modBusy(), guestNote.empty() ? nullptr : guestNote.c_str(),
-               [this, alwaysGame](std::vector<std::string> selection) {
+               [this](std::vector<std::string> selection) {
                    mp_->setGameModPacks(selection);
-                   if (settings_) {
-                       // A saved tick hidden by a same-named always-enabled pack is kept (it
-                       // applies again once that pack leaves always_enabled/).
-                       auto& packs = settings_->prefsFor(singlePlayer_).gamePacks;   // this room kind's ticks
-                       for (const auto& n : packs)
-                           if (std::find(selection.begin(), selection.end(), n) == selection.end() &&
-                               std::any_of(alwaysGame.begin(), alwaysGame.end(), [&](const std::string& a) {
-                                   return tak::hpi::MountSet::key(a) == tak::hpi::MountSet::key(n); }))
-                               selection.push_back(n);
-                       packs = std::move(selection); saveSettings(*settings_);
-                   }
+                   // This room kind's remembered ticks, when this room remembers (not a
+                   // --play-map run or a harness); a saved tick hidden by a same-named
+                   // always-enabled pack is kept there (rememberRoomPrefs).
+                   rememberRoomPrefs(RoomField::Mods);
                });
         if (const auto status = mp_->roomModStatus(); gameOn && !status.empty())
             blockText(tak::uiTextFit(status, 1.3f, 600), kCreateMargin, kLobbyH - 32, 1.3f, {205, 190, 135, 255});
@@ -1232,8 +981,9 @@ float createOptionPx(float maxW) {
 
     void GameView::drawStartMarkers(const SDL_FRect& img, const std::vector<int>& colorOfStart, float maxRadius) {
         if (mapPreviewStarts_.empty() || img.w <= 0 || img.h <= 0) return;
-        // Sized from the preview (the full-window map view allows larger), so the create preview (192 to 288 px) and the room's smaller
-        // one both read: a black rim and a white ring keep it legible on any terrain.
+        // Sized from the preview (the full-window map view allows larger), so the CHANGE MAP
+        // panel's previews (220 and 336 px) and the room's both read: a black rim and a white
+        // ring keep it legible on any terrain.
         const float r = std::clamp(std::min(img.w, img.h) * 0.06f, 7.0f, maxRadius);
         auto disc = [&](float cx, float cy, float rad, SDL_Color c) {
             constexpr int kSeg = 20;
@@ -1339,12 +1089,11 @@ float createOptionPx(float maxW) {
 
     void GameView::openBigMap() {
         // The map of the preview on show: the room's (its verified package if it has one,
-        // as drawRoomPreview reads it), the CHANGE MAP panel's candidate or the create
-        // screen's choice. A downloaded map reads through a view holding its archive's
-        // files; a generated one is rolled again from its id, through the base data only
-        // (as the game builds it).
+        // as drawRoomPreview reads it) or the CHANGE MAP panel's candidate. A downloaded map
+        // reads through a view holding its archive's files; a generated one is rolled again
+        // from its id, through the base data only (as the game builds it).
         const bool room = mapPreviewFor_.rfind("room:", 0) == 0;
-        std::string path = room ? mpRoom().mapId : picker_.open ? (picker_.random ? picker_.gen : picker_.file).path : mapPath_;
+        std::string path = room ? mpRoom().mapId : picker_.open ? (picker_.random ? picker_.gen : picker_.file).path : std::string();
         if (path.empty()) return;
         static const char* kWorld[tak::mapgen::kMapTypes] = {"aramon", "taros", "veruna", "zhon", "creon"};
         try {
@@ -1391,7 +1140,7 @@ float createOptionPx(float maxW) {
         // the bottom), with the lobby's 16 margin round it; a generated map's recipe takes
         // a line or two between them.
         const bool fromRoom = bigMapFor_.rfind("room:", 0) == 0;
-        const std::string mapId = fromRoom ? mpRoom().mapId : picker_.open ? (picker_.random ? picker_.gen : picker_.file).id : mpMapId_;
+        const std::string mapId = fromRoom ? mpRoom().mapId : picker_.open ? (picker_.random ? picker_.gen : picker_.file).id : std::string();
         constexpr float kRecipePx = 1.1f, kRecipePitch = 13;
         const auto recipe = packItems(genRecipeItems(mapId), kRecipePx, lw - 2 * kCreateMargin);
         const float recipeH = recipe.empty() ? 0 : float(recipe.size()) * kRecipePitch + 4;
@@ -1429,7 +1178,6 @@ float createOptionPx(float maxW) {
             if (genSlider_ >= 0 || lbField_ == 5) applyGenParams();
             genSlider_ = -1; mapDrag_ = false;
             roomFieldBlur();   // an edited room name or password is sent
-            saveCreatePreferences();
         }
         // The full-window map view: BACK (its only button) or Esc closes it; nothing
         // else reaches the lobby under it.
@@ -1460,7 +1208,6 @@ float createOptionPx(float maxW) {
         } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
             if (genSlider_ >= 0) applyGenParams();
             mapDrag_ = false; genSlider_ = -1;
-            saveCreatePreferences();
         } else if (e.type == SDL_MOUSEWHEEL) {
             float mx, my; lobbyMouse(mx, my);
             if (ptIn(mapListRect_, mx, my)) {   // scroll the map list under the cursor
@@ -1483,20 +1230,15 @@ float createOptionPx(float maxW) {
                 if (ptIn(hot.rect, mx, my)) {
                     if (hot.cycle) hot.cycle(forward ? 1 : -1);
                     else if (forward && hot.action) hot.action();
-                    saveCreatePreferences();
                     break;
                 }
         } else if (e.type == SDL_TEXTINPUT && lbField_) {
             std::string* f = lbFieldBuf();
-            // A typed game name is 16 at most (the game list and the LAN rows show it whole);
-            // only a LOCAL SERVER's own "<name>'s Game" runs past it. The room's name and
-            // password (fields 9 and 10) take printable ASCII up to the server's limits.
-            const size_t cap = lbField_ == 1 ? 16 : lbField_ == 9 ? tak::net::kRoomNameMax
-                             : lbField_ == 10 ? tak::net::kRoomPasswordMax : 24;
+            // The room's name and password (fields 9 and 10) take printable ASCII up to the
+            // server's limits.
+            const size_t cap = lbField_ == 9 ? tak::net::kRoomNameMax : lbField_ == 10 ? tak::net::kRoomPasswordMax : 24;
             if (f && f->size() < cap) {
-                if (lbField_ == 1) {
-                    for (unsigned char c : std::string(e.text.text)) if (f->size() < cap) *f += char(c);
-                } else if (lbField_ == 9 || lbField_ == 10) {
+                if (lbField_ == 9 || lbField_ == 10) {
                     for (unsigned char c : std::string(e.text.text))
                         if (f->size() < cap && c >= 0x20 && c <= 0x7e) *f += char(c);
                     (lbField_ == 9 ? roomNameEdited_ : roomPassEdited_) = true;
@@ -1509,7 +1251,6 @@ float createOptionPx(float maxW) {
                 if (lbField_ == 7) modScroll_[0] = 0;
                 if (lbField_ == 8) modScroll_[1] = 0;
             }
-            saveCreatePreferences();
         } else if (e.type == SDL_KEYDOWN && lbField_) {
             if (e.key.keysym.sym == SDLK_BACKSPACE) {
                 std::string* f = lbFieldBuf();
@@ -1525,7 +1266,6 @@ float createOptionPx(float maxW) {
                 if (lbField_ == 5) applyGenParams();
                 lbField_ = 0; SDL_StopTextInput();
             } else if (e.key.keysym.sym == SDLK_ESCAPE) { if (lbField_ == 5) applyGenParams(); lbField_ = 0; SDL_StopTextInput(); }
-            saveCreatePreferences();
         }
     }
 

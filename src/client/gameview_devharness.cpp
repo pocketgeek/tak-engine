@@ -125,14 +125,17 @@
         gate->arm();
         if (big) {
             // A generated map: its view reads vfs_ itself (an installed map's room view
-            // reads the verified package's own files). Drawn once, as the lobby draws it,
-            // so the chunk worker has work too.
+            // reads the verified package's own files). Opened as from the CHANGE MAP panel's
+            // RANDOM tab, and drawn once, as the lobby draws it, so the chunk worker has work too.
             tak::mapgen::Params params;
             params.seed = 4;
-            const std::string mapPath = mapPath_;
-            mapPreviewFor_ = mapPath_ = tak::mapgen::encodeMapId(params);
+            const std::string id = tak::mapgen::encodeMapId(params);
+            const MapPicker panel = picker_;
+            picker_.open = picker_.random = true;
+            picker_.gen = {id, id};
+            mapPreviewFor_ = id;
             openBigMap();
-            mapPath_ = mapPath;
+            picker_ = panel;
             if (!bigMap_) fail("the full-window view did not open");
             bigMap_->draw({0, 0, 640, 480});
             waitHeld(*gate, 1);   // its section worker, at least

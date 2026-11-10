@@ -1439,6 +1439,8 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
 
     bool GameView::mpAutoStep(int autoMode, const std::string& mapId, bool crusades) {
         using S = tak::net::MpClient::State;
+        lobbyAutoMode_ = autoMode;
+        if (autoMode) rememberRoom_ = false;   // a harness room writes no remembered settings
         // Reconnecting after the link dropped mid-game: mpStep owns it (a reconnect
         // passes through Lobby, which must not read as the lobby branches below).
         if (reconnectUntilMs_) return mpStep();
@@ -1448,6 +1450,9 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
             return false;
         }
         S st = mp_->state();
+        // A door's or CREATE's room: in it, or refused (the lobby says why), or gone with the link.
+        if (st == S::InRoom || st == S::Done) roomAutoCreate_ = roomCreateSent_ = false;
+        else if (roomCreateSent_ && !mp_->joinError().empty()) roomAutoCreate_ = roomCreateSent_ = false;
         if (st == S::Done) {
             if (beginReconnect()) return true;
             if (netError_.empty()) netError_ = mp_->error();
@@ -1468,7 +1473,11 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
         }
         // TAK_ROOM_SCRIPT (debug builds): room actions, after this mode's own seating step.
         if (!roomScriptStep(autoMode)) return false;
-        if (st == S::Lobby && (autoMode == 1 || autoMode == 4 || autoMode == 7 || autoMode == 8)) {
+        if (st == S::Lobby && autoMode == 0 && roomAutoCreate_ && !roomCreateSent_) {
+            // PLAY THE MACHINE, a LOCAL SERVER host, --play-map: the room opens straight away,
+            // from the remembered settings (headless too, so a menu pick reaches the room).
+            createRoomFromPrefs();
+        } else if (st == S::Lobby && (autoMode == 1 || autoMode == 4 || autoMode == 7 || autoMode == 8)) {
             if (const char* be = tak::devEnv("TAK_BENCH")) {   // headless: benchmark run
                 int lv = std::atoi(be);                        // TAK_BENCH=<level 1..6>, default High
                 benchmarkLevel_ = (lv >= 1 && lv <= tak::sim::kBenchLevels) ? lv : 3;
@@ -1736,9 +1745,84 @@ int roomRuleValue(const tak::net::GameOptions& o, tak::RoomField field) {
 }
 }  // namespace
 
-    // The browser's CREATE and the doors that open a room straight away: not built yet (the
-    // create screen still makes the rooms).
-    void GameView::createRoomFromPrefs() { roomActError_ = kNotImplemented; }
+    void GameView::createRoomFromPrefs() {
+        if (!mp_ || mp_->state() != tak::net::MpClient::State::Lobby) { roomActError_ = "not in the game list"; return; }
+        if (roomCreateSent_) { roomActError_ = "a game is already being opened"; return; }
+        // The browser's CREATE makes a multiplayer room; the doors named theirs.
+        if (roomKind_ == RoomKind::None) roomKind_ = singlePlayer_ ? RoomKind::SinglePlayer : RoomKind::Multiplayer;
+        rememberRoom_ = lobbyAutoMode_ == 0 && roomForcedMap_.empty();
+        const bool sp = roomKind_ == RoomKind::SinglePlayer;
+        // The rules: the kind's remembered set, each value one the room's cells can show. A
+        // private single-player room is never listed, so ALLOW SPECTATORS stays at its default
+        // there. MAP SCENARIO starts off (a Test Map copy plays its scenario by its opt-in).
+        const tak::Settings::RoomPrefs p = settings_ ? settings_->prefsFor(sp) : tak::Settings::RoomPrefs{};
+        tak::net::GameOptions o;
+        o.crusades = p.crusades ? 1 : 0;
+        o.doubleSight = p.doubleSight ? 1 : 0;
+        o.pathfindingMode = tak::sim::validPathfindingMode(uint8_t(p.pathfindingMode)) ? p.pathfindingMode
+                                                                                      : tak::sim::PathfindingMode::Retail;
+        o.speedUnlock = p.speedUnlock ? 1 : 0;
+        o.unitCap = p.unitCap == 250 || p.unitCap == 500 || p.unitCap == 1000 ? uint16_t(p.unitCap) : uint16_t(2000);
+        o.monarchExpendable = p.monarchExpendable ? 1 : 0;
+        o.powerCodes = p.powerCodes ? 1 : 0;
+        o.fogExplored = uint8_t(std::clamp(p.fog, 0, 2));
+        o.randomStarts = uint8_t(std::clamp(p.randomStarts, 0, 2));
+        o.allowSpectators = sp || p.allowSpectators ? 1 : 0;
+        // Game mods are on in every room: the host ticks mods/game packs in the room, and they
+        // and the always-enabled ones go to every player (the server turns them off for missions).
+        o.gameMods = 1;
+        o.mapScenario = 0;
+        roomChosen_ = o; roomChosenSet_ = true;
+        mp_->setGameModsAllowed(mods_.game);
+        mp_->setGameModPacks(p.gamePacks);
+        // The map: the --play-map map and nothing else; otherwise the remembered recipe or map,
+        // then the launch's map, then the generator's defaults (buildable from retail data).
+        struct Try { std::string id, path; bool remembered; };
+        std::vector<Try> tries;
+        std::string why;   // the remembered map was passed over: why
+        if (!roomForcedMap_.empty()) {
+            tries.push_back({roomForcedMap_, tak::hpi::findMap(vfs_, roomForcedMap_), false});
+        } else {
+            if (p.generated) {
+                bool made = tak::mapgen::isGeneratedMapId(p.generator);
+                if (made) try { tak::mapgen::parseMapId(p.generator); } catch (const std::exception&) { made = false; }
+                if (made) tries.push_back({p.generator, p.generator, true});
+                else why = "its random map cannot be made";
+            }
+            if (!p.map.empty()) {
+                if (std::string path = tak::hpi::findMap(vfs_, p.map); !path.empty()) tries.push_back({p.map, path, true});
+                else if (why.empty() && !p.generated) why = "it is not installed";
+            }
+            if (!roomDefaultMap_.empty())
+                if (std::string path = tak::hpi::findMap(vfs_, roomDefaultMap_); !path.empty())
+                    tries.push_back({roomDefaultMap_, path, false});
+            const std::string recipe = tak::mapgen::encodeMapId(tak::mapgen::Params{});
+            tries.push_back({recipe, recipe, false});
+        }
+        std::string opened, failed;
+        for (const Try& t : tries) {
+            try {
+                if (t.path.empty()) throw std::runtime_error("map not installed: " + t.id);
+                mp_->createGame(sp ? "Single Player" : "", roomStartPass_, t.id, o, capacityFor(t.id, t.path, false), false, sp);
+                failed = mp_->createError();
+            } catch (const std::exception& e) { failed = e.what(); }
+            if (failed.empty()) { opened = t.id; break; }
+            std::fprintf(stderr, "room: cannot open a game on '%s': %s\n", t.id.c_str(), failed.c_str());
+            if (t.remembered && why.empty()) why = failed;
+        }
+        if (opened.empty()) {   // a --play-map map that cannot be built here: the lobby says why
+            roomActError_ = failed;
+            roomAutoCreate_ = false;
+            return;
+        }
+        roomCreateSent_ = true;
+        roomPassDraft_ = roomStartPass_;
+        if (!why.empty()) {
+            std::string note = "THE REMEMBERED MAP COULD NOT BE USED (" + why + "): " + mapTitle(opened) + " WAS CHOSEN";
+            for (char& c : note) c = char(std::toupper(static_cast<unsigned char>(c)));
+            roomOpenNote_ = std::move(note);
+        }
+    }
 
     bool GameView::roomScriptStep(int autoMode) {
         using S = tak::net::MpClient::State;
@@ -1807,7 +1891,7 @@ int roomRuleValue(const tak::net::GameOptions& o, tak::RoomField field) {
                     if (roomActError_.empty()) pickerPick();
                 });
                 roomScriptSerial_ = picker_.pickSerial;   // 0: PICK had nothing to send
-                if (wantRefusal && !refused.empty() && refused != kNotImplemented) {
+                if (wantRefusal && !refused.empty()) {
                     std::fprintf(stderr, "room script: %s: refused here: %s\n", step.text.c_str(), refused.c_str());
                     refused.clear();
                     done = true;
@@ -1868,6 +1952,14 @@ int roomRuleValue(const tak::net::GameOptions& o, tak::RoomField field) {
             for (const auto& s : room.slots) count += s.type == 1 && (what == "humans" || s.ready);
             roomScriptActed_ = true;
             done = count >= std::atoi(step.arg.c_str() + eq + 1);
+        } else if (step.verb == "ready") {
+            if (!roomScriptActed_) refused = act([&] { roomSetReady(true); });
+            done = room.mySlot >= 0 && room.slots[room.mySlot].ready;
+        } else if (step.verb == "leave") {
+            // LEAVE, as the LOCAL SERVER prompt's YES (it asks nothing more). The room is left at
+            // once: a single-player or LOCAL SERVER session ends with this frame.
+            if (!roomScriptActed_) refused = act([&] { roomLeave(); });
+            done = mp_->state() != S::InRoom;
         } else if (step.verb == "start") {
             // START once it is enabled, as a player would press it.
             if (!roomScriptActed_ && roomCanStart(roomFrame(int(kLobbyW)))) {

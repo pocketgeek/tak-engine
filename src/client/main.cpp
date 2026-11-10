@@ -1309,7 +1309,10 @@ int main(int argc, char** argv) {
             // plaintext server, or one refused), it is the CONNECT screen: the password
             // is never kept, so it has to be typed again.
             const auto next = std::exchange(afterResult, tak::ResultChoice::Menu);
-            if (std::exchange(lanReturnToConnect, false) && next == tak::ResultChoice::Menu) menu.reopenConnect("");
+            if (std::exchange(lanReturnToConnect, false) && next == tak::ResultChoice::Menu) {
+                menu.reopenConnect("");
+                std::fprintf(stderr, "menu: back to CONNECT TO SERVER\n");
+            }
             if (next == tak::ResultChoice::GameSelect) {
                 const auto address = tak::parseServerAddress(lastServer);
                 tokenLaunch = address && sessionToken.heldFor(address->host, address->port);
@@ -1464,11 +1467,12 @@ int main(int argc, char** argv) {
             return 1;
         }
         serverHost = "127.0.0.1"; serverPort = p;
-        // Campaign mission -> auto-host it (mode 8); menu skirmish stops in the lobby
-        // (mode 0); CLI single-player creates its room and seats the player unready
-        // (mode 7), then also waits for AIs, READY and START unless TAK_SP_AIS is set.
+        // Campaign mission -> auto-host it (mode 8); PLAY THE MACHINE, a LOCAL SERVER host and
+        // --play-map open their room from the remembered settings (mode 0, the room's own
+        // create); CLI single-player creates its room and seats the player unready (mode 7),
+        // then also waits for AIs, READY and START unless TAK_SP_AIS is set.
         mpAutoMode = benchmarkLaunch ? 1
-                   : !campaignStem.empty() ? 8 : (menuInteractive || lanHosting ? 0 : 7);
+                   : !campaignStem.empty() ? 8 : (menuInteractive || lanHosting || !playMap.empty() ? 0 : 7);
         std::fprintf(stderr, "%s: local server on port %d%s\n", lanHosting ? "local server" : "single-player", p,
                      lanHosting ? " (LAN, unencrypted)" : !campaignStem.empty() ? " (campaign)" : menuInteractive ? " (lobby)" : "");
     }
@@ -1688,7 +1692,7 @@ int main(int argc, char** argv) {
             // later, so it constructs "bare" (no single-player 2-monarch spawn).
             // When looping back to the menu, keep this function's vfs alive for the
             // next session (+ its findMap); hand the game its own fresh mount.
-            if (lobbyLoading) lobbyLoading->step("Preparing game setup",50);
+            if (lobbyLoading) lobbyLoading->step("Preparing the game room",50);
             gameView = std::make_unique<GameView>(ren,
                                                   // Campaign result/progression and the next
                                                   // session still need the front-end catalog.
@@ -1724,11 +1728,14 @@ int main(int argc, char** argv) {
                 if (fromMenu) { gameView->setExternalLobbyMusic();  // front-end owns the lobby BGM
                                 gameView->setCanReturnToMenu(); }   // in-game menu can return to it
                 if (!campaignStem.empty()) gameView->setMissionStem(campaignStem);   // autoMode 8 hosts this mission
-                else if (menuInteractive) gameView->setSinglePlayer();  // menu SP: SP-flavoured lobby, Create-first
-                else if (mpAutoMode == 7) gameView->setSinglePlayerFlag();   // --play-map / CLI game: a private room
-                // LOCAL SERVER: its host, the game "<name>'s Game" -- the one game name
-                // allowed past 16 characters (a 16-character name keeps its 's Game).
-                else if (lanHosting) gameView->setLanHost(playerName + "'s Game", lanGamePass);
+                // PLAY THE MACHINE: the single-player room, opened straight away.
+                else if (menuInteractive) gameView->openSinglePlayerRoom();
+                // --play-map: the single-player room on the Test Map copy, and only that map.
+                else if (!playMap.empty()) gameView->openSinglePlayerRoom(args[0], /*playMap=*/true);
+                else if (mpAutoMode == 7) gameView->setSinglePlayerFlag();   // CLI game: a private room
+                // LOCAL SERVER: its host's room, opened straight away; the server names it
+                // "<name>'s Game", with the game password typed on CONNECT.
+                else if (lanHosting) gameView->openLanHostRoom(lanGamePass);
                 else if (benchmarkLaunch) {   // menu Benchmark: all-AI watch run + metrics
                     gameView->setBenchmark(benchmarkLevel, settings.benchmarkPathfinding, settings.benchmarkSpeed);
                 }
@@ -3166,7 +3173,7 @@ int main(int argc, char** argv) {
                         : origin == tak::LaunchOrigin::Multiplayer  ? tak::ResultChoice::GameSelect
                                                                     : tak::ResultChoice::Menu;
         // Say where the doors really go. The left one is always the title screen. Single
-        // player's right door is the Play the Machine setup; a LAN game's returns to
+        // player's right door is a new Play the Machine room; a LAN game's returns to
         // Connect to Server (its list); an online game's is that server's game list only
         // with a sign-in token for it, else Connect to Server too (see the menu loop above).
         const bool lanGame = origin == tak::LaunchOrigin::Multiplayer && !tokenLaunch &&

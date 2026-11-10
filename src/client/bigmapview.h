@@ -1,6 +1,6 @@
 #pragma once
 
-// The lobby's full-window map view: a click on the create screen's or the room's map
+// The lobby's full-window map view: a click on the room's or its CHANGE MAP panel's map
 // preview shows the chosen map's own terrain and features (trees, rocks, mana spots,
 // ruins) fitted to the window, instead of the small radar picture. GameView draws it
 // over the lobby, which keeps running underneath, so a room still starts while a

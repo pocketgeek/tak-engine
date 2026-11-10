@@ -16,6 +16,17 @@ cannot finish prints why and ends the client. TAK_QUIT_TICK ends a game that sta
      removes the three AIs past its seats, and the game on it starts.
   4  multiplayer unready: a guest READY, the host changes FOG OF WAR, the server clears the
      guest's READY (the guest is told so), the guest readies again and the host STARTs.
+  5  PLAY THE MACHINE (the menu's door): the room opens at once from the single-player
+     settings; an AI, CHANGE MAP and CRUSADES are remembered in spRoom.* (mpRoom.* untouched),
+     and the next launch's room opens on that map with those rules.
+  6  --play-map: the room opens on the Test Map copy and keeps it (CHANGE MAP is refused
+     here), starts with one AI and no second human, and writes no remembered map.
+  7  a remembered map that is not installed: the room opens on the launch's map (athri cay)
+     instead, and says why.
+  8  LOCAL SERVER host: the room opens at once as "<name>'s Game" with the CONNECT password;
+     a rename reaches the server; LEAVE closes the game and goes back to CONNECT TO SERVER.
+  9  online CREATE: a room "<account>'s Game" opens at once from the multiplayer settings;
+     a rule change is remembered in mpRoom.* (spRoom.* untouched).
   10 single player MAP SCENARIO confirm: on a map whose scenario seats more players than it
      has starts, turning the scenario off would remove AIs, so the first click only arms the
      cell (the note says what the next does); the second removes them, and the room says so.
@@ -75,7 +86,7 @@ def run_client(client, argv, env, home, timeout=180):
 def script_ran(log, steps):
     """Every step finished, in order, and nothing failed."""
     for line in log.splitlines():
-        if line.startswith('room script: ') and not re.search(r': done$|^room script: (finished|wrote )', line):
+        if line.startswith('room script: ') and not re.search(r': done$|^room script: (finished|wrote |map!:.*: refused here: )', line):
             raise AssertionError('the room script failed: %s' % line)
     at = 0
     for step in steps:
@@ -141,6 +152,174 @@ def case_watch(args, root):
         assert played and int(played[1]) >= QUIT_TICK, 'the watched game did not play to the quit tick'
     except AssertionError as e:
         raise AssertionError('%s\n%s' % (e, log[-4000:]))
+
+
+def run_until(client, argv, env, home, marker, timeout=180):
+    """A client that does not end by itself (a room it cannot start, the menu it returns to):
+    run it until `marker` is in its log, then end it (SIGTERM, as a window close); its log."""
+    path = home / 'client.log'
+    with open(path, 'w') as out:
+        proc = subprocess.Popen([client] + argv + ['--winsize', '960', '540'], cwd=home, env=env,
+                                stdout=out, stderr=subprocess.STDOUT)
+    try:
+        deadline = time.monotonic() + timeout
+        while marker not in path.read_text(errors='replace'):
+            if proc.poll() is not None or time.monotonic() > deadline:
+                raise AssertionError('%r never appeared (client %s):\n%s' % (
+                    marker, 'exited %d' % proc.returncode if proc.poll() is not None else 'still running',
+                    path.read_text(errors='replace')[-4000:]))
+            time.sleep(0.1)
+        time.sleep(0.5)   # the lines that follow it (a settings write) land
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(20)
+            except subprocess.TimeoutExpired:
+                proc.kill(); proc.wait()
+    return path.read_text(errors='replace')
+
+
+def settings_of(home):
+    """The profile's settings file as key -> value (a repeated key keeps its last value)."""
+    out = {}
+    for line in (home / 'settings.ini').read_text(errors='replace').splitlines():
+        key, eq, value = line.partition(' = ')
+        if eq:
+            out[key.strip()] = value.strip()
+    return out
+
+
+def case_door(args, root):
+    """PLAY THE MACHINE opens its room at once; the room's changes go to spRoom.*."""
+    steps = ['ai:1', 'map:Inner Circle', 'opt:crusades=1', 'start']
+    home, env = profile(root, 'case5', ';'.join(steps), {'TAK_MENU_PICK': 'singleplayer'})
+    code, log = run_client(args.client, ['menu', '--data', args.data], env, home)
+    try:
+        assert re.search(r"client \d+ created game \d+ 'Single Player' on 'athri cay'", log, re.I), \
+            'the door did not open its room on the launch map'
+        script_ran(log, steps)
+        played_to_quit(log, code)
+        saved = settings_of(home)
+        assert saved.get('spRoom.map', '').lower() == 'inner circle', 'the picked map was not remembered: %r' % saved
+        assert saved.get('spRoom.crusades') == '1' and saved.get('spRoom.generated') == '0', \
+            'CRUSADES was not remembered: %r' % saved
+        assert saved.get('mpRoom.map') == '' and saved.get('mpRoom.crusades') == '0', \
+            'the multiplayer set changed: %r' % saved
+    except AssertionError as e:
+        raise AssertionError('%s\n%s' % (e, log[-4000:]))
+    # The next launch's room: that map, those rules.
+    env['TAK_ROOM_SCRIPT'] = 'ai:1;start'
+    code, log = run_client(args.client, ['menu', '--data', args.data], env, home)
+    try:
+        assert re.search(r"client \d+ created game \d+ 'Single Player' on 'inner circle' \(crusades=1 ", log, re.I), \
+            'the next room did not open on the remembered map and rules'
+        script_ran(log, ['ai:1', 'start'])
+        played_to_quit(log, code)
+    except AssertionError as e:
+        raise AssertionError('%s\n%s' % (e, log[-4000:]))
+
+
+def playtest_snapshot(root, data, hpitool):
+    """A Cartographer snapshot: one map (Inner Circle's terrain and header, renamed) in a .kmp."""
+    src = Path(root) / 'playtest-src'
+    (src / 'kmap').mkdir(parents=True)
+    for ext in ('tnt', 'ota'):
+        (src / 'kmap' / ('Playtest Map.' + ext)).write_bytes(hpi_read(hpitool, data, 'maps/Inner Circle.' + ext))
+    kmp = Path(root) / 'Playtest Map.kmp'
+    subprocess.run([hpitool, 'pack', str(src), str(kmp)], check=True, stdout=subprocess.DEVNULL)
+    return str(kmp)
+
+
+def case_play_map(args, root):
+    """--play-map: its room plays the Test Map copy only, starts solo with an AI, remembers nothing."""
+    kmp = playtest_snapshot(root, args.data, args.hpitool)
+    steps = ['map!:Inner Circle', 'ai:1', 'start']
+    home, env = profile(root, 'case6', ';'.join(steps))
+    code, log = run_client(args.client, ['--play-map', kmp, '--data', args.data], env, home)
+    try:
+        assert re.search(r"client \d+ created game \d+ 'Single Player' on 'playtest map \[[0-9a-f]{16}\]'", log, re.I), \
+            'the room did not open on the Test Map copy'
+        assert "room script: map!:Inner Circle: refused here: a test map's room keeps its map" in log, \
+            'CHANGE MAP was not refused in the room'
+        script_ran(log, steps)
+        assert re.search(r'game \d+ starting with 2 players', log), 'the game did not start with the AI'
+        played_to_quit(log, code)
+        saved = settings_of(home) if (home / 'settings.ini').exists() else {}
+        assert not saved.get('spRoom.map') and saved.get('spRoom.generated', '0') == '0', \
+            'the Test Map run remembered a map: %r' % saved
+    except AssertionError as e:
+        raise AssertionError('%s\n%s' % (e, log[-4000:]))
+
+
+def case_fallback(args, root):
+    """A remembered map that is not installed: the room opens on the launch's map, and says why."""
+    home, env = profile(root, 'case7', 'ai:1;start', {'TAK_MENU_PICK': 'singleplayer'})
+    (home / 'settings.ini').write_text('fullscreen = 0\nspRoom.map = No Such Map\n')
+    code, log = run_client(args.client, ['menu', '--data', args.data], env, home)
+    try:
+        opened = re.search(r"client \d+ created game \d+ 'Single Player' on '([^']*)'", log)
+        assert opened and (opened[1].lower() == 'athri cay' or opened[1].startswith('~gen1~')), \
+            'the room did not open on the fallback map'
+        assert re.search(r'room note: THE REMEMBERED MAP COULD NOT BE USED \(IT IS NOT INSTALLED\): .+ WAS CHOSEN', log), \
+            'the room did not say why'
+        script_ran(log, ['ai:1', 'start'])
+        played_to_quit(log, code)
+        assert settings_of(home).get('spRoom.map') == 'No Such Map', 'the fallback was remembered'
+    except AssertionError as e:
+        raise AssertionError('%s\n%s' % (e, log[-4000:]))
+
+
+def case_lan_host(args, root):
+    """LOCAL SERVER host: "<name>'s Game" with its password at once; rename; LEAVE to CONNECT."""
+    home, env = profile(root, 'case8', 'name:Friday;leave', {'TAK_MENU_PICK': 'lanhost:alice:pw'})
+    log = run_until(args.client, ['menu', '--data', args.data], env, home, 'menu: back to CONNECT TO SERVER')
+    try:
+        assert re.search(r"client \d+ created game \d+ 'alice's Game' on 'athri cay'", log, re.I), \
+            'the LOCAL SERVER room was not opened at once'
+        assert re.search(r"room: game \d+ 'alice's Game' \(password set\)", log), 'the room has no password'
+        script_ran(log, ['name:Friday', 'leave'])
+        assert re.search(r"game \d+: renamed to 'Friday'", log), 'the server did not rename the game'
+        assert log.find('menu: back to CONNECT TO SERVER') > log.find('room script: leave: done'), \
+            'LEAVE did not go back to CONNECT TO SERVER'
+    except AssertionError as e:
+        raise AssertionError('%s\n%s' % (e, log[-4000:]))
+
+
+def case_online_create(args, root):
+    """Online CREATE: "<account>'s Game" at once, from the multiplayer settings, remembered there."""
+    port = free_port()
+    shome, senv = profile(root, 'case9-server', '')
+    slog_path = shome / 'server.log'
+    with open(slog_path, 'w') as slog:
+        # A server that signs players in (the client has an account), on loopback.
+        server = subprocess.Popen([args.server, '--port', str(port), '--data', args.data, '--local', '--seed', '1'],
+                                  stdout=slog, stderr=subprocess.STDOUT, env=senv, cwd=shome)
+    try:
+        deadline = time.monotonic() + 90
+        while 'listening' not in slog_path.read_text(errors='replace'):
+            assert time.monotonic() < deadline and server.poll() is None, \
+                'the server never listened:\n' + slog_path.read_text(errors='replace')[-3000:]
+            time.sleep(0.1)
+        steps = ['create', 'opt:crusades=1']
+        home, env = profile(root, 'case9', ';'.join(steps),
+                            {'TAK_MENU_PICK': 'connect:alice:alicepass1@tcp://127.0.0.1:%d' % port})
+        log = run_until(args.client, ['menu', '--data', args.data], env, home, 'room script: finished')
+        slog_text = slog_path.read_text(errors='replace')
+        try:
+            script_ran(log, steps)
+            assert re.search(r"client \d+ created game \d+ 'alice's Game' on '[^']+' \(crusades=0 ", slog_text), \
+                'CREATE did not open "alice\'s Game" from the multiplayer defaults'
+            assert re.search(r'game \d+: host changed the rules \(crusades', slog_text), 'the rule did not reach the server'
+            saved = settings_of(home)
+            assert saved.get('mpRoom.crusades') == '1', 'CRUSADES was not remembered: %r' % saved
+            assert saved.get('spRoom.crusades') == '0' and saved.get('spRoom.map') == '', \
+                'the single-player set changed: %r' % saved
+        except AssertionError as e:
+            raise AssertionError('%s\nclient:\n%s\nserver:\n%s' % (e, log[-3000:], slog_text[-3000:]))
+    finally:
+        if server.poll() is None:
+            server.kill(); server.wait()
 
 
 def hpi_read(hpitool, data, path):
@@ -267,7 +446,8 @@ def case_unready(args, root):
         slog.close()
 
 
-CASES = {1: case_single_player, 2: case_watch, 3: case_capacity, 4: case_unready, 10: case_scenario_confirm}
+CASES = {1: case_single_player, 2: case_watch, 3: case_capacity, 4: case_unready, 5: case_door, 6: case_play_map,
+         7: case_fallback, 8: case_lan_host, 9: case_online_create, 10: case_scenario_confirm}
 
 
 def main():

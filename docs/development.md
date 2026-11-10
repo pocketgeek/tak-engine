@@ -316,12 +316,13 @@ builds; the only ones a release build reads are takserver's test timers
 ([public server](public-server.md)).
 
 A debug `takclient game "<map>" --data <dir>` without `--server` is single-player: it
-starts a private local `takserver` (no auth, loopback) and opens that game's room with
-the player seated but not ready: the same room the menu's SINGLE PLAYER opens after
-CREATE. The game starts only when someone seats AIs, clicks READY and START, so a
-scripted run in a real window waits in the room forever. `TAK_SP_AIS=N` seats N AI
-opponents (the first plays `--aiside`, default Taros) and starts the game at once;
-add `TAK_QUIT_TICK=<tick>` to leave when the game reaches that tick. For example
+starts a private local `takserver` (no auth, loopback) and opens a single-player room on
+that map with the player seated: the room the menu's PLAY THE MACHINE opens, but on the
+named map, with the default rules and nothing remembered. The game starts only when
+someone seats AIs and clicks START, so a scripted run in a real window waits in the room
+forever. `TAK_SP_AIS=N` seats N AI opponents (the first plays `--aiside`, default
+Taros) and starts the game at once; add `TAK_QUIT_TICK=<tick>` to leave when the game
+reaches that tick. For example
 `TAK_SP_AIS=1 TAK_QUIT_TICK=300 build-o2/takclient game "Inner Circle" --data <dir>
 --winsize 1280 720` (on Windows, `set` the two variables first) loads, plays 300 ticks
 against one AI and exits.

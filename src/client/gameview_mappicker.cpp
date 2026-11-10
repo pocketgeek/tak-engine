@@ -4,9 +4,8 @@
 #include <cmath>
 
 // Out-of-line GameView method definitions (the game room's CHANGE MAP panel): a panel over
-// the room with the create screen's map list (EXISTING MAP) and generator (RANDOM MAP),
-// whose PICK asks the server to change the room's map (MpClient::setRoomMap). The list, the
-// generator and the preview are the create screen's too (drawCreate calls the same members).
+// the room with the installed maps' list (EXISTING MAP) and the random-map generator (RANDOM
+// MAP), whose PICK asks the server to change the room's map (MpClient::setRoomMap).
 
 namespace {
 // The panel, in canvas units: over the room's right column, with the slot table's first
@@ -41,7 +40,7 @@ template <class List> int scrollFor(const List& list, const std::string& filter,
     return at == shown.end() ? 0 : std::max(0, int(at - shown.begin()) - 3);
 }
 // MAP SCENARIO belongs to one map: when the EXISTING candidate changes, its choice starts OFF
-// and its facts are read again (as the create screen's syncCreateScenario).
+// and its facts are read again.
 template <class Picker, class Facts> void syncScenario(Picker& p, Facts&& facts) {
     if (p.scenarioFor == p.file.path) return;
     p.scenarioFor = p.file.path;
@@ -62,13 +61,13 @@ int seatedHumans(const tak::net::RoomView& room) {
 }
 }  // namespace
 
-    // ---- the list, the generator and the preview (the create screen's too) ----
+    // ---- the list, the generator and the preview ----
 
     void GameView::drawMapListBox(const SDL_FRect& area, MapPick& sel) {
-        // In the panel a map with fewer seats than the room's seated humans is greyed with its
-        // player count in red; it can still be selected, to preview it or to turn its MAP
-        // SCENARIO on (which may open more seats).
-        const int humans = picker_.open ? seatedHumans(mpRoom()) : 0;
+        // A map with fewer seats than the room's seated humans is greyed with its player count
+        // in red; it can still be selected, to preview it or to turn its MAP SCENARIO on (which
+        // may open more seats).
+        const int humans = seatedHumans(mpRoom());
         // Sort buttons: NAME / PLAYERS / SIZE. Clicking sets the sort key; clicking the
         // active one flips ascending/descending. The active key shows an up/down arrow.
         {
@@ -115,7 +114,7 @@ int seatedHumans(const tak::net::RoomView& room) {
                     else { mapSort_ = k; mapSortDir_ = 1; }
                     sortMapList();
                     mapScroll_ = 0;
-                    if (picker_.open) rememberRoomSort();
+                    rememberRoomSort();
                 }});
             }
         }
@@ -178,10 +177,7 @@ int seatedHumans(const tak::net::RoomView& room) {
                 blockText("S", infoX - 14, row.y + (rowH - 11) / 2, 1.5f, {230, 200, 120, 255});
             lobbyHots_.push_back({row, [this, &sel, nm, pth] {
                 sel = {nm, pth};
-                if (picker_.open) { picker_.message.clear(); return; }
-                // The create screen: its choice, remembered.
-                mpMapId_ = nm; mapPath_ = pth;
-                if (settings_) { settings_->prefsFor(singlePlayer_).map = nm; saveSettings(*settings_); }
+                picker_.message.clear();   // a new candidate: the last PICK's answer is old news
             }});
         }
         // Scrollbar: track + a proportional, draggable thumb (also wheel-scrollable).
@@ -340,19 +336,19 @@ int seatedHumans(const tak::net::RoomView& room) {
         // MAP SCENARIO: play the map's own scenario -- its placed armies,
         // trigger rules and Use Only list -- instead of a skirmish. Off for every map until
         // chosen; greyed, with the reason, when the map has no playable scenario. The lines
-        // under it say what turning it on changes (dim while it is off). The panel's choice
-        // is its EXISTING candidate's; the create screen's sits under its GENERATE button.
+        // under it say what turning it on changes (dim while it is off). The choice is the
+        // EXISTING candidate's.
         if (!withScenario || gen || path.empty()) return;
-        bool& chosen = picker_.open ? picker_.scenario : createMapScenario_;
-        const tak::sim::ScenarioInfo& info = picker_.open ? picker_.scenarioInfo : createScenario_;
-        const float y0 = pvy + pvH + (picker_.open ? 26 : 68), cycleH = picker_.open ? 24 : 26;
+        bool& chosen = picker_.scenario;
+        const tak::sim::ScenarioInfo& info = picker_.scenarioInfo;
+        const float y0 = pvy + pvH + 26, cycleH = 24;
         const bool testCopy = info.marker && info.runnable();
         // A Test Map copy of a map whose only scenario content is a Use Only list
         // (hasscenario stays 0) plays no scenario, but its opt-in still applies the list.
         const bool testUseOnly = info.marker && !info.hasScenario && info.useOnlyTypes >= 0;
         const bool offered = scenarioOffered(info);
         lbCycle(pvx, y0, pvW, cycleH, (chosen && offered) || testCopy ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF",
-                offered, [this, flip = &chosen](int) { *flip = !*flip; if (picker_.open) picker_.message.clear(); });
+                offered, [this, flip = &chosen](int) { *flip = !*flip; picker_.message.clear(); });
         std::vector<std::pair<std::string, SDL_Color>> lines;
         const SDL_Color grey{150, 155, 165, 255}, dim{130, 135, 150, 255}, normal{205, 210, 225, 255};
         if (testCopy) {

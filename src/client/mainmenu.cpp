@@ -863,7 +863,7 @@ struct MainMenu::Impl {
     bool serverLocal() const { return serverSel == kRowLocal; }
     // The rows that sign in to an account. The others take a player name, and their
     // password box is the GAME's password: optional, set by the LOCAL SERVER host
-    // (it fills the create screen) and given by a joiner to get into a locked game.
+    // (its game room starts with it) and given by a joiner to get into a locked game.
     bool serverAccount() const { return serverSel < kRowLocal || serverSel >= rememberedRow0(); }
     // CONNECT (START/CONNECT) is live once there is a name, an account's password,
     // and a typed address for CUSTOM.

@@ -18,7 +18,7 @@ constexpr uint16_t kUnitCaps[] = {250, 500, 1000, 2000};
 constexpr SDL_Color kAmber{235, 205, 120, 255}, kRed{255, 130, 110, 255};
 const char* onOff(bool value) { return value ? "ON" : "OFF"; }
 
-// A rule's value as its cell and the chat show it (the create screen's words).
+// A rule's value as its cell and the chat show it.
 std::string ruleValue(RoomField field, const tak::net::GameOptions& o) {
     switch (field) {
     case RoomField::Scenario: return onOff(o.mapScenario);
@@ -134,7 +134,7 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
         if (scenarioLobbyPackage_.lock() != mp_->mapPackage()) {
             scenarioLobbyPackage_ = mp_->mapPackage();
             // With this client's registry, so the Use Only count leaves out the names no
-            // unit answers to, as setupMatch does (the create screen counts the same way).
+            // unit answers to, as setupMatch does (the CHANGE MAP panel counts the same way).
             scenarioLobby_ = mp_->mapPackage() ? tak::net::maps::scenarioInfo(*mp_->mapPackage(), &registry_) : tak::sim::ScenarioInfo{};
         }
         f.roomMap = room.mission.empty();
@@ -162,6 +162,13 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
     }
 
     void GameView::roomStart() { mp_->startGame(); }
+
+    void GameView::roomSetReady(bool ready) {
+        const auto& room = mpRoom();
+        if (room.mySlot < 0) { roomActError_ = "not seated"; return; }
+        const auto& s = room.slots[room.mySlot];
+        mp_->setSlot(room.mySlot, 1, s.faction, s.color, s.team, ready ? 1 : 0, s.aiLevel);
+    }
 
     // The host's slot type cell (drawRoomSlots): an empty seat becomes OPEN, AI or CLOSED,
     // keeping its side, colour and team.
@@ -191,7 +198,15 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
                 // The host's own password, as it made the room (the draft is shown in the
                 // field); a room this client did not make shows PASSWORD SET instead.
                 if (!host || !room.passworded) roomPassDraft_.clear();
-                else if (!createPass_.empty()) roomPassDraft_ = createPass_;
+                else if (!roomStartPass_.empty()) roomPassDraft_ = roomStartPass_;
+                // A remembered map passed over when the room was made: the room says why.
+                if (!roomOpenNote_.empty()) {
+                    roomNote_ = std::exchange(roomOpenNote_, {});
+                    roomNoteUntil_ = now + 10000;
+                    std::fprintf(stderr, "room note: %s\n", roomNote_.c_str());
+                }
+                std::fprintf(stderr, "room: game %u '%s'%s\n", room.id, room.name.c_str(),
+                             room.passworded ? " (password set)" : "");
                 roomOptsDraft_.reset(); scenarioArmUntil_ = 0; watchFillAt_ = 0;
                 roomWatching_ = false; roomChosenSet_ = false;
             }
@@ -357,23 +372,20 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
         float bx = x;
         if (!singlePlayer_) {
             bool iAmReady = room.mySlot >= 0 && room.slots[room.mySlot].ready;
-            lbBtn(x, y, 130, 30, iAmReady ? "UNREADY" : "READY", room.mySlot >= 0, [this, iAmReady] {
-                const auto& s = mpRoom().slots[mpRoom().mySlot];
-                mp_->setSlot(mpRoom().mySlot, 1, s.faction, s.color, s.team, iAmReady ? 0 : 1, s.aiLevel); });
+            lbBtn(x, y, 130, 30, iAmReady ? "UNREADY" : "READY", room.mySlot >= 0,
+                  [this, iAmReady] { roomSetReady(!iAmReady); });
             bx = x + 142;
         }
         bool canStart = roomCanStart(f);
         // The server takes a moment to build the game: show the click landed.
         if (mp_->startPending() || mp_->starting()) lbBtn(bx, y, 130, 30, "STARTING...", true, nullptr, {70, 110, 70, 255});
         else lbBtn(bx, y, 130, 30, "START", canStart, [this] { roomStart(); }, {70, 110, 70, 255});
-        // A --play-map room exists to test its one map: leaving it quits.
-        lbBtn(bx + 142, y, 120, 30, roomForcedMap_.empty() ? "LEAVE" : "QUIT", true, [this] {
+        // A --play-map room exists to test its one map, and a CLI game has no menu to go back
+        // to: leaving either quits.
+        lbBtn(bx + 142, y, 120, 30, singlePlayer_ && !canReturnToMenu_ ? "QUIT" : "LEAVE", true, [this] {
             // A LOCAL SERVER's host leaving closes the game for everyone: ask first.
             if (lanHost_ && lanOthersInRoom() > 0) { lanLeavePrompt_ = true; return; }
-            // Whatever room comes next (this one again too) is seen afresh: nothing it shows
-            // first is a change.
-            roomSeenSeq_ = 0;
-            leaveRoom();
+            roomLeave();
         });
         // Room readiness also includes game mods and other players. A
         // completed local map is not progress to display while packs change;
