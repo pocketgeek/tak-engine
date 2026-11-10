@@ -1,5 +1,5 @@
 // The streamed replay writer (net/replaywriter.h): a finished recording is the
-// format-13 file byte for byte, a rejoin's re-sent log is not written twice, and
+// finished file byte for byte, a rejoin's re-sent log is not written twice, and
 // what a dead process leaves behind (.part + .chk, possibly torn) is recovered into
 // a replay loadReplayFile accepts -- while a live recording is never touched.
 #include "client/replayfile.h"
@@ -11,6 +11,7 @@
 #include <iostream>
 #include <iterator>
 #include <stdexcept>
+#include <tuple>
 #include "util/u8path.h"
 
 #ifndef _WIN32
@@ -44,7 +45,7 @@ std::vector<ReplayCheck> trail(uint32_t n) {   // a checkpoint every 30 ticks, l
     for (uint32_t t = 29; t < n; t += 30) c.push_back({t, 0x1000u + t, 0x2000u + t});
     return c;
 }
-// The one-shot layout the client wrote before streaming (and the server still writes).
+// The one-shot layout the server writes (and a finished stream matches).
 std::vector<uint8_t> oneShot(const ReplayHeader& h, const std::vector<std::vector<uint8_t>>& log,
                              const std::vector<ReplayCheck>& c) {
     Writer w;
@@ -246,6 +247,23 @@ void run() {
         put(dead / "game-11-1.takrep.part", std::vector<uint8_t>(40, 0));
         check(recoverReplayParts(deadDir).empty() && !fs::exists(dead / "game-11-1.takrep.part"),
               "a recording with no header was kept");
+    }
+    {
+        // Another build's recording (other format, or other protocol): not this build's
+        // to judge or finish, so it is left exactly as it is, sidecar and all.
+        for (const auto& [gameId, at, value] : {std::tuple{12u, size_t(4), kReplayFormat - 1},
+                                                std::tuple{13u, size_t(8), kNetVersion - 1},
+                                                std::tuple{14u, size_t(8), kNetVersion + 1}}) {
+            const fs::path part = leftovers(gameId, 50);
+            auto b = bytes(part);
+            for (int i = 0; i < 4; ++i) b[at + size_t(i)] = uint8_t(value >> (8 * i));
+            put(part, b);
+            const fs::path chk = fs::path(part.native() + fs::path(".chk").native());
+            const auto sidecar = bytes(chk);
+            check(recoverReplayParts(deadDir).empty() && bytes(part) == b && bytes(chk) == sidecar,
+                  "recovery touched another build's recording (game " + std::to_string(gameId) + ")");
+            fs::remove(part); fs::remove(chk);
+        }
     }
 }
 }  // namespace

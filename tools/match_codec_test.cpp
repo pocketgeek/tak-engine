@@ -107,8 +107,7 @@ static void optionsCodec() {
     const GameOptions o = fxOpts(7);
     Writer w; put(w, o);
     // CreateGame / SetGameOptions carry exactly these bytes; LobbyState/GameStarting embed them.
-    // Protocol 258 appended allowSpectators (0c) after the pathfinder byte; 259 mapScenario (0d);
-    // 288 powerCodes (0e).
+    // After the pathfinder byte come allowSpectators (0c), mapScenario (0d) and powerCodes (0e).
     golden(w.b, "0304021105efbe00000607080b090a040c0d0e", "GameOptions wire bytes");
     GameOptions back; back.gameMods = 0; back.speed = 0; back.fogExplored = 0; back.allowSpectators = 0;
     Reader r(w.b.data(), w.b.size()); get(r, back);
@@ -220,9 +219,9 @@ static void bundles() {
     events[0].kind = Event::Kind::Leave; events[0].player = 2; events[1].kind = Event::Kind::Forfeit; events[1].player = 6;
     Writer w; putBundle(w, 1234, cmds, events);
     golden(w.b, "d20400000300000000014d000000ffffffff0000c03f000010c0010000000000000000000000000000000017030500000000000000000020410000a04100000000000000000000000000000000000000f041000020421a0700000000000000000000404000008040005441524c4f44450000000000000000000000a0400000c0400200000002020106", "TickBundle bytes");
-    auto decode = [](const std::vector<uint8_t>& b, Bundle& out, uint32_t proto = kNetVersion) {
+    auto decode = [](const std::vector<uint8_t>& b, Bundle& out) {
         uint32_t tick = 0; Reader r(b.data(), b.size());
-        return getBundle(r, tick, out, /*strict=*/true, proto) && tick == 1234;
+        return getBundle(r, tick, out, /*strict=*/true) && tick == 1234;
     };
     auto live = [](const std::vector<uint8_t>& b, Bundle& out) {   // MpClient's TickBundle decode
         uint32_t tick = 0; Reader r(b.data(), b.size());
@@ -238,22 +237,17 @@ static void bundles() {
     auto mutated = [&](auto edit) { std::vector<Command> c = cmds; std::vector<Event> e = events; edit(c, e);
                                     Writer m; putBundle(m, 1234, c, e); return m.b; };
     Bundle x;
-    check(!decode(mutated([](auto& c, auto&) { c[0].kind = Cmd(uint8_t(Cmd::BuildManaArea) + 1); }), x), "unknown command kind accepted");
+    check(decode(mutated([](auto& c, auto&) { c[0].kind = Cmd::BenchClock; }), x), "the last command kind refused");
+    check(!decode(mutated([](auto& c, auto&) { c[0].kind = Cmd(uint8_t(Cmd::BenchClock) + 1); }), x = {}), "unknown command kind accepted");
     check(!decode(mutated([](auto& c, auto&) { c[0].player = kMaxSlots; }), x = {}), "command player out of range accepted");
     check(!decode(mutated([](auto& c, auto&) { c[1].x2 = std::numeric_limits<float>::quiet_NaN(); }), x = {}), "non-finite coordinate accepted");
     check(!decode(mutated([](auto&, auto& e) { e[0].kind = Event::Kind(0); }), x = {}), "event kind 0 accepted");
-    // Kind 3 was the Darien Crusades CampaignForfeit (removed in 0.9.4): reserved, refused.
-    check(!decode(mutated([](auto&, auto& e) { e[0].kind = Event::Kind(3); }), x = {}), "removed event kind 3 accepted");
-    check(!decode(mutated([](auto&, auto& e) { e[0].kind = Event::Kind(3); }), x = {}, kAiTakeoverProtocol - 1),
-          "removed event kind 3 accepted under an older protocol");
+    // Kind 3 is reserved: refused.
+    check(!decode(mutated([](auto&, auto& e) { e[0].kind = Event::Kind(3); }), x = {}), "reserved event kind 3 accepted");
     check(!decode(mutated([](auto&, auto& e) { e[1].player = kMaxSlots; }), x = {}), "event player out of range accepted");
-    check(!decode(w.b, x = {}, 220), "area command accepted under a protocol before 221");
-    // Event::Kind::AiTakeover (protocol 289): read from 289 on, refused in an older replay,
-    // and nothing past it is a known kind.
+    // Event::Kind::AiTakeover is read, and nothing past it is a known kind.
     check(decode(mutated([](auto&, auto& e) { e[0].kind = Event::Kind::AiTakeover; }), x = {}) &&
           x.events.size() == 2 && x.events[0].kind == Event::Kind::AiTakeover, "AI takeover event refused");
-    check(!decode(mutated([](auto&, auto& e) { e[0].kind = Event::Kind::AiTakeover; }), x = {}, kAiTakeoverProtocol - 1),
-          "AI takeover event accepted under a protocol before 289");
     check(!decode(mutated([](auto&, auto& e) { e[0].kind = Event::Kind(uint8_t(Event::Kind::AiTakeover) + 1); }), x = {}),
           "unknown event kind accepted");
     { auto t = w.b; t.push_back(0); check(!decode(t, x = {}), "trailing byte accepted"); }

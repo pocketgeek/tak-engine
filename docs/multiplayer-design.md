@@ -38,7 +38,7 @@ the headless test client is `TAK_HEADLESS=1 takclient game ... --mpai`
   for up to 30 seconds -- in all, per game, over all of their stalls, counted
   from when they went quiet -- (everyone sees the countdown); back in time -- the same connection, or an
   automatic reconnect -- the game goes on, otherwise a server AI (Normal)
-  takes the seat over (§4, protocol 289).
+  takes the seat over (§4).
 
 The current implementation supports spectators and [verified map transfer](map-transfer.md).
 
@@ -307,7 +307,7 @@ link `sim`, `tdf`, `net`, and the new `ai` module only.
 - **Hash breadth.** To attribute desyncs quickly, the extended `stateHash`
   (§6) also folds in projectile owner + quantized position and order targets —
   counts alone let same-count divergences hide until damage lands.
-- **Disconnect policy (protocol 289).** The rule: if a player effectively
+- **Disconnect policy.** The rule: if a player effectively
   stops communicating, the game waits 30 seconds for them, paused, with a
   countdown; if they are still not communicating after that, they are dropped
   and an AI at Normal plays their units. The 30 seconds are a budget per seat
@@ -372,7 +372,7 @@ link `sim`, `tdf`, `net`, and the new `ai` module only.
     Silence before the first tick, or before the client has loaded, is not
     charged (loading has its own deadlines): a connection that closes then
     counts down from the close. `Waiting`
-    is not recorded and no sim state changed, so protocol 289 still. Like the
+    is not recorded and changes no sim state. Like the
     budget, the hold accounting is wall-clock time on the server alone.
   - *Coming back.* Talking again on the same connection inside the window (a
     frozen frame, a hitch, a Wi-Fi blip TCP rode out) ends that seat's wait. A
@@ -457,18 +457,18 @@ silently skipped.)
 | Msg | Payload | Notes |
 |---|---|---|
 | `PlayerCommands` | n × Command | client → server; player byte ignored/overwritten |
-| `OrderBegin` / `OrderMembers` / `OrderCommit` / `OrderAbort` | serial, template Command, shape, count / serial, member deltas (≤ 2,048) / serial, count, digest / serial | client → server (protocol 267): one explicit selection order as a transaction; the server puts the committed order whole into ONE TickBundle (`Cmd::Order`, its activation tick). Legion clients send their selection verbs this way, Retail clients keep per-unit commands. `net/protocol.h` beside `kOrderMaxMembers`, `server/orders.h`, docs/legion-pathfinding.md "Legion 10,000 stage 3" |
+| `OrderBegin` / `OrderMembers` / `OrderCommit` / `OrderAbort` | serial, template Command, shape, count / serial, member deltas (≤ 2,048) / serial, count, digest / serial | client → server: one explicit selection order as a transaction; the server puts the committed order whole into ONE TickBundle (`Cmd::Order`, its activation tick). Legion clients send their selection verbs this way, Retail clients keep per-unit commands. `net/protocol.h` beside `kOrderMaxMembers`, `server/orders.h`, docs/legion-pathfinding.md "Legion 10,000 stage 3" |
 | `TickBundle` | tick u32, n × Command (ascending player, then arrival order), m × Event | server → all clients, 30/s; empty bundles are the clock; the event section exists from day one (§3) |
 | `StateHash` | tick u32, hash u64 | client → server, every 30 ticks |
 | `Desynced` | tick, reason | server → one client; its game ends (no reconnect) |
 | `Pause` / `Resume` | cause, player | the host's pause (`SetPause`): server stops closing ticks, never expires; ends if the host leaves the game |
-| `Waiting` | n × (slot, ms left), own (running, ms) | protocol 289: the seats the room is waiting for (§4 disconnect policy); no tick closes while n > 0 |
+| `Waiting` | n × (slot, ms left), own (running, ms) | the seats the room is waiting for (§4 disconnect policy); no tick closes while n > 0 |
 | `SpeedUpdate` | speed (tenths, 10 = 1×) | server → all; host changed speed mid-game (needs `speedUnlock`); re-cadences tick pacing, not the per-tick `dt`, so the sim stays deterministic |
 | `PlayerStatus` | slot, {connected, dropped, left} + ping | informational only — never sim-affecting (sim-affecting lifecycle is an Event in the bundle) |
-| `Rejoin` | game id, resume token, fromTick | protocol 289: a reconnect inside the disconnect wait → `Reseated` (slot, rotated token, fromTick, logEnd), then the bundles from fromTick → live bundles |
+| `Rejoin` | game id, resume token, fromTick | a reconnect inside the disconnect wait → `Reseated` (slot, rotated token, fromTick, logEnd), then the bundles from fromTick → live bundles |
 | `Bye` | reason | clean shutdown both ways |
 
-### Voice chat (protocol 276)
+### Voice chat
 
 Voice is **presentation only**: it never enters a TickBundle, the replay log, the
 referee or `World::stateHash`, and the sim is unchanged by it. The server relays it
@@ -585,7 +585,7 @@ attackMove) all map onto existing `Train` / `Build` / `AttackMove` commands.
   connection.
 - Per-player per-tick command cap (e.g. 64) so a spammer can't inflate every
   bundle for eight clients; excess commands are dropped with a notice.
-  Explicit orders (protocol 267) have limits of their own: 16,384 members, 64
+  Explicit orders have limits of their own: 16,384 members, 64
   orders / 384 KiB outstanding per client, 96 KiB of order records per tick
   shared by the room (first pick rotating), the same per-second byte and
   command budgets (an order's members count as commands; over the command
@@ -1273,11 +1273,10 @@ TargetCleared once; folded in only when non-zero, always 0 in Retail mode). Legi
 `passAhead` also no longer counts an enemy's fight-leg body as oncoming traffic to a
 fight leg. Retail's fire at a point (SUPPRESS, and AIRSTRIKE, AIRTOGROUNDHOVER and
 AIRTOGROUND for flyers; docs/retail-engine.md "Fire at a point: SUPPRESS" and "SUPPRESS
-port") arrives as the new order verb `Cmd::AttackGround` (`kAttackGroundProtocol`, base
-layout; a strict replay read refuses it before 312); its order state
+port") arrives as the new order verb `Cmd::AttackGround` (base layout); its order state
 (`Order::suppress*`, `Order::airPoint`) and a slot's point target (`Unit::slotPoint`,
 `slotPointAt`) are hashed when set. The server's classic AI tells the sims its squads
-with the new `Cmd::AiGroup` (same protocol gate; applied only for a computer-owned
+with the new `Cmd::AiGroup` (applied only for a computer-owned
 player and never accepted from a client; `World::setAiGroup`). An order verb's `queue` byte now also carries
 `kQueueFront` (Ctrl: the order goes in at the head without clearing the queue, retail
 4d7a09 -> 4d7750) and the `kQueueToggle` bit (a player's own Shift or Ctrl click takes
@@ -1539,21 +1538,17 @@ room is created and kept by later option updates, and forced off by the server i
 campaigns and Crusades battles. `Cmd::PowerCode` (28, after `Order`) carries one of
 the seven simulation codes (`targetId` the code, `queue` the +LOS argument,
 `unitId` the +ManaMe unit); the server drops it while the room's option is off and
-treats an unknown code or argument as a forgery. Strict replay reads accept it from
-protocol 288. Replay format 14 appends the POWER CODES byte after the MAP SCENARIO
-byte: bit 0 the option, bit 1 the map started revealed (FOG OF WAR Explored or Full
-Vision, which +Mapping starts from); a format-13 file reads it as 0. With power codes
+treats an unknown code or argument as a forgery. Replay format 14 appends the POWER
+CODES byte after the MAP SCENARIO byte: bit 0 the option, bit 1 the map started
+revealed (FOG OF WAR Explored or Full Vision, which +Mapping starts from). With power codes
 off the simulation and the `--mpai` hashes are 287's, but 287 recordings no longer
 play.
 Protocol 294 makes the room's FOG OF WAR option sim-affecting for area clear only
 (`MatchConfig::roomMapRevealed` / `roomLosOff`, `World::setRoomVision`: retail's
 explored allowance reads the Mapping plane, which Map Revealed fills). Replay
-format 15 appends the option byte (0..2) after POWER CODES; an older file takes it
-from the POWER CODES byte when power codes were on, else the default EXPLORED.
-Older recordings require their original engine.
+format 15 appends the option byte (0..2) after POWER CODES.
 Campaign playback forces Retail even if a header supplies another mode.
-Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when
-reading an older file). Saved
+Replay format 13 adds the room's MAP SCENARIO byte after the slot table. Saved
 `gameCreate.pathfindingMode` values and the wire byte keep the stable identities
 `0=Retail` and `4=Legion`; `1`, `2` and `3` (the removed Flowfield, Cooperative
 and Retail+) are invalid. Missing, unknown or removed saved values default to
@@ -1561,9 +1556,11 @@ Retail, while unknown network/replay mode bytes are rejected. The creation
 control switches between Retail and Legion. Debug-only `TAK_LEGION=1` selects
 Legion in the headless multiplayer test harness. `crowdbench` accepts `--mode
 retail` or `legion` for direct comparisons. Legion's groups and per-unit state
-are part of the simulation checksum only in mode 4. Replay format 11's byte
-layout is unchanged; the protocol bump prevents silently replaying old
-simulation rules.
+are part of the simulation checksum only in mode 4. A replay plays only under the
+replay format and protocol that recorded it (`supportedReplayProtocol`): the loader
+reads the current format (15) and refuses any other format or protocol, and a strict
+bundle read accepts every current command kind and event kind 1, 2 and 4 (3 is
+reserved).
 For `tools/desync-hunt-remote.sh`, `--minutes` limits simulated match time.
 `TAK_WALL_TIMEOUT=3600` grants each client up to one real hour for a dense
 stress run; the default remains simulated seconds plus 300.
@@ -1605,6 +1602,7 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.9.24 (peers and server) requires protocol 320 (317 to 319 were never released on their own); versions 0.9.23 and 0.9.22 require protocol 316; version 0.9.21 requires protocol 315 (313 and 314 were never released on their own); version 0.9.20 requires protocol 312; version 0.9.19 (peers and server) requires protocol 311 (310, Legion steering of 2026-11-02, was never released on its own); versions 0.9.18, 0.9.17 and 0.9.16 (peers and server) require protocol 309; 0.9.15 and 0.9.14 required 308; 0.9.13 required 307; 0.9.12 required 305 (306 was never released); 0.9.11 required 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
-0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
+227. Peers, the server and replays must all match `kNetVersion` exactly: the
+handshake refuses a peer of any other protocol, and the replay loader rejects
+every other simulation protocol.
 Campaign missions remain fixed to Retail.

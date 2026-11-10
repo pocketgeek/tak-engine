@@ -399,7 +399,7 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
         if (mapPath.empty()) throw std::runtime_error("map '" + rf.mapId + "' is not in this game data");
     }
     const uint64_t myDataHash = tak::hpi::gameplayHash(rvfs);
-    if (rf.dataHash && rf.dataHash != myDataHash) {
+    if (rf.dataHash != myDataHash) {
         std::fprintf(stderr, "replay: WARNING -- recorded on gameplay data %016llx, yours is %016llx. Playback will diverge from the recording.\n",
                      (unsigned long long)rf.dataHash, (unsigned long long)myDataHash);
     }
@@ -409,17 +409,7 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
     if (canReturn) view->setCanReturnToMenu();
     std::fprintf(stderr, "replay: %s -- map '%s', %zu ticks%s (format %u, recorded by %s, %zu hash checkpoints)\n",
                  path.c_str(), rf.mapId.c_str(), rf.bundles.size(), rf.crusades ? " (Crusades)" : "",
-                 rf.formatVersion, rf.engineVersion.empty() ? "an older build" : rf.engineVersion.c_str(), rf.checks.size());
-#ifndef NDEBUG
-    // TAK_POSTRAIL_REF=<file>: digests written by TAK_POSTRAIL on the recording build, for a recording that
-    // predates format 12. TAK_POSTRAIL=<file> writes this playback's own trail (src/client/postrail.h).
-    if (const char* ref = tak::devEnv("TAK_POSTRAIL_REF")) {
-        const auto trail = tak::postrail::load(ref);
-        for (auto& ck : rf.checks)
-            if (ck.posDigest == 0) if (auto it = trail.find(ck.tick); it != trail.end()) ck.posDigest = it->second;
-    }
-    view->openPostrail(tak::devEnv("TAK_POSTRAIL"));
-#endif
+                 rf.formatVersion, rf.engineVersion.c_str(), rf.checks.size());
     view->setReplayChecks(std::move(rf.checks));
 #ifndef NDEBUG
     // TAK_SITUATION=<tick>:<path>: write the world at <tick> and the next 600 ticks of commands as a .scn
@@ -430,7 +420,7 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
         meta.crusades = rf.crusades;
         meta.players = int(rf.cfg.slots.size());
         meta.seed = rf.cfg.startSeed;
-        meta.source = std::filesystem::path(path).filename().string() + " (engine " + (rf.engineVersion.empty() ? "unknown" : rf.engineVersion) + ")";
+        meta.source = std::filesystem::path(path).filename().string() + " (engine " + rf.engineVersion + ")";
         view->armSituation(req, meta);
     }
 #endif

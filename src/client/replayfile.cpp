@@ -29,18 +29,20 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
     tak::net::Reader r(d.data() + 4, d.size() - 4);
     tak::net::ReplayHeader h;
     uint32_t fmt = 0, proto = 0;
-    if (!tak::net::readReplayHeader(r, h, fmt, proto)) return false;
-    // REFUSE what we cannot replay faithfully. Both of these were recorded from the
-    // start and neither was ever checked, so an old file ran happily under new
-    // simulation rules and quietly produced a different game.
+    const bool headerOk = tak::net::readReplayHeader(r, h, fmt, proto);
     out.formatVersion = fmt;
     out.protocolVersion = proto;
-    if (!tak::net::supportedReplayProtocol(fmt, proto)) {
-        out.error = "recorded under protocol v" + std::to_string(proto) +
-                    ", this build is v" + std::to_string(tak::net::kNetVersion) +
-                    " -- this replay protocol is unsupported";
+    // REFUSE what we cannot replay faithfully: a file from any other engine version
+    // would run under different simulation rules and quietly produce a different game.
+    if (r.ok && !tak::net::supportedReplayProtocol(fmt, proto)) {
+        out.error = proto != tak::net::kNetVersion
+            ? "recorded under protocol v" + std::to_string(proto) + ", this build is v" +
+                  std::to_string(tak::net::kNetVersion) + " -- this replay protocol is unsupported"
+            : "replay format " + std::to_string(fmt) + ", this build reads format " +
+                  std::to_string(tak::net::kReplayFormat) + " -- this replay format is unsupported";
         return false;
     }
+    if (!headerOk) return false;
     out.mapId = h.mapId;
     out.mapDigest = h.mapDigest;
     out.modDigest = h.modDigest;
@@ -71,24 +73,21 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
         // The recorded tick index proves the bundle stream is intact and in order.
         uint32_t tick = 0;
         tak::net::Bundle bd;
-        if (!tak::net::getBundle(br, tick, bd, /*strict=*/true, proto) || tick != t) return false;
+        if (!tak::net::getBundle(br, tick, bd, /*strict=*/true) || tick != t) return false;
         out.bundles.push_back(std::move(bd));
     }
-    // Hash checkpoints (format 6+). Absent in an older file, which simply means
-    // playback cannot be checked against the original.
-    if (fmt >= 6) {
-        uint32_t nchecks = r.u32();
+    // Hash checkpoints from the original game.
+    uint32_t nchecks = r.u32();
+    if (!r.ok) return false;
+    if (uint64_t(nchecks) * tak::net::kReplayCheckBytes > uint64_t(r.end - r.p)) return false;
+    out.checks.reserve(nchecks);
+    for (uint32_t i = 0; i < nchecks; ++i) {
+        tak::net::ReplayCheck c;
+        c.tick = r.u32();
+        c.hash = r.u64();
+        c.posDigest = r.u64();
         if (!r.ok) return false;
-        if (uint64_t(nchecks) * tak::net::replayCheckBytes(fmt) > uint64_t(r.end - r.p)) return false;   // u32 + u64 (+ u64 from format 12)
-        out.checks.reserve(nchecks);
-        for (uint32_t i = 0; i < nchecks; ++i) {
-            tak::net::ReplayCheck c;
-            c.tick = r.u32();
-            c.hash = r.u64();
-            if (fmt >= 12) c.posDigest = r.u64();
-            if (!r.ok) return false;
-            out.checks.push_back(c);
-        }
+        out.checks.push_back(c);
     }
     return r.ok && r.p == r.end;
 }

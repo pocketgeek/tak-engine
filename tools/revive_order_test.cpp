@@ -239,20 +239,15 @@ static void newOrderEndsChannel(const Types& t) {
           "a move ends the revive unraised, the body kept");
 }
 
-// Cmd::Resurrect on the wire: a strict replay read accepts it from protocol
-// 305 (kResurrectProtocol) and refuses it before; the server accepts it from
-// a client.
+// Cmd::Resurrect on the wire: a strict replay read accepts it, and the server
+// accepts it from a client.
 static void wire() {
     std::printf("Cmd::Resurrect on the wire:\n");
     net::Command c; c.kind = net::Cmd::Resurrect; c.unitId = 7; c.targetId = 9;
     net::Writer w; net::putBundle(w, 3, {c}, {});
-    auto read = [&](uint32_t proto) {
-        net::Reader r(w.b.data(), w.b.size()); uint32_t tick = 0; net::Bundle b;
-        return net::getBundle(r, tick, b, true, proto) && b.cmds.size() == 1 &&
-               b.cmds[0].kind == net::Cmd::Resurrect && b.cmds[0].targetId == 9;
-    };
-    check(read(net::kResurrectProtocol) && !read(net::kResurrectProtocol - 1),
-          "a strict read takes it from protocol 305 only");
+    net::Reader r(w.b.data(), w.b.size()); uint32_t tick = 0; net::Bundle b;
+    check(net::getBundle(r, tick, b, true) && b.cmds.size() == 1 &&
+          b.cmds[0].kind == net::Cmd::Resurrect && b.cmds[0].targetId == 9, "a strict read takes it");
     net::Writer batch; batch.u32(1); batch.cmd(c);
     std::vector<net::Command> parsed;
     check(srv::parsePlayerCommands(batch.b, parsed) && parsed.size() == 1, "the server accepts it from a client");

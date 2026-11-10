@@ -245,7 +245,7 @@ struct Client {
     // ignored TAK_SRV_DELAY so deferred commands outran delayed ones.
     std::deque<Command> cmdQueue;
     uint64_t cmdDropped = 0;     // past the queue cap; logged, not silent
-    // Selection-order transactions (protocol 267; server/orders.h): the open one
+    // Selection-order transactions (server/orders.h): the open one
     // and the committed orders this client has queued. A committed order joins
     // cmdQueue as ONE Cmd::Order item, so it keeps its place among this client's
     // commands.
@@ -267,7 +267,7 @@ struct Client {
     uint64_t mapReceiveStarted=0,mapReceiveProgress=0;
     bool replaying = false;
     size_t replayPos = 0;        // next index into Room::log to send
-    // Voice chat (protocol 276): relayed beside the game, never into a bundle, the log or
+    // Voice chat: relayed beside the game, never into a bundle, the log or
     // the referee. voiceListen is the client's own VoiceListen (off until it says so).
     // Its frames are budgeted per second: past kVoiceFramesPerSec / kVoiceBytesPerSec
     // they are dropped (a frame stall followed by catch-up is normal), past
@@ -379,7 +379,7 @@ struct Room {
     bool refSuspect = false;                    // referee itself suspected desynced
     int8_t missionOutcomeSent = 0;              // campaign result already broadcast (0 = none)
     // durability (M5): the full bundle log for spectators, reconnects and the replay,
-    // per-slot resume tokens, and the disconnect wait (protocol 289).
+    // per-slot resume tokens, and the disconnect wait.
     size_t logBytes=0;
     bool resourceLimited=false;
     std::vector<std::vector<uint8_t>> log;      // serialized TickBundle payload per tick
@@ -668,7 +668,7 @@ private:
     bool canAdvance(const Room& r) const;   // false = wait for a lagging player (flow control)
     void checkHashes(Room& r, uint32_t tick);
     void dropClient(uint32_t id, const char* reason);
-    // The disconnect wait (protocol 289). beginWait stops the room for a seat it has not
+    // The disconnect wait. beginWait stops the room for a seat it has not
     // heard from since `since` (kept if it is already waiting: the countdown never
     // restarts); endWait lets it go on; takeOver hands the seat to a server Normal AI once
     // the wait runs out. Each tells the room (Msg::Waiting). trackHolds charges the seats
@@ -827,7 +827,7 @@ void Server::handshake(Client& c, const Frame& f) {
 
 void Server::sendWelcome(Client& c) {
     c.state = Client::Lobby;
-    Writer w; w.u32(c.id); w.str(c.name); w.u8(lan_ ? 1 : 0);   // a LAN host's server (a trailing byte older clients ignore)
+    Writer w; w.u32(c.id); w.str(c.name); w.u8(lan_ ? 1 : 0);   // 1 = a LAN host's server
     c.conn.send(Msg::Welcome, w);
     std::fprintf(stderr, "client %u '%s' joined lobby\n", c.id, c.name.c_str());
 }
@@ -1255,7 +1255,7 @@ bool Server::voiceBehind(Client& d, const Room& r, uint64_t now) {
 // Voice chat: one frame from a talker in room r, to the recipients its VOICE mask picks
 // with exactly the Chat rules -- the whole room (spectators included) while the room is
 // not running, otherwise the seated players whose bit is set, and the spectators when the
-// frame carries kVoiceSpectators (protocol 316; before, only a mask of 0xff); a spectator
+// frame carries kVoiceSpectators; a spectator
 // in a running game reaches nobody (spectators never talk in game) -- minus the
 // talker, minus anyone who has not asked for voice or is still catching up, and minus
 // anyone lagging the running game (voiceBehind). Sent as low-priority frames
@@ -1325,8 +1325,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             GameOptions o; get(r, o);
             if (!tak::sim::validPathfindingMode(uint8_t(o.pathfindingMode))) { sendReject(c,"invalid pathfinding mode"); return; }
             // Sanitise the raw options (get() checks only the pathfinder byte).
-            // A current host always asks for game mods; 0 comes from a 0.8.12 or 0.8.13 host's
-            // GAME MODS: OFF or a debug --mods launch, and is honoured as before.
+            // The lobby always asks for game mods; 0 comes from a debug --mods launch.
             o.gameMods = o.gameMods ? 1 : 0;
             if(!mission.empty())o.gameMods=0;   // campaigns never run game mods
             if(o.benchmark)o.gameMods=0;          // nor the Benchmark: plain retail data
@@ -1437,7 +1436,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             break;
         }
         case Msg::Rejoin: {
-            // A quick reconnect inside the disconnect wait (protocol 289). The client
+            // A quick reconnect inside the disconnect wait. The client
             // kept its world: it names the first tick it has no bundle for and gets the
             // log from there, not a rebuild from tick 0 (the long rejoin that replayed
             // the whole game is gone -- past the wait an AI has the seat).
@@ -1821,8 +1820,8 @@ void Server::acceptMap(Room& room, std::shared_ptr<tak::net::maps::Package> pack
 }
 void Server::modMsg(Client& c,const Frame& f) {
     Room* room=roomOf(c);if(!room)return;
-    // Only the host of a skirmish room with game mods on (every room a current host
-    // creates; a 0.8.12 or 0.8.13 host may still turn them off) may upload game packs.
+    // Only the host of a skirmish room with game mods on (every lobby room; a debug
+    // --mods launch may turn them off) may upload game packs.
     // Anyone else (a guest, or any player of a campaign mission room) is refused
     // outright, with an error rather than silence, so a modified client learns it.
     if(f.kind==Msg::ModOffer || f.kind==Msg::ModChunk) {
@@ -2551,8 +2550,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             // hash-checked, never recorded; a tick the server has not closed is ignored.
             if (!r->running) return;
             Reader rd(f.payload.data(), f.payload.size());
-            uint32_t tk = rd.u32(), rtt = rd.u32();
-            const uint32_t arrived = rd.p != rd.end ? rd.u32() : tk;   // optional (protocol 276)
+            const uint32_t tk = rd.u32(), rtt = rd.u32(), arrived = rd.u32();
             if (!rd.ok || rd.p != rd.end) return;
             if (tk >= r->tick) break;
             if (tk > c.ackTick) c.ackTick = tk;
@@ -3583,16 +3581,6 @@ static int serverMain(int argc, char** argv) {
 #endif
         else if (!std::strcmp(argv[i], "--map-cache-dir") && i+1<argc)mapRoot=argv[++i];
         else if (!std::strcmp(argv[i], "--accounts") && i + 1 < argc) accountsPath = argv[++i];
-        else if (!std::strcmp(argv[i], "--crusades-db") || !std::strcmp(argv[i], "--crusades-definition")) {
-            // The Darien Crusades service (persistent campaigns, allegiance, issued battles)
-            // was removed in 0.9.4. A service drop-in written for 0.9.3 may still pass these:
-            // warn and ignore them (and their value) so the updated server still starts; its
-            // database and replays are never read.
-            std::fprintf(stderr, "takserver: warning: %s was removed in 0.9.4 (the Darien Crusades campaign "
-                                 "service no longer exists) and is ignored; remove the option. The Crusades "
-                                 "balance is a room option.\n", argv[i]);
-            if (i + 1 < argc && std::strncmp(argv[i + 1], "--", 2) != 0) ++i;
-        }
         else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc)
             { fixedSeed = uint32_t(std::strtoul(argv[++i], nullptr, 0)); fixedSeedGiven = true; }
         else if (!std::strcmp(argv[i], "--no-auth")) noAuth = true;

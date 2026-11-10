@@ -64,7 +64,7 @@ public:
         if (!stateDiverged_) return posDiverged_
             ? "positions/hp/orders diverged at tick " + std::to_string(posTick_) + " (state hash matched)" : "";
         std::string s = "state diverged at tick " + std::to_string(stateTick_);
-        if (!haveDigest_) return s + "; no position digest was recorded (format < 12)";
+        if (!haveDigest_) return s + "; no position digest was recorded";
         if (posDiverged_) {
             if (posTick_ == stateTick_) return s + "; positions/hp/orders diverge at the same tick (a behaviour change)";
             return s + "; positions/hp/orders match until tick " + std::to_string(posTick_) + " (hash layout changed first, behaviour later)";

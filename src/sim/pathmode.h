@@ -1,8 +1,7 @@
 #pragma once
 #include <cstdint>
 namespace tak::sim {
-// Stable saved/network/replay identities. Values 1-3 belonged to the removed
-// Flowfield, Cooperative and Retail+ modes; they are invalid and stay unused.
+// Stable saved/network/replay identities. Values 1-3 are reserved and invalid.
 enum class PathfindingMode : uint8_t { Retail=0,Legion=4 };
 // Group-planned, clearance-exact ground navigation (src/sim/legion*).
 constexpr bool isLegionPathfinding(PathfindingMode mode) {return mode==PathfindingMode::Legion;}

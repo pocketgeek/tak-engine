@@ -129,10 +129,6 @@ void codec() {
                       b.cmds[3].order->tmpl.kind == Cmd::Stop,
                   std::string("a mixed bundle round-trips (") + (strict ? "strict" : "live") + ")");
         }
-        Reader old(w.b.data(), w.b.size());
-        uint32_t tick = 0;
-        Bundle b;
-        check(!getBundle(old, tick, b, true, 266), "a strict protocol-266 read refuses an order");
     }
     // Strict reads validate the order whole.
     auto strictOk = [](const Command& c) {

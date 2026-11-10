@@ -502,9 +502,6 @@
         writableWorld().tick(1.0f / 30.0f);
         captureTransportEffects();
         ++replayTick_;
-#ifndef NDEBUG
-        if (postrail_.active()) postrail_.record(uint32_t(replayTick_ - 1), world_);
-#endif
         // COMPARE against what the original game computed at this tick. Recording
         // the checkpoints was only half of it -- playback printed the count and
         // checked nothing, so a replay that diverged still ran happily to the end

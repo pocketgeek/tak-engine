@@ -915,13 +915,10 @@ void wire() {
     std::printf("Cmd::AttackGround on the wire:\n");
     net::Command c; c.kind = net::Cmd::AttackGround; c.unitId = 7; c.x = 100; c.z = 200;
     net::Writer w; net::putBundle(w, 3, {c}, {});
-    auto read = [&](uint32_t proto) {
-        net::Reader r(w.b.data(), w.b.size()); uint32_t tick = 0; net::Bundle b;
-        return net::getBundle(r, tick, b, true, proto) && b.cmds.size() == 1 &&
-               b.cmds[0].kind == net::Cmd::AttackGround && b.cmds[0].x == 100 && b.cmds[0].z == 200;
-    };
-    check(read(net::kAttackGroundProtocol) && !read(net::kAttackGroundProtocol - 1),
-          "a strict read takes it from protocol 312 only");
+    net::Reader r(w.b.data(), w.b.size()); uint32_t tick = 0; net::Bundle b;
+    check(net::getBundle(r, tick, b, true) && b.cmds.size() == 1 &&
+          b.cmds[0].kind == net::Cmd::AttackGround && b.cmds[0].x == 100 && b.cmds[0].z == 200,
+          "a strict read takes it");
     net::Writer batch; batch.u32(1); batch.cmd(c);
     std::vector<net::Command> parsed;
     check(srv::parsePlayerCommands(batch.b, parsed) && parsed.size() == 1, "the server accepts it from a client");

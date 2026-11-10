@@ -373,7 +373,7 @@ public:
     // which releases them from its send windows.
     struct InputDrop { uint32_t commands = 0, serial = 0; };
     std::vector<InputDrop> takeInputDropped() { return std::exchange(inputDropped_, {}); }
-    // posDigest rides only into the recorded replay trail (format 12), never onto the wire.
+    // posDigest rides only into the recorded replay trail, never onto the wire.
     void sendHash(uint32_t tick, uint64_t hash, uint64_t posDigest = 0);
     // Flow-control progress (WE S3): the last tick processed and the smoothed RTT.
     void sendProgress(uint32_t tick);
