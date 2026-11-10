@@ -55,7 +55,6 @@ int main() {
     flips("maxFps",          [](Settings& s) { s.maxFps += 17; });
     flips("renderer",        [](Settings& s) { s.renderer = "software"; });
     flips("ignoreDpiScaling",[](Settings& s) { s.ignoreDpiScaling = !s.ignoreDpiScaling; });
-    flips("dpiMigrated",     [](Settings& s) { s.dpiMigrated = !s.dpiMigrated; });
     flips("nativeWayland",   [](Settings& s) { s.nativeWayland = 2; });
     flips("displayMode",     [](Settings& s) { s.displayMode = 3; });
     flips("displayScale",    [](Settings& s) { s.displayScale = 1.45f; });
@@ -329,27 +328,28 @@ int main() {
         if (!same) ++g_fail;
     }
 
-    // DPI migration: once, folds the OS scale into uiScale/cursorScale (clamped), and
-    // only when the option is on.
+    // First run (applyFirstRunScale): a fresh profile starts UI Scale and Cursor Size at
+    // the display's scale (clamped), on every platform; an existing profile keeps its own.
     {
         auto check = [&](const char* what, bool ok) {
             std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
             if (!ok) ++g_fail;
         };
-        Settings s{};
-        check("dpi: changed", tak::applyDpiMigration(s, 1.5f));
-        check("dpi: ui 1.5", s.uiScale == 1.5f && s.cursorScale == 2 && s.dpiMigrated);
-        check("dpi: only once", !tak::applyDpiMigration(s, 2.0f) && s.uiScale == 1.5f);
+        Settings w{};   // Windows, a 150% primary display: DPI 144 / 96
+        check("first: windows dpi", tak::applyFirstRunScale(w, true, 144.0f / 96.0f) &&
+                                    w.uiScale == 1.5f && w.cursorScale == 2);
+        Settings m{};   // macOS Retina: the backing scale, drawable / window
+        check("first: mac backing", tak::applyFirstRunScale(m, true, tak::backingScale(1440, 2880)) &&
+                                    m.uiScale == 2.0f && m.cursorScale == 2);
         Settings c{}; c.uiScale = 1.5f; c.cursorScale = 6;
-        tak::applyDpiMigration(c, 3.0f);
-        check("dpi: clamped", c.uiScale == 2.0f && c.cursorScale == 8);
-        Settings o{}; o.ignoreDpiScaling = false;
-        tak::applyDpiMigration(o, 1.5f);
-        check("dpi: off untouched", o.uiScale == 1.0f && o.cursorScale == 1 && o.dpiMigrated);
+        tak::applyFirstRunScale(c, true, 3.0f);
+        check("first: clamped", c.uiScale == 2.0f && c.cursorScale == 8);
         Settings h{};
-        tak::applyDpiMigration(h, 1.0f);
-        check("dpi: 100% untouched", h.uiScale == 1.0f && h.cursorScale == 1);
-        check("dpi: defaults keep flag", tak::preferenceDefaults(s).dpiMigrated);
+        check("first: 100% untouched", !tak::applyFirstRunScale(h, true, 1.0f) && h.uiScale == 1.0f &&
+                                       h.cursorScale == 1);
+        Settings e{}; e.uiScale = 1.25f; e.cursorScale = 3;
+        check("first: existing kept", !tak::applyFirstRunScale(e, false, 2.0f) && e.uiScale == 1.25f &&
+                                      e.cursorScale == 3);
         // macOS Retina: points vs pixels. Every non-Retina case is an identity.
         check("dpi: backing 1x", tak::backingScale(1280, 1280) == 1.0f && tak::backingScale(0, 0) == 1.0f);
         check("dpi: backing 2x", tak::backingScale(1280, 2560) == 2.0f);
@@ -407,15 +407,14 @@ int main() {
         // simulated start: what the game does with the settings at startup. The numbers are
         // the user's 57" (7680 x 2160 at 1.45: 5297 logical) and a 2560-wide GNOME laptop
         // at 1.5 (1707 logical). An X11 start under Wayland measures the X11 desktop width
-        // (`x11W`); a native start the scale and the logical width.
-        static int probed = 0, probeCalls = 0;
-        auto probe = []() { ++probeCalls; return probed; };
+        // (`x11W`); a native start the scale and the logical width. `fresh`: no settings
+        // file when the game started, so the first-run rule applies first, as in main.cpp.
         auto start = [&](Settings& s, int now, float scale, int x11W, int logicalW,
-                         int fallback = wl::kModeX11Real) {
-            wl::DisplayHistory h{s.displayMode, s.displayScale, s.displayX11Width, s.displayLogicalWidth};
+                         int fallback = wl::kModeX11Real, bool fresh = false) {
             wl::Observation o{now, scale, x11W, logicalW};
-            const int assumed = s.dpiMigrated && now == wl::kModeWayland ? int(wl::kModeWayland) : int(wl::kModeX11);
-            const float f = wl::advanceDisplay(h, o, assumed, wl::Units::GamePixels, fallback, probe);
+            tak::applyFirstRunScale(s, fresh, wl::firstRunScale(o));
+            wl::DisplayHistory h{s.displayMode, s.displayScale, s.displayX11Width, s.displayLogicalWidth};
+            const float f = wl::advanceDisplay(h, o, wl::Units::GamePixels, fallback);
             tak::rescaleUi(s, f);
             s.displayMode = h.mode; s.displayScale = h.scale;
             s.displayX11Width = h.x11Width; s.displayLogicalWidth = h.logicalWidth;
@@ -433,46 +432,50 @@ int main() {
             check("x11: fallback", wl::fallbackX11Kind(kde) == R && wl::fallbackX11Kind(kdeSys) == X &&
                                    wl::fallbackX11Kind(gnome) == R);
         }
-        {   // Upgrade from 0.9.5 on KDE default (the user's own case): no history, Auto now
-            // native. XWayland is asked: 7680 = real pixels, so nothing is enlarged.
-            Settings s; s.uiScale = 1.25f; s.cursorScale = 4;
-            probed = 7680; probeCalls = 0;
-            const float f = start(s, W, 1.45f, 0, 5297);
-            check("up: kde default same", f == 1.0f && s.uiScale == 1.25f && s.cursorScale == 4 && probeCalls == 1);
-            check("up: kde records", s.displayMode == W && near(s.displayScale, 1.45f) && s.displayX11Width == 7680 &&
-                                     s.displayLogicalWidth == 5297);
-            start(s, U, 0, 7680, 0);   // Off again: measured real against the remembered logical width
-            check("up: kde back same", s.uiScale == 1.25f && s.cursorScale == 4 && s.displayMode == R);
-            // Even where kwinrc would say otherwise (the X11 setting is not readable from
-            // here, or another desktop configured real pixels), the measurement decides.
-            Settings h; h.uiScale = 1.0f; h.cursorScale = 2;
-            probed = 3840; probeCalls = 0;
-            start(h, W, 1.5f, 0, 2560, X);   // Hyprland force_zero_scaling, GNOME xwayland-native-scaling
-            check("up: real anywhere", h.uiScale == 1.0f && h.cursorScale == 2);
+        {   // First run on Linux: a fresh profile in a native Wayland window starts at the
+            // compositor's scale on every desktop -- KDE (whose X11 windows get real pixels)
+            // and GNOME (whose X11 windows are stretched) alike. Nothing converts on that
+            // start: there is no earlier window.
+            Settings k;
+            check("first: kde native S", start(k, W, 1.45f, 0, 5297, R, true) == 1.0f && near(k.uiScale, 1.45f) &&
+                                         k.cursorScale == 1 && k.displayMode == W && near(k.displayScale, 1.45f));
+            Settings g;
+            check("first: gnome native S", start(g, W, 1.5f, 0, 1707, R, true) == 1.0f && near(g.uiScale, 1.5f) &&
+                                           g.cursorScale == 2 && g.displayMode == W);
+            // The next start is not fresh: nothing compounds.
+            check("first: once", start(k, W, 1.45f, 0, 5297) == 1.0f && near(k.uiScale, 1.45f) &&
+                                 start(g, W, 1.5f, 0, 1707) == 1.0f && near(g.uiScale, 1.5f));
+            // Then switching NATIVE WAYLAND off converts as usual: KDE's real pixels keep the
+            // sizes, GNOME's stretched X11 window divides by S.
+            start(k, U, 0, 7680, 0);
+            check("first: kde then x11", near(k.uiScale, 1.45f) && k.displayMode == R);
+            start(g, U, 0, 1707, 0);
+            check("first: gnome then x11", near(g.uiScale, 1.0f) && g.cursorScale == 1 && g.displayMode == X);
+            // X11, plain or through XWayland: the defaults stay.
+            Settings x, p;
+            check("first: xwayland 1", start(x, U, 0, 1707, 0, R, true) == 1.0f && x.uiScale == 1.0f &&
+                                       x.cursorScale == 1 && x.displayMode == U);
+            check("first: plain x11 1", start(p, R, 0, 0, 0, R, true) == 1.0f && p.uiScale == 1.0f && p.displayMode == R);
+            // A native start whose scale never settled keeps the defaults and records nothing.
+            Settings u;
+            check("first: unsettled", start(u, W, 0.0f, 0, 1707, R, true) == 1.0f && u.uiScale == 1.0f &&
+                                      u.displayMode == 0);
         }
-        {   // Upgrade from 0.9.5 on GNOME (stretched): XWayland's screen is the logical size: x S.
-            Settings g; g.uiScale = 1.0f; g.cursorScale = 2;
-            probed = 1707; probeCalls = 0;
-            start(g, W, 1.5f, 0, 1707);
-            check("up: gnome xS", near(g.uiScale, 1.5f) && g.cursorScale == 3 && g.displayMode == W);
+        {   // An existing profile is never rescaled on start: with no window recorded yet
+            // this start is recorded and the player's sizes stay.
+            Settings e; e.uiScale = 1.25f; e.cursorScale = 4;
+            check("existing: native kept", start(e, W, 1.45f, 0, 5297) == 1.0f && e.uiScale == 1.25f &&
+                                           e.cursorScale == 4 && e.displayMode == W);
+            Settings x; x.uiScale = 0.75f; x.cursorScale = 2;
+            check("existing: x11 kept", start(x, U, 0, 1707, 0) == 1.0f && x.uiScale == 0.75f &&
+                                        x.cursorScale == 2 && x.displayMode == U);
         }
-        {   // Unknown: XWayland could not be asked. The fallback decides: real pixels (leave
-            // the sizes) everywhere but KDE "scaled by the system".
-            Settings s; s.uiScale = 1.0f; s.cursorScale = 2;
-            probed = 0; probeCalls = 0;
-            start(s, W, 1.5f, 0, 1707);
-            check("up: unknown same", s.uiScale == 1.0f && s.cursorScale == 2 && probeCalls == 1);
-            Settings k; k.uiScale = 1.0f; k.cursorScale = 2;
-            start(k, W, 1.5f, 0, 1707, X);
-            check("up: unknown kde sys xS", near(k.uiScale, 1.5f) && k.cursorScale == 3);
-        }
-        {   // An X11 history recorded by an X11 start is used without asking XWayland.
+        {   // An X11 history recorded by an X11 start is measured by the next native start.
             Settings s; s.uiScale = 1.0f; s.cursorScale = 2;
             start(s, U, 0, 1707, 0);
             check("x11 rec: unmeasured", s.displayMode == U && s.displayX11Width == 1707 && s.uiScale == 1.0f);
-            probed = 9999; probeCalls = 0;
             start(s, W, 1.5f, 0, 1707);
-            check("x11 rec: stretched xS", near(s.uiScale, 1.5f) && s.cursorScale == 3 && probeCalls == 0);
+            check("x11 rec: stretched xS", near(s.uiScale, 1.5f) && s.cursorScale == 3);
             start(s, U, 0, 1707, 0);   // and back: measured stretched now, / S
             check("x11 rec: back /S", near(s.uiScale, 1.0f) && s.cursorScale == 2 && s.displayMode == X);
             start(s, W, 1.5f, 0, 1707);
@@ -493,14 +496,14 @@ int main() {
             check("dock: kde x11 same", start(s, U, 0, 2560, 0) == 1.0f && s.uiScale == 1.5f && s.displayMode == R);
             check("dock: back same", start(s, W, 1.45f, 0, 5297) == 1.0f && s.uiScale == 1.5f && s.cursorScale == 4);
         }
-        {   // An X11 start that cannot measure itself against a known earlier window (a
-            // native history from the build before widths were recorded) uses the fallback
-            // and remembers it, so the next native start does not convert a second time.
+        {   // An X11 start that cannot measure itself against a known earlier window (native
+            // on a 2560-wide external monitor, then X11 on the 1707-wide laptop alone) uses the
+            // fallback and remembers it, so the next native start does not convert a second time.
             Settings s; s.uiScale = 1.0f; s.cursorScale = 2; s.displayMode = W; s.displayScale = 1.5f;
+            s.displayLogicalWidth = 2560;
             check("guess: x11 left", start(s, U, 0, 1707, 0) == 1.0f && s.displayMode == R && s.uiScale == 1.0f);
-            probed = 1707; probeCalls = 0;
-            check("guess: no compounding", start(s, W, 1.5f, 0, 1707) == 1.0f && s.uiScale == 1.0f &&
-                                           s.cursorScale == 2 && probeCalls == 0);
+            check("guess: no compounding", start(s, W, 1.5f, 0, 2560) == 1.0f && s.uiScale == 1.0f &&
+                                           s.cursorScale == 2);
         }
         {   // The scale must be settled: an unsettled native start (0) records and changes nothing,
             // so the next start still converts.
@@ -515,32 +518,25 @@ int main() {
             Settings s; s.uiScale = 1.5f; s.cursorScale = 3; s.displayMode = W; s.displayScale = 1.5f;
             s.displayLogicalWidth = 1707; s.displayX11Width = 1707;
             const float f = start(s, W, 2.0f, 0, 1280);
-            check("mig: wl scale change", f == 1.0f && s.uiScale == 1.5f && s.cursorScale == 3 && s.displayScale == 2.0f);
+            check("kind: wl scale change", f == 1.0f && s.uiScale == 1.5f && s.cursorScale == 3 && s.displayScale == 2.0f);
             start(s, U, 0, 1280, 0);   // back to stretched X11 now uses the latest scale
-            check("mig: latest scale", near(s.uiScale, 0.75f) && s.cursorScale == 2 && s.displayMode == X);
+            check("kind: latest scale", near(s.uiScale, 0.75f) && s.cursorScale == 2 && s.displayMode == X);
         }
         {   // Never native: X11 starts only record; with no scale known nothing converts.
             Settings x; x.uiScale = 1.0f;
-            check("mig: x11 only none", start(x, U, 0, 1707, 0) == 1.0f && start(x, U, 0, 1707, 0) == 1.0f &&
+            check("kind: x11 only none", start(x, U, 0, 1707, 0) == 1.0f && start(x, U, 0, 1707, 0) == 1.0f &&
                                         x.uiScale == 1.0f && x.displayMode == U);
             Settings p;   // a plain X11 desktop is always real pixels
-            check("mig: plain x11", start(p, R, 0, 0, 0) == 1.0f && p.displayMode == R);
+            check("kind: plain x11", start(p, R, 0, 0, 0) == 1.0f && p.displayMode == R);
             Settings u;
-            check("mig: unknown driver", start(u, wl::kModeUnknown, 0, 0, 0) == 1.0f && u.displayMode == 0);
+            check("kind: unknown driver", start(u, wl::kModeUnknown, 0, 0, 0) == 1.0f && u.displayMode == 0);
             Settings one; one.cursorScale = 2;
             start(one, W, 1.0f, 0, 2560);   // 100% desktop: nothing to convert
-            check("mig: scale 1 none", one.uiScale == 1.0f && one.cursorScale == 2);
-        }
-        {   // A file from the build that migrated on the first native start (dpiMigrated, no
-            // displayMode: the user's own file) already holds native sizes: never converted.
-            Settings s; s.dpiMigrated = true; s.nativeWayland = wl::kOn; s.uiScale = 1.45484f; s.cursorScale = 6;
-            probed = 5297; probeCalls = 0;
-            start(s, W, 1.45f, 0, 5297);
-            check("mig: dpiMigrated kept", s.uiScale == 1.45484f && s.cursorScale == 6 && probeCalls == 0);
+            check("kind: scale 1 none", one.uiScale == 1.0f && one.cursorScale == 2);
         }
         {   // Cartographer sizes in window points: only the real-pixel X11 window differs.
             auto cart = [](wl::DisplayHistory& h, int now, float scale, int x11W, int logicalW) {
-                return wl::advanceDisplay(h, wl::Observation{now, scale, x11W, logicalW}, wl::kModeX11,
+                return wl::advanceDisplay(h, wl::Observation{now, scale, x11W, logicalW},
                                           wl::Units::CartographerPoints, wl::kModeX11Real);
             };
             wl::DisplayHistory h;
@@ -565,33 +561,14 @@ int main() {
         {   // Clamped at the range ends: 2.0 cannot grow, so the way back is not exact.
             Settings s; s.uiScale = 2.0f; s.cursorScale = 8;
             tak::rescaleUi(s, 1.45f);
-            check("mig: clamped", s.uiScale == 2.0f && s.cursorScale == 8);
-            check("mig: factor 1 no-op", !tak::rescaleUi(s, 1.0f));
+            check("kind: clamped", s.uiScale == 2.0f && s.cursorScale == 8);
+            check("kind: factor 1 no-op", !tak::rescaleUi(s, 1.0f));
         }
     }
 
-    // Texture Filtering migration (resolveTextureFilter; -1 = key absent). The new key
-    // wins; a file from before it maps the old Bilinear Filtering toggle onto Off/Units
-    // (Units is exactly what that toggle smoothed), then the older 0.7.24 keys.
-    {
-        auto check = [&](const char* what, bool ok) {
-            std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
-            if (!ok) ++g_fail;
-        };
-        using tak::resolveTextureFilter;
-        check("tf: default Everything", Settings{}.textureFilter == 2 && resolveTextureFilter(-1, -1, -1, -1) == 2);
-        check("tf: new key wins", resolveTextureFilter(2, 0, 0, 0) == 2 && resolveTextureFilter(0, 1, 1, 1) == 0);
-        check("tf: new key clamps", resolveTextureFilter(9, -1, -1, -1) == 2);
-        check("tf: bilinear 0 -> Off", resolveTextureFilter(-1, 0, 1, 1) == 0);
-        check("tf: bilinear 1 -> Units", resolveTextureFilter(-1, 1, -1, -1) == 1);
-        check("tf: old zoom smooth", resolveTextureFilter(-1, -1, 0, 1) == 1 && resolveTextureFilter(-1, -1, 1, 0) == 0);
-        check("tf: 0.7.24 bilinear", resolveTextureFilter(-1, -1, 1, -1) == 1 && resolveTextureFilter(-1, -1, 0, -1) == 0);
-    }
-
     // GPU MEMORY LIMIT values (parseGpuMemoryLimit / snap / write / label). 1280 MiB is the
-    // default and what any unreadable value falls back to -- as is "auto" (and a stored 0),
-    // the pre-0.8.8 default -- and a hand-edited size snaps to the nearest listed choice so
-    // the Options dropdown always shows what is in effect.
+    // default and what any unreadable value falls back to, and a hand-edited size snaps to
+    // the nearest listed choice so the Options dropdown always shows what is in effect.
     {
         auto check = [&](const char* what, bool ok) {
             std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
@@ -599,8 +576,6 @@ int main() {
         };
         using tak::parseGpuMemoryLimit; using tak::gpuMemoryLimitValue; using tak::gpuMemoryLimitLabel;
         check("gpu: default 1280", Settings{}.gpuMemoryLimit == 1280 && tak::kGpuMemoryDefaultMiB == 1280);
-        check("gpu: old auto -> 1280", parseGpuMemoryLimit("auto") == 1280 && parseGpuMemoryLimit("AUTO") == 1280 &&
-                                       parseGpuMemoryLimit("0") == 1280 && tak::snapGpuMemoryLimit(0) == 1280);
         check("gpu: unlimited", parseGpuMemoryLimit("unlimited") == -1 && parseGpuMemoryLimit("Unlimited") == -1 &&
                                 parseGpuMemoryLimit("-1") == -1);
         check("gpu: listed sizes", parseGpuMemoryLimit("512") == 512 && parseGpuMemoryLimit("1280") == 1280 &&
@@ -609,7 +584,8 @@ int main() {
                                   parseGpuMemoryLimit("99999") == 4096 && parseGpuMemoryLimit("1300") == 1280 &&
                                   parseGpuMemoryLimit("1450") == 1536);
         check("gpu: junk -> 1280", parseGpuMemoryLimit("") == 1280 && parseGpuMemoryLimit("lots") == 1280 &&
-                                   parseGpuMemoryLimit("1 GB") == 1280 && parseGpuMemoryLimit("-7") == 1280);
+                                   parseGpuMemoryLimit("1 GB") == 1280 && parseGpuMemoryLimit("-7") == 1280 &&
+                                   parseGpuMemoryLimit("0") == 1280);
         bool roundTrip = true, listed = false;
         for (int mib : tak::kGpuMemoryLimits) {
             roundTrip = roundTrip && parseGpuMemoryLimit(gpuMemoryLimitValue(mib)) == mib;
@@ -629,9 +605,8 @@ int main() {
     }
 
 #ifdef TAK_SETTINGS_FILE_TEST
-    // The campaign book's OPPONENT AI line is gone (missions always play Classic). The
-    // 0.8.11 prereleases saved it as campaignAi = classic | normal: such a file still
-    // loads, the key is ignored like any unknown key, and the next save leaves it out.
+    // A fresh profile is one with no settings file: loadSettings says whether it found one
+    // (the first-run rule keys on it), and an empty file is a profile all the same.
     {
         auto check = [&](const char* what, bool ok) {
             std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
@@ -639,11 +614,20 @@ int main() {
         };
         const auto path = std::filesystem::temp_directory_path() /
                           ("settings_test_" + std::to_string(std::random_device{}()) + ".ini");
-        { std::ofstream(path) << "lastMap = Inner Circle\ncampaignAi = normal\nmasterVol = 7\n"; }
         tak::setSettingsPath(path.string());
-        const Settings s = tak::loadSettings();
-        check("campaignAi: loads", s.lastMap == "Inner Circle" && s.masterVol == 7);
-        check("campaignAi: dropped", tak::serializeSettings(s).find("campaignAi") == std::string::npos);
+        bool found = true;
+        const Settings none = tak::loadSettings(&found);
+        check("fresh: no file", !found && none == Settings{});
+        { std::ofstream(path) << "uiScale = 1.5\n"; }
+        check("fresh: file found", tak::loadSettings(&found).uiScale == 1.5f && found);
+        { std::ofstream(path, std::ios::trunc); }
+        check("fresh: empty file found", tak::loadSettings(&found) == Settings{} && found);
+        // Campaign progress is campaigndone.<id> = the completed mission indices; a
+        // campaign.<id> count is not a key the game reads.
+        { std::ofstream(path) << "campaigndone.aramon = 0,2\ncampaign.taros = 3\n"; }
+        const Settings camp = tak::loadSettings();
+        check("campaign: done read", camp.campaignCompleted.size() == 1 &&
+                                     camp.campaignCompleted.at("aramon") == std::set<int>{0, 2});
         std::error_code ec;
         std::filesystem::remove(path, ec);
     }
@@ -735,8 +719,8 @@ int main() {
         std::error_code ec;
         std::filesystem::remove(path, ec);
     }
-    // MAX FPS: 30..240, and 0 means unlimited; a saved cap past 240 (once allowed up to
-    // 480) loads as unlimited, and unlimited survives a save.
+    // MAX FPS: 30..240, and 0 means unlimited; a cap outside the range clamps to it, and
+    // unlimited survives a save.
     {
         auto fpsFrom = [&](const std::string& body) {
             const auto path = std::filesystem::temp_directory_path() /
@@ -755,7 +739,8 @@ int main() {
         check("maxFps: 144 kept", fpsFrom("maxFps = 144\n") == 144);
         check("maxFps: 10 -> 30", fpsFrom("maxFps = 10\n") == 30);
         check("maxFps: 0 unlimited", fpsFrom("maxFps = 0\n") == 0);
-        check("maxFps: 480 unlimited", fpsFrom("maxFps = 480\n") == 0);
+        check("maxFps: 480 -> 240", fpsFrom("maxFps = 480\n") == 240);
+        check("maxFps: -5 unlimited", fpsFrom("maxFps = -5\n") == 0);
         Settings w{};
         w.maxFps = 0;
         check("maxFps: 0 round trip", fpsFrom(tak::serializeSettings(w)) == 0);
@@ -823,9 +808,8 @@ int main() {
                                loadFrom("displayMode = x\ndisplayScale = 99\n").displayScale == 0.0f);
         check("display: kept by defaults", tak::preferenceDefaults(dm).displayMode == 3 &&
                                            tak::preferenceDefaults(dm).displayScale == 1.45f);
-        // HIDDEN UNITS: off | dots | fade; a file from before the option (no key), one
-        // saved with a mode since removed (OUTLINE, SHADOW), and an unknown value load as
-        // FADE, the default.
+        // HIDDEN UNITS: off | dots | fade; no key and an unknown value load as FADE, the
+        // default.
         check("hidden: default 2", Settings{}.hiddenUnits == 2);
         check("hidden: absent", loadFrom("masterVol = 7\n").hiddenUnits == 2);
         check("hidden: off", loadFrom("hiddenUnits = off\n").hiddenUnits == 0);

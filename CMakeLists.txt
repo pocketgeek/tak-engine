@@ -2522,7 +2522,7 @@ if(TAK_BUILD_CLIENT)
     add_test(NAME options_autosave COMMAND options_autosave_test)
     set_tests_properties(options_autosave PROPERTIES TIMEOUT 60
       ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
-    # With SDL, settings_test also loads a settings file (an old campaignAi key is ignored).
+    # With SDL, settings_test also reads settings files.
     target_sources(settings_test PRIVATE src/client/settings.cpp)
     target_compile_definitions(settings_test PRIVATE TAK_SETTINGS_FILE_TEST)
     target_link_libraries(settings_test PRIVATE ${_tak_sdl2})

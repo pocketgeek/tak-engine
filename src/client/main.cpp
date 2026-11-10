@@ -704,8 +704,11 @@ int main(int argc, char** argv) {
 #endif
     tak::installSignalHandlers();
     // Persisted Options (audio/camera/display prefs). CLI flags still win where they
-    // apply; the file is the source of truth for anything not passed on the CLI.
-    tak::Settings settings = tak::loadSettings();
+    // apply; the file is the source of truth for anything not passed on the CLI. No file
+    // yet is a fresh profile: the first-run rule below sizes the HUD and cursor once.
+    bool settingsFound = false;
+    tak::Settings settings = tak::loadSettings(&settingsFound);
+    const bool freshProfile = !settingsFound;
     tak::music::setCustom(settings.customMusicTracks);   // CUSTOM MUSIC, from the first note
     // Finish any replay a crash, kill or power cut left mid-recording, so it is
     // listed and playable like any other (net/replaywriter.h). Recordings still
@@ -716,12 +719,11 @@ int main(int argc, char** argv) {
     tak::hpi::setUserMapRoot(tak::u8path(tak::replayDir()));
 #ifdef _WIN32
     if (tak::dpiIgnoredAtStartup()) {
-        // First run (or first run since this option arrived): the old stretched window made
-        // the HUD look OS-scale times bigger, so fold that scale into UI/cursor size.
+        // Real pixels: a fresh profile starts its HUD and cursor at the display's scale.
         float ddpi = 0;
         float osScale = SDL_GetDisplayDPI(0, &ddpi, nullptr, nullptr) == 0 && ddpi > 0 ? ddpi / 96.0f : 1.0f;
         std::fprintf(stderr, "dpi: ignoring Windows display scaling; primary display scale %.2f (%.0f dpi)\n", osScale, ddpi);
-        if (tak::applyDpiMigration(settings, osScale)) tak::saveSettings(settings);
+        if (tak::applyFirstRunScale(settings, freshProfile, osScale)) tak::saveSettings(settings);
     }
 #endif
     // Select the saved output device before ANY audio opens (validated -- an absent
@@ -1040,11 +1042,17 @@ int main(int argc, char** argv) {
     // once already.
 #ifdef __APPLE__
     if (tak::dpiIgnoredAtStartup()) {
-        // Same one-time UI/cursor migration as Windows. macOS has no DPI number to ask
-        // for before the window exists; the backing scale is drawable / window.
+        // The same first-run rule as Windows. macOS has no DPI number to ask for before
+        // the window exists; the backing scale is drawable / window.
         const float osScale = tak::hidpi::scale(ren);
         std::fprintf(stderr, "dpi: native Retina resolution; backing scale %.2f\n", osScale);
-        if (tak::applyDpiMigration(settings, osScale)) tak::saveSettings(settings);
+        if (tak::applyFirstRunScale(settings, freshProfile, osScale)) {
+            // Save just these into the file, not this run's command-line overrides.
+            tak::Settings disk = tak::loadSettings();
+            disk.uiScale = settings.uiScale;
+            disk.cursorScale = settings.cursorScale;
+            tak::saveSettings(disk);
+        }
     }
 #elif defined(__linux__)
     if (mpHeadless == 0 && shot.empty()) {
@@ -1069,15 +1077,15 @@ int main(int argc, char** argv) {
         } else if (now.mode == wlc::kModeX11) {
             now.x11Width = wlc::desktopWidth();
         }
-        // No history yet: a file from a build that migrated on the first native start
-        // (dpiMigrated) already holds native sizes; otherwise every earlier Linux build ran X11.
-        const int assumed = settings.dpiMigrated && now.mode == wlc::kModeWayland
-                                ? int(wlc::kModeWayland) : int(wlc::kModeX11);
+        // First run: a fresh profile in a native window starts at the compositor's scale.
+        const bool firstRun = tak::applyFirstRunScale(settings, freshProfile, wlc::firstRunScale(now));
+        if (firstRun)
+            std::fprintf(stderr, "dpi: fresh profile: UI Scale and Cursor Size at the display scale -> uiScale=%.2f cursorScale=%d\n",
+                         settings.uiScale, settings.cursorScale);
         wlc::DisplayHistory h{settings.displayMode, settings.displayScale, settings.displayX11Width,
                               settings.displayLogicalWidth};
         int kinds[2] = {0, 0};
-        const float f = wlc::advanceDisplay(h, now, assumed, wlc::Units::GamePixels,
-                                            wlc::fallbackX11Kind(wl.session), wlc::probeXWaylandWidth, &kinds);
+        const float f = wlc::advanceDisplay(h, now, wlc::Units::GamePixels, wlc::fallbackX11Kind(wl.session), &kinds);
         if (now.mode != wlc::kModeUnknown) {
             const bool guessed = kinds[0] == wlc::kModeX11 || kinds[1] == wlc::kModeX11;
             std::fprintf(stderr, "dpi: X11 desktop %d, logical %d, scale %.2f: last window %s, this one %s%s%s%s\n",
@@ -1086,7 +1094,7 @@ int main(int argc, char** argv) {
                          guessed ? wlc::modeName(wlc::fallbackX11Kind(wl.session)) : "", guessed ? ")" : "");
         }
         const bool resized = tak::rescaleUi(settings, f);
-        if (resized || h.mode != settings.displayMode || h.scale != settings.displayScale ||
+        if (firstRun || resized || h.mode != settings.displayMode || h.scale != settings.displayScale ||
             h.x11Width != settings.displayX11Width || h.logicalWidth != settings.displayLogicalWidth) {
             if (resized)
                 std::fprintf(stderr, "dpi: display %s -> %s: UI Scale and Cursor Size x%.3f -> uiScale=%.2f cursorScale=%d\n",

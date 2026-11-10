@@ -214,7 +214,7 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
         else if(now.mode==wlc::kModeX11)now.x11Width=wlc::desktopWidth();
         wlc::DisplayHistory h{preferences.displayMode,preferences.displayScale,preferences.displayX11Width,preferences.displayLogicalWidth};
         int kinds[2]={0,0};
-        const float f=wlc::advanceDisplay(h,now,wlc::kModeX11,wlc::Units::CartographerPoints,wlc::fallbackX11Kind(wl.session),wlc::probeXWaylandWidth,&kinds);
+        const float f=wlc::advanceDisplay(h,now,wlc::Units::CartographerPoints,wlc::fallbackX11Kind(wl.session),&kinds);
         if(now.mode!=wlc::kModeUnknown)
             std::fprintf(stderr,"dpi: X11 desktop %d, logical %d, scale %.2f: last window %s, this one %s\n",h.x11Width,h.logicalWidth,now.scale>0?now.scale:h.scale,
                          wlc::modeName(kinds[0]),wlc::modeName(kinds[1]));
