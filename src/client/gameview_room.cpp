@@ -1,27 +1,120 @@
 #include "client/gameview.h"
 #include "net/matchconfig.h"
+#include "net/roomseats.h"
 #include <cmath>
 #include <cstring>
 #include <random>
 
 // Out-of-line GameView method definitions (the game room): the left column -- the room's
-// name, the slot table, READY / START / LEAVE and the rules -- and the room's per-frame
-// reactions. The right column is drawRoomColumn (gameview_lobby.cpp); the CHANGE MAP
-// panel is gameview_mappicker.cpp.
+// name and password, the slot table, READY / START / LEAVE, the note line and the options
+// block -- and the room's per-frame reactions: the host's own READY in single player,
+// WATCH's AI fill, the change display (flashes and notes). The right column is
+// drawRoomColumn (gameview_lobby.cpp); the CHANGE MAP panel is gameview_mappicker.cpp.
 
 namespace {
-std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
-    std::string name=tak::sim::pathfindingModeName(mode);
-    for(char& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
-    return "PATHFINDING: "+name;
-}
-// START LOCATIONS as the create screen and the room show it (GameOptions::randomStarts).
-std::string startLocationsLabel(uint8_t mode) {
-    switch (tak::net::normalizeStartMode(mode)) {
-    case tak::net::kStartsRandom: return "START LOCATIONS: RANDOM";
-    case tak::net::kStartsBySlot: return "START LOCATIONS: BY SLOT";
-    default: return "START LOCATIONS: FIXED";
+using tak::RoomField;
+const char* const kFogName[3] = {"NOT EXPLORED", "EXPLORED", "FULL VISION"};
+constexpr uint16_t kUnitCaps[] = {250, 500, 1000, 2000};
+constexpr SDL_Color kAmber{235, 205, 120, 255}, kRed{255, 130, 110, 255};
+const char* onOff(bool value) { return value ? "ON" : "OFF"; }
+
+// A rule's value as its cell and the chat show it (the create screen's words).
+std::string ruleValue(RoomField field, const tak::net::GameOptions& o) {
+    switch (field) {
+    case RoomField::Scenario: return onOff(o.mapScenario);
+    case RoomField::Crusades: return onOff(o.crusades);
+    case RoomField::DoubleSight: return onOff(o.doubleSight);
+    case RoomField::UnitCap: return std::to_string(o.unitCap);
+    case RoomField::Monarch: return onOff(o.monarchExpendable);
+    case RoomField::SpeedUnlock: return onOff(o.speedUnlock);
+    case RoomField::Fog: return kFogName[std::min<int>(o.fogExplored, 2)];
+    case RoomField::StartLocations:
+        switch (tak::net::normalizeStartMode(o.randomStarts)) {
+        case tak::net::kStartsRandom: return "RANDOM";
+        case tak::net::kStartsBySlot: return "BY SLOT";
+        default: return "FIXED";
+        }
+    case RoomField::Pathfinding: {
+        std::string name = tak::sim::pathfindingModeName(o.pathfindingMode);
+        for (char& c : name) c = char(std::toupper(static_cast<unsigned char>(c)));
+        return name;
     }
+    case RoomField::PowerCodes: return onOff(o.powerCodes);
+    case RoomField::AllowSpectators: return onOff(o.allowSpectators);
+    default: return "";
+    }
+}
+std::string ruleLabel(RoomField field, const tak::net::GameOptions& o) {
+    return std::string(tak::roomFieldCaption(field)) + ": " + ruleValue(field, o);
+}
+
+// The options block draws every label at one size: the largest (up to 1.6) at which every
+// caption a cell can show fits `maxW`, so the block reads as one list and cycling a cell
+// never resizes its text. Measured in the current UI FONT.
+float roomRulePx(float maxW) {
+    static const char* const kCaptions[] = {
+        "CRUSADES: OFF", "DOUBLE SIGHT/RADAR: OFF", "UNIT CAP: 2000", "MONARCH EXPENDABLE: SCENARIO",
+        "MONARCH EXPENDABLE: OFF", "ALLOW SPEED CHANGE: OFF", "POWER CODES: OFF", "ALLOW SPECTATORS: OFF",
+        "MAP SCENARIO: OFF", "MAP SCENARIO: ON (TEST MAP)"};
+    float px = 1.6f;
+    tak::net::GameOptions o;
+    for (auto mode : {tak::sim::PathfindingMode::Retail, tak::sim::PathfindingMode::Legion}) {
+        o.pathfindingMode = mode;
+        px = tak::uiTextFitPx(ruleLabel(RoomField::Pathfinding, o), px, maxW);
+    }
+    for (uint8_t mode = 0; mode < 3; ++mode) {
+        o.randomStarts = mode; o.fogExplored = mode;
+        px = tak::uiTextFitPx(ruleLabel(RoomField::StartLocations, o), px, maxW);
+        px = tak::uiTextFitPx(ruleLabel(RoomField::Fog, o), px, maxW);
+    }
+    for (const char* caption : kCaptions) px = tak::uiTextFitPx(caption, px, maxW);
+    return std::floor(px * 20) / 20;   // a 0.05 step, so rounding never re-overflows
+}
+
+// A multiplayer host's name (field 9) and password (10) boxes, from the slot table's left
+// edge: drawRoom draws them there, and roomInput keeps a click inside the one being typed in.
+SDL_FRect roomFieldBox(int field, float x) {
+    return field == 9 ? SDL_FRect{x, 54, 250, 24} : SDL_FRect{x + 260, 54, 180, 24};
+}
+
+// The pulsing amber fill behind a line a change lights (alpha 40..120 at 2 Hz) until `until`.
+void drawPulse(SDL_Renderer* ren, const SDL_FRect& rect, uint64_t until) {
+    const uint64_t now = SDL_GetTicks64();
+    if (now >= until) return;
+    const float wave = 0.5f + 0.5f * std::cos(float(until - now) * 0.001f * 2.0f * 6.2831853f);
+    SDL_SetRenderDrawColor(ren, kAmber.r, kAmber.g, kAmber.b, uint8_t(40 + 80 * wave));
+    SDL_RenderFillRectF(ren, &rect);
+}
+
+// The room plays its map's scenario: the MAP SCENARIO option, or (from the verified package)
+// a Test Map copy's opt-in. It fixes START LOCATIONS and owns MONARCH EXPENDABLE.
+bool scenarioPlays(const tak::net::RoomView& room, bool havePackage, const tak::sim::ScenarioInfo& s) {
+    const bool fileMap = room.mission.empty() && !tak::mapgen::isGeneratedMapId(room.mapId);
+    return fileMap && (room.opts.mapScenario != 0 ||
+                       (havePackage && !room.opts.stressTest && !room.opts.benchmark && s.active(false)));
+}
+
+// "REMOVES 2 AI PLAYERS AND MOVES 1 PLAYER": what a capacity plan does to the seats.
+std::string seatPlanText(const tak::net::SeatPlan& plan) {
+    const auto count = [](size_t n, const char* one, const char* many) { return std::to_string(n) + (n == 1 ? one : many); };
+    std::string out;
+    if (!plan.removedAi.empty()) out = "REMOVES " + count(plan.removedAi.size(), " AI PLAYER", " AI PLAYERS");
+    if (!plan.moves.empty()) out += (out.empty() ? "MOVES " : " AND MOVES ") + count(plan.moves.size(), " PLAYER", " PLAYERS");
+    return out;
+}
+
+// The host's own choices start as the room's rules. A single-player host watching the AIs
+// has FULL VISION and no POWER CODES forced on the room, so those two come from the
+// remembered set and return when it sits down again.
+void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomView& room, bool watchingSp,
+                const tak::Settings* settings) {
+    if (set) return;
+    chosen = room.opts;
+    if (watchingSp && settings) {
+        chosen.fogExplored = uint8_t(std::clamp(settings->spRoom.fog, 0, 2));
+        chosen.powerCodes = settings->spRoom.powerCodes ? 1 : 0;
+    }
+    set = true;
 }
 }  // namespace
 
@@ -74,7 +167,7 @@ std::string startLocationsLabel(uint8_t mode) {
     // keeping its side, colour and team.
     void GameView::roomSetSlotType(int slot, uint8_t type) {
         const auto& room = mpRoom();
-        if (room.hostId != mp_->myClientId()) { roomActError_ = "only the host changes a seat"; return; }
+        if (!mp_->roomEditable()) { roomActError_ = "only the host changes a seat, before the game starts"; return; }
         if (slot < 0 || slot >= tak::net::kMaxSlots || room.slots[slot].type == 1) {
             roomActError_ = "not an empty seat"; return;
         }
@@ -85,17 +178,122 @@ std::string startLocationsLabel(uint8_t mode) {
     void GameView::roomStep() {
         const auto& room = mp_->room();
         const bool host = (room.hostId == mp_->myClientId());
-        // SP spectate ("watch the AIs"): the instant the host lands in the room, fill
-        // every open capacity slot with an AI -- each on its own team/colour and a
-        // RANDOM race -- so the watcher gets a full free-for-all with no hand-seating.
-        // Closed slots (no start position on this map) are skipped. One-shot
-        // (specAutoSeated_), so the host can still tweak/close slots afterwards.
-        if (singlePlayer_ && spSpectate_ && host && room.mySlot < 0 && !specAutoSeated_) {
-            std::mt19937 rng(uint32_t(SDL_GetTicks64()) ^ (room.id * 2654435761u));
-            for (int i = 0; i < tak::net::kMaxSlots; ++i)
-                if (room.slots[i].type == 0)   // open capacity slot
-                    mp_->setSlot(i, 2, uint8_t(rng() % 5), uint8_t(i), uint8_t(i), 1, aiLevelEnv());
-            specAutoSeated_ = true;
+        const uint64_t now = SDL_GetTicks64();
+        if (room.id) {   // 0: joined, and the room's first LobbyState is still on its way
+            // A room seen for the first time (or over a new connection): its display starts afresh.
+            if (!roomSeenSeq_ || room.id != roomSeen_.id || mp_->lobbySeq() < roomSeenSeq_) {
+                roomSeen_ = room;
+                roomSeenSeq_ = mp_->lobbySeq();
+                std::fill(std::begin(roomFlashUntil_), std::end(roomFlashUntil_), 0);
+                std::fill(std::begin(roomSeatFlashUntil_), std::end(roomSeatFlashUntil_), 0);
+                roomNote_.clear(); roomRefusal_.clear(); roomNoteUntil_ = roomRefusalUntil_ = 0;
+                roomNameDraft_ = room.name; roomNameEdited_ = roomPassEdited_ = false;
+                // The host's own password, as it made the room (the draft is shown in the
+                // field); a room this client did not make shows PASSWORD SET instead.
+                if (!host || !room.passworded) roomPassDraft_.clear();
+                else if (!createPass_.empty()) roomPassDraft_ = createPass_;
+                roomOptsDraft_.reset(); scenarioArmUntil_ = 0; watchFillAt_ = 0;
+                roomWatching_ = false; roomChosenSet_ = false;
+            }
+            // A host's own choices (a successor host's too: from the rules it inherits).
+            if (!host) roomChosenSet_ = false;
+            else seedChosen(roomChosen_, roomChosenSet_, room, singlePlayer_ && mp_->isSpectator(), settings_);
+            // A refused map change or rename, while the CHANGE MAP panel is closed: red on the
+            // note line for 6 s (the panel shows its own refusals in its footer). A map change
+            // on its way makes room for its own answer, even one worded as the last (the
+            // room's own requests clear it as they send).
+            if (const std::string& err = mp_->roomError(); err.empty()) {
+                if (now >= roomRefusalUntil_ || mp_->roomMapPending()) { roomRefusal_.clear(); roomRefusalUntil_ = 0; }
+            } else {
+                const bool rename = mp_->roomErrorFor() == tak::net::RoomRequest::Info;
+                const std::string text = (rename ? "CANNOT RENAME THE GAME: " : "CANNOT CHANGE THE MAP: ") + err;
+                if (text != roomRefusal_) {
+                    roomRefusal_ = text; roomRefusalUntil_ = picker_.open ? 0 : now + 6000;
+                    // The name field shows the room's name again (unless it is being typed in).
+                    if (rename && lbField_ != 9 && !roomNameEdited_) roomNameDraft_ = room.name;
+                }
+            }
+            // The block shows a click at once; the server's answer (or 1.5 s) replaces it.
+            if (roomOptsDraft_) {
+                const auto& d = *roomOptsDraft_;
+                const auto& o = room.opts;
+                const bool answered = d.crusades == o.crusades && d.doubleSight == o.doubleSight && d.unitCap == o.unitCap &&
+                    d.monarchExpendable == o.monarchExpendable && d.speedUnlock == o.speedUnlock &&
+                    d.fogExplored == o.fogExplored && d.randomStarts == o.randomStarts &&
+                    d.pathfindingMode == o.pathfindingMode && d.powerCodes == o.powerCodes &&
+                    d.allowSpectators == o.allowSpectators;
+                if (answered || now - roomOptsDraftMs_ > 1500) roomOptsDraft_.reset();
+            }
+            // What the host changed since the last LobbyState: flashes, the note, chat lines.
+            tak::RoomChanges changes;
+            const bool newState = mp_->lobbySeq() != roomSeenSeq_;
+            if (newState) {
+                changes = tak::roomChanges(roomSeen_, room);
+                // The name field's draft follows a rename as it arrives (not while the field is
+                // typed in), so a click on the field goes on from the name last sent or seen.
+                if (changes.name && lbField_ != 9 && !roomNameEdited_) roomNameDraft_ = room.name;
+                // The host's own changes light nothing; a guest sees each one.
+                if (!host && (changes.bits || changes.name || changes.password)) {
+                    const uint64_t until = now + 3000;
+                    for (RoomField field : changes.options) roomFlashUntil_[size_t(field)] = until;
+                    if (changes.name || changes.password) roomFlashUntil_[size_t(RoomField::Name)] = until;
+                    if (changes.bits & tak::net::kChangeMods) roomFlashUntil_[size_t(RoomField::Mods)] = until;
+                    if (changes.bits) for (int seat : changes.seats) roomSeatFlashUntil_[seat] = until;
+                    if (changes.unreadied && room.mySlot >= 0) roomSeatFlashUntil_[room.mySlot] = until;
+                    // Multiplayer keeps each change in the chat's history too.
+                    if (!singlePlayer_) {
+                        for (RoomField field : changes.options) {
+                            std::string line;
+                            if (field == RoomField::Map) line = "THE HOST CHANGED THE MAP TO " + mapTitle(room.mapId);
+                            else if (field == RoomField::Scenario) line = std::string("THE HOST TURNED MAP SCENARIO ") + onOff(room.opts.mapScenario);
+                            else line = std::string("THE HOST CHANGED ") + tak::roomFieldCaption(field) + " TO " + ruleValue(field, room.opts);
+                            chatLog_.push_back({"SYSTEM", line});
+                        }
+                        if (changes.name) chatLog_.push_back({"SYSTEM", "THE HOST RENAMED THE GAME TO " + room.name});
+                        if (changes.bits & tak::net::kChangeMods) chatLog_.push_back({"SYSTEM", "THE HOST CHANGED THE GAME MODS"});
+                    }
+                }
+                if (const std::string note = tak::roomChangeNote(changes, host); !note.empty()) {
+                    roomNote_ = note;
+                    roomNoteUntil_ = now + 6000;
+                    std::fprintf(stderr, "room note: %s\n", note.c_str());
+                }
+            }
+            const bool shrank = newState && room.capacity < roomSeen_.capacity;
+            if (newState) { roomSeen_ = room; roomSeenSeq_ = mp_->lobbySeq(); }
+            // WATCH (single player): once the server has the host watching, an AI in every
+            // OPEN seat if fewer than two AIs are seated (each a random race on its seat's
+            // team, in the lowest colour no seat holds), and the watcher's rules (FULL
+            // VISION, no POWER CODES). Again whenever a smaller map takes AIs away.
+            const bool watching = singlePlayer_ && host && mp_->isSpectator() && room.mySlot < 0;
+            if (watching && mp_->roomEditable()) {
+                const bool fill = (watchFillAt_ && mp_->lobbySeq() > watchFillAt_) ||   // the first room after WATCH
+                                  (!roomWatching_ && !watchFillAt_) ||                  // a room made to watch
+                                  (roomWatching_ && (shrank || changes.aiRemoved > 0));
+                if (fill) {
+                    watchFillAt_ = 0;
+                    int ais = 0;
+                    for (const auto& s : room.slots) ais += s.type == 2;
+                    if (ais < 2) {
+                        std::mt19937 rng(uint32_t(now) ^ (room.id * 2654435761u));
+                        bool held[10] = {};
+                        for (const auto& s : room.slots) if ((s.type == 1 || s.type == 2) && s.color < 10) held[s.color] = true;
+                        for (int i = 0; i < std::min<int>(room.capacity, tak::net::kMaxSlots); ++i) {
+                            if (room.slots[i].type != 0) continue;
+                            uint8_t colour = 0;
+                            while (colour < 9 && held[colour]) ++colour;
+                            held[colour] = true;
+                            mp_->setSlot(i, 2, uint8_t(rng() % 5), colour, room.slots[i].team, 1, aiLevelEnv());
+                        }
+                    }
+                    mp_->setGameOptions(roomEffective());
+                }
+                roomWatching_ = true;
+            } else if (!watching) {
+                // Sat down again (SIT HERE): the host's own FOG OF WAR and POWER CODES return.
+                if (roomWatching_ && host && room.mySlot >= 0 && mp_->roomEditable()) mp_->setGameOptions(roomEffective());
+                roomWatching_ = false;
+            }
         }
         // SP: no READY button -- the player is always ready. Keep the slot marked
         // ready (once, self-limiting) so the host's START enables.
@@ -111,7 +309,46 @@ std::string startLocationsLabel(uint8_t mode) {
         const RoomFrame f = roomFrame(winW);
         const float x = f.x, rowW = f.rowW, colX = f.colX;
         const bool host = f.host, needHuman = f.needHuman;
-        if (!singlePlayer_) blockText(room.name, x, 54, 2.2f, {210, 210, 220, 255});
+        const uint64_t now = SDL_GetTicks64();
+        // Multiplayer: the room's name and password. The host edits both in place (fields 9
+        // and 10, sent on Enter or when the field loses focus); a guest reads the name, and
+        // LOCKED when the room has a password.
+        if (!singlePlayer_) {
+            drawRoomFlash(RoomField::Name, {x - 4, 51, 448, 30});
+            if (host) {
+                const auto field = [&](const SDL_FRect& r, int id, float px, const std::string& shown, bool placeholder,
+                                       std::function<void()> activate) {
+                    const bool active = lbField_ == id;
+                    SDL_SetRenderDrawColor(ren_, 24, 26, 34, 255); SDL_RenderFillRectF(ren_, &r);
+                    SDL_SetRenderDrawColor(ren_, active ? 200 : 90, active ? 210 : 100, active ? 130 : 130, 255);
+                    SDL_RenderDrawRectF(ren_, &r);
+                    const float ty = r.y + (r.h - 7 * px - tak::uiTextDescent(px)) / 2;
+                    blockText(shown, r.x + 6, ty, px, placeholder ? SDL_Color{110, 116, 132, 255} : SDL_Color{225, 230, 240, 255});
+                    lobbyHots_.push_back({r, std::move(activate)});
+                };
+                // The name: its end while typing (where the typing is), else the room's own,
+                // shrunk before it is cut. The draft follows the room's name (roomStep) except
+                // while typed in or just sent, so a click on it goes on from the last text.
+                const SDL_FRect nameBox = roomFieldBox(9, x);
+                const float namePx = lbField_ == 9 ? 1.8f : tak::uiTextFitPx(room.name, 1.8f, (nameBox.w - 12) * 0.97f, 1.4f);
+                field(nameBox, 9, namePx,
+                      lbField_ == 9 ? tak::uiTextFitStart(roomNameDraft_ + "_", namePx, nameBox.w - 12)
+                                    : tak::uiTextFit(room.name, namePx, nameBox.w - 12),
+                      false, [this] { lbField_ = 9; SDL_StartTextInput(); });
+                // The password, as typed; a successor host never learns it: PASSWORD SET.
+                const SDL_FRect passBox = roomFieldBox(10, x);
+                const bool empty = roomPassDraft_.empty() && lbField_ != 10;
+                field(passBox, 10, 1.5f,
+                      lbField_ == 10 ? tak::uiTextFitStart(roomPassDraft_ + "_", 1.5f, passBox.w - 12)
+                      : empty        ? std::string(room.passworded ? "PASSWORD SET" : "NO PASSWORD")
+                                     : tak::uiTextFit(roomPassDraft_, 1.5f, passBox.w - 12),
+                      empty, [this] { lbField_ = 10; SDL_StartTextInput(); });
+            } else {
+                const std::string name = tak::uiTextFit(room.name, 2.2f, 440);
+                blockText(name, x, 54, 2.2f, {210, 210, 220, 255});
+                if (room.passworded) blockText("LOCKED", x + blockWidth(name, 2.2f) + 10, 58, 1.4f, kAmber);
+            }
+        }
         drawRoomColumn(f, winH);   // the map, its preview, the mods and the chat
         float y = f.y;
         drawRoomSlots(f, y);
@@ -129,9 +366,13 @@ std::string startLocationsLabel(uint8_t mode) {
         // The server takes a moment to build the game: show the click landed.
         if (mp_->startPending() || mp_->starting()) lbBtn(bx, y, 130, 30, "STARTING...", true, nullptr, {70, 110, 70, 255});
         else lbBtn(bx, y, 130, 30, "START", canStart, [this] { roomStart(); }, {70, 110, 70, 255});
-        lbBtn(bx + 142, y, 120, 30, "LEAVE", true, [this] {
+        // A --play-map room exists to test its one map: leaving it quits.
+        lbBtn(bx + 142, y, 120, 30, roomForcedMap_.empty() ? "LEAVE" : "QUIT", true, [this] {
             // A LOCAL SERVER's host leaving closes the game for everyone: ask first.
             if (lanHost_ && lanOthersInRoom() > 0) { lanLeavePrompt_ = true; return; }
+            // Whatever room comes next (this one again too) is seen afresh: nothing it shows
+            // first is a change.
+            roomSeenSeq_ = 0;
             leaveRoom();
         });
         // Room readiness also includes game mods and other players. A
@@ -142,30 +383,44 @@ std::string startLocationsLabel(uint8_t mode) {
         // takes two.
         const auto status = [&](const std::string& text) {
             const float room = std::max(40.0f, colX - 12 - (bx + 280));
-            constexpr SDL_Color amber{235, 205, 120, 255};
             const float px = tak::uiTextFitPx(text, 1.3f, room, 1.1f);
-            if (blockWidth(text, px) <= room) { blockText(text, bx + 280, y + 9, px, amber); return; }
+            if (blockWidth(text, px) <= room) { blockText(text, bx + 280, y + 9, px, kAmber); return; }
             auto rows = tak::uiTextWrap(text, 1.1f, room);
             for (size_t k = 2; k < rows.size(); ++k) rows[1] += " " + rows[k];
-            blockText(rows[0], bx + 280, y + 3, 1.1f, amber);
-            if (rows.size() > 1) blockText(tak::uiTextFit(rows[1], 1.1f, room), bx + 280, y + 16, 1.1f, amber);
+            blockText(rows[0], bx + 280, y + 3, 1.1f, kAmber);
+            if (rows.size() > 1) blockText(tak::uiTextFit(rows[1], 1.1f, room), bx + 280, y + 16, 1.1f, kAmber);
         };
         const auto& mapStatus = mp_->mapStatus();
-        if (!room.mapsReady && !mp_->modPending() && !mp_->modBusy() &&
-            mapStatus != "MAP READY" && mapStatus != "MAP VERIFIED")
+        const bool watching = singlePlayer_ && host && mp_->isSpectator() && room.mySlot < 0;
+        int used = 0;
+        for (const auto& s : room.slots) used += s.type == 1 || s.type == 2;
+        // A successor host without the room's map cannot offer it: another map is the way on.
+        if (host && mp_->hostMapMissing()) status("THIS MAP IS NOT INSTALLED HERE: CHANGE MAP");
+        else if (!room.mapsReady && !mp_->modPending() && !mp_->modBusy() &&
+                 mapStatus != "MAP READY" && mapStatus != "MAP VERIFIED")
             status(mapStatus.empty() ? "WAITING FOR MAP VERIFICATION" : mapStatus);
+        else if (watching && !mp_->startPending() && !mp_->starting())
+            status(used >= 2 ? "WATCHING THE AIS" : "ADD AI PLAYERS TO WATCH");
         else if (host && needHuman && !mp_->startPending() && !mp_->starting())
             status("NEEDS 2+ HUMAN PLAYERS");
-        // Why the server refused the last START (a needed seat, setupMatch's refusal...).
-        if (!mp_->startError().empty()) {
-            // Shrunk before it is cut: a refusal that names a unit and the way out (a
-            // scenario unit CRUSADES leaves out) should be read whole.
-            const std::string why = "CANNOT START: " + mp_->startError();
-            const float px = tak::uiTextFitPx(why, 1.1f, rowW, 0.8f);
-            blockText(tak::uiTextFit(why, px, rowW), x, y + 33, px, {255, 130, 110, 255});
-        }
-        // Creation settings are read-only here and come from the room, not
-        // this client's saved preferences. Keep every rule visible with 8 slots.
+        // The note line under the controls, one message at a time: why the server refused
+        // the last START (a needed seat, setupMatch's refusal...), a refused map change or
+        // rename, the MAP SCENARIO cell's confirm, then the room's note (what the host
+        // changed, the seats a smaller map took). Shrunk before it is cut: a refusal that
+        // names a unit and the way out should be read whole.
+        const auto noteLine = [&](const std::string& text, SDL_Color colour) {
+            const float px = tak::uiTextFitPx(text, 1.2f, rowW, 0.8f);
+            blockText(tak::uiTextFit(text, px, rowW), x, y + 33, px, colour);
+        };
+        if (!mp_->startError().empty()) noteLine("CANNOT START: " + mp_->startError(), kRed);
+        else if (!roomRefusal_.empty() && now < roomRefusalUntil_) noteLine(roomRefusal_, kRed);
+        else if (scenarioArmUntil_ > now) {
+            const bool on = room.opts.mapScenario != 0;
+            const auto plan = tak::net::planCapacity(room.slots, seatsFor(roomStarts().count, scenarioLobby_, !on));
+            noteLine(std::string("CLICK AGAIN: TURNING MAP SCENARIO ") + (on ? "OFF " : "ON ") + seatPlanText(plan), kAmber);
+        } else if (!roomNote_.empty() && now < roomNoteUntil_) noteLine(roomNote_, kAmber);
+        // The options block: the host's rules, clickable for the host. Every rule stays
+        // visible with 8 slots.
         y += 44;
         drawRoomRules(f, y);
     }
@@ -174,6 +429,10 @@ std::string startLocationsLabel(uint8_t mode) {
         const auto& room = mp_->room();
         const float x = f.x, rowW = f.rowW;
         const bool host = f.host;
+        // The host's cells take clicks only while the room is the host's to edit: never in a
+        // campaign mission or a Benchmark, nor once START is on its way.
+        const bool edit = host && mp_->roomEditable();
+        const bool watching = singlePlayer_ && host && mp_->isSpectator() && room.mySlot < 0;
         const uint8_t needSeats = f.needSeats;
         // START LOCATIONS: BY SLOT gives slot N the map's StartPos N. A seat past the map's
         // last start opens at a fallback, worked out by the sim's own rule and tagged under
@@ -201,6 +460,10 @@ std::string startLocationsLabel(uint8_t mode) {
             SDL_FRect row{x, y, rowW, 30};
             SDL_SetRenderDrawColor(ren_, mine ? 40 : 26, mine ? 48 : 30, mine ? 66 : 40, 255);
             SDL_RenderFillRectF(ren_, &row);
+            // A seat the host changed flashes; this player's own row only behind its READY,
+            // the line a host change clears.
+            if (mine && !singlePlayer_) drawPulse(ren_, {x + kReady - 4, y + 4, row.w - 50 - kReady, 22}, roomSeatFlashUntil_[i]);
+            else drawPulse(ren_, row, roomSeatFlashUntil_[i]);
             char sn[12]; std::snprintf(sn, sizeof sn, "%d", i + 1);
             blockText(sn, x + 8, y + 8, 1.8f, {150, 155, 170, 255});
             // type (host may cycle open<->closed on empty slots)
@@ -213,7 +476,7 @@ std::string startLocationsLabel(uint8_t mode) {
                 blockText(tak::uiTextFit(t, fpx, colW), cx, cy + (px - fpx) * 3.5f, fpx, c);
             };
             cell(typeName[s.type % 4], x + kType, y + 8, 1.6f, 56, tcol);
-            if (host && s.type != 1) {
+            if (edit && s.type != 1) {
                 // Host cycles an empty slot OPEN -> AI -> CLOSED. AI opponents are
                 // seated (and run) on the server; this is how you set up multi-AI
                 // games (including single-player vs several AIs).
@@ -255,7 +518,7 @@ std::string startLocationsLabel(uint8_t mode) {
                     cell(gap + 1, x + kLevel + wide, y + 13, 1.1f, kLevelW, diffCol[lvl]);
                 } else
                     cell(diffName[lvl], x + kLevel + wide, y + 9, 1.4f, kLevelW, diffCol[lvl]);
-                if (host) { SDL_FRect db{x + kLevel - 2 + wide, y + 2, kLevelW + 2, 26};
+                if (edit) { SDL_FRect db{x + kLevel - 2 + wide, y + 2, kLevelW + 2, 26};
                     lobbyHots_.push_back({db, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
                         const int at = int(std::find(kCycle, kCycle + kLevels, s2.aiLevel) - kCycle);
                         mp_->setSlot(i, s2.type, s2.faction, s2.color, s2.team, s2.ready,
@@ -267,8 +530,9 @@ std::string startLocationsLabel(uint8_t mode) {
                           (spot < startCount ? "USES START " + std::to_string(spot + 1) : std::string("NEAR MAP CENTRE")),
                           x + kName, y + 21.5f, 1.1f, {235, 205, 120, 255});
             }
-            // faction / color / team edit: your own row, or (host) any AI row.
-            bool canEdit = (mine || (host && s.type == 2));
+            // faction / color / team edit: your own row (the host's only while it may edit),
+            // or (host) any AI row.
+            bool canEdit = (mine && (!host || edit)) || (edit && s.type == 2);
             cell(factionName(s.faction), x + kSide + wide, y + 8, 1.6f, kColour - kSide - 4, {200, 205, 215, 255});
             if (canEdit) { SDL_FRect fb{x + kSide + wide, y + 6, kColour - kSide - 4, 18};
                 lobbyHots_.push_back({fb, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
@@ -294,92 +558,162 @@ std::string startLocationsLabel(uint8_t mode) {
                 lobbyHots_.push_back({teb, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
                     mp_->setSlot(i, s2.type, s2.faction, s2.color, uint8_t((s2.team + direction + tak::net::kMaxSlots) % tak::net::kMaxSlots), s2.ready, s2.aiLevel); }}); }
             if (s.type == 1 && !singlePlayer_) {   // SP: the player is always ready, no column
-                SDL_Color rc = s.ready ? SDL_Color{130, 230, 140, 255} : SDL_Color{120, 125, 135, 255};
+                // This player's NOT READY, while a host change that cleared it flashes, reads bright.
+                const bool lit = mine && SDL_GetTicks64() < roomSeatFlashUntil_[i];
+                SDL_Color rc = s.ready ? SDL_Color{130, 230, 140, 255} : lit ? SDL_Color{250, 245, 230, 255} : SDL_Color{120, 125, 135, 255};
                 cell(s.ready ? "READY" : "NOT READY", x + kReady, y + 8, 1.6f, row.w - 58 - kReady, rc);
             }
             // host kick button for other humans
             if (host && s.type == 1 && !mine) {
-                lbBtn(x + row.w - 54, y + 3, 50, 22, "KICK", true, [this, i] { mp_->kick(i); });
+                lbBtn(x + row.w - 54, y + 3, 50, 22, "KICK", edit, [this, i] { mp_->kick(i); });
             }
             // Any seated player may take an OPEN seat (Msg::MoveSeat): the seat is the
             // start under BY SLOT, and the order under FIXED. Open seats are always
             // inside the map's capacity (the server closes the rest). Not in a campaign
             // mission, whose seats are given.
+            // The seat buttons share MOVE HERE's label size.
+            const float seatPx = tak::uiTextFitPx("MOVE HERE", kBtnLabelPx, 90 - 12.0f);
             if (room.mission.empty() && room.mySlot >= 0 && s.type == 0)
-                lbBtn(x + row.w - 94, y + 3, 90, 22, "MOVE HERE", true, [this, i] { mp_->moveSeat(i); });
+                lbBtn(x + row.w - 94, y + 3, 90, 22, "MOVE HERE", !host || edit, [this, i] { mp_->moveSeat(i); },
+                      {60, 66, 86, 255}, seatPx);
+            // Single player: WATCH on the host's own row leaves the seat to watch the AIs;
+            // while watching, SIT HERE on an OPEN or AI row takes that seat back.
+            if (singlePlayer_ && mine && host && room.mission.empty() && !room.opts.benchmark)
+                lbBtn(x + row.w - 94, y + 3, 90, 22, "WATCH", edit, [this] { roomWatch(); }, {60, 66, 86, 255}, seatPx);
+            if (watching && (s.type == 0 || s.type == 2) && i < room.capacity)
+                lbBtn(x + row.w - 94, y + 3, 90, 22, "SIT HERE", edit, [this, i] { roomSitHere(i); }, {60, 66, 86, 255}, seatPx);
             y += 30;   // slot row pitch: 8 rows must leave room for the option toggles below
+        }
+    }
+
+    // ---- the options block ----
+    std::vector<GameView::RoomRule> GameView::roomRules(const tak::net::RoomView& room, bool host) {
+        // The host sees its click at once (the draft) until the server answers.
+        const auto& o = host && roomOptsDraft_ ? *roomOptsDraft_ : room.opts;
+        const bool edit = host && mp_->roomEditable();
+        const bool fileMap = room.mission.empty() && !tak::mapgen::isGeneratedMapId(room.mapId);
+        const bool havePackage = bool(mp_->mapPackage());
+        const bool scenario = scenarioPlays(room, havePackage, scenarioLobby_);
+        const bool testCopy = fileMap && havePackage && scenarioLobby_.marker && scenarioLobby_.runnable();
+        // Single player's watcher plays no army: FULL VISION and no POWER CODES, forced.
+        const bool watching = singlePlayer_ && host && mp_->isSpectator() && room.mySlot < 0;
+        std::vector<RoomRule> rules;
+        const auto add = [&](RoomField field, std::string label, bool live, bool dim, std::function<void(int)> cycle) {
+            live = live && edit;
+            rules.push_back({field, std::move(label), live, dim, live ? std::move(cycle) : nullptr});
+        };
+        const auto toggle = [&](RoomField field, bool value) {
+            add(field, ruleLabel(field, o), true, false, [this, field, value](int) { roomRuleCommit(field, value ? 0 : 1); });
+        };
+        // A cell forced by another rule: its forced value, dimmed, not clickable.
+        const auto forced = [&](RoomField field, const std::string& value) {
+            add(field, std::string(tak::roomFieldCaption(field)) + ": " + value, false, true, nullptr);
+        };
+        toggle(RoomField::Crusades, o.crusades);
+        toggle(RoomField::DoubleSight, o.doubleSight);
+        add(RoomField::UnitCap, ruleLabel(RoomField::UnitCap, o), true, false, [this, cap = o.unitCap](int direction) {
+            const auto at = std::find(std::begin(kUnitCaps), std::end(kUnitCaps), cap);
+            const int index = at == std::end(kUnitCaps) ? 0 : int(at - std::begin(kUnitCaps));
+            roomRuleCommit(RoomField::UnitCap, kUnitCaps[(index + direction + 4) % 4]);
+        });
+        // When OFF, losing your Monarch loses the game (retail commander rule); ON makes the
+        // Monarch just another unit. A scenario owns how its game ends.
+        if (scenario) forced(RoomField::Monarch, "SCENARIO");
+        else toggle(RoomField::Monarch, o.monarchExpendable);
+        toggle(RoomField::SpeedUnlock, o.speedUnlock);
+        // FOG OF WAR: display-only (never hashed); every peer applies the same rule.
+        if (watching) forced(RoomField::Fog, "FULL VISION");
+        else add(RoomField::Fog, ruleLabel(RoomField::Fog, o), true, false, [this, fog = std::min<int>(o.fogExplored, 2)](int direction) {
+            roomRuleCommit(RoomField::Fog, (fog + direction + 3) % 3); });
+        // START LOCATIONS: FIXED = the seated slots take the map's starts in order, as in
+        // retail; RANDOM = shuffled for the match; BY SLOT (not retail) = slot N takes the
+        // Nth start. A scenario plays on fixed starts.
+        if (scenario) forced(RoomField::StartLocations, "FIXED");
+        else add(RoomField::StartLocations, ruleLabel(RoomField::StartLocations, o), true, false,
+                 [this, mode = tak::net::normalizeStartMode(o.randomStarts)](int direction) {
+                     roomRuleCommit(RoomField::StartLocations, (mode + direction + 3) % 3); });
+        add(RoomField::Pathfinding, ruleLabel(RoomField::Pathfinding, o), true, false, [this, mode = o.pathfindingMode](int direction) {
+            roomRuleCommit(RoomField::Pathfinding, int(tak::sim::cyclePathfindingMode(mode, direction))); });
+        // POWER CODES (retail's battle-room box): the +codes typed in the chat box work for
+        // every player. Never in a campaign mission.
+        if (!room.mission.empty()) rules.push_back({RoomField::kCount, "", false, false, nullptr});
+        else if (watching) forced(RoomField::PowerCodes, "OFF");
+        else toggle(RoomField::PowerCodes, o.powerCodes);
+        // ALLOW SPECTATORS (multiplayer): may others WATCH once the game runs.
+        if (!singlePlayer_) toggle(RoomField::AllowSpectators, o.allowSpectators);
+        // MAP SCENARIO (an installed or received map): changes with the map (SetRoomMap), so
+        // its capacity can move seats; it waits for the verified package, which says what the
+        // map's scenario needs. A Test Map copy always plays its own.
+        if (fileMap) {
+            const bool on = room.opts.mapScenario != 0;
+            const bool live = !testCopy && !mp_->roomMapPending() && havePackage && roomStarts().count >= 0 &&
+                              (on || scenarioOffered(scenarioLobby_));
+            add(RoomField::Scenario, testCopy ? "MAP SCENARIO: ON (TEST MAP)" : on ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF",
+                live, false, [this](int) { roomScenarioClick(); });
+        }
+        while (!rules.empty() && rules.back().label.empty()) rules.pop_back();
+        return rules;
+    }
+
+    // Two columns of cells in reading order (an empty label keeps its place blank): framed
+    // buttons for the host, plain text for guests, a forced value dimmer either way.
+    void GameView::drawRoomRules(const std::vector<RoomRule>& rules, float x, float y, float colW, float pitch) {
+        // The host's cells are buttons (grey while one cannot be clicked); a campaign mission
+        // or a Benchmark is never the host's to edit, so its host reads the rules as a guest.
+        const auto& room = mpRoom();
+        const bool host = room.hostId == mp_->myClientId() && room.mission.empty() && !room.opts.benchmark;
+        constexpr float kCellH = 17;
+        const float cellW = colW - 4;
+        const float px = roomRulePx(cellW - 12);
+        for (size_t k = 0; k < rules.size(); ++k) {
+            const RoomRule& rule = rules[k];
+            if (rule.label.empty()) continue;
+            const SDL_FRect cell{x + float(k % 2) * colW, y + float(k / 2) * pitch, cellW, kCellH};
+            SDL_Color text;
+            if (host) {
+                const bool hot = rule.live && lbHot(cell);
+                const SDL_Color fill = !rule.live ? SDL_Color{40, 42, 50, 255} : hot ? SDL_Color{90, 110, 150, 255}
+                                                                                     : SDL_Color{60, 66, 86, 255};
+                SDL_SetRenderDrawColor(ren_, fill.r, fill.g, fill.b, 255); SDL_RenderFillRectF(ren_, &cell);
+                SDL_SetRenderDrawColor(ren_, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255); SDL_RenderDrawRectF(ren_, &cell);
+                text = rule.live ? SDL_Color{225, 230, 240, 255} : rule.dim ? SDL_Color{110, 115, 125, 255} : SDL_Color{160, 165, 178, 255};
+                if (rule.live && rule.cycle) lobbyHots_.emplace_back(cell, rule.cycle);
+            } else
+                text = rule.dim ? SDL_Color{130, 135, 150, 255} : SDL_Color{205, 210, 225, 255};
+            if (rule.field != RoomField::kCount) drawRoomFlash(rule.field, cell);   // the host changed it
+            const float ty = cell.y + (kCellH - 7 * px - tak::uiTextInkDescent(rule.label, px)) / 2;
+            blockText(tak::uiTextFit(rule.label, px, cellW - 12), cell.x + 6, ty, px, text);
         }
     }
 
     void GameView::drawRoomRules(const RoomFrame& f, float y) {
         const auto& room = mp_->room();
         const float x = f.x, rowW = f.rowW;
-        const bool host = f.host, fileMap = f.fileMap, scenarioOn = f.scenarioOn, scenarioShown = f.scenarioShown;
+        const bool fileMap = f.fileMap, scenarioOn = f.scenarioOn;
         const uint8_t needSeats = f.needSeats;
         const SDL_Color infoColor{205,210,225,255};
-        // Six rows of two columns at a 16.5 pitch (POWER CODES and MAP SCENARIO are the
-        // sixth), above a MAP SCENARIO's details (from y+99), across the slot table's
-        // width: a label too long for its column shrinks. A generated map's recipe is
-        // on the preview's hover box and the full-window map instead.
-        constexpr float kInfoPitch = 16.5f;
+        // Two columns of cells at a 19 pitch across the slot table's width (multiplayer
+        // six rows, five for a generated map; single player five), then a MAP SCENARIO's
+        // details under them. A generated map's recipe is on the preview's hover box and
+        // the full-window map instead.
+        constexpr float kRulePitch = 19;
         const float infoColW = std::floor(rowW / 2);
-        auto info = [&](int row, int column, const std::string& label) {
-            const float px = tak::uiTextFitPx(label, 1.6f, infoColW - 8, 1.2f);
-            blockText(tak::uiTextFit(label, px, infoColW - 8), x+column*infoColW, y+row*kInfoPitch+(1.6f-px)*3.5f, px, infoColor);
-        };
-        auto onOff = [](bool value) { return value ? "ON" : "OFF"; };
-        info(0,0,std::string("CRUSADES: ")+onOff(room.opts.crusades));
-        info(0,1,std::string("DOUBLE SIGHT/RADAR: ")+onOff(room.opts.doubleSight));
-        info(1,0,"UNIT CAP: "+std::to_string(room.opts.unitCap));
-        info(1,1,scenarioShown ? std::string("MONARCH EXPENDABLE: SCENARIO")
-                            : std::string("MONARCH EXPENDABLE: ")+onOff(room.opts.monarchExpendable));
-        info(2,0,std::string("ALLOW SPEED CHANGE: ")+onOff(room.opts.speedUnlock));
-        static const char* fogNames[]={"NOT EXPLORED","EXPLORED","FULL VISION"};
-        info(2,1,std::string("FOG OF WAR: ")+fogNames[std::min<int>(room.opts.fogExplored,2)]);
-        info(3,0,startLocationsLabel(room.opts.randomStarts));
-        info(4,0,pathfindingLabel(room.opts.pathfindingMode));
-        if(room.mission.empty())
-            info(5,0,std::string("POWER CODES: ")+onOff(room.opts.powerCodes));
-        // ALLOW SPECTATORS is the one room rule the host may still flip here: it only
-        // decides who may WATCH once the game runs, so no player has planned around it.
-        // The server adopts it until START and refuses Spectate while it is off.
-        // For the host it lights up under the pointer (the button hover colour), the one
-        // hint that this line of the read-only list is a toggle.
-        if(!singlePlayer_) {
-            const std::string label=std::string("ALLOW SPECTATORS: ")+onOff(room.opts.allowSpectators);
-            const SDL_FRect hit{x+infoColW,y+4*kInfoPitch-2,blockWidth(label,1.6f),18};
-            blockText(label,hit.x,y+4*kInfoPitch,1.6f,host && lbHot(hit) ? SDL_Color{180,200,240,255} : infoColor);
-            if(host) lobbyHots_.push_back({hit,[this](int) {
-                auto o=mpRoom().opts; o.allowSpectators=o.allowSpectators?0:1; mp_->setGameOptions(o); }});
-        }
-        if(singlePlayer_)
-            info(3,1,std::string("SPECTATE (WATCH AIS): ")+onOff(mp_->isSpectator()));
-        else {
-            const auto& games=mp_->games();
-            const auto game=std::find_if(games.begin(),games.end(),[&](const auto& g){return g.id==room.id;});
-            // Show whether access is protected, never the password itself.
-            if(game!=games.end() || host)
-                info(3,1,std::string("PASSWORD: ")+((game!=games.end()?game->passworded:!createPass_.empty())?"SET":"NONE"));
-        }
-        // MAP SCENARIO, under the grid for a file map (the rows a generated map's recipe
-        // uses): the rule, and when on, what it changes and the seats it needs.
+        const auto rules = roomRules(room, f.host);
+        drawRoomRules(rules, x, y, infoColW, kRulePitch);
+        // MAP SCENARIO's details, for a file map: what it changes and the seats it needs, in
+        // reading order across two columns, three rows above the canvas edge.
         if(fileMap) {
-            const SDL_Color amber{235,205,120,255};
+            const float detailY = y + float((rules.size() + 1) / 2) * kRulePitch + 2;
             const bool testCopy=mp_->mapPackage() && scenarioLobby_.marker && scenarioLobby_.runnable();
             const bool wanted=room.opts.mapScenario!=0 || testCopy;
             // A Test Map copy whose only scenario content is a Use Only list: no scenario,
             // but the copy's opt-in applies the list (not in a stress or benchmark room).
             const bool testUseOnly=mp_->mapPackage() && scenarioLobby_.marker && !scenarioLobby_.hasScenario &&
                                    scenarioLobby_.useOnlyTypes>=0 && !room.opts.stressTest && !room.opts.benchmark;
-            // The rule itself is a grid line like the others: the right column's last, under
-            // SPECTATE (single player) or ALLOW SPECTATORS (multiplayer).
-            info(singlePlayer_ ? 4 : 5,1,testCopy ? "MAP SCENARIO: ON (TEST MAP)" : wanted ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF");
-            // Its details, in reading order across two columns, in the three rows between
-            // the grid's last row (it ends near y+94) and the canvas edge.
             int detail=0;
             auto rule=[&](const std::string& text,bool warning=false) {
                 if(detail>=6)return;
-                blockText(tak::uiTextFit(text,1.2f,infoColW-8),x+float(detail%2)*infoColW,y+99+float(detail/2)*12.5f,1.2f,warning ? amber : infoColor);
+                blockText(tak::uiTextFit(text,1.2f,infoColW-8),x+float(detail%2)*infoColW,detailY+float(detail/2)*12.5f,1.2f,warning ? kAmber : infoColor);
                 ++detail;
             };
             if(testUseOnly && !wanted) rule("TEST MAP: "+tak::sim::scenarioUseOnlyLine(scenarioLobby_,false));
@@ -406,16 +740,240 @@ std::string startLocationsLabel(uint8_t mode) {
         }
     }
 
-    // ---- room editing: the host's edits in the room, not built yet ----
-    // Each room action reports kNotImplemented, so a TAK_ROOM_SCRIPT verb wired to it fails
-    // at once; the input and drawing hooks do nothing.
-    void GameView::rememberRoomPrefs(RoomField) {}
-    void GameView::rememberRoomSort() {}
-    void GameView::roomFieldCommit(int) { roomActError_ = kNotImplemented; }
-    void GameView::roomFieldBlur() {}
-    bool GameView::roomInput(const SDL_Event&) { return false; }
-    void GameView::roomRuleCommit(RoomField, int) { roomActError_ = kNotImplemented; }
-    void GameView::roomScenarioClick() { roomActError_ = kNotImplemented; }
-    void GameView::roomWatch() { roomActError_ = kNotImplemented; }
-    void GameView::roomSitHere(int) { roomActError_ = kNotImplemented; }
-    void GameView::drawRoomFlash(RoomField, const SDL_FRect&) {}
+    // ---- room editing: the host's edits in the room ----
+    tak::net::GameOptions GameView::roomEffective() const {
+        const auto& room = mp_->room();
+        tak::net::GameOptions o = room.opts;
+        if (roomChosenSet_) {
+            const auto& c = roomChosen_;
+            o.crusades = c.crusades; o.doubleSight = c.doubleSight; o.unitCap = c.unitCap;
+            o.monarchExpendable = c.monarchExpendable; o.speedUnlock = c.speedUnlock; o.fogExplored = c.fogExplored;
+            o.randomStarts = c.randomStarts; o.pathfindingMode = c.pathfindingMode; o.powerCodes = c.powerCodes;
+            o.allowSpectators = c.allowSpectators;
+        }
+        if (singlePlayer_ && room.hostId == mp_->myClientId() && mp_->isSpectator() && room.mySlot < 0) {
+            o.fogExplored = 2; o.powerCodes = 0;   // WATCH
+        }
+        if (scenarioPlays(room, bool(mp_->mapPackage()), scenarioLobby_)) o.randomStarts = tak::net::kStartsFixed;
+        return o;
+    }
+
+    void GameView::roomRuleCommit(RoomField field, int value) {
+        const auto& room = mpRoom();
+        if (!mp_->roomEditable()) { roomActError_ = "only the host changes the rules, before the game starts"; return; }
+        seedChosen(roomChosen_, roomChosenSet_, room, singlePlayer_ && mp_->isSpectator(), settings_);
+        const auto rules = roomRules(room, true);
+        const auto rule = std::find_if(rules.begin(), rules.end(), [&](const RoomRule& r) { return r.field == field; });
+        if (field == RoomField::Scenario || rule == rules.end()) {
+            roomActError_ = std::string("this room has no ") + tak::roomFieldCaption(field) + " rule to set"; return;
+        }
+        if (!rule->live) { roomActError_ = std::string(tak::roomFieldCaption(field)) + " is fixed here"; return; }
+        // The value must be one the cell can show.
+        const bool flag = value == 0 || value == 1;
+        switch (field) {
+        case RoomField::UnitCap:
+            if (std::find(std::begin(kUnitCaps), std::end(kUnitCaps), value) == std::end(kUnitCaps)) {
+                roomActError_ = "a unit cap is 250, 500, 1000 or 2000"; return;
+            }
+            break;
+        case RoomField::Fog: case RoomField::StartLocations:
+            if (value < 0 || value > 2) { roomActError_ = "a value from 0 to 2"; return; }
+            break;
+        case RoomField::Pathfinding:
+            if (value < 0 || value > 255 || !tak::sim::validPathfindingMode(uint8_t(value))) {
+                roomActError_ = "no such pathfinding mode"; return;
+            }
+            break;
+        default:
+            if (!flag) { roomActError_ = "ON is 1 and OFF is 0"; return; }
+            break;
+        }
+        auto& c = roomChosen_;
+        switch (field) {
+        case RoomField::Crusades: c.crusades = uint8_t(value); break;
+        case RoomField::DoubleSight: c.doubleSight = uint8_t(value); break;
+        case RoomField::UnitCap: c.unitCap = uint16_t(value); break;
+        case RoomField::Monarch: c.monarchExpendable = uint8_t(value); break;
+        case RoomField::SpeedUnlock: c.speedUnlock = uint8_t(value); break;
+        case RoomField::Fog: c.fogExplored = uint8_t(value); break;
+        case RoomField::StartLocations: c.randomStarts = uint8_t(value); break;
+        case RoomField::Pathfinding: c.pathfindingMode = tak::sim::PathfindingMode(value); break;
+        case RoomField::PowerCodes: c.powerCodes = uint8_t(value); break;
+        case RoomField::AllowSpectators: c.allowSpectators = uint8_t(value); break;
+        default: break;
+        }
+        roomOptsDraft_ = roomEffective();
+        roomOptsDraftMs_ = SDL_GetTicks64();
+        mp_->setGameOptions(*roomOptsDraft_);
+        rememberRoomPrefs(field);
+    }
+
+    // The MAP SCENARIO cell: the room's map again with the other scenario value, and the
+    // seats it gives from the verified package (never a local file, which can be another
+    // revision of the map). Removing or moving players takes a second click within 3 s.
+    void GameView::roomScenarioClick() {
+        const auto& room = mpRoom();
+        if (!mp_->roomEditable()) { roomActError_ = "only the host changes MAP SCENARIO, before the game starts"; return; }
+        if (!room.mission.empty() || tak::mapgen::isGeneratedMapId(room.mapId)) { roomActError_ = "this map has no scenario"; return; }
+        if (mp_->roomMapPending()) { roomActError_ = "the last map change is still waiting for the server"; return; }
+        const int starts = roomStarts().count;
+        if (!mp_->mapPackage() || starts < 0) { roomActError_ = "the map is not verified yet"; return; }
+        if (scenarioLobby_.marker && scenarioLobby_.runnable()) { roomActError_ = "a Test Map copy always plays its scenario"; return; }
+        const bool on = room.opts.mapScenario != 0;
+        if (!on && !scenarioOffered(scenarioLobby_)) { roomActError_ = "this map offers no scenario to play"; return; }
+        seedChosen(roomChosen_, roomChosenSet_, room, singlePlayer_ && mp_->isSpectator(), settings_);
+        const uint8_t cap = seatsFor(starts, scenarioLobby_, !on);
+        const auto plan = tak::net::planCapacity(room.slots, cap);
+        // (More players than the seats it leaves: the server refuses it, and says why.)
+        const uint64_t now = SDL_GetTicks64();
+        if ((!plan.removedAi.empty() || !plan.moves.empty()) && scenarioArmUntil_ <= now) {
+            scenarioArmUntil_ = now + 3000;   // the note line says what the next click does
+            std::fprintf(stderr, "room note: CLICK AGAIN: TURNING MAP SCENARIO %s %s\n", on ? "OFF" : "ON", seatPlanText(plan).c_str());
+            return;
+        }
+        scenarioArmUntil_ = 0;
+        roomRefusal_.clear(); roomRefusalUntil_ = 0;   // room for this one's answer
+        if (!mp_->setRoomMap(room.mapId, cap, !on, roomChosen_.randomStarts)) roomActError_ = mp_->roomError();
+    }
+
+    // WATCH (single player): the host leaves its seat; roomStep fills the room with AIs once
+    // the server has it watching.
+    void GameView::roomWatch() {
+        const auto& room = mpRoom();
+        if (!mp_->roomEditable()) { roomActError_ = "only the host watches, before the game starts"; return; }
+        if (!singlePlayer_) { roomActError_ = "only a single-player host watches the AIs"; return; }
+        if (room.mySlot < 0 || mp_->isSpectator()) { roomActError_ = "already watching"; return; }
+        seedChosen(roomChosen_, roomChosenSet_, room, false, settings_);
+        watchFillAt_ = mp_->lobbySeq();
+        mp_->watch();
+    }
+
+    // SIT HERE: a watching host takes an OPEN seat, or an AI's (the AI goes first; the two
+    // requests are in order on the one connection). roomStep then sends the host's rules.
+    void GameView::roomSitHere(int slot) {
+        const auto& room = mpRoom();
+        if (!mp_->roomEditable()) { roomActError_ = "only the host sits down, before the game starts"; return; }
+        if (!mp_->isSpectator() || room.mySlot >= 0) { roomActError_ = "not watching"; return; }
+        if (slot < 0 || slot >= std::min<int>(room.capacity, tak::net::kMaxSlots) ||
+            (room.slots[slot].type != 0 && room.slots[slot].type != 2)) { roomActError_ = "not an open or AI seat"; return; }
+        const auto& s = room.slots[slot];
+        if (s.type == 2) mp_->setSlot(slot, 0, s.faction, s.color, s.team, 0, s.aiLevel);
+        mp_->moveSeat(slot);
+    }
+
+    // The room's name (field 9) or password (10), when typed in since the last commit. A
+    // blank name reverts; a successor host's rename leaves the password alone.
+    void GameView::roomFieldCommit(int field) {
+        const auto& room = mpRoom();
+        if (room.hostId != mp_->myClientId()) { roomActError_ = "only the host renames the game"; return; }
+        if (field == 9) {
+            if (!roomNameEdited_) return;
+            roomNameEdited_ = false;
+            std::string name = roomNameDraft_;
+            name.erase(0, name.find_first_not_of(' '));
+            name.erase(name.find_last_not_of(' ') + 1);
+            if (name.empty()) { roomNameDraft_ = room.name; roomActError_ = "a game needs a name"; return; }
+            roomNameDraft_ = name;
+            if (name == room.name) return;
+            roomRefusal_.clear(); roomRefusalUntil_ = 0;   // room for this one's answer
+            mp_->setRoomInfo(name, std::nullopt);
+        } else if (field == 10) {
+            if (!roomPassEdited_) return;
+            roomPassEdited_ = false;
+            roomRefusal_.clear(); roomRefusalUntil_ = 0;
+            mp_->setRoomInfo(std::nullopt, roomPassDraft_);
+        }
+    }
+
+    void GameView::roomFieldBlur() {
+        if (roomNameEdited_) roomFieldCommit(9);
+        if (roomPassEdited_) roomFieldCommit(10);
+    }
+
+    // Enter sends the name or password being typed; Esc puts it back (the room's name; a
+    // password the field never showed reads PASSWORD SET again). A click inside the field
+    // being typed in leaves it be (anywhere else sends it: lobbyInput). Esc also lets go of
+    // an armed MAP SCENARIO click.
+    bool GameView::roomInput(const SDL_Event& e) {
+        if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT && (lbField_ == 9 || lbField_ == 10) &&
+            !singlePlayer_ && !modsScreen_ && !picker_.open && !lanLeavePrompt_) {
+            mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
+            float mx, my; lobbyMouse(mx, my);
+            return ptIn(roomFieldBox(lbField_, RoomFrame{}.x), mx, my);
+        }
+        if (e.type != SDL_KEYDOWN) return false;
+        const auto key = e.key.keysym.sym;
+        if (lbField_ == 9 || lbField_ == 10) {
+            if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+                roomFieldCommit(lbField_);
+            } else if (key == SDLK_ESCAPE) {
+                if (lbField_ == 9) { roomNameDraft_ = mpRoom().name; roomNameEdited_ = false; }
+                else { roomPassDraft_.clear(); roomPassEdited_ = false; }
+            } else return false;
+            lbField_ = 0; SDL_StopTextInput();
+            return true;
+        }
+        if (key == SDLK_ESCAPE && !lbField_ && !modsScreen_ && scenarioArmUntil_ > SDL_GetTicks64()) {
+            scenarioArmUntil_ = 0;
+            return true;
+        }
+        return false;
+    }
+
+    // Write one thing back to the room kind's remembered set: the cell the host clicked (its
+    // chosen value, never WATCH's or MAP SCENARIO's override), an accepted map, the game
+    // packs. Only a room this session remembers (not --play-map, a harness or a guest), and
+    // never a campaign mission or Benchmark room.
+    void GameView::rememberRoomPrefs(RoomField field) {
+        const auto& room = mpRoom();
+        if (!settings_ || !rememberRoom_ || roomKind_ == RoomKind::None || room.hostId != mp_->myClientId() ||
+            !room.mission.empty() || room.opts.benchmark)
+            return;
+        auto& p = roomKind_ == RoomKind::SinglePlayer ? settings_->spRoom : settings_->mpRoom;
+        const auto& c = roomChosen_;
+        switch (field) {
+        case RoomField::Crusades: p.crusades = c.crusades != 0; break;
+        case RoomField::DoubleSight: p.doubleSight = c.doubleSight != 0; break;
+        case RoomField::UnitCap: p.unitCap = c.unitCap; break;
+        case RoomField::Monarch: p.monarchExpendable = c.monarchExpendable != 0; break;
+        case RoomField::SpeedUnlock: p.speedUnlock = c.speedUnlock != 0; break;
+        case RoomField::Fog: p.fog = std::min<int>(c.fogExplored, 2); break;
+        case RoomField::StartLocations: p.randomStarts = tak::net::normalizeStartMode(c.randomStarts); break;
+        case RoomField::Pathfinding: p.pathfindingMode = c.pathfindingMode; break;
+        case RoomField::PowerCodes: p.powerCodes = c.powerCodes != 0; break;
+        case RoomField::AllowSpectators: p.allowSpectators = c.allowSpectators != 0; break;
+        case RoomField::Map:
+            // The map keeps the last installed one; the generator's recipe is what RANDOM opens on.
+            if (tak::mapgen::isGeneratedMapId(room.mapId)) { p.generated = true; p.generator = room.mapId; }
+            else { p.generated = false; p.map = room.mapId; }
+            break;
+        case RoomField::Mods: {
+            // A saved tick hidden by a same-named always-enabled pack is kept (it applies
+            // again once that pack leaves always_enabled/), as the MODS screen keeps it.
+            auto selection = mp_->gameModPacks();
+            for (const auto& n : p.gamePacks)
+                if (std::find(selection.begin(), selection.end(), n) == selection.end() &&
+                    std::any_of(mp_->alwaysGameModPacks().begin(), mp_->alwaysGameModPacks().end(), [&](const std::string& a) {
+                        return tak::hpi::MountSet::key(a) == tak::hpi::MountSet::key(n); }))
+                    selection.push_back(n);
+            p.gamePacks = std::move(selection);
+            break;
+        }
+        default: return;
+        }
+        saveSettings(*settings_);
+    }
+
+    void GameView::rememberRoomSort() {
+        const auto& room = mpRoom();
+        if (!settings_ || !rememberRoom_ || roomKind_ == RoomKind::None || room.hostId != mp_->myClientId() ||
+            !room.mission.empty() || room.opts.benchmark)
+            return;
+        auto& p = roomKind_ == RoomKind::SinglePlayer ? settings_->spRoom : settings_->mpRoom;
+        p.mapSort = mapSort_; p.mapSortDir = mapSortDir_;
+        saveSettings(*settings_);
+    }
+
+    void GameView::drawRoomFlash(RoomField field, const SDL_FRect& rect) {
+        if (field < RoomField::kCount) drawPulse(ren_, rect, roomFlashUntil_[size_t(field)]);
+    }

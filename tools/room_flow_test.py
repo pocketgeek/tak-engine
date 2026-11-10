@@ -10,8 +10,15 @@ cannot finish prints why and ends the client. TAK_QUIT_TICK ends a game that sta
 
   1  single player (CLI game room): an AI seated, CHANGE MAP to Inner Circle, START; the
      game plays to the quit tick.
+  2  single player WATCH: the host leaves its seat, AIs fill the room, START; the host plays
+     the game as a spectator.
   3  CHANGE MAP to a 6-player random map, four AIs seated, then a 2-player one: the server
      removes the three AIs past its seats, and the game on it starts.
+  4  multiplayer unready: a guest READY, the host changes FOG OF WAR, the server clears the
+     guest's READY (the guest is told so), the guest readies again and the host STARTs.
+  10 single player MAP SCENARIO confirm: on a map whose scenario seats more players than it
+     has starts, turning the scenario off would remove AIs, so the first click only arms the
+     cell (the note says what the next does); the second removes them, and the room says so.
 
 Debug builds only (TAK_ROOM_SCRIPT, TAK_QUIT_TICK and the CLI game are debug hooks).
 
@@ -22,10 +29,12 @@ import argparse
 import os
 from pathlib import Path
 import re
+import socket
 import struct
 import subprocess
 import sys
 import tempfile
+import time
 
 QUIT_TICK = 60   # a started game plays this far, then the client quits
 
@@ -118,7 +127,147 @@ def case_capacity(args, root):
         raise AssertionError('%s\n%s' % (e, log[-4000:]))
 
 
-CASES = {1: case_single_player, 3: case_capacity}
+def case_watch(args, root):
+    """Single player WATCH: the host watches, AIs fill the room, START as a spectator."""
+    home, env = profile(root, 'case2', 'watch;start')
+    code, log = run_client(args.client, ['game', 'Athri Cay', '--data', args.data], env, home)
+    try:
+        script_ran(log, ['watch', 'start'])
+        assert re.search(r'client \d+ now watches game \d+', log), 'the server never had the host watching'
+        started = re.search(r'game \d+ starting with (\d+) players', log)
+        assert started and int(started[1]) >= 2, 'the AIs did not fill the room'
+        assert code == 0, 'the client exited %d' % code
+        played = re.search(r'replay: wrote .*\((\d+) ticks\)', log)
+        assert played and int(played[1]) >= QUIT_TICK, 'the watched game did not play to the quit tick'
+    except AssertionError as e:
+        raise AssertionError('%s\n%s' % (e, log[-4000:]))
+
+
+def hpi_read(hpitool, data, path):
+    """One file of the install, from the archive that wins it."""
+    where = subprocess.run([hpitool, 'where', str(data), path], capture_output=True, text=True, check=True).stdout
+    archive, entry = re.search(r'-> (.+?)!(.+)$', where.strip()).groups()
+    return subprocess.run([hpitool, 'cat', str(Path(data) / archive), entry], capture_output=True, check=True).stdout
+
+
+def seats_install(root, data, hpitool):
+    """The retail install plus "Scenario Seats": King of the Hill with only its first two
+    start positions, so its scenario (placements for players 1-4) needs four seats and the
+    map alone gives two."""
+    install = Path(root) / 'seats-install'
+    install.mkdir()
+    for entry in Path(data).iterdir():
+        if entry.name.lower() != 'maps':
+            os.symlink(entry.resolve(), install / entry.name)
+    maps = install / 'Maps'
+    maps.mkdir()
+    for entry in (Path(data) / 'Maps').iterdir():
+        os.symlink(entry.resolve(), maps / entry.name)
+    src = Path(root) / 'seats-src'
+    (src / 'kmap').mkdir(parents=True)
+    for ext in ('tnt', 'crt', 'tdf'):
+        (src / 'kmap' / ('Scenario Seats.' + ext)).write_bytes(hpi_read(hpitool, data, 'maps/King of the Hill.' + ext))
+    ota = hpi_read(hpitool, data, 'maps/King of the Hill.ota').decode('latin-1')
+    ota, dropped = re.subn(r'\[special[23]\]\s*\{[^{}]*\}\s*', '', ota)
+    assert dropped == 2, 'King of the Hill no longer has the start positions this case drops'
+    ota = ota.replace('King of the Hill', 'Scenario Seats').replace('numplayers=4', 'numplayers=2')
+    (src / 'kmap' / 'Scenario Seats.ota').write_bytes(ota.encode('latin-1'))
+    subprocess.run([hpitool, 'pack', str(src), str(maps / 'Scenario Seats.kmp')], check=True, stdout=subprocess.DEVNULL)
+    return str(install)
+
+
+def case_scenario_confirm(args, root):
+    """Single player MAP SCENARIO off with AIs in the scenario's extra seats: arm, confirm."""
+    data = seats_install(root, args.data, args.hpitool)
+    # The room opens with the scenario on (four seats); three AIs fill them.
+    home, env = profile(root, 'case10', 'ai:1;ai:2;ai:3;scenario:0;start', {'TAK_MAP_SCENARIO': '1'})
+    code, log = run_client(args.client, ['game', 'Scenario Seats', '--data', data], env, home)
+    try:
+        script_ran(log, ['ai:1', 'ai:2', 'ai:3', 'scenario:0', 'start'])
+        assert re.search(r"client \d+ created game \d+ 'Single Player' on 'Scenario Seats' .*scenario=1", log), \
+            'the room did not open on Scenario Seats with its scenario on'
+        armed = log.find('room note: CLICK AGAIN: TURNING MAP SCENARIO OFF REMOVES 2 AI PLAYERS')
+        assert armed >= 0, 'the first click did not arm the cell'
+        turned = [m.start() for m in re.finditer(r'host turned MAP SCENARIO off \(capacity 2, scenario 0, 2 AI removed', log)]
+        assert len(turned) == 1 and turned[0] > armed, 'the change was not sent once, after the confirm'
+        # (The server sends the new room before it logs the change: the note may come first.)
+        assert 'room note: 2 AI PLAYERS LEFT: THE MAP HAS 2 STARTS' in log[armed:], 'the room did not tell the removal'
+        assert re.search(r'game \d+ starting with 2 players', log), 'the game did not start with the one AI left'
+        assert code == 0, 'the client exited %d' % code
+        played = re.search(r'replay: wrote .*\((\d+) ticks\)', log)
+        assert played and int(played[1]) >= QUIT_TICK, 'the game did not play to the quit tick'
+    except AssertionError as e:
+        raise AssertionError('%s\n%s' % (e, log[-4000:]))
+
+
+def free_port():
+    with socket.socket() as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
+
+
+def case_unready(args, root):
+    """Multiplayer: the host's rule change clears a READY guest; it readies again; START."""
+    port = free_port()
+    shome, senv = profile(root, 'case4-server', '')
+    slog_path = shome / 'server.log'
+    slog = open(slog_path, 'w')
+    server = subprocess.Popen([args.server, '--port', str(port), '--data', args.data, '--local', '--seed', '1', '--no-auth'],
+                              stdout=slog, stderr=subprocess.STDOUT, env=senv, cwd=shome)
+    clients = []
+    try:
+        deadline = time.monotonic() + 90
+        while 'listening' not in slog_path.read_text(errors='replace'):
+            assert time.monotonic() < deadline and server.poll() is None, \
+                'the server never listened:\n' + slog_path.read_text(errors='replace')[-3000:]
+            time.sleep(0.1)
+        net = ['game', 'Athri Cay', '--data', args.data, '--server', '127.0.0.1', '--serverport', str(port)]
+        # Windowed clients (the room draws, and tells), driven by the harness modes: the host
+        # (1) waits for nine READY (never) instead of starting itself, so its script STARTs;
+        # the guest (2) joins, readies, and readies again when its READY is cleared.
+        hhome, henv = profile(root, 'case4-host', 'wait:ready=2;opt:fog=2;wait:ready=2;start',
+                              {'TAK_MPAUTO': '1', 'TAK_MP_WAIT': '9'})
+        ghome, genv = profile(root, 'case4-guest', '', {'TAK_MPAUTO': '2'})
+        for name, home, env in (('host', hhome, henv), ('guest', ghome, genv)):
+            log = open(home / 'client.log', 'w')
+            clients.append((name, home, subprocess.Popen([args.client] + net + ['--winsize', '960', '540'], cwd=home,
+                                                         env=env, stdout=log, stderr=subprocess.STDOUT), log))
+        logs = {}
+        for name, home, proc, log in clients:
+            try:
+                code = proc.wait(180)
+            except subprocess.TimeoutExpired:
+                proc.kill(); proc.wait()
+                code = 'still running after 180 s'
+            log.close()
+            logs[name] = (code, (home / 'client.log').read_text(errors='replace'))
+        server.kill(); server.wait(); slog.close()
+        slog_text = slog_path.read_text(errors='replace')
+        try:
+            script_ran(logs['host'][1], ['wait:ready=2', 'opt:fog=2', 'wait:ready=2', 'start'])
+            assert re.search(r'game \d+: host changed the rules \(fog[^;]*; rev \d+, 1 unreadied\)', slog_text), \
+                'the fog change did not unready the guest'
+            assert 'room note: HOST CHANGED FOG OF WAR -- READY AGAIN' in logs['guest'][1], 'the guest was not told'
+            assert 'room note: PLAYERS MUST READY AGAIN' in logs['host'][1], 'the host was not told'
+            assert re.search(r'game \d+ starting with 2 players', slog_text), 'the game did not start'
+            for name, (code, log) in logs.items():
+                assert code == 0, 'the %s exited %s' % (name, code)
+                played = re.search(r'replay: wrote .*\((\d+) ticks\)', log)
+                assert played and int(played[1]) >= QUIT_TICK, 'the %s did not play to the quit tick' % name
+        except AssertionError as e:
+            raise AssertionError('%s\nhost:\n%s\nguest:\n%s\nserver:\n%s' % (
+                e, logs['host'][1][-2500:], logs['guest'][1][-2500:], slog_text[-2500:]))
+    finally:
+        for _, _, proc, log in clients:
+            if proc.poll() is None:
+                proc.kill(); proc.wait()
+            log.close()
+        if server.poll() is None:
+            server.kill(); server.wait()
+        slog.close()
+
+
+CASES = {1: case_single_player, 2: case_watch, 3: case_capacity, 4: case_unready, 10: case_scenario_confirm}
 
 
 def main():

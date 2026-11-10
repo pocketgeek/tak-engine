@@ -2424,7 +2424,7 @@ set_tests_properties(credstore PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takclient src/client/main.cpp src/client/alloccount.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_clicks.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_room.cpp src/client/gameview_mappicker.cpp src/client/bigmapview.cpp src/cartographer/features.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/gameview_powercodes.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/gameview_hidden.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp)
+    add_executable(takclient src/client/main.cpp src/client/alloccount.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_clicks.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_room.cpp src/client/gameview_mappicker.cpp src/client/roomchanges.cpp src/client/bigmapview.cpp src/cartographer/features.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/gameview_powercodes.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/gameview_hidden.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp)
     # Local dev/test harness (standalone scenario/demo/FFA setup, --testbuild/--firetest...):
     # debug builds only. The file is also wrapped in #ifndef NDEBUG, as are its callers, so
     # this just skips an empty TU when the config's flags define NDEBUG.
@@ -3784,6 +3784,10 @@ add_test(NAME match_codec COMMAND match_codec_test)
 add_executable(room_seats_test tools/room_seats_test.cpp)
 target_link_libraries(room_seats_test PRIVATE tak-formats)
 add_test(NAME room_seats COMMAND room_seats_test)
+# What a guest sees of the host's room changes (client/roomchanges.h): the flashes and notes.
+add_executable(room_changes_test tools/room_changes_test.cpp src/client/roomchanges.cpp)
+target_link_libraries(room_changes_test PRIVATE tak-formats)
+add_test(NAME room_changes COMMAND room_changes_test)
 
 # The skirmish AI (src/ai) is SERVER-ONLY -- it never links into takclient, so the
 # client cannot run AI locally. AIs run only on the server.
