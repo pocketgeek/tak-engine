@@ -743,12 +743,13 @@
         const auto& room = mp_->room();
         const float colX = f.colX, colW = f.colW;
         const bool host = f.host, roomMap = f.roomMap;
-        // Left-aligned with the preview under it, and kept to the column: a long name (a
-        // Test Map copy's "test <n> [<fingerprint>]") shrinks a little, then is cut with "...".
+        // The map's name alone (the preview under it says what it names), left-aligned with
+        // that preview and kept to the column: a long name (a Test Map copy's
+        // "test <n> [<fingerprint>]") shrinks a little, then is cut with "...".
         // A map or MAP SCENARIO change lights it, and the preview's rim below.
         const SDL_FRect head{colX, 58, colW, 20};
         drawRoomFlash(RoomField::Map, head); drawRoomFlash(RoomField::Scenario, head);
-        const std::string mapHead = "MAP  " + mapTitle(room.mapId);
+        const std::string mapHead = mapTitle(room.mapId);
         const float mapHeadPx = tak::uiTextFitPx(mapHead, 1.8f, colW, 1.4f);
         blockText(tak::uiTextFit(mapHead, mapHeadPx, colW), colX, 62 + (1.8f - mapHeadPx) * 4, mapHeadPx, {180, 185, 195, 255});
         // The room's map, with its starts numbered and coloured by who opens there,
