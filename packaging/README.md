@@ -95,3 +95,15 @@ consistent. This adds no application runtime dependency.
 References: [Azure signing action and runner requirements](https://github.com/Azure/artifact-signing-action),
 [OIDC setup](https://github.com/Azure/artifact-signing-action/blob/main/docs/OIDC.md),
 and [SignTool verification](https://learn.microsoft.com/en-us/windows/win32/seccrypto/signtool).
+
+## Linux AppImage
+
+`packaging/appimage/build.sh <build-dir> <out-dir>` turns a built Release tree into
+`tak-engine-<version>-<arch>.AppImage`. The binaries link only libc/libm, so the AppDir
+is the `cmake --install` tree plus `AppRun` and no libraries are bundled. `AppRun`
+starts the game, or `cartographer` / `takserver` when the first argument names one.
+appimagetool and the AppImage runtime are pinned by release and SHA-256 in the script;
+to move to newer ones, change the release names and both checksums together. CI builds
+it on the Ubuntu 22.04 legs (glibc 2.35, the oldest of the Ubuntu/Debian legs) for x64
+and ARM64 and checks each program through `APPIMAGE_EXTRACT_AND_RUN`, since containers
+have no FUSE.

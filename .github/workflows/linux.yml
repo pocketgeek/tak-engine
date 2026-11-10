@@ -1,8 +1,10 @@
 name: Linux packages
 run-name: Linux packages · ${{ github.ref_name }}
 
-# Native x64/ARM64 packages for Ubuntu, Debian, Fedora and openSUSE Leap;
-# x64 packages for Arch and Slackware. Each builds in its target distro container.
+# Native x64/ARM64 packages for Ubuntu, Debian, Fedora, openSUSE Leap and Tumbleweed and
+# the RHEL family (EL9/EL10: RHEL, Rocky, Alma); x64 packages for Arch and Slackware; an
+# x64/ARM64 AppImage for any other distribution and the Steam Deck. Each builds in its
+# target distro container.
 # SDL2/jpeg/zlib and FFmpeg/TLS are static; OS graphics/audio drivers remain external.
 # Main builds upload CI artifacts; version tags also attach them to the release.
 
@@ -45,9 +47,10 @@ jobs:
       matrix:
         include:
           # Native runners and containers; Arch provides only an x64 image.
-          # Debug binaries use the oldest glibc for each architecture.
+          # Debug binaries and the AppImage use the oldest glibc among the Ubuntu/Debian legs
+          # (2.35), which every current distribution and SteamOS meet.
           - { name: 'Ubuntu 22.04 x64', image: 'ubuntu:22.04', family: deb,
-              tag: ubuntu22.04, arch: x64, cpu: x86_64, runner: ubuntu-24.04, debug: true, cmake_dl: true, cxx12: true }
+              tag: ubuntu22.04, arch: x64, cpu: x86_64, runner: ubuntu-24.04, debug: true, appimage: true, cmake_dl: true, cxx12: true }
           - { name: 'Ubuntu 24.04 x64', image: 'ubuntu:24.04', family: deb,
               tag: ubuntu24.04, arch: x64, cpu: x86_64, runner: ubuntu-24.04 }
           - { name: 'Ubuntu 26.04 x64', image: 'ubuntu:26.04', family: deb,
@@ -63,7 +66,7 @@ jobs:
           - { name: 'Arch x64', image: 'archlinux:latest', family: arch,
               tag: arch, arch: x64, cpu: x86_64, runner: ubuntu-24.04 }
           - { name: 'Ubuntu 22.04 arm64', image: 'ubuntu:22.04', family: deb,
-              tag: ubuntu22.04, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm, debug: true, cmake_dl: true, cxx12: true }
+              tag: ubuntu22.04, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm, debug: true, appimage: true, cmake_dl: true, cxx12: true }
           - { name: 'Ubuntu 24.04 arm64', image: 'ubuntu:24.04', family: deb,
               tag: ubuntu24.04, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm }
           - { name: 'Ubuntu 26.04 arm64', image: 'ubuntu:26.04', family: deb,
@@ -80,6 +83,23 @@ jobs:
               tag: opensuse-leap16.0, arch: x64, cpu: x86_64, runner: ubuntu-24.04 }
           - { name: 'openSUSE Leap 16.0 arm64', image: 'registry.opensuse.org/opensuse/leap:16.0', family: suse,
               tag: opensuse-leap16.0, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm }
+          - { name: 'openSUSE Tumbleweed x64', image: 'registry.opensuse.org/opensuse/tumbleweed:latest', family: suse,
+              tag: opensuse-tumbleweed, arch: x64, cpu: x86_64, runner: ubuntu-24.04 }
+          - { name: 'openSUSE Tumbleweed arm64', image: 'registry.opensuse.org/opensuse/tumbleweed:latest', family: suse,
+              tag: opensuse-tumbleweed, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm }
+          # The RHEL family, built on AlmaLinux: one package per major release serves RHEL,
+          # Rocky and Alma alike. Both build with a gcc-toolset: EL9's own g++ is 11 (C++20
+          # needs more), and EL10's gcc has no static libatomic (FFmpeg's link asks for
+          # -latomic, which CMakeLists keeps static). Each toolset carries its own static
+          # libstdc++ and libatomic.
+          - { name: 'EL9 x64 (RHEL/Rocky/Alma)', image: 'almalinux:9', family: el,
+              tag: el9, arch: x64, cpu: x86_64, runner: ubuntu-24.04, toolset: 14 }
+          - { name: 'EL9 arm64 (RHEL/Rocky/Alma)', image: 'almalinux:9', family: el,
+              tag: el9, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm, toolset: 14 }
+          - { name: 'EL10 x64 (RHEL/Rocky/Alma)', image: 'almalinux:10', family: el,
+              tag: el10, arch: x64, cpu: x86_64, runner: ubuntu-24.04, toolset: 15 }
+          - { name: 'EL10 arm64 (RHEL/Rocky/Alma)', image: 'almalinux:10', family: el,
+              tag: el10, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm, toolset: 15 }
           - { name: 'Slackware 15.0 x64', image: 'vbatts/slackware:15.0', family: slack,
               tag: slackware15.0, arch: x64, cpu: x86_64, runner: ubuntu-24.04, cmake_dl: true }
     steps:
@@ -117,6 +137,23 @@ jobs:
             libXfixes-devel libXScrnSaver-devel libxkbcommon-devel wayland-devel \
             wayland-protocols-devel libdecor-devel mesa-libGL-devel mesa-libEGL-devel
           if [ "${{ matrix.arch }}" = "x64" ]; then dnf -y install nasm; fi
+      - name: Install build deps (dnf, EL)
+        if: matrix.family == 'el'
+        run: |
+          # EPEL (ccache) and CRB (ninja, nasm, libstdc++-static and several -devel).
+          dnf -y install dnf-plugins-core epel-release
+          dnf config-manager --set-enabled crb
+          dnf -y install cmake ninja-build gcc-c++ ccache git make perl python3 patch rpm-build pkgconf \
+            tar gzip zstd xz file \
+            alsa-lib-devel pulseaudio-libs-devel pipewire-devel dbus-devel \
+            libX11-devel libXext-devel libXcursor-devel libXi-devel libXrandr-devel \
+            libXfixes-devel libXScrnSaver-devel libxkbcommon-devel wayland-devel \
+            wayland-protocols-devel libdecor-devel mesa-libGL-devel mesa-libEGL-devel
+          if [ "${{ matrix.arch }}" = "x64" ]; then dnf -y install nasm; fi
+          t=gcc-toolset-${{ matrix.toolset }}
+          dnf -y install $t-gcc-c++ $t-libstdc++-devel $t-libatomic-devel
+          # Every later step (FFmpeg, SDL2, the game) compiles with the toolset's gcc.
+          echo "PATH=/opt/rh/$t/root/usr/bin:$PATH" >> "$GITHUB_ENV"
       - name: Install build deps (pacman)
         if: matrix.family == 'arch'
         run: |
@@ -129,9 +166,15 @@ jobs:
       - name: Install build deps (zypper)
         if: matrix.family == 'suse'
         run: |
-          # The image defaults to HTTP mirrors; use authenticated HTTPS in CI.
-          sed -i 's|http://cdn.opensuse.org|https://cdn.opensuse.org|g' \
-            /usr/share/zypp/local/service/openSUSE/repo/*.xml /etc/zypp/repos.d/*.repo
+          # The images default to HTTP mirrors; use authenticated HTTPS in CI. Leap keeps its
+          # repos in a service file on cdn.opensuse.org, Tumbleweed in repos.d on
+          # download.opensuse.org.
+          for f in /usr/share/zypp/local/service/openSUSE/repo/*.xml /etc/zypp/repos.d/*.repo; do
+            if [ -f "$f" ]; then
+              sed -i -e 's|http://cdn.opensuse.org|https://cdn.opensuse.org|g' \
+                     -e 's|http://download.opensuse.org|https://download.opensuse.org|g' "$f"
+            fi
+          done
           zypper --non-interactive refresh
           zypper --non-interactive install --no-recommends \
             cmake ninja gcc-c++ ccache git make perl python3 patch rpm-build pkgconf-pkg-config \
@@ -335,7 +378,7 @@ jobs:
           dpkg-deb -I build/tak-engine-*.deb   # show control + auto deps
           mkdir -p dist && cp build/tak-engine-*.deb dist/
       - name: Package (.rpm)
-        if: matrix.family == 'rpm' || matrix.family == 'suse'
+        if: matrix.family == 'rpm' || matrix.family == 'suse' || matrix.family == 'el'
         run: |
           (cd build && cpack -G RPM)
           test "$(rpm -qp --qf '%{ARCH}' build/tak-engine-*.rpm)" = "${{ matrix.cpu }}"
@@ -360,6 +403,17 @@ jobs:
           installpkg dist/tak-engine-*.txz
           /usr/bin/takclient --version
           /usr/bin/takserver --version
+
+      # One AppImage per architecture: the same static binaries, so no bundled libraries.
+      # Containers have no FUSE, so the checks run it extracted.
+      - name: Package (.AppImage)
+        if: matrix.appimage == true
+        run: |
+          sh packaging/appimage/build.sh build dist
+          image=$(ls dist/tak-engine-*-${{ matrix.cpu }}.AppImage)
+          APPIMAGE_EXTRACT_AND_RUN=1 "$image" --version
+          APPIMAGE_EXTRACT_AND_RUN=1 "$image" takserver --version
+          APPIMAGE_EXTRACT_AND_RUN=1 "$image" cartographer --version
 
       # Debug tarball from the oldest-glibc leg only: the release binaries are
       # hardened (only --data/--version, no env vars), so devs get an unhardened

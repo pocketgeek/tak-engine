@@ -94,8 +94,11 @@ version, for example `tak-engine-<version>-ubuntu24.04-amd64.deb`:
 | Debian 12 / 13 | `…-debian12-amd64.deb`, `…-debian13-amd64.deb`; `-arm64.deb` for ARM64 |
 | Fedora 44 / 45 | `…-fedora44-x86_64.rpm`, `…-fedora45-x86_64.rpm`; `-aarch64.rpm` for ARM64 |
 | openSUSE Leap 16.0 | `…-opensuse-leap16.0-x86_64.rpm`, or `…-aarch64.rpm` for ARM64 |
+| openSUSE Tumbleweed | `…-opensuse-tumbleweed-x86_64.rpm`, or `…-aarch64.rpm` for ARM64 |
+| Red Hat Enterprise Linux, Rocky Linux, AlmaLinux 9 / 10 | `…-el9-x86_64.rpm`, `…-el10-x86_64.rpm`; `-aarch64.rpm` for ARM64 |
 | Arch Linux | `…-1-x86_64.pkg.tar.zst` |
 | Slackware 15.0 | `…-x86_64-1_slack15.0.txz` |
+| Any other Linux, Steam Deck | `…-x86_64.AppImage`, or `…-aarch64.AppImage` for ARM64 |
 
 The downloads whose names end in `-debug` are for diagnosing problems; you do
 not need them to play.
@@ -117,11 +120,20 @@ like any other app.
 | Ubuntu, Debian | `sudo apt install ./tak-engine-….deb` |
 | Fedora | `sudo dnf install ./tak-engine-….rpm` |
 | openSUSE | `sudo zypper install ./tak-engine-….rpm` |
+| Red Hat Enterprise Linux, Rocky Linux, AlmaLinux | `sudo dnf install ./tak-engine-….rpm` |
 | Arch Linux | `sudo pacman -U tak-engine-….pkg.tar.zst` |
 | Slackware | `upgradepkg --install-new tak-engine-….txz` (as root) |
 
 The game appears in your application menu as **Total Annihilation: Kingdoms**,
 and the map editor as **Cartographer**.
+
+**AppImage (any distribution, Steam Deck).** Nothing to install: make the file
+executable (`chmod +x tak-engine-….AppImage`, or the file's properties in your file
+manager) and run it. It starts the game; `./tak-engine-….AppImage cartographer` starts the
+map editor and `./tak-engine-….AppImage takserver …` the dedicated server. It adds no
+menu entries by itself (an AppImage manager such as Gear Lever can). On a Steam Deck,
+run it from Desktop Mode, or add it to Steam as a non-Steam game to play it in Game Mode.
+It needs glibc 2.35 or later, which every current distribution has.
 
 Every package contains the game client, the Cartographer map editor and the
 `takserver` dedicated server; there is no menu shortcut for the server. Libraries the game needs are bundled; your system only

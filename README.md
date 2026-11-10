@@ -109,8 +109,11 @@ installer, DMGs) or `takclient-<version>-` (ZIPs), followed by:
 | Debian 12 / 13 | `debian<version>-amd64.deb` or `-arm64.deb` |
 | Fedora 44 / 45 | `fedora<version>-x86_64.rpm` or `-aarch64.rpm` |
 | openSUSE Leap 16.0 | `opensuse-leap16.0-x86_64.rpm` or `-aarch64.rpm` |
+| openSUSE Tumbleweed | `opensuse-tumbleweed-x86_64.rpm` or `-aarch64.rpm` |
+| RHEL, Rocky Linux, AlmaLinux 9 / 10 | `el<version>-x86_64.rpm` or `-aarch64.rpm` |
 | Arch Linux (x64) | `1-x86_64.pkg.tar.zst` |
 | Slackware64 15.0 | `x86_64-1_slack15.0.txz` |
+| Any other Linux, Steam Deck | `x86_64.AppImage` or `aarch64.AppImage` |
 
 The `-debug` downloads are for diagnosing problems, not for playing. The macOS
 app and DMG are signed and notarized by Apple; the Windows installer and
@@ -129,7 +132,9 @@ provides only graphics, sound and windowing.
   `apt install ./tak-engine-….deb`, `dnf install ./tak-engine-….rpm`,
   `zypper install ./tak-engine-….rpm`, `pacman -U ./tak-engine-….pkg.tar.zst`
   or `upgradepkg --install-new ./tak-engine-….txz`. The application menu then
-  shows **Total Annihilation: Kingdoms** and **Cartographer**.
+  shows **Total Annihilation: Kingdoms** and **Cartographer**. Or, on any
+  distribution or a Steam Deck, make the AppImage executable and run it: it starts
+  the game, and `cartographer` or `takserver` as its first argument starts those.
   On a Wayland desktop the game and Cartographer open native Wayland windows,
   sharp at any display scale (GNOME without the libdecor library keeps X11);
   **Options → Display → Native Wayland** changes this.
