@@ -202,7 +202,7 @@ void cart::Editor::openAiProfiles() {
     aiMod.reset();aiModSaveOpen=aiModOpenOpen=false;aiView=AiView::Table;
     aiUseRoster(aiPack?aiPacks[size_t(aiPack-1)]:"");
     commitHistory();aiUndoFloor=history.revision();aiRedoRevisions.clear();aiRedoAt=0;
-    aiOpened=aiFiles;aiOpen=true;aiStartOpen=aiMergeOpen=false;aiFocus=AI_NONE;aiWordPick=-2;aiGroupSelected=-1;aiGroupCell=-1;
+    aiOpened=aiFiles;aiOpen=true;aiStartOpen=false;aiFocus=AI_NONE;aiWordPick=-2;aiGroupSelected=-1;aiGroupCell=-1;
     if(aiNote.find("Could not read the units")!=0)aiNote.clear();
     aiName=scenario.aiProfile;aiPendingName.clear();aiScroll=0;aiGroupScroll=aiGroupUnitScroll=0;aiIssues.clear();
     aiViewCache=AiTabView{};menuOpen=-1;
@@ -215,7 +215,7 @@ void cart::Editor::closeAiProfiles() {
     if(aiModDirty()) {aiClosePack([this] {closeAiProfiles();});return;}   // asks first; closes after
     if(aiModOnly) {finishAiModWorkspace();return;}   // closing the pack ends an AI mod without a map
     aiMod.reset();aiModSaveOpen=aiModOpenOpen=false;
-    aiOpen=aiStartOpen=aiMergeOpen=false;aiFocus=AI_NONE;aiView=AiView::Table;aiPendingName.clear();aiWordPick=-2;aiGroupCell=-1;
+    aiOpen=aiStartOpen=false;aiFocus=AI_NONE;aiView=AiView::Table;aiPendingName.clear();aiWordPick=-2;aiGroupCell=-1;
     SDL_StopTextInput();
 }
 
@@ -541,85 +541,6 @@ void cart::Editor::aiGroupAction(int rule,int what) {
     aiGroupSelected=what==1?rule-1:what==3?rule+1:what==2?std::min(rule,int(aiTabView().draft.groups.size())-1):rule;aiGroupUnitScroll=0;
 }
 
-// ---- the old per-level files: MERGE INTO TAK ENGINE -------------------------------------
-// The game no longer reads ai/d.txt .. ai/ad.txt; they stay byte for byte. The merge
-// writes one of them into ai/takengine.txt (aiMergeIntoEngine, checked by the engine's
-// own parser). Files that set the same units count as one; when they differ the user
-// picks which level's file (Normal's preselected). The dialog is the asking.
-void cart::Editor::aiOpenMerge() {
-    const auto& files=aiSet();
-    const auto old=cart::aiOldLevelFiles(files,aiMod?std::string():scenario.aiProfile);
-    if(old.empty())return;
-    aiMergeRows.clear();
-    std::vector<tak::ai::Profile> settings;
-    for(const auto& key:old) {
-        AiMergeRow row;row.key=key;
-        const auto profile=cart::aiLevelSettings(bytesText(files.at(key)));
-        row.settings=cart::aiLevelSettingCount(profile);
-        row.group=int(settings.size());
-        for(size_t i=0;i<settings.size();++i)
-            if(settings[i].weight==profile.weight && settings[i].limit==profile.limit) {row.group=aiMergeRows[i].group;break;}
-        settings.push_back(profile);
-        aiMergeRows.push_back(std::move(row));
-    }
-    aiMergePick=0;
-    for(size_t i=0;i<aiMergeRows.size();++i)if(cart::aiOldLevelOf(aiMergeRows[i].key)==Difficulty::Normal)aiMergePick=int(i);
-    aiMergeDelete=false;aiMergeOpen=true;if(aiFocus!=AI_NONE)aiFocus=AI_NONE;aiNote.clear();
-}
-
-void cart::Editor::aiMerge() {
-    if(aiMergePick<0 || aiMergePick>=int(aiMergeRows.size())) {aiMergeOpen=false;return;}
-    const auto row=aiMergeRows[size_t(aiMergePick)];
-    const std::string engineKey=tak::ai::kEngineProfileFile;
-    const auto& files=aiSet();
-    const auto it=files.find(engineKey);
-    const std::string before=it==files.end()?std::string():bytesText(it->second);
-    std::string bytes,error;
-    if(!cart::aiMergeIntoEngine(before,bytesText(files.at(row.key)),aiHeaderFor(1),*aiCatalogue,bytes,error)) {
-        aiMergeOpen=false;aiNote=error;std::fprintf(stderr,"cartographer: %s\n",error.c_str());return;
-    }
-    aiSetFile(engineKey,bytes);   // one undo step with the deletes: the same frame
-    if(aiMergeDelete)for(const auto& r:aiMergeRows)aiSetFile(r.key,"");
-    aiMergeOpen=false;
-    if(aiView==AiView::Text) {aiTextKey.clear();aiSelectTab(1);}
-    else aiSelectTab(1);
-    aiNote="Merged "+std::to_string(row.settings)+" unit setting"+(row.settings==1?"":"s")+" from "+row.key+" into "+engineKey+
-        (aiMergeDelete?"; the old level files are deleted.":"; the old files stay (not read).")+
-        (aiMod?" A pack edit has no undo: CLOSE PACK discards what is not saved.":" Ctrl+Z takes it back.");
-}
-
-void cart::Editor::drawAiMerge() {
-    if(!aiMergeOpen)return;
-    std::set<int> groups;for(const auto& row:aiMergeRows)groups.insert(row.group);
-    const bool differ=groups.size()>1;
-    const auto pc=cart::drawPanel(ren,w,h,540,196+int(aiMergeRows.size())*18,"MERGE INTO TAK ENGINE");
-    const std::string engineKey=tak::ai::kEngineProfileFile;
-    int y=pc.y;
-    y+=12*drawWrapped(ren,"The game no longer reads the old level files. All six levels read "+engineKey+", each over its own built-in table.",pc.x,y,pc.w,2,220,225,235);
-    y+=12*drawWrapped(ren,differ?"These files set different units: pick the one to write into "+engineKey+" (Normal's is preselected).":
-        aiMergeRows.size()>1?"They all set the same units, so they merge as one.":"Its unit settings are written into "+engineKey+".",pc.x,y,pc.w,2,differ?235:170,differ?215:185,differ?150:200)+6;
-    for(size_t i=0;i<aiMergeRows.size();++i) {
-        auto& row=aiMergeRows[i];
-        row.box={pc.x,y,pc.w,16};
-        const bool picked=int(i)==aiMergePick || (!differ);
-        const auto level=cart::aiOldLevelOf(row.key);
-        cart::drawText(ren,std::string(picked?"(o) ":"( ) ")+row.key+" ("+(level?cart::aiLevelName(*level):"?")+")",pc.x,y+4,1,picked?255:205,picked?235:210,picked?200:220);
-        cart::drawText(ren,std::to_string(row.settings)+" unit setting"+(row.settings==1?"":"s"),pc.x+260,y+4,1,160,200,170);
-        y+=18;
-    }
-    y+=4;
-    const auto engine=aiSet().find(engineKey);
-    y+=12*drawWrapped(ren,engine==aiSet().end()?engineKey+" is new: it gets exactly these settings.":
-        "Units "+engineKey+" already sets and the old file does not keep their values; the old file's units take its values.",pc.x,y,pc.w,2,170,185,200)+4;
-    aiMergeDeleteBox={pc.x,y,pc.w,14};
-    SDL_Rect box{pc.x,y,16,14};SDL_SetRenderDrawColor(ren,96,98,112,255);SDL_RenderDrawRect(ren,&box);
-    if(aiMergeDelete)cart::drawText(ren,"x",pc.x+5,y+4,1,255,235,200);
-    cart::drawText(ren,"Also delete the old level files (otherwise they stay, unread)",pc.x+22,y+4,1,220,225,235);
-    drawWrapped(ren,aiMod?"A pack edit has no undo: CLOSE PACK discards what is not saved.":"One Ctrl+Z takes back the whole merge.",pc.x,pc.y+pc.h-34,pc.w,1,150,160,175);
-    aiMergeGo=cart::drawButton(ren,pc.x+pc.w-150,pc.y+pc.h-20,70,18,"MERGE",true);
-    aiMergeCancel=cart::drawButton(ren,pc.x+pc.w-74,pc.y+pc.h-20,70,18,"CANCEL",false);
-}
-
 std::string cart::Editor::aiRowExplanation(const AiRosterRow& row) {
     const auto& view=aiTabView();
     std::string out=row.label+" ("+row.key+")";
@@ -691,20 +612,6 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
         }
         return;
     }
-    if(aiMergeOpen) {   // merge the old level files: pick (when they differ), MERGE (Enter), CANCEL (Esc)
-        if(e.type==SDL_KEYDOWN) {
-            const auto key=e.key.keysym.sym;
-            if(key==SDLK_ESCAPE)aiMergeOpen=false;
-            else if(key==SDLK_RETURN || key==SDLK_KP_ENTER)aiMerge();
-        } else if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
-            const int mx=e.button.x,my=e.button.y;
-            if(cart::pointIn(mx,my,aiMergeGo))aiMerge();
-            else if(cart::pointIn(mx,my,aiMergeCancel))aiMergeOpen=false;
-            else if(cart::pointIn(mx,my,aiMergeDeleteBox))aiMergeDelete=!aiMergeDelete;
-            else for(size_t i=0;i<aiMergeRows.size();++i)if(cart::pointIn(mx,my,aiMergeRows[i].box))aiMergePick=int(i);
-        }
-        return;
-    }
     if(aiStartOpen) {
         if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE) {aiStartOpen=false;aiPendingName.clear();}
         else if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
@@ -768,7 +675,6 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
     if(aiFocus==AI_SEARCH && !cart::pointIn(mx,my,aiSearchBox))aiFocus=AI_NONE;
     for(int t=0;t<2;++t)if(cart::pointIn(mx,my,aiTabRects[t])) {if(t!=aiTab)aiSelectTab(t);return;}
     if(cart::pointIn(mx,my,aiPreviewBox)) {aiStepPreview(1);return;}
-    if(cart::pointIn(mx,my,aiMergeButton)) {aiCommitText();aiOpenMerge();return;}
     for(int p=0;p<3;++p)if(cart::pointIn(mx,my,aiPresetRects[p])) {aiPreset(p);return;}
     if(cart::pointIn(mx,my,aiDoneButton)) {closeAiProfiles();return;}
     if(cart::pointIn(mx,my,aiModSaveButton)) {aiCommitText();aiOpenModSave();return;}
@@ -863,7 +769,7 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
             int tab=-1;
             if(cart::aiEngineFile(issue.file))tab=1;
             else if(issue.file.empty() || issue.file==aiKeyFor(0))tab=0;
-            if(tab<0) {aiNote=issue.file+" is not one of the profiles shown here."+(cart::aiOldLevelOf(issue.file)?" MERGE INTO TAK ENGINE copies its unit settings.":"");return;}
+            if(tab<0) {aiNote=issue.file+" is not one of the profiles shown here.";return;}
             aiView=AiView::Text;aiTextKey.clear();aiSelectTab(tab);
             size_t at=0;for(int n=1;n<issue.line && at!=std::string::npos;++n) {at=aiText.find('\n',at);if(at!=std::string::npos)++at;}
             aiTextEdit.caret=aiTextEdit.anchor=at==std::string::npos?aiText.size():at;aiTextFollow=true;
@@ -905,7 +811,7 @@ void cart::Editor::drawAiProfiles() {
     const AiFiles& files=aiMod?aiMod->files:aiFiles;
     const AiFiles& openedFiles=aiMod?aiMod->opened:aiOpened;
 
-    // ---- left column: the profiles, the preview level, old files, presets, game-mod preview ----
+    // ---- left column: the profiles, the preview level, presets, game-mod preview ----
     for(int t=0;t<2;++t) {
         const auto key=aiKeyFor(t);
         const SDL_Rect r{ct.x,ct.y+t*28,kLeftW,26};
@@ -931,17 +837,6 @@ void cart::Editor::drawAiProfiles() {
     cart::drawText(ren,"PREVIEW LEVEL",ct.x,ly,1,150,200,150);
     aiPreviewBox=cart::drawButton(ren,ct.x,ly+12,kLeftW,18,std::string("< ")+upperText(cart::aiLevelName(aiPreviewLevel))+" >",aiTab==1);
     ly+=36;
-    // The old per-level files: kept as they are, no longer read.
-    aiMergeButton={};
-    if(const auto old=cart::aiOldLevelFiles(files,aiMod?std::string():scenario.aiProfile);!old.empty()) {
-        std::string names;
-        for(size_t i=0;i<old.size();++i)names+=(i?", ":"")+old[i].substr(3);
-        const int lines=std::min(4,int(cart::TextEdit::lines("Old level files ("+names+") are no longer read by the game.",std::max(1,(kLeftW-6)/6)).size()));
-        fillRect(ren,ct.x,ly-2,kLeftW,lines*12+28,70,52,28);
-        drawWrapped(ren,"Old level files ("+names+") are no longer read by the game.",ct.x+3,ly,kLeftW-6,4,255,215,150);
-        aiMergeButton=cart::drawButton(ren,ct.x+3,ly+lines*12+4,kLeftW-6,18,"MERGE INTO TAK ENGINE...",true);
-        ly+=lines*12+32;
-    }
     ly+=4;
     cart::drawText(ren,"PRESETS",ct.x,ly,1,150,200,150);
     for(int p=0;p<3;++p)aiPresetRects[p]=cart::drawButton(ren,ct.x,ly+12+p*22,kLeftW,18,kPresetNames[p],false);
@@ -1223,9 +1118,8 @@ void cart::Editor::drawAiProfiles() {
         aiStartCancel=cart::drawButton(ren,pc.x+pc.w-74,pc.y+pc.h-20,70,18,"CANCEL",false);
     }
     drawAiWordPicker();
-    drawAiMerge();
     drawAiModDialogs();
-    if(!aiHint.empty() && !aiStartOpen && !aiMergeOpen && !aiModSaveOpen && !aiModOpenOpen && aiWordPick==-2 && modal==M_NONE)cart::drawTooltip(ren,w,h,pointerX,pointerY,aiHint);
+    if(!aiHint.empty() && !aiStartOpen && !aiModSaveOpen && !aiModOpenOpen && aiWordPick==-2 && modal==M_NONE)cart::drawTooltip(ren,w,h,pointerX,pointerY,aiHint);
 }
 
 // ---- game mods (design 3.5, 7.2) -------------------------------------------------
@@ -1234,11 +1128,7 @@ void cart::Editor::aiOpenModSave() {
     aiModRows.clear();aiModDeletes.clear();aiModDeleteTicked.clear();aiModNote.clear();aiModDeleteBoxes.clear();
     const auto& files=aiSet();
     auto has=[&](const std::string& key) {const auto it=files.find(key);return it!=files.end() && !it->second.empty();};
-    auto label=[](const std::string& key) {
-        if(cart::aiEngineFile(key))return std::string("TAK ENGINE AI");
-        if(const auto old=cart::aiOldLevelOf(key))return std::string("old ")+cart::aiLevelName(*old)+" file (not read)";
-        return std::string("DEFAULT AI");
-    };
+    auto label=[](const std::string& key) {return std::string(cart::aiEngineFile(key)?"TAK ENGINE AI":"DEFAULT AI");};
     if(aiMod) {   // back to the pack it came from: what changed since it was opened
         aiModPack=aiMod->pack;
         for(const auto& [key,bytes]:files)if(!bytes.empty()) {
@@ -1251,7 +1141,7 @@ void cart::Editor::aiOpenModSave() {
         // DEFAULT unticked: a game mod's file applies on every map (design 3.5).
         const auto def=aiKeyFor(0);
         if(!def.empty() && has(def))aiModRows.push_back({"DEFAULT AI",def,def,false,true,{}});
-        const auto key=aiKeyFor(1);   // ai/takengine.txt; the old level files are not read, so never offered
+        const auto key=aiKeyFor(1);   // ai/takengine.txt
         if(has(key))aiModRows.push_back({label(key),key,key,true,false,{}});
         else if(aiOpened.count(key))aiModDeletes.push_back(key);   // emptied in this window
     }
@@ -1454,7 +1344,7 @@ void cart::Editor::startAiModWorkspace(const std::string& pack,bool fresh) {
 
 void cart::Editor::finishAiModWorkspace() {
     aiMod.reset();aiModSaveOpen=aiModOpenOpen=aiModPickWorkspace=false;aiAfterSave=nullptr;
-    aiOpen=aiStartOpen=aiMergeOpen=false;aiFocus=AI_NONE;aiView=AiView::Table;aiPendingName.clear();aiWordPick=-2;aiGroupCell=-1;
+    aiOpen=aiStartOpen=false;aiFocus=AI_NONE;aiView=AiView::Table;aiPendingName.clear();aiWordPick=-2;aiGroupCell=-1;
     aiViewCache=AiTabView{};aiIssues.clear();aiNote.clear();
     aiModOnly=false;   // back to the map put aside, or to no document (noDocument)
     SDL_StopTextInput();

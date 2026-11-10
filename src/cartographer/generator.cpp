@@ -44,21 +44,15 @@ bool parseGeneratorFields(const GeneratorFields& f,tak::mapgen::Params& p,std::s
     }
     p=next;error.clear();return true;
 }
-bool restoreGeneratorRecipe(const std::string& recipe,const std::string& description,
-                            tak::mapgen::Params& params,std::string& error) {
+bool restoreGeneratorRecipe(const std::string& recipe,tak::mapgen::Params& params,std::string& error) {
     auto encoded=recipe;
-    constexpr std::string_view prefix="Generator recipe: ";
-    if(encoded.empty() && description.starts_with(prefix))encoded=description.substr(prefix.size(),description.find_first_of("\r\n")-prefix.size());
     if(encoded.empty()) {error="This map has no saved generator recipe. Use New Map > Random to create one.";return false;}
     // decodeMapId intentionally supplies defaults on malformed input. The editor
     // must reject that fallback: otherwise Regenerate could replace a map with an
-    // unrelated seed while appearing to restore its original settings.
+    // unrelated seed while appearing to restore its original settings. A recipe of
+    // another generator version does not encode back to itself either.
     std::transform(encoded.begin(),encoded.end(),encoded.begin(),[](unsigned char c){return char(std::tolower(c));});
     const auto restored=tak::mapgen::decodeMapId(encoded);
-    if(tak::mapgen::isGeneratedMapId(encoded) && restored.formatVer!=tak::mapgen::Params{}.formatVer) {
-        error="This map was made by an older random-map generator (version "+std::to_string(restored.formatVer)+
-              "), which this build cannot regenerate. Use New Map > Random to create a new one.";return false;
-    }
     if(!tak::mapgen::isGeneratedMapId(encoded) || tak::mapgen::encodeMapId(restored)!=encoded) {
         error="The saved generator recipe is malformed or cannot be restored exactly.";return false;
     }

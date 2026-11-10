@@ -156,6 +156,11 @@ static int generationWorkflow(const char* data) {
     std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
     std::vector<uint8_t> originalTerrain;
     auto readTerrain=[&] {tak::hpi::Archive archive(root/"Generated preview.kmp");for(const auto& entry:archive.entries())if(entry.path.ends_with(".tnt"))return archive.read(entry);return std::vector<uint8_t>{};};
+    auto readMetadata=[&] {
+        tak::hpi::Archive archive(root/"Generated preview.kmp");
+        for(const auto& entry:archive.entries())if(entry.path.ends_with(".ota")) {const auto bytes=archive.read(entry);return tak::tnt::Scenario::parse(std::string(bytes.begin(),bytes.end()));}
+        return tak::tnt::Scenario{};
+    };
     auto useSidecarRecipe=[&] {
         std::vector<tak::hpi::PackFile> files;
         {
@@ -209,7 +214,12 @@ static int generationWorkflow(const char* data) {
         case 9: text("123456");key(SDLK_TAB);text("8");key(SDLK_RETURN);++stage;break;
         case 10: if(title.find("[Generated preview]")!=std::string::npos) {key(SDLK_RETURN);++stage;}break;
         case 11: check(title=="Cartographer -- Generated preview *","accept adopts unsaved generated map");key(SDLK_s,KMOD_CTRL);++stage;break;
-        case 12: check(!title.ends_with(" *"),"generated map saved");originalTerrain=readTerrain();key(SDLK_RETURN);key(SDLK_p);++stage;break;
+        case 12: {
+            check(!title.ends_with(" *"),"generated map saved");originalTerrain=readTerrain();
+            const auto metadata=readMetadata();   // the recipe rides in its own key; the description starts empty
+            check(tak::mapgen::isGeneratedMapId(metadata.generatorRecipe) && metadata.missionDescription.empty(),"a new random map's description is not empty");
+            key(SDLK_RETURN);key(SDLK_p);++stage;break;
+        }
         case 13: key(SDLK_TAB);text("Authored description");key(SDLK_RETURN);key(SDLK_s,KMOD_CTRL);++stage;break;
         case 14: key(SDLK_RETURN);key(SDLK_n,KMOD_CTRL);++stage;break; // change in-memory generator seed
         case 15: useSidecarRecipe();key(SDLK_ESCAPE);key(SDLK_o,KMOD_CTRL);++stage;break;
@@ -297,16 +307,20 @@ static int overlayWorkflow(const char* data) {
 // in its cell (ai/takengine.txt, previewed on Normal and then Hard), the map's own
 // DEFAULT profile chosen and started empty, a preset applied
 // after its confirmation, undo/redo after closing, and Save As writing the files at
-// the .kmp root with aiprofile= in the .ota. TAK_EDITOR_TEST_CAPTURE=<prefix> also
-// writes <prefix>-level.png and <prefix>-default.png of the window.
+// the .kmp root with aiprofile= in the .ota. The map also carries ai/n.txt, which no
+// profile reads: it is not shown, never written, and saved byte for byte.
+// TAK_EDITOR_TEST_CAPTURE=<prefix> also writes <prefix>-level.png and
+// <prefix>-default.png of the window.
 static int aiProfileWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-aiprofile-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directory(root);isolateProfile(root.string().c_str());
     const auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
     const auto map=tak::tnt::Map::load(vfs.read(path),path);tak::tnt::Scenario metadata;metadata.kingdom="zhon";
+    const std::string unrelated="weight araarch 9\n";   // ai/n.txt: a file no profile of this map reads
+    cart::AiFiles fixture;fixture["ai/n.txt"].assign(unrelated.begin(),unrelated.end());
     std::string error;
-    if(!cart::writeDocumentBundle(root/"AiTest.kmp",cart::documentFiles(map,metadata,{},{},{},{},"AiTest"),error))throw std::runtime_error(error);
+    if(!cart::writeDocumentBundle(root/"AiTest.kmp",cart::documentFiles(map,metadata,{},{},{},fixture,"AiTest"),error))throw std::runtime_error(error);
     std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
     std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
     cart::Editor* editor=nullptr;cart::EditorHooks hooks;hooks.attached=[&](cart::Editor& e){editor=&e;};
@@ -335,9 +349,10 @@ static int aiProfileWorkflow(const char* data) {
         switch(frame) {
         case 0:key(SDLK_o,KMOD_CTRL);break;
         case 1:text((root/"AiTest.kmp").string());key(SDLK_RETURN);break;
-        case 2:check(!dirty,"opening the fixture marked it dirty");key(SDLK_a);break;
+        case 2:check(!dirty && file("ai/n.txt")==unrelated,"opening the fixture marked it dirty or changed ai/n.txt");key(SDLK_a);break;
         case 3:check(editor->aiOpen && title.find("[AI]")!=std::string::npos,"A did not open the AI Profiles window");
-            check(editor->aiMergeButton.w==0,"MERGE INTO TAK ENGINE is offered on a map without old level files");click(editor->aiTabRects[1]);break;
+            check(editor->aiTabKey()!="ai/n.txt" && editor->aiKeyFor(0)!="ai/n.txt" && editor->aiKeyFor(1)!="ai/n.txt","ai/n.txt is shown as a profile");
+            click(editor->aiTabRects[1]);break;
         case 4:check(editor->aiTab==1 && editor->aiTabKey()=="ai/takengine.txt" && editor->aiTabLevel()==tak::ai::Difficulty::Normal,
                      "the TAK ENGINE AI tab was not selected, previewing Normal");click(editor->aiSearchBox);break;
         case 5:text("araarch");break;
@@ -346,7 +361,7 @@ static int aiProfileWorkflow(const char* data) {
         case 8:check(file("ai/takengine.txt").find("\nweight araarch 0\n")!=std::string::npos,"the archer weight 0 was not written to ai/takengine.txt");
             check(file("ai/takengine.txt").starts_with(cart::kAiProfileMagic) && file("ai/takengine.txt").find("TAK ENGINE AI (all six levels) profile for map")!=std::string::npos,
                   "ai/takengine.txt is not in the canonical form with its header");
-            check(editor->aiFiles.size()==1,"a level edit wrote more than ai/takengine.txt");
+            check(editor->aiFiles.size()==2 && file("ai/n.txt")==unrelated,"a level edit wrote more than ai/takengine.txt");
             capture("-level.png");click(editor->aiPreviewBox);break;
         case 9:{
             check(editor->aiTabLevel()==tak::ai::Difficulty::Hard && editor->aiTabView().preview==tak::ai::Difficulty::Hard,"PREVIEW LEVEL did not step to Hard");
@@ -376,12 +391,14 @@ static int aiProfileWorkflow(const char* data) {
         }
     },hooks);
     if(failure.empty()) {
-        std::set<std::string> entries;std::string ota;
+        std::set<std::string> entries;std::string ota,kept;
         tak::hpi::Archive archive(root/"AiSaved.kmp");
         for(const auto& entry:archive.entries()) {
             entries.insert(tak::hpi::MountSet::key(entry.path));
             if(entry.path.ends_with(".ota")) {const auto bytes=archive.read(entry);ota.assign(bytes.begin(),bytes.end());}
+            if(tak::hpi::MountSet::key(entry.path)=="ai/n.txt") {const auto bytes=archive.read(entry);kept.assign(bytes.begin(),bytes.end());}
         }
+        check(kept==unrelated,"the saved .kmp does not carry ai/n.txt byte for byte");
         check(entries.count("ai/takengine.txt") && entries.count("ai/aitest.txt"),"the saved .kmp lacks root ai/takengine.txt or ai/aitest.txt");
         for(const auto& entry:entries)check(!(entry.starts_with("kmap/") && entry.find("/ai/")!=std::string::npos),"an AI file was written under kmap/");
         check(ota.find("aiprofile=aitest;")!=std::string::npos,"the saved .ota does not say aiprofile=aitest");
@@ -389,106 +406,6 @@ static int aiProfileWorkflow(const char* data) {
     fs::remove_all(root);
     if(result || !failure.empty() || lastFrame>23) {std::cerr<<failure<<'\n';return 1;}
     std::cout<<"PASS: AI Profiles window: TAK ENGINE AI cell and Hard preview, own DEFAULT profile, preset, undo/redo, Save As with root ai/ files and aiprofile=\n";return 0;
-}
-// MERGE INTO TAK ENGINE through real input, on a map that still carries the old level
-// files: ai/e.txt and ai/n.txt set the same units, ai/h.txt (written by hand) others.
-// The notice and button are drawn; the dialog lists the three in level order with
-// Normal's preselected, and a click picks another. MERGE writes ai/takengine.txt in
-// the canonical form, which the engine's applyProfileText reads as Normal's settings;
-// the old files stay byte for byte and the DEFAULT AI's file is never written. One
-// Ctrl+Z takes it back, Ctrl+Y redoes it. A second merge of Hard's file with "also
-// delete" ticked adds Hard's settings on top and removes the three old files, and the
-// notice goes; one Ctrl+Z brings all of it back. TAK_EDITOR_TEST_CAPTURE=<prefix> also
-// writes <prefix>-merge.png of the dialog and <prefix>-merged.png after it.
-static int aiMergeWorkflow(const char* data) {
-    namespace fs=std::filesystem;
-    const auto root=fs::temp_directory_path()/("tak-editor-aimerge-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    fs::create_directory(root);isolateProfile(root.string().c_str());
-    const auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
-    const auto map=tak::tnt::Map::load(vfs.read(path),path);tak::tnt::Scenario metadata;metadata.kingdom="zhon";
-    const std::string handHard="// my own Hard\nweight araarch 7\nlimit araarch 1\n";   // no magic: written by hand
-    const std::string normalText="weight araarch 2\nlimit tararch 0\n";
-    cart::AiFiles fixture;
-    fixture["ai/h.txt"].assign(handHard.begin(),handHard.end());
-    fixture["ai/n.txt"].assign(normalText.begin(),normalText.end());
-    fixture["ai/e.txt"].assign(normalText.begin(),normalText.end());
-    std::string error;
-    if(!cart::writeDocumentBundle(root/"AiMerge.kmp",cart::documentFiles(map,metadata,{},{},{},fixture,"AiMerge"),error))throw std::runtime_error(error);
-    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
-    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
-    cart::Editor* editor=nullptr;cart::EditorHooks hooks;hooks.attached=[&](cart::Editor& e){editor=&e;};
-    std::string failure,merged;int lastFrame=0;
-    auto check=[&](bool value,const std::string& message) {if(!value && failure.empty())failure="frame "+std::to_string(lastFrame)+": "+message;};
-    auto file=[&](const std::string& key) {
-        const auto it=editor->aiFiles.find(key);return it==editor->aiFiles.end()?std::string():std::string(it->second.begin(),it->second.end());
-    };
-    auto plays=[](const std::string& text) {tak::ai::Profile p;tak::ai::applyProfileText(text,p);return p;};
-    auto oldIntact=[&] {return file("ai/h.txt")==handHard && file("ai/n.txt")==normalText && file("ai/e.txt")==normalText;};
-    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window*,SDL_Renderer* renderer,int frame) {
-        lastFrame=frame;
-        float sx=1,sy=1;SDL_RenderGetScale(renderer,&sx,&sy);
-        auto click=[&](const SDL_Rect& r) {
-            if(r.w<=0) {check(false,"target not drawn");return;}
-            SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.clicks=1;
-            e.button.x=int((r.x+r.w/2)*sx);e.button.y=int((r.y+r.h/2)*sy);SDL_PushEvent(&e);e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
-        };
-        auto capture=[&](const char* suffix) {
-            const char* prefix=SDL_getenv("TAK_EDITOR_TEST_CAPTURE");if(!prefix)return;
-            int pw=0,ph=0;SDL_GetRendererOutputSize(renderer,&pw,&ph);std::vector<uint8_t> rgba(size_t(pw)*ph*4);
-            if(SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),pw*4)==0)tak::png::write(std::string(prefix)+suffix,pw,ph,rgba);
-        };
-        auto row=[&](size_t i) {return i<editor->aiMergeRows.size()?editor->aiMergeRows[i].box:SDL_Rect{};};
-        switch(frame) {
-        case 0:key(SDLK_o,KMOD_CTRL);break;
-        case 1:text((root/"AiMerge.kmp").string());key(SDLK_RETURN);break;
-        case 2:check(oldIntact(),"the fixture's old level files did not open as they are");key(SDLK_a);break;
-        case 3:check(editor->aiOpen && editor->aiMergeButton.w>0,"the old-file notice and MERGE INTO TAK ENGINE are not drawn");
-            click(editor->aiMergeButton);break;
-        case 4:{
-            const auto& rows=editor->aiMergeRows;
-            check(editor->aiMergeOpen && rows.size()==3 && rows[0].key=="ai/e.txt" && rows[1].key=="ai/n.txt" && rows[2].key=="ai/h.txt",
-                  "the dialog does not list the three old files in level order");
-            check(editor->aiMergePick==1,"Normal's file is not preselected");
-            check(rows.size()==3 && rows[0].group==rows[1].group && rows[2].group!=rows[1].group && rows[1].settings==2,
-                  "files with the same settings are not told apart from Hard's");
-            check(!editor->aiMergeDelete,"also delete is ticked before the user ticks it");
-            click(row(2));break;
-        }
-        case 5:check(editor->aiMergePick==2,"a click did not pick Hard's file");click(row(1));break;
-        case 6:check(editor->aiMergePick==1 && oldIntact() && !editor->aiFiles.count("ai/takengine.txt"),"picking changed a file");
-            capture("-merge.png");click(editor->aiMergeGo);break;
-        case 7:{
-            merged=file("ai/takengine.txt");
-            check(!editor->aiMergeOpen && editor->aiTab==1,"MERGE did not close the dialog on the TAK ENGINE AI tab");
-            check(merged.starts_with(cart::kAiProfileMagic) && merged.find("TAK ENGINE AI (all six levels) profile for map")!=std::string::npos,
-                  "ai/takengine.txt is not canonical with its header");
-            const auto n=plays(normalText),m=plays(merged);
-            check(!n.weight.empty() && m.weight==n.weight && m.limit==n.limit,"the engine does not read Normal's settings from ai/takengine.txt");
-            check(oldIntact() && editor->aiFiles.size()==4,"the merge changed an old file or wrote another file");
-            capture("-merged.png");key(SDLK_z,KMOD_CTRL);break;
-        }
-        case 8:check(!editor->aiFiles.count("ai/takengine.txt") && oldIntact(),"one Ctrl+Z did not take back the merge");key(SDLK_y,KMOD_CTRL);break;
-        case 9:check(file("ai/takengine.txt")==merged,"Ctrl+Y did not bring the merge back");click(editor->aiMergeButton);break;
-        case 10:check(editor->aiMergeOpen,"MERGE INTO TAK ENGINE did not open again");click(row(2));click(editor->aiMergeDeleteBox);break;
-        case 11:check(editor->aiMergePick==2 && editor->aiMergeDelete,"Hard and also delete were not picked");click(editor->aiMergeGo);break;
-        case 12:{
-            auto want=plays(merged);tak::ai::applyProfileText(handHard,want);
-            const auto m=plays(file("ai/takengine.txt"));
-            check(m.weight==want.weight && m.limit==want.limit && m.limit.count("tararch"),"the second merge does not read as the first plus Hard's file");
-            check(editor->aiFiles.size()==1,"also delete left an old level file");
-            check(editor->aiMergeButton.w==0,"the notice stays with no old level files");
-            key(SDLK_z,KMOD_CTRL);break;
-        }
-        case 13:check(file("ai/takengine.txt")==merged && oldIntact(),"one Ctrl+Z did not bring back the deleted files and the first merge");
-            click(editor->aiDoneButton);break;
-        case 14:{SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
-        case 15:if(editor->modal==cart::Editor::M_QUITSAVE)click(editor->mQuit);break;
-        default:if(frame>24) {failure+=" (AI merge workflow did not exit)";std::_Exit(3);}
-        }
-    },hooks);
-    fs::remove_all(root);
-    if(result || !failure.empty() || lastFrame>24) {std::cerr<<failure<<'\n';return 1;}
-    std::cout<<"PASS: AI Profiles MERGE INTO TAK ENGINE: notice, Normal preselected, old files kept byte for byte, engine-read result, also delete, one undo step\n";return 0;
 }
 // The AI window's game-mod half, against a SCRATCH data root (the install's entries
 // linked in, a fresh real mods/ folder): Save as game mod into an existing pack in
@@ -509,7 +426,7 @@ static int aiModWorkflow(const char* data) {
     auto put=[](const fs::path& p,const std::string& text) {std::ofstream(p,std::ios::binary)<<text;};
     auto slurp=[](const fs::path& p) {std::ifstream f(p,std::ios::binary);return std::string(std::istreambuf_iterator<char>(f),{});};
     put(ai/"TakEngine.TXT","weight araarch 7\n");put(ai/"notes.txt","keep\n");
-    put(ai/"n.txt","weight araarch 9\n");   // an old level file: never offered, never touched
+    put(ai/"n.txt","weight araarch 9\n");   // another DEFAULT profile of the pack: never touched
     const auto backups=root/"TAKengine"/"Cartographer"/"mod-backups"/"Harder";
     auto backedUp=[&](const std::string& name) {   // every backup copy of `name`, oldest first
         std::vector<std::string> out;std::error_code ec;std::vector<fs::path> stamps;
@@ -571,7 +488,7 @@ static int aiModWorkflow(const char* data) {
             check(editor->aiModPlanError.empty(),"plan error: "+editor->aiModPlanError);
             check(editor->aiModPlan.pack=="Harder" && editor->aiModPlan.folder==ai,"the existing Mods/Game/Harder/AI was not reused in its own case");
             check(n && n->action==A::Replace && n->path==ai/"TakEngine.TXT","the pack's different TakEngine.TXT is not planned as a replace");
-            check(!change("ai/n.txt"),"the pack's old ai/n.txt is planned");
+            check(!change("ai/n.txt"),"the pack's ai/n.txt is planned");
             capture("-modsave.png");click(editor->aiModWriteButton);break;
         }
         case 10:check(editor->modal==cart::Editor::M_CONFIRM && editor->mTitle=="REPLACE PACK FILES","a different pack file was replaced without the compare");key(SDLK_RETURN);break;
@@ -589,7 +506,7 @@ static int aiModWorkflow(const char* data) {
             click(row);break;
         }
         case 14:check(editor->aiMod && editor->aiMod->pack=="Harder" && packFile("ai/takengine.txt")==mapFile("ai/takengine.txt"),"the pack's files were not opened");
-            check(packFile("ai/n.txt")=="weight araarch 9\n" && editor->aiMergeButton.w>0,"the pack's old ai/n.txt is not kept with the notice");
+            check(packFile("ai/n.txt")=="weight araarch 9\n","the pack's ai/n.txt is not kept");
             check(title.find("[AI]")!=std::string::npos,"the window closed");click(editor->aiTabRects[1]);break;
         case 15:capture("-pack.png");click(cell("araarch",0));break;
         case 16:text("5");key(SDLK_RETURN);break;
@@ -2598,7 +2515,6 @@ int main(int argc,char** argv) {
     if(argc==3 && std::string(argv[2])=="aiprofile-mod")return aiModWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="aiprofile-extras")return aiExtrasWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="aiprofile-packs")return aiPackListWorkflow(argv[1]);
-    if(argc==3 && std::string(argv[2])=="aiprofile-merge")return aiMergeWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="templates")return templateWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="rules")return ruleTextWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);

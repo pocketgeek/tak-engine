@@ -169,7 +169,6 @@ void cart::Editor::adoptFreshMap(FreshMap fm,const std::string& nm,const std::st
     scenario.kingdom = wld; scenario.sizeW = mapView.map().width/32; scenario.sizeH = mapView.map().height/32;
     scenario.missionName = nm;
     scenario.generatorRecipe=fm.recipe;
-    if(!fm.recipe.empty())scenario.missionDescription="Generator recipe: "+fm.recipe;
     if(regeneratingCurrent) {scenario.missionName=previousName;scenario.missionDescription=previousDescription;}
     scenario.starts = std::move(fm.starts);
     if(!regeneratingCurrent)documentRequest.clear();   // a new, unsaved map: a restart cannot reopen it
@@ -225,7 +224,7 @@ void cart::Editor::applyNewMap(bool random) {
 
 void cart::Editor::openGeneratorRecipe() {
     std::string error;auto params=generatorParams;
-    if(!cart::restoreGeneratorRecipe(scenario.generatorRecipe,scenario.missionDescription,params,error)) {openMessage("GENERATOR RECIPE",error);return;}
+    if(!cart::restoreGeneratorRecipe(scenario.generatorRecipe,params,error)) {openMessage("GENERATOR RECIPE",error);return;}
     generatorParams=params;
     regeneratingCurrent=true;
     const char* worlds[]={"aramon","taros","veruna","zhon","creon"};

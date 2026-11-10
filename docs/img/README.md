@@ -705,9 +705,9 @@ composed, so no browser cell or tree is a placeholder.
   encoded at quality 98 (full chroma) instead of 86, because at 86 the tab
   label *DEFAULT AI* could read as *DEFAULT AT*; the scene is unchanged.
   Both were recaptured again the same way when the levels' six tabs became one
-  TAK ENGINE AI tab (`ai/takengine.txt`), and `ai-takengine.jpg` was added from
-  the `aiprofile-merge` workflow (crop 802 × 534 at 60,78, quality 98, full
-  chroma).
+  TAK ENGINE AI tab (`ai/takengine.txt`). `ai-takengine.jpg` is the `aiprofile`
+  workflow's `-level.png`, taken the same way (crop 802 × 534 at 60,78, quality
+  98, full chroma).
   `ai-mod.jpg` was added with the AI mod without a map, from the `aimod-nomap`
   workflow's `-aimod.png` (SDL `offscreen`, 921 × 691, scratch data root and
   profile), not cropped, so the empty editor behind the window shows; quality
@@ -756,7 +756,7 @@ composed, so no browser cell or tree is a placeholder.
 | `menus.jpg` | Composite: the FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP menus, each opened over Ulasem Arena and cropped to the menu (with only its own title). From 0.9.0 FILE has New AI mod... and Open AI mod..., VIEW ends with Show blocked cells (B) and SCENARIO with AI Profiles... (A) |
 | `ai-profiles.jpg` | *AiTest* (Ulasem Arena's terrain), Scenario → AI Profiles, DEFAULT AI tab: the map's own profile *aitest* started Empty, then NO FLYERS after its confirmation, so every flying unit reads BUILD OFF and LIMIT 0; TAK ENGINE AI (`ai/takengine.txt`) is tagged `map *` from an earlier edit, and PREVIEW LEVEL reads HARD. Crop of the window |
 | `ai-group-rules.jpg` | Ulasem Arena, AI Profiles, DEFAULT AI tab in the GROUP RULES view: own profile *ulasem arena*, one rule WEIGHT ARA 50 % covering 32 units, the Archer set individually (80 %) and shown as skipped. Crop of the window |
-| `ai-takengine.jpg` | *AiMerge* (Ulasem Arena's terrain) carrying the old level files `ai/e.txt`, `ai/n.txt` and `ai/h.txt`: AI Profiles, TAK ENGINE AI tab previewing NORMAL right after MERGE INTO TAK ENGINE took Normal's file; the old-file notice is still shown. From the `aiprofile-merge` workflow's `-merged.png`. Crop of the window |
+| `ai-takengine.jpg` | *AiTest* (Ulasem Arena's terrain), AI Profiles, TAK ENGINE AI tab previewing NORMAL with FIND *araarch*: the Archer's weight set to 0, so it reads OFF. From the `aiprofile` workflow's `-level.png`. Crop of the window |
 | `ai-mod.jpg` | File → New AI mod *Harder AI* (a scratch pack, no map open): the AI MOD (NO MAP) window on the TAK ENGINE AI tab previewing NORMAL after one edit, the Archer's WEIGHT 0, so the pack reads UNSAVED; the toolbar names the pack and the editor behind the window is empty. Whole window |
 | `blocked.jpg` | Added with the BLOCKED tool, not by the capture driver: the editor's own `--shot` output (`cartographer "Ladron's Tarn" --shot … --shot-tool blocked`, SDL `offscreen`, fresh scratch profile), whole 921 × 691 window at 30%. The shipped map's blocked cells along its castle walls are tinted red and its road cells blue; the browser lists the five brush sizes |
 

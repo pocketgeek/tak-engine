@@ -134,16 +134,8 @@ std::string inQuotes(std::string_view s) { return "'" + std::string(s) + "'"; }
 bool aiEngineFile(const std::string& key) {
     return tak::hpi::MountSet::key(key) == tak::ai::kEngineProfileFile;
 }
-std::optional<Difficulty> aiOldLevelOf(const std::string& key) {
-    // The names the levels read up to protocol 292 (ai::levelProfileFile then).
-    static constexpr const char* kOld[] = {"ai/d.txt", "ai/e.txt", "ai/n.txt", "ai/h.txt", "ai/a.txt", "ai/ad.txt"};
-    const auto k = tak::hpi::MountSet::key(key);
-    for (size_t i = 0; i < std::size(kOld); ++i)
-        if (k == kOld[i]) return kLevels[i];
-    return std::nullopt;
-}
 AiKind aiKindOf(const std::string& key) {
-    return aiEngineFile(key) || aiOldLevelOf(key) ? AiKind::Level : AiKind::Default;
+    return aiEngineFile(key) ? AiKind::Level : AiKind::Default;
 }
 const char* aiLevelName(Difficulty d) {
     switch (d) {
@@ -568,11 +560,6 @@ std::vector<AiIssue> checkAiFile(const std::string& key, std::string_view bytes,
     }
     static const ClassicCatalogue kNone;
     const ClassicCatalogue& catalogue = roster.catalogue ? *roster.catalogue : kNone;
-    if (const auto old = aiOldLevelOf(file)) {   // not read any more: no line checks
-        issue(S::Warning, 0, {}, file + " was the " + aiLevelName(*old) + " level's file; the game no longer reads it (all " +
-              "six levels read " + tak::ai::kEngineProfileFile + "). MERGE INTO TAK ENGINE copies its unit settings.");
-        return out;
-    }
     const bool engine = aiEngineFile(file);
     const AiKind kind = engine ? AiKind::Level : AiKind::Default;
     const auto lines = attributeAiLines(bytes, kind, catalogue);
@@ -763,9 +750,6 @@ std::vector<AiIssue> checkAiMap(const AiFiles& files, const std::string& aiProfi
         else if (aiEngineFile(own))
             out.push_back({S::Error, {}, 0, {}, "aiprofile=" + aiProfile + " makes the DEFAULT AI read " + own +
                            ", the file our levels read"});
-        else if (aiOldLevelOf(own))
-            out.push_back({S::Error, {}, 0, {}, "aiprofile=" + aiProfile + " makes the DEFAULT AI read " + own +
-                           ", an old level file name; rename the profile"});
         else {
             if (aiProfile.find('.') != std::string::npos)
                 out.push_back({S::Warning, {}, 0, {}, "aiprofile=" + aiProfile + " reads " + own +
@@ -777,10 +761,8 @@ std::vector<AiIssue> checkAiMap(const AiFiles& files, const std::string& aiProfi
         }
     }
     for (const auto& [key, bytes] : files) {
-        if (!aiFileTravels(key, aiProfile)) {
-            if (!aiOldLevelOf(key))   // an old level file: its own notice says it is not read
-                out.push_back({S::Warning, key, 0, {}, key + " is kept in the .kmp but not sent to other players or into Test Map"});
-        }
+        if (!aiFileTravels(key, aiProfile))
+            out.push_back({S::Warning, key, 0, {}, key + " is kept in the .kmp but not sent to other players or into Test Map"});
         else if (key == "ai/default.txt")
             out.push_back({S::Info, key, 0, {}, "every map without its own profile name also reads ai/default.txt, "
                            "and an installed ai/default.txt may be used instead"});
@@ -830,8 +812,6 @@ std::string aiProfileNameError(const std::string& name) {
     const auto key = aiProfileFileKey(name);
     if (key == "ai/default.txt") return "'default' is the standard profile; choose another name.";
     if (aiEngineFile(key)) return inQuotes(name) + " is the file our AI levels read; choose another name.";
-    if (const auto level = aiOldLevelOf(key))
-        return inQuotes(name) + " was the " + std::string(aiLevelName(*level)) + " level's file name; choose another name.";
     if (!validDocumentName(name) || !aiFileKey(key) || name.front() == ' ')
         return "Choose a name without reserved file name characters.";
     return {};
@@ -929,62 +909,6 @@ AiFileChoice whichFile(Difficulty d, const tak::hpi::Vfs& base, const AiFiles& m
                       (travel.count(source) ? "; it replaces this map's file entirely." : ".");
     }
     return out;
-}
-
-// ---- the old per-level files -----------------------------------------------------------
-
-std::vector<std::string> aiOldLevelFiles(const AiFiles& files, const std::string& aiProfile) {
-    const auto own = aiProfileFileKey(aiProfile);
-    std::vector<std::pair<Difficulty, std::string>> found;
-    for (const auto& [key, bytes] : files)
-        if (const auto level = aiOldLevelOf(key); level && !bytes.empty() && key != own) found.push_back({*level, key});
-    std::sort(found.begin(), found.end());
-    std::vector<std::string> out;
-    for (auto& f : found) out.push_back(std::move(f.second));
-    return out;
-}
-
-tak::ai::Profile aiLevelSettings(std::string_view bytes) {
-    tak::ai::Profile out;
-    tak::ai::applyProfileText(bytes, out);
-    return out;
-}
-size_t aiLevelSettingCount(const tak::ai::Profile& p) {
-    std::set<std::string> units;
-    for (const auto* m : {&p.weight, &p.limit})
-        for (const auto& [unit, v] : *m) units.insert(unit);
-    return units.size();
-}
-
-bool aiMergeIntoEngine(std::string_view engineBytes, std::string_view oldBytes, const std::string& header,
-                       const ClassicCatalogue& catalogue, std::string& out, std::string& error) {
-    const std::string file = tak::ai::kEngineProfileFile;
-    AiDraft draft = parseAiDraft(engineBytes, AiKind::Level, catalogue);
-    if (draft.asWritten && !engineBytes.empty()) {
-        std::string why;
-        if (!makeEditable(draft, catalogue, &why)) {
-            error = file + " was written by hand and cannot be converted (" + why + "); merge by hand in the Text view.";
-            return false;
-        }
-    }
-    draft.asWritten = false;
-    draft.original.clear();
-    draft.kind = AiKind::Level;
-    if (draft.header.empty()) draft.header = header;
-    const auto old = aiLevelSettings(oldBytes);
-    for (const auto& [unit, v] : old.weight) draft.units[unit].weight = v;
-    for (const auto& [unit, v] : old.limit) draft.units[unit].limit = v;
-    if (!saveAiDraft(draft, catalogue, out, error)) return false;
-    // The engine's reading of the result must be the old ai/takengine.txt followed by
-    // the old level file, line for line.
-    auto want = aiLevelSettings(engineBytes);
-    tak::ai::applyProfileText(oldBytes, want);
-    const auto got = aiLevelSettings(out);
-    if (got.weight != want.weight || got.limit != want.limit) {
-        error = "AI profile could not be written exactly: the merged " + file + " does not read as its settings plus the old file's";
-        return false;
-    }
-    return true;
 }
 
 std::string compareAiFiles(const std::string& key, std::string_view before, std::string_view after,

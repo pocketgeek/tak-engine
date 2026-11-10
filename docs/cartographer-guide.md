@@ -1126,9 +1126,7 @@ uses for its random maps.
 | **SCATTERED MANA (BY MAP AREA)** | None, Minimum, Medium, High or Max neutral mana spots spread over open ground, by area. Max is as dense as a home with six spots; each lower level halves it. |
 | **PLATEAUS**, **MOUNTAINS**, **TOWNS** | 0 to 255: cliff-edged plateaus with ramps, mountain ranges and walled towns (Zhon: villages), built from the world's own retail sections. Ignored where a world has no such kit (Veruna has no mountains) and, for plateaus, by Taros Maze and Creon Highlands, which make their own high ground. All three at 0 give the same terrain as generator version 9. |
 
-The fields are in two columns. **Regenerate** on a map made by a generator older
-than version 10 explains that its recipe cannot be rebuilt; use **RANDOM** for a
-new one.
+The fields are in two columns.
 
 The generator adjusts some settings without asking, and the preview shows the
 size it really used:
@@ -1147,15 +1145,15 @@ size it really used:
 | Themed layouts | 16 × 16 | 24 × 24 |
 
 Accepting replaces the whole map: terrain, features, start positions and any
-scenario content. The new map is unsaved, its description is set to
-*Generator recipe: …*, and the settings (the **recipe**) are saved with the
-map.
+scenario content. The new map is unsaved, its description is empty, and the
+settings (the **recipe**) are saved with the map.
 
 **Scenario → Regenerate from recipe** reopens the settings with the recipe of
 the open map, so you can try another seed or density. Accepting keeps the map's
 name and description and replaces everything else. It can be undone with
 **Ctrl+Z**. A map that was not generated has no recipe, and Cartographer says
-so.
+so; so does a map whose recipe this generator cannot rebuild exactly (one made
+by another generator version): use **RANDOM** for a new one.
 
 ---
 
@@ -1458,10 +1456,6 @@ The DEFAULT AI is the one the room calls **RETAIL**. See
 [AI difficulty](user-guide.md#ai-difficulty) in the game guide for how each
 level plays.
 
-Maps or mods made for 0.8.11 or earlier may carry a file for each level
-(`ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`, `ai/a.txt`, `ai/ad.txt`). The
-game no longer reads those; see [Old level files](#old-level-files).
-
 ### The AI Profiles window
 
 **Scenario → AI Profiles...** (**A**) opens the window. **Scenario →
@@ -1477,8 +1471,7 @@ flying unit is switched off.*
   (`ai/takengine.txt`, the one file all six of our levels read). A profile the
   map carries is tagged `map`; `*` means it changed since the window opened,
   and `as written` marks a file written by hand (see below). Under them are
-  **PREVIEW LEVEL**, the [old level files](#old-level-files) notice when the map
-  still has them, the **presets**, **PREVIEW WITH GAME MOD** and the **GAME
+  **PREVIEW LEVEL**, the **presets**, **PREVIEW WITH GAME MOD** and the **GAME
   MOD** buttons.
 - **The rule line** at the top says how this kind of file works. DEFAULT AI:
   *the first line naming a unit wins; group rules combine*. TAK ENGINE AI:
@@ -1516,6 +1509,11 @@ for the next level, right-click for the one before) picks whose built-in
 values fill the unset cells and the **BUILT-IN** column, and whose limits in
 play are shown. Your settings (marked `*`) are the same for every level.
 
+![The AI PROFILES window for map AiTest on the TAK ENGINE AI tab (ai/takengine.txt, tagged map *), previewing NORMAL, with FIND set to araarch. Right: the rule line WHOLE NUMBERS; UNITS BY NAME ONLY; LATER LINES WIN and the unit table with the BUILD, WEIGHT, BUILT-IN and LIMIT (IN PLAY) columns: the Archer (araarch) is OFF with weight 0](img/cartographer/ai-takengine.jpg)
+
+*The TAK ENGINE AI tab previewing Normal, after setting the Archer's weight to
+0: no level builds it.*
+
 Each level also changes limits as it plays: Easy halves them, Hard and Absurd
 raise them by half (at least 1), and the Defensive levels ignore every limit
 except 0. The **LIMIT (IN PLAY)** column shows `> n` when the level changes your
@@ -1537,30 +1535,6 @@ and Undo takes a preset back.
 On the TAK ENGINE AI tab the presets write `ai/takengine.txt`, so they apply
 to all six levels.
 
-#### Old level files
-
-A map or game mod made for 0.8.11 or earlier may still carry the old per-level
-files `ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`, `ai/a.txt` or
-`ai/ad.txt`. The game no longer reads them. Cartographer keeps them in the map
-(or pack) byte for byte, as ordinary unused files, and the left column shows a
-notice naming them, with **MERGE INTO TAK ENGINE...**:
-
-![The AI PROFILES window for map AiMerge on the TAK ENGINE AI tab, previewing NORMAL. Left: under PREVIEW LEVEL, the notice Old level files (e.txt, n.txt, h.txt) are no longer read by the game, and the button MERGE INTO TAK ENGINE.... Right: the unit table with WEIGHT, BUILT-IN and LIMIT (IN PLAY) columns, and the note Merged 2 unit settings from ai/n.txt into ai/takengine.txt; the old files stay (not read). Ctrl+Z takes it back](img/cartographer/ai-takengine.jpg)
-
-*After merging Normal's old file. The old files are still in the map, so the
-notice stays until you delete them.*
-
-- The dialog lists the old files in level order with how many units each
-  sets. Files that set exactly the same units merge as one. When they differ,
-  pick the file to use; **Normal**'s is preselected.
-- **MERGE** writes that file's unit settings into `ai/takengine.txt`: each unit
-  it names takes its weight and limit there; units `ai/takengine.txt` already
-  sets and the old file does not keep their values. Cartographer checks the
-  result with the game's own reader before it stores it.
-- The old files stay unless you tick **Also delete the old level files**.
-- One **Undo** takes back the whole merge (and the deletes). In a game mod's
-  pack there is no undo, as for every pack edit.
-
 #### The DEFAULT AI's own profile
 
 A map starts with **the standard profile** (`aiprofile=DEFAULT` in its map
@@ -1580,8 +1554,8 @@ FROM**:
 
 The profile is saved in the map as `ai/<name>.txt`, and the map's settings
 name it. You can rename it in the name field: the file moves with the name.
-A name cannot contain `.`, `/` or `\`, and cannot be `default`, `takengine`
-or an old level file name (`d`, `e`, `n`, `h`, `a`, `ad`). Choosing **the standard profile**
+A name cannot contain `.`, `/` or `\`, and cannot be `default` or `takengine`.
+Choosing **the standard profile**
 again asks first, then removes the map's file. Cartographer never writes a new
 `ai/default.txt` into a map: that name is read by every map without a profile
 of its own. A map that already carries one keeps it, and choosing its own
@@ -1625,7 +1599,7 @@ selected unit's name. **TABLE VIEW** goes back.
 **CHECK** lists problems in all the map's AI files: misspelled unit names
 (with a suggestion), lines that do nothing, a decimal or a capital `Weight` in
 `ai/takengine.txt`, a side that could build nothing at all (and on which
-levels), old level files the game no longer reads, and more. Click a
+levels), and more. Click a
 problem to see its line. Check Map reports the warnings and errors too (see
 [What Check Map reports](#what-check-map-reports)). None of them stops you from
 saving.
@@ -1656,7 +1630,7 @@ not.* The rules:
   the map, then your install), and only then for `ai/default.txt` in the same
   order. So a game mod's `ai/default.txt` does not replace a map's own profile.
 - Your install never supplies `ai/takengine.txt`. Cosmetic mods never supply
-  AI files. The old level files are never read, wherever they are.
+  AI files.
 - Campaign missions always use the DEFAULT AI.
 
 **PREVIEW WITH GAME MOD** steps through your game mods (**PACK: NONE** means
@@ -1674,8 +1648,8 @@ pack is picked, the unit table also lists the units it adds, tagged `pack`.
 `mods/game/<pack>/ai/` in your game data folder. Type a new pack name, or step
 through the existing packs with `<` and `>`. The dialog shows the full folder,
 one row per file with what it will do (new, identical, replaces), and which
-files to write: `ai/takengine.txt` is ticked; the old level files are not
-offered; the DEFAULT AI profile is not ticked, and
+files to write: `ai/takengine.txt` is ticked; the DEFAULT AI profile is not
+ticked, and
 can be written either as `ai/default.txt` (every map that uses the standard
 profile) or under the map's profile name (only maps whose profile has that
 name).
@@ -2030,7 +2004,7 @@ name the same profile) each open, play and travel with their own copy.
 Only some of these files go with the map to other players and into **Test
 Map**: `ai/default.txt`, `ai/takengine.txt` and the file the map's AI profile names
 (`aiprofile=islands` reads `ai/islands.txt`). Any other file, such as
-`ai/notes.txt` or an old level file like `ai/n.txt`, stays in your `.kmp` but is
+`ai/notes.txt`, stays in your `.kmp` but is
 not sent; Check Map says so.
 
 ### Sharing your map

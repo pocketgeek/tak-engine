@@ -595,18 +595,6 @@ struct Editor : Session {
     void aiPickWord(const std::string& word);
     void aiCommitGroupCell();
     void aiGroupAction(int rule,int what);       // 0 keyword, 1 move up, 2 remove, 3 move down
-    // The old per-level files (ai/d.txt .. ai/ad.txt, no longer read): kept byte for
-    // byte; MERGE INTO TAK ENGINE writes one of them into ai/takengine.txt after the
-    // dialog shows what it does (when they disagree the user picks which; Normal's is
-    // preselected). Optionally deletes them too. One undo step (a pack edit has none).
-    struct AiMergeRow {std::string key;size_t settings=0;int group=0;SDL_Rect box{};};   // group: rows with the same settings share it
-    bool aiMergeOpen=false,aiMergeDelete=false;
-    int aiMergePick=0;
-    std::vector<AiMergeRow> aiMergeRows;
-    SDL_Rect aiMergeButton{},aiMergeGo{},aiMergeCancel{},aiMergeDeleteBox{};
-    void aiOpenMerge();
-    void aiMerge();
-    void drawAiMerge();
     void drawAiGroups(int x0,int y0,int W,int listBottom);
     void drawAiWordPicker();
     // The unit roster of a game mod (design 7.2, phase 5): when a pack is edited or
