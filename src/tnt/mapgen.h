@@ -95,7 +95,12 @@ Result generate(const Params& p, const hpi::Vfs& vfs);
 // Prefabs consumed by either generator, included in multiplayer's data hash.
 std::vector<std::string> assetPaths(const hpi::Vfs& vfs);
 
-// Clamp UI inputs to section multiples, 2..8 players, and layout-specific space.
+// The map sizes the menus offer, in sections (32 cells) per side.
+constexpr int kSizeSteps[] = {8, 12, 16, 20, 24, 32, 40, 48, 56, 64};
+
+// Clamp UI inputs to section multiples, 2..8 players, and layout-specific space: a side
+// the layout cannot fit at this player count grows (the smaller side first, along
+// kSizeSteps) until it can. Width and height are independent.
 Params sanitize(Params p);
 
 // Complete, balanced expansion rounds; independent of map area/player count.

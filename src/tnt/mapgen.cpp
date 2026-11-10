@@ -47,8 +47,8 @@ Params sanitize(Params p) {
     const auto first = name.find_first_not_of(' ');
     p.name = first == std::string::npos ? std::string{} : name.substr(first);
     if (p.mapType >= kMapTypes) p.mapType = Aramon;
-    // Section multiples, 4..64 sections per side.
-    auto fix = [](uint16_t v) -> uint16_t { return uint16_t(std::clamp(int(v) / 32, 4, 64) * 32); };
+    // Section multiples, 8..64 sections per side.
+    auto fix = [](uint16_t v) -> uint16_t { return uint16_t(std::clamp(int(v) / 32, 8, 64) * 32); };
     p.widthCells = fix(p.widthCells);
     p.heightCells = fix(p.heightCells);
     p.players = uint8_t(std::clamp<int>(p.players, 2, 8));
@@ -56,17 +56,37 @@ Params sanitize(Params p) {
     p.layout = std::min<uint8_t>(p.layout, kLayouts-1);
     if (p.layout >= Maze) for (uint8_t world=0;world<kMapTypes;++world)
         if (themedLayout(world)==p.layout) p.mapType=world;
-    const int minimum = p.layout == Lakes ? (p.players > 4 ? 512 : 384) : (p.players > 4 ? 384 : 256);
-    int minW = minimum, minH = minimum;
-    if (p.layout >= Maze) minW = minH = p.players > 4 ? 768 : 512;
-    if (p.layout == Islands) {
-        const int cols = p.players <= 4 ? 2 : 3;
-        const int rows = (p.players + cols - 1) / cols;
-        minW = std::max(minW, cols * 256);
-        minH = std::max(minH, rows * 256);
+    // What fits was measured, not assumed (2026-11-09): every layout, 2-8 players and
+    // widths x heights of 8-64 sections, generated for 16 seeds, counting a size only when
+    // every seed built a map that keeps its layout -- Maze walls and open exits, Highlands
+    // uplands, water on Lakes, Riverlands and Ports, a harbor per player on Islands and
+    // Ports. The start plan decides most of it: every start kMinStartGap from the others,
+    // for any seed. Beyond that a layout needs a shortest side (sections) per player
+    // count, the measured value held level or rising as players are added.
+    static constexpr int kMinSide[kLayouts][9] = {
+        /* Mainland   */ {0, 0, 8, 8, 8, 8, 8, 8, 8},
+        /* Lakes      */ {0, 0, 8, 8, 8, 12, 12, 12, 12},
+        /* Islands    */ {0, 0, 8, 12, 12, 16, 16, 20, 20},
+        /* Maze       */ {0, 0, 8, 8, 8, 8, 8, 8, 8},
+        /* Ports      */ {0, 0, 12, 12, 16, 16, 16, 16, 16},
+        /* Riverlands */ {0, 0, 8, 8, 12, 12, 12, 12, 16},
+        /* Jungle     */ {0, 0, 8, 8, 8, 8, 8, 8, 8},
+        /* Highlands  */ {0, 0, 8, 8, 8, 8, 8, 8, 8},
+    };
+    const auto fits = [&](const Params& q) {
+        if (std::min(q.widthCells, q.heightCells) / 32 < kMinSide[q.layout][q.players]) return false;
+        return detail::startsSpacedForAnySeed(q);
+    };
+    // A size that does not fit grows the smaller side (width on a tie) to the next menu
+    // step until it does; 64 x 64 fits everything.
+    const auto grow = [](uint16_t cells) {
+        for (int step : kSizeSteps) if (step * 32 > cells) return uint16_t(step * 32);
+        return cells;
+    };
+    while (!fits(p) && (p.widthCells < 64 * 32 || p.heightCells < 64 * 32)) {
+        if (p.widthCells <= p.heightCells && p.widthCells < 64 * 32) p.widthCells = grow(p.widthCells);
+        else p.heightCells = grow(p.heightCells);
     }
-    p.widthCells = uint16_t(std::max<int>(p.widthCells, minW));
-    p.heightCells = uint16_t(std::max<int>(p.heightCells, minH));
     return p;
 }
 

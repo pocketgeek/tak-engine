@@ -46,18 +46,28 @@ ordinary playable maps. Clients and servers must run the same engine version
 In the game setup screen each biome offers its own themed fourth layout.
 Cartographer lists the themed layouts by faction; selecting one sets its biome.
 
-The menu offers square sizes 8, 12, 16, 20, 24, 32, 40, 48, 56, and 64. It skips sizes that cannot
-support the selected layout/player count:
+Width and height are set separately, each 8, 12, 16, 20, 24, 32, 40, 48, 56 or 64 sections
+(one section is 32 simulation cells); the menu skips a size the layout cannot build with
+the other side as it is, and `sanitize` grows a side that does not fit (the smaller side
+first, along those steps). What fits was measured, not assumed: every layout, 2–8 players
+and widths × heights of 8–64 sections were generated for 16 seeds (3,080 combinations),
+and a size counts only when every seed built a map that keeps its layout (Maze walls and
+open exits, Highlands uplands, water on Lakes, Riverlands and Ports, a harbor per player on
+Islands and Ports). Two rules reproduce that with no size allowed that fails:
 
-| Layout | 2–4 players | 5–8 players |
-| --- | --- | --- |
-| Mainland | 8×8 minimum | 12×12 minimum |
-| Lakes | 12×12 minimum | 16×16 minimum |
-| Islands | 16×16 minimum | 24×24 minimum |
-| Themed layouts | 16×16 minimum | 24×24 minimum |
+1. The start plan keeps every start 72 cells from the others for any of the eight
+   rotations the seed picks (`startsSpacedForAnySeed`). This alone decides Mainland, Maze,
+   Jungle and Highlands, and keeps 6–8 player maps at 12 sections or more on a side unless
+   the other side is long.
+2. A shortest side, in sections, by layout and players (held level or rising with players):
 
-The API also accepts rectangular dimensions in 32-cell section multiples, with
-per-axis space requirements. One map-size unit is 32 simulation cells.
+| Layout | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Mainland, Maze, Jungle, Highlands | 8 | 8 | 8 | 8 | 8 | 8 | 8 |
+| Lakes | 8 | 8 | 8 | 12 | 12 | 12 | 12 |
+| Riverlands | 8 | 8 | 12 | 12 | 12 | 12 | 16 |
+| Islands | 8 | 12 | 12 | 16 | 16 | 20 | 20 |
+| Ports | 12 | 12 | 16 | 16 | 16 | 16 | 16 |
 
 Starts are planned before terrain is painted, with a minimum 72-cell separation,
 level home areas, and clear 24×24-cell construction squares. Home economies are

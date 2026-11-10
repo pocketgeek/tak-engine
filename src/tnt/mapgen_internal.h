@@ -361,5 +361,11 @@ constexpr std::array<std::pair<int, int>, 8> kCompass = {{
     {0, 1000}, {-707, 707}, {-1000, 0}, {-707, -707},
 }};
 
+// The closest two starts may be, in cells (generateBalanced refuses a closer plan).
+constexpr int kMinStartGap = 72;
+// Whether the start plan keeps kMinStartGap for every rotation the seed can pick
+// (seed % 8): a size that holds here holds for any seed. sanitize asks it.
+bool startsSpacedForAnySeed(const Params& p);
+
 
 } // namespace tak::mapgen::detail

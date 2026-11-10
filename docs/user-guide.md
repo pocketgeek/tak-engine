@@ -534,9 +534,11 @@ The Retail AI always plays the campaign's computer opponents: see
   routes. Maze corridors open onto all four map edges, and Lakes can reach the
   edge of the map.
 - **World**: the look of the map (Aramon, Taros, Veruna, Zhon or Creon terrain).
-- **Size** and **player count**, up to 64 × 64. The sizes on offer depend on the
-  layout and the player count: larger player counts need bigger maps, and themed
-  layouts start at 16 × 16 (24 × 24 for 5–8 players).
+- **Players**, then **Width** and **Height**, each from 8 to 64 sections, set on their
+  own. A size the layout cannot build fairly at that player count is skipped: most
+  layouts go down to 8 × 8 for up to 5 players and 12 × 12 for 6–8, and Islands, Ports,
+  Lakes and Riverlands need a little more room as players are added. Long, narrow maps
+  are allowed where the starts fit.
 - **Forests**, **Rocks**, **Water** and **Hills** amounts (on Creon Highlands the
   Hills slider is **Highlands**, the amount of high ground).
 - **Plateaus**, **Mountains** and **Towns**: terrain built from the original
@@ -585,10 +587,10 @@ are not supported any more: the game asks you to generate a new map. A
 generated map you have saved as a `.kmp` always plays, whatever made it.
 Rebuilding a map from its recipe needs the same game data.
 
-![The single-player screen with Generate Random Map open: Type Aramon and Layout Mainland, then Size 12 × 12 and Players 4 on one row, the Forests, Rocks, Extra Mana, Scattered Mana (at High), Water, Hills, Plateaus, Mountains and Towns sliders in two columns and Re-roll Seed. The preview shows four numbered starts](img/guide/random-map-lobby.jpg)
+![The single-player screen with Generate Random Map open: Type Aramon, Layout Mainland and Players 4, then Width 16 and Height 12 on one row, the Forests, Rocks, Extra Mana, Scattered Mana (at High), Water, Hills, Plateaus, Mountains and Towns sliders in two columns and Re-roll Seed. The preview shows the wide 16 × 12 map with four numbered starts](img/guide/random-map-lobby.jpg)
 
 *The random map settings in the single-player lobby, with Scattered Mana at
-High. Size and Players share a row.*
+High, on a wide 16 × 12 map: Width and Height are set separately.*
 
 ![A wooded lake shore on a generated Aramon Riverlands map, with a lodestone among standing-stone ruins in a clearing and a rocky plateau rim at the lower left](img/generated.jpg)
 

@@ -19,7 +19,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 321;      // 321: review fixes -- refused player orders change nothing (a Ctrl Load checked
+constexpr uint32_t kNetVersion = 322;      // 322: random maps size each side on its own, from 8 sections where the layout fits
+                                           // (sanitize measures the fit: the start plan for any seed, islands/harbor room)
+                                           // 321: review fixes -- refused player orders change nothing (a Ctrl Load checked
                                            // before either unit is rewound; Train/RepeatTrain/Build/BuildManaArea held to the
                                            // producer's build menu, Train/RepeatTrain to mobile types); host powers follow the
                                            // host's seat across reconnects and pass on when it leaves a running game (LobbyState

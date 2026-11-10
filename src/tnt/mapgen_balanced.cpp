@@ -150,12 +150,28 @@ std::vector<Point> planStarts(const Params& p) {
 }
 }
 
+namespace detail {
+bool startsSpacedForAnySeed(const Params& p) {
+    for (uint64_t rotation = 0; rotation < 8; ++rotation) {
+        Params q = p;
+        q.seed = rotation;
+        const auto starts = planStarts(q);
+        for (size_t i = 0; i < starts.size(); ++i)
+            for (size_t j = 0; j < i; ++j) {
+                const int dx = starts[i].first - starts[j].first, dz = starts[i].second - starts[j].second;
+                if (dx * dx + dz * dz < kMinStartGap * kMinStartGap) return false;
+            }
+    }
+    return true;
+}
+}
+
 namespace {
 Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
     Result r;r.starts=planStarts(p);
     for(size_t i=0;i<r.starts.size();++i)for(size_t j=0;j<i;++j) {
         const int dx=r.starts[i].first-r.starts[j].first,dz=r.starts[i].second-r.starts[j].second;
-        if(dx*dx+dz*dz<72*72)throw std::runtime_error("Random map starts are too close");
+        if(dx*dx+dz*dz<kMinStartGap*kMinStartGap)throw std::runtime_error("Random map starts are too close");
     }
     auto& m=r.map;m.stockTerrain=true;
     const int w=p.widthCells,h=p.heightCells,sw=w/32,sh=h/32;

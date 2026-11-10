@@ -236,7 +236,7 @@ int main(int argc,char** argv) {
             check(d.layout==layout && themedLayout(d.mapType)==layout,"theme codec/world mismatch");
         }
         Params invalid;invalid.widthCells=0;invalid.heightCells=65535;invalid.players=255;invalid.layout=255;
-        auto sane=sanitize(invalid);check(sane.players==8&&sane.widthCells>=384&&sane.heightCells==2048,"sanitize bounds");
+        auto sane=sanitize(invalid);check(sane.players==8&&sane.widthCells>=256&&sane.heightCells==2048&&sanitize(sane).widthCells==sane.widthCells,"sanitize bounds");
         Params named; named.name = "  My Lake-7_  ";
         check(decodeMapId(encodeMapId(named)).name == "My Lake-7_", "map name round trip");
         check(friendlyLabel(named) == "My Lake-7_", "map name display");

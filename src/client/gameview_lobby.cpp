@@ -555,10 +555,7 @@ float createOptionPx(float maxW) {
 
     void GameView::applyGenParams() {
         genParams_.formatVer = tak::mapgen::Params{}.formatVer;
-        genParams_ = tak::mapgen::sanitize(genParams_);
-        // The menu offers square maps; accommodate the layout's minimum size.
-        genParams_.widthCells = genParams_.heightCells =
-            std::max(genParams_.widthCells, genParams_.heightCells);
+        genParams_ = tak::mapgen::sanitize(genParams_);   // grows a side the layout cannot fit
         auto previous = tak::mapgen::decodeMapId(mpMapId_);
         previous.name = genParams_.name;
         const bool reusePreview = mapPreviewFor_ == mapPath_ &&
@@ -946,7 +943,6 @@ float createOptionPx(float maxW) {
       } else {
         // ---- random-map params panel (replaces the list) --------------------------
         static const char* kTypeName[tak::mapgen::kMapTypes] = {"ARAMON", "TAROS", "VERUNA", "ZHON", "CREON"};
-        static const int kSizes[] = {8, 12, 16, 20, 24, 32, 40, 48, 56, 64};   // section-units (x32 cells) per side
         // One rhythm for the whole panel: every control is kRowH tall and every gap
         // is kGap. The rows used to step by 30, 30, 36 and then 44, so the buttons
         // sat tighter than the sliders and the run of sliders drifted out of line
@@ -966,32 +962,35 @@ float createOptionPx(float maxW) {
                              const int next=(index+direction+4)%4;
                              genParams_.layout=next==3?tak::mapgen::themedLayout(genParams_.mapType):uint8_t(next);
                              applyGenParams(); }); py += kRowH + kGap;
-        int curU = genParams_.widthCells / 32;
-        char szl[48]; std::snprintf(szl, sizeof szl, "SIZE:  %d x %d", curU, curU);
-        // SIZE and PLAYERS share a row, so the six sliders and the seed button
-        // still end above the BACK/CREATE footer band of the 540-high canvas.
-        lbCycle(px, py, kHalfW, kRowH, szl, true, [this](int direction) {
-            const int u = genParams_.widthCells / 32;
+        char pl[32]; std::snprintf(pl, sizeof pl, "PLAYERS:  %d", int(genParams_.players));
+        lbCycle(px, py, kBtnW, kRowH, pl, true, [this](int direction) {
+            genParams_.players = uint8_t(2 + (genParams_.players - 2 + direction + 7) % 7);
+            applyGenParams();
+        }); py += kRowH + kGap;
+        // WIDTH and HEIGHT, in sections (32 cells), each on its own: a step offers only the
+        // sizes the layout can build with the other side as it is (sanitize keeps both).
+        const auto sizeCycle = [this](bool height, int direction) {
+            const int cur = (height ? genParams_.heightCells : genParams_.widthCells) / 32;
             std::vector<int> sizes;
-            for (int size : kSizes) {
+            for (int size : tak::mapgen::kSizeSteps) {
                 auto candidate = genParams_;
-                candidate.widthCells = candidate.heightCells = uint16_t(size * 32);
-                candidate = tak::mapgen::sanitize(candidate);
-                if (candidate.widthCells == size * 32 && candidate.heightCells == size * 32)
+                (height ? candidate.heightCells : candidate.widthCells) = uint16_t(size * 32);
+                const auto kept = tak::mapgen::sanitize(candidate);
+                if (kept.widthCells == candidate.widthCells && kept.heightCells == candidate.heightCells)
                     sizes.push_back(size);
             }
             if (sizes.empty()) return;
-            auto at = std::find(sizes.begin(), sizes.end(), u);
-            int index = at == sizes.end() ? 0 : int(at - sizes.begin());
-            int next = sizes[(index + direction + int(sizes.size())) % int(sizes.size())];
-            genParams_.widthCells = genParams_.heightCells = uint16_t(next * 32);
+            const auto at = std::find(sizes.begin(), sizes.end(), cur);
+            const int index = at == sizes.end() ? (direction > 0 ? -1 : 0) : int(at - sizes.begin());
+            const int next = sizes[size_t((index + direction + int(sizes.size())) % int(sizes.size()))];
+            (height ? genParams_.heightCells : genParams_.widthCells) = uint16_t(next * 32);
             applyGenParams();
-        });
-        char pl[32]; std::snprintf(pl, sizeof pl, "PLAYERS:  %d", int(genParams_.players));
-        lbCycle(px + kHalfW + kGap, py, kHalfW, kRowH, pl, true, [this](int direction) {
-            genParams_.players = uint8_t(2 + (genParams_.players - 2 + direction + 7) % 7);
-            applyGenParams();
-        }); py += kRowH + kGap * 2;   // a wider break between the pickers and the sliders
+        };
+        char wl[32]; std::snprintf(wl, sizeof wl, "WIDTH:  %d", genParams_.widthCells / 32);
+        lbCycle(px, py, kHalfW, kRowH, wl, true, [sizeCycle](int direction) { sizeCycle(false, direction); });
+        char hl[32]; std::snprintf(hl, sizeof hl, "HEIGHT:  %d", genParams_.heightCells / 32);
+        lbCycle(px + kHalfW + kGap, py, kHalfW, kRowH, hl, true, [sizeCycle](int direction) { sizeCycle(true, direction); });
+        py += kRowH + kGap * 2;   // a wider break between the pickers and the sliders
         // Nine sliders in two half-width columns; each level reads at the right end of
         // its label line, where the bar's column ends.
         int column = 0;
