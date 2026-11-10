@@ -787,7 +787,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     std::vector<std::pair<float, float>> genStarts;
     tak::tnt::Map map;
     if (generated) {
-        auto g = tak::mapgen::generate(tak::mapgen::decodeMapId(cfg.mapPath), vfs);
+        auto g = tak::mapgen::generate(tak::mapgen::parseMapId(cfg.mapPath), vfs);
         map = std::move(g.map);
         for (auto& [scx, scz] : g.starts)   // cell -> px, matching parseStartPositions
             genStarts.push_back({float(scx * 16), float(scz * 16)});

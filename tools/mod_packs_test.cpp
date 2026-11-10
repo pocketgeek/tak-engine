@@ -10,8 +10,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <iterator>
-#include <map>
 #include "util/u8path.h"
 using namespace tak;
 int main(){
@@ -24,12 +22,6 @@ int main(){
  auto bytesOf=[](const std::string& v){return std::vector<uint8_t>(v.begin(),v.end());};
  auto rejects=[&](auto fn,const char* label){bool caught=false;try{fn();}catch(const std::exception&){caught=true;}check(caught,label);};
  try{
-  // A legacy overrides/ folder full of packs: never read, never touched.
-  put("overrides/Alpha/sounds/legacy.wav","legacy");put("overrides/Alpha/units/legacy.fbi","legacy");archive("overrides/click.hpi",{{"sounds/legacy-click.wav","legacy"}});put("overrides/OldPack/sounds/old.wav","old");
-  auto snapshot=[&]{std::map<std::string,std::string> all;for(const auto& e:std::filesystem::recursive_directory_iterator(root/"overrides")){
-    std::string bytes;if(e.is_regular_file()){std::ifstream in(e.path(),std::ios::binary);bytes.assign(std::istreambuf_iterator<char>(in),{});}
-    all[e.path().lexically_relative(root).generic_string()]=bytes+"|"+std::to_string(static_cast<long long>(std::filesystem::last_write_time(e.path()).time_since_epoch().count()));}return all;};
-  const auto legacyBefore=snapshot();
   // Files directly in mods/, mods/cosmetic/ and mods/game/ are never packs.
   put("mods/root-only.wav","forbidden");put("mods/cosmetic/root-only.wav","forbidden");put("mods/game/root-only.wav","forbidden");
   put("mods/cosmetic/Alpha/sounds/test.wav","a");put("mods/cosmetic/Zeta/sounds/test.wav","z");
@@ -38,8 +30,7 @@ int main(){
   put("mods/game/Zeta/sounds/only-game.wav","g");
   check(hpi::modPacks(root,hpi::ModKind::Cosmetic)==std::vector<std::string>({"Alpha","Zeta"}),"only cosmetic pack directories listed");
   check(hpi::modPacks(root,hpi::ModKind::Game)==std::vector<std::string>({"Alpha","Zeta"}),"only game pack directories listed");
-  check(hpi::hasLegacyOverridesDir(root),"legacy overrides/ folder detected");
-  auto empty=hpi::mountRetailRoot(root);check(!empty.has("root-only.wav")&&!empty.has("sounds/test.wav")&&!empty.has("sounds/legacy.wav"),"root and unselected files never loaded");
+  auto empty=hpi::mountRetailRoot(root);check(!empty.has("root-only.wav")&&!empty.has("sounds/test.wav"),"root and unselected files never loaded");
   auto cosmetic=hpi::mountRetailRoot(root,{},{"Alpha"});check(cosmetic.has("sounds/test.wav") && cosmetic.read("sounds/test.wav")==std::vector<uint8_t>{'a'},"selected cosmetic sound loaded");
   for(const auto* p:{"units/test.fbi","features/test.tdf","scripts/test.cob","objects3d/test.3do","ai/test.txt"})check(!cosmetic.has(p),"cosmetic cannot change simulation inputs");
   check(hpi::gameplayHash(cosmetic)==hpi::gameplayHash(empty),"cosmetic packs never change the gameplay hash");
@@ -54,14 +45,13 @@ int main(){
   check(!hpi::mountRetailRoot(root,{},{"Alpha"}).has("sounds/only-game.wav"),"a cosmetic selection never loads game packs");
   rejects([&]{hpi::modFiles(root,hpi::ModKind::Game,{"../escape"});},"reject unknown/traversal pack");
   rejects([&]{hpi::modFiles(root,hpi::ModKind::Cosmetic,{"../game/Alpha"});},"reject a cosmetic name that reaches a game pack");
-  rejects([&]{hpi::mountRetailRoot(root,{"OldPack"});},"overrides/ packs are not game packs");rejects([&]{hpi::mountRetailRoot(root,{},{"OldPack"});},"overrides/ packs are not cosmetic packs");
   {   // A selection whose name exists only in the other kind is refused.
     put("mods/game/OnlyGame/sounds/x.wav","x");
     rejects([&]{hpi::modFiles(root,hpi::ModKind::Cosmetic,{"OnlyGame"});},"a game pack is not a cosmetic pack");
   }
   {   // Always-enabled packs: subfolders of mods/<kind>/always_enabled/, each a pack
-      // in the ordinary format. Archives directly in mods/cosmetic/ (0.8.13's
-      // always-on archives) and other loose files no longer load.
+      // in the ordinary format. Archives directly in mods/cosmetic/ and other loose
+      // files never load.
     archive("mods/cosmetic/b.hpi",{{"sounds/rootarc.wav","b"},{"sounds/test.wav","rb"}});archive("mods/cosmetic/A.HPI",{{"sounds/rootarc.wav","a"}});
     archive("mods/cosmetic/c.ufo",{{"sounds/ufo.wav","u"}});archive("mods/cosmetic/d.kmp",{{"sounds/kmp.wav","k"}});
     archive("mods/root.hpi",{{"sounds/mods-root.wav","r"}});archive("mods/game/root.hpi",{{"sounds/game-root.wav","r"}});
@@ -84,10 +74,9 @@ int main(){
     check(skipped.empty(),"harmless cosmetic layers are never left out");
     check(campaign.has("sounds/always.wav") && campaign.read("sounds/test.wav")==bytesOf("hb") && campaign.has("sounds/glow-loose.wav"),
           "always-enabled cosmetic packs load with no packs selected (campaigns included)");
-    check(!campaign.has("sounds/rootarc.wav"),"an archive directly in mods/cosmetic/ is no longer loaded");
+    check(!campaign.has("sounds/rootarc.wav"),"an archive directly in mods/cosmetic/ is never loaded");
     for(const auto* q:{"sounds/ufo.wav","sounds/kmp.wav","loose.wav","sounds/mods-root.wav","sounds/game-root.wav","sounds/ae-loose.wav","sounds/hidden.wav"})
       check(!campaign.has(q),"loose files in mods/, mods/<kind>/ and always_enabled/ never load");
-    check(!campaign.has("sounds/legacy-click.wav"),"a legacy overrides/ archive is never loaded");
     check(!campaign.has("units/always.fbi"),"an always-enabled cosmetic pack never loads gameplay files");
     check(hpi::gameplayHash(campaign)==hpi::gameplayHash(empty),"always-enabled cosmetic packs never change the gameplay hash");
     const auto on=hpi::modFiles(root,hpi::ModKind::Cosmetic,{"Halo","Glow"});
@@ -151,7 +140,7 @@ int main(){
     const auto layered=hpi::modFiles(root,hpi::ModKind::Game,{"Zeta","GAlways"});
     check(layered.at("sounds/test.wav")==bytesOf("game-z") && layered.count("units/galways.fbi"),"a ticked game pack wins over an always-enabled one");
     check(!hpi::mountPlayVfs(root,{},{}).has("units/galways.fbi"),"always-enabled game packs come only from the room's package");
-    // The package names the packs plainly, so a 0.8.13 peer's decode accepts it.
+    // The package names the packs plainly.
     auto pkg=net::mods::build(root,{"GAlways","Alpha"});
     check(pkg->mapPath=="Alpha, GAlways" && pkg->files->count("units/galways.fbi") && pkg->files->count("units/test.fbi"),"a package carries always-enabled game packs by plain name");
     check(*net::mods::decode(pkg->bytes,pkg->digest)->files==*pkg->files,"the package round-trips");
@@ -170,7 +159,6 @@ int main(){
   auto p=net::mods::build(root,{"Zeta","Alpha"});auto q=net::mods::build(root,{"Alpha","Zeta"});check(p->digest==q->digest,"selection order does not affect package digest");
   check(p->files->count("units/test.fbi")&&!p->files->count("root-only.wav"),"package includes selected files only");
   check(p->files->at("sounds/test.wav")==std::vector<uint8_t>({'g','a','m','e','-','z'}),"package carries game packs, never cosmetic ones");
-  check(!p->files->count("sounds/legacy.wav"),"package never carries overrides/ files");
   check(!p->files->count("sounds/always.wav") && !p->files->count("sounds/only-a.wav"),"package never carries always-enabled cosmetic packs");
   auto bytes=p->bytes;bytes.back()^=1;rejects([&]{net::mods::decode(bytes,p->digest);},"reject corrupt download");
   net::Writer bad;bad.u32(0x32564f54);bad.u32(0);bad.u32(1);bad.str("../escape");bad.blob(std::vector<uint8_t>{1});auto hash=crypto::toHex(crypto::sha256(bad.b.data(),bad.b.size()));
@@ -229,7 +217,6 @@ int main(){
     const std::string saveFailed="GAME MODS VERIFIED; SAVE FAILED: disk full";
     check(C::roomModStatus(saveFailed,none.get())==saveFailed,"a cache failure still shows");
   }
-  check(snapshot()==legacyBefore,"the legacy overrides/ folder is left byte-identical");
  }catch(const std::exception& e){std::cerr<<e.what()<<'\n';++failures;}
  std::error_code ec;std::filesystem::remove_all(root,ec);std::cout<<"mod packs: "<<failures<<" failures\n";return failures?1:0;
 }

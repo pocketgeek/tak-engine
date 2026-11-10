@@ -274,6 +274,24 @@ int main(int argc, char** argv) try {
         peer.setDataHash(hpi::gameplayHash(peerData)); spectator.setDataHash(peer.dataHash());
         check(host.connect("127.0.0.1", port, "maphost"), "host connection");
         check(peer.connect("127.0.0.1", port, "mappeer"), "peer connection");
+        {   // A server refuses a room for a random map this build cannot make (a v9 id).
+            net::MpClient refused; refused.setMapRoot(argv[3]); refused.setCacheRoot(cacheBase/"refused");
+            refused.setDataHash(host.dataHash());
+            check(refused.connect("127.0.0.1", port, "maprefused"), "refused connection");
+            bool sent = false;
+            for (auto end = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+                 refused.poll() && std::chrono::steady_clock::now() < end;) {
+                if (!sent && refused.state() == net::MpClient::State::Lobby) {
+                    net::GameOptions opts; opts.gameMods = 0;
+                    refused.createGame("refused", "", "~gen1~09000100000000000000038001800108ffffffffff0004", opts, 2);
+                    sent = true;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            check(sent && refused.state() == net::MpClient::State::Done &&
+                  refused.error().find("generate a new map") != std::string::npos,
+                  "a room for an unknown random-map recipe was not refused");
+        }
         bool created = false, joined = false, readied = false, started = false, late = false;
         bool chatSent=false,sharingSent=false,sharingSeen=false,sharingRestored=false;
         std::vector<std::pair<std::string,std::string>> hostChat,peerChat,spectatorChat;
@@ -580,6 +598,16 @@ int main(int argc, char** argv) try {
     (*legacyFiles)["terrain/00001234.jpg"] = {1,2,3};
     hpi::Vfs legacy; legacy.setMapFiles(legacyFiles);
     check(net::maps::build(legacy,"test")->files->size()==2,"map without companions rejected");
+    {   // A saved random map is an ordinary map: its .recipe companion is only carried,
+        // so one from another generator version still plays from its saved terrain.
+        auto savedFiles = std::make_shared<hpi::Vfs::Files>(*legacyFiles);
+        const std::string oldRecipe = "~gen1~09000100000000000000038001800108ffffffffff0004";
+        (*savedFiles)["kmap/test.recipe"] = std::vector<uint8_t>(oldRecipe.begin(), oldRecipe.end());
+        hpi::Vfs saved; saved.setMapFiles(savedFiles);
+        const auto package = net::maps::decode(net::maps::build(saved,"test")->bytes,"");
+        check(package->mapPath=="kmap/test.tnt" && package->files->count("kmap/test.recipe"),
+              "a saved random map of another generator version is not playable as an ordinary map");
+    }
     if (argc == 2) {
         auto vfs=hpi::mountRetailRoot(argv[1]);
         {
@@ -611,22 +639,21 @@ int main(int argc, char** argv) try {
         auto recipe=mapgen::encodeMapId(params);
         auto output=net::maps::saveGenerated(root,vfs,recipe);
         check(output.filename().string().starts_with("Generated-My Lake-"),"named map filename");
-        // Simulate the original named archive, then verify saving repairs it.
-        std::vector<hpi::PackFile> oldFiles;
-        {
-            hpi::Archive archive(output);
-            for (const auto& entry:archive.entries()) if (!entry.isDirectory) {
-                auto oldPath=entry.path;
-                const auto prefix="kmap/My Lake-"+crypto::toHex(crypto::sha256(recipe)).substr(0,16);
-                if (oldPath.starts_with(prefix)) oldPath.replace(0,prefix.size(),"kmap/My Lake");
-                oldFiles.push_back({oldPath,archive.read(entry)});
-            }
+        check(hpi::Archive(output).find("kmap/My Lake-"+crypto::toHex(crypto::sha256(recipe)).substr(0,16)+".tnt")!=nullptr,
+              "named map archive path");
+        const auto savedTime=std::filesystem::last_write_time(output);
+        check(net::maps::saveGenerated(root,vfs,recipe)==output && std::filesystem::last_write_time(output)==savedTime,
+              "saving a generated map again rewrote it");
+        // Only a current recipe is saved: one of another version (here a v9 id) or a
+        // malformed one is refused, never generated as some other map.
+        for (const char* other:{"~gen1~09000100000000000000038001800108ffffffffff0004","~gen1~0a00zz"}) {
+            bool refused=false;
+            try { net::maps::saveGenerated(root,vfs,other); }
+            catch (const std::exception& e) { refused=std::string(e.what()).find("generate a new map")!=std::string::npos; }
+            check(refused,"an unknown random-map recipe was saved");
+            check(!std::filesystem::exists(root/"Maps"/("Generated-"+crypto::toHex(crypto::sha256(std::string(other)))+".kmp")),
+                  "an unknown random-map recipe left a saved map");
         }
-        const auto oldBytes=hpi::pack(oldFiles);
-        { std::ofstream out(output,std::ios::binary|std::ios::trunc);
-          out.write(reinterpret_cast<const char*>(oldBytes.data()),oldBytes.size()); }
-        check(net::maps::saveGenerated(root,vfs,recipe)==output,"legacy named repair changed filename");
-        check(hpi::Archive(output).find("kmap/My Lake-"+crypto::toHex(crypto::sha256(recipe)).substr(0,16)+".tnt")!=nullptr,"legacy named archive not repaired");
         hpi::Vfs saved(&vfs); saved.addLayer(hpi::MountSet(root/"Maps",{false,{".kmp"},{},{}}));
         const auto maps=hpi::listMaps(saved);
         std::string path;

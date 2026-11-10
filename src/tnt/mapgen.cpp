@@ -7,6 +7,7 @@
 #include <array>
 #include <map>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -91,11 +92,6 @@ Params sanitize(Params p) {
 }
 
 Result generate(const Params& raw, const tak::hpi::Vfs& input) {
-    // v10 added the retail terrain kits. Older recipes are not regenerated: their
-    // saved maps remain ordinary maps, and the menus upgrade a remembered recipe.
-    if(raw.formatVer!=Params{}.formatVer)
-        throw std::runtime_error("Random-map recipe version "+std::to_string(raw.formatVer)+
-            " is no longer supported (this build makes version "+std::to_string(Params{}.formatVer)+"); generate a new map");
     tak::hpi::Vfs vfs(&input, true);
     return generateBalanced(sanitize(raw), vfs);
 }
@@ -147,27 +143,25 @@ std::string encodeMapId(const Params& pin) {
     return std::string(kMagic) + toHex(b);
 }
 
-Params decodeMapId(const std::string& id) {
-    Params p;
-    if (!isGeneratedMapId(id) || id.size() > 6 + 2 * (26 + 24) || (id.size() - 6) % 2) return p;
-    // De-hex the payload.
+namespace {
+// The fixed fields encodeMapId writes, before the 0..24-byte name.
+constexpr size_t kFixedBytes = 26;
+
+// The Params of a well-formed id: the magic, the current version and its exact payload.
+std::optional<Params> tryDecode(const std::string& id) {
+    if (!isGeneratedMapId(id) || (id.size() - 6) % 2) return std::nullopt;
+    const size_t bytes = (id.size() - 6) / 2;
+    if (bytes < kFixedBytes || bytes > kFixedBytes + 24) return std::nullopt;
     std::string raw;
     for (size_t i = 6; i + 1 < id.size(); i += 2) {
         int hi = hexNib(id[i]), lo = hexNib(id[i + 1]);
-        if (hi < 0 || lo < 0) return sanitize(p);
+        if (hi < 0 || lo < 0) return std::nullopt;
         raw.push_back(char((hi << 4) | lo));
     }
-    auto u8 = [&](size_t o) -> uint8_t { return o < raw.size() ? uint8_t(raw[o]) : 0; };
-    auto u16 = [&](size_t o) -> uint16_t { return uint16_t(u8(o) | (u8(o + 1) << 8)); };
-    // v8 (22 bytes + name), v9 (+ scattered mana) and v10 (+ three kit amounts) share
-    // their leading fields; decoding an older one keeps its version so generate()
-    // refuses it clearly, while a menu that edits it upgrades the remembered settings.
-    const uint16_t version = u16(0);
-    if (raw.size() >= 2 && version != 0 && (version < 8 || version > 10)) { p.formatVer = version; return p; }
-    if (raw.size() < 22) return sanitize(p);
-    const size_t fixed = version >= 10 ? 26 : version == 9 ? 23 : 22;
-    if (version < 8 || raw.size() < fixed || raw.size() > fixed + 24) return Params{};
-    p.formatVer = version;
+    auto u8 = [&](size_t o) { return uint8_t(raw[o]); };
+    auto u16 = [&](size_t o) { return uint16_t(u8(o) | (u8(o + 1) << 8)); };
+    Params p;
+    if (u16(0) != p.formatVer) return std::nullopt;
     uint64_t s = 0; for (int i = 0; i < 8; ++i) s |= uint64_t(u8(2 + i)) << (8 * i);
     p.seed = s;
     p.mapType = u8(10);
@@ -179,10 +173,22 @@ Params decodeMapId(const std::string& id) {
     p.waterDensity = u8(19);
     p.reliefDensity = u8(20);
     p.layout = u8(21);
-    if (version >= 9) p.manaScatter = u8(22);
-    if (version >= 10) { p.plateauDensity = u8(23); p.mountainDensity = u8(24); p.townDensity = u8(25); }
-    p.name = raw.substr(fixed);
+    p.manaScatter = u8(22);
+    p.plateauDensity = u8(23); p.mountainDensity = u8(24); p.townDensity = u8(25);
+    p.name = raw.substr(kFixedBytes);
     return sanitize(p);
+}
+}  // namespace
+
+Params decodeMapId(const std::string& id) {
+    if (auto p = tryDecode(id)) return *p;
+    return sanitize(Params{});
+}
+
+Params parseMapId(const std::string& id) {
+    if (auto p = tryDecode(id)) return *p;
+    throw std::runtime_error("unknown random-map recipe (this build makes version " +
+                             std::to_string(Params{}.formatVer) + "); generate a new map");
 }
 
 std::string friendlyLabel(const Params& pin) {

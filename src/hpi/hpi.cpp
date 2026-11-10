@@ -1044,12 +1044,6 @@ std::filesystem::path realSubdir(const std::filesystem::path& dir, const char* w
 std::filesystem::path modDirectory(const std::filesystem::path& root,ModKind kind) {
     return realSubdir(realSubdir(root,"mods"),kind==ModKind::Game?"game":"cosmetic");
 }
-}
-bool hasLegacyOverridesDir(const std::filesystem::path& root) {
-    // Looks at the root's entries only: overrides/ itself is never opened.
-    return !realSubdir(root,"overrides").empty();
-}
-namespace {
 // mods/<kind>/always_enabled/ (any case), or empty.
 std::filesystem::path modAlwaysDirectory(const std::filesystem::path& root,ModKind kind) {
     return realSubdir(modDirectory(root,kind),kAlwaysEnabledDir);

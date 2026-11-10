@@ -41,14 +41,15 @@ Map caches are local to each machine: a client keeps them in its per-user folder
 and takserver in `--map-cache-dir`, by default `TAKengine/takserver` in the per-user data
 folder (`$XDG_DATA_HOME` or `~/.local/share` on Linux, `%APPDATA%` on Windows,
 `~/Library/Application Support` on macOS). Downloaded game mods go in `ModCache/` beside it.
-The data folder is only read; a `MapCache/` that a version before 0.9.5 left in it is
-ignored and left as it is.
+The data folder is only read.
 
-Generated recipes still need no terrain download. At match start each participant
+Generated maps need no terrain download: the room's map ID is the recipe, and a server
+refuses a room whose recipe this build cannot make. At match start each participant
 saves a reusable `.kmp` under `Maps/` in the same per-user map folder (the server in
 its `--map-cache-dir`), never in the data folder; see [random map generation](random-map-generation.md).
 A client reports a save failure (`MAP SAVE FAILED`) in chat and its log; it can still
-play using its in-memory copy.
+play using its in-memory copy. A saved generated map picked later is an ordinary map:
+it transfers and plays like any other, from its saved terrain.
 
 Validation: `map_transfer_test` checks canonical identity, resource isolation,
 cache/catalog reuse, malformed packages, checksums, and chunk ordering. With a data

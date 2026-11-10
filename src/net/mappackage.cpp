@@ -342,18 +342,13 @@ std::shared_ptr<Package> loadCache(const std::filesystem::path& root, const std:
 }
 std::filesystem::path saveGenerated(const std::filesystem::path& root, const hpi::Vfs& vfs, const std::string& recipe,uint64_t quota) {
     if (!mapgen::isGeneratedMapId(recipe)) return {};
+    const auto params = mapgen::parseMapId(recipe);   // an unknown recipe saves nothing
     const std::string id = crypto::toHex(crypto::sha256(recipe));
-    const auto params = mapgen::decodeMapId(recipe);
     const std::string name = params.name.empty() ? "Generated-" + std::string(mapgen::layoutName(params.layout)) + "-" +
         mapgen::friendlyLabel(params) + "-" + id.substr(0,16) : params.name + "-" + id.substr(0,16);
     const auto output = root / "Maps" / ("Generated-" + (params.name.empty() ? std::string{} : params.name + "-") + id + ".kmp");
     const std::string path = "kmap/" + name;
-    if (std::filesystem::exists(output)) {
-        // Named maps from the first v5 implementation used just the title inside
-        // the archive. Repair those on save; otherwise preserve idempotent saves.
-        const hpi::Archive existing(output);
-        if (params.name.empty() || existing.find(path + ".tnt")) return output;
-    }
+    if (std::filesystem::exists(output)) return output;
     const auto usage=quota ? tak::storageUsage(root/"MapCache")+tak::storageUsage(root/"Maps","Generated-") : 0;
     tak::storageRoom(usage,1,quota);
     auto g = mapgen::generate(params, vfs);

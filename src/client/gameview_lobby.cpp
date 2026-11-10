@@ -461,9 +461,9 @@ float createOptionPx(float maxW) {
         // map with feature dots; pollGenPreview uploads it. Nothing here touches the view.
         GenPreviewOut out;
         out.id = id;
-        tak::mapgen::Params gp = tak::mapgen::decodeMapId(id);
+        tak::mapgen::Params gp;
         tak::mapgen::Result g;
-        try { g = tak::mapgen::generate(gp, vfs); }
+        try { gp = tak::mapgen::parseMapId(id); g = tak::mapgen::generate(gp, vfs); }
         catch (const std::exception& e) { out.error = e.what(); return out; }
         const tak::tnt::Map& m = g.map;
         const int W = m.width, H = m.height, sea = m.seaLevel;
@@ -554,7 +554,6 @@ float createOptionPx(float maxW) {
     }
 
     void GameView::applyGenParams() {
-        genParams_.formatVer = tak::mapgen::Params{}.formatVer;
         genParams_ = tak::mapgen::sanitize(genParams_);   // grows a side the layout cannot fit
         auto previous = tak::mapgen::decodeMapId(mpMapId_);
         previous.name = genParams_.name;
@@ -655,9 +654,10 @@ float createOptionPx(float maxW) {
             if (!lanHost_) createName_ = pref.name.substr(0, 16);   // a LOCAL SERVER game keeps its host's name
             mapSort_ = pref.mapSort; mapSortDir_ = pref.mapSortDir;
             if (!mapList_.empty()) sortMapList();
+            // The remembered recipe, unless it is one this build cannot make.
             if (tak::mapgen::isGeneratedMapId(pref.generator)) {
                 try {
-                    genParams_ = tak::mapgen::decodeMapId(pref.generator);
+                    genParams_ = tak::mapgen::parseMapId(pref.generator);
                     if (pref.generated) { applyGenParams(); mapPrefApplied_ = true; }
                 } catch (const std::exception&) { genParams_ = {}; }
             }
@@ -1867,7 +1867,7 @@ float createOptionPx(float maxW) {
         static const char* kWorld[tak::mapgen::kMapTypes] = {"aramon", "taros", "veruna", "zhon", "creon"};
         try {
             if (tak::mapgen::isGeneratedMapId(path)) {
-                const auto params = tak::mapgen::decodeMapId(path);
+                const auto params = tak::mapgen::parseMapId(path);
                 auto view = std::make_unique<tak::hpi::Vfs>(&vfs_, true);
                 // The preview's roll when it is this map (it always is once the preview shows).
                 auto map = genPreviewMap_ && genPreviewMapId_ == path ? *genPreviewMap_

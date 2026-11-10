@@ -74,7 +74,7 @@ tak::terrainwork::Params scheduleParams() {
 
 tak::tnt::Map MapView::genOrLoad(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
     if (tak::mapgen::isGeneratedMapId(mapPath))
-        return tak::mapgen::generate(tak::mapgen::decodeMapId(mapPath), vfs).map;
+        return tak::mapgen::generate(tak::mapgen::parseMapId(mapPath), vfs).map;
     return tak::tnt::Map::load(vfs.read(mapPath), mapPath);
 }
 

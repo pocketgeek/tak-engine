@@ -582,8 +582,8 @@ below it. When the game starts, the map is saved on
 every player's computer and on the server, so it appears in the map list later.
 See [random map generation](random-map-generation.md) for the rules it follows.
 
-The generator is version 10. Recipes (seed and settings) from older versions
-are not supported any more: the game asks you to generate a new map. A
+The generator is version 10 and builds only its own recipes (seed and
+settings); for any other the game asks you to generate a new map. A
 generated map you have saved as a `.kmp` always plays, whatever made it.
 Rebuilding a map from its recipe needs the same game data.
 
@@ -2906,28 +2906,6 @@ its folder out of `always_enabled/`.
   always-enabled one is used, and the ordinary folder is hidden from the room
   until you rename or move one of them. A saved tick of that name is kept and
   has no effect while the always-enabled pack is there.
-
-**If you used 0.8.13 or earlier.** A `.hpi` placed directly in
-`mods/cosmetic/` (the old always-on archives, such as `mods/cosmetic/click.hpi`)
-is **not loaded**, and the game does not move it for you. For each one:
-
-1. Make a folder for it in `mods/cosmetic/always_enabled/`, named after the
-   archive, for example `mods/cosmetic/always_enabled/click/`.
-2. Move the archive into that folder:
-   `mods/cosmetic/always_enabled/click/click.hpi`.
-3. Open a game room: the pack's folder name now shows on the **ALWAYS ON** line
-   under **COSMETIC MODS**.
-
-Anything placed loose in `mods/game/` was never loaded; put it in a pack folder.
-Your ticked packs carry over unchanged. The old **GAME MODS: ON/OFF** choice of
-the multiplayer setup screen is gone, and a saved choice is ignored.
-
-**If you used 0.8.7 or earlier.** The old `overrides/` folder is not read.
-Nothing in it is moved or changed; move your packs into `mods/cosmetic/` or `mods/game/` yourself, each
-in its own folder. A pack you used in **Cosmetic** mode goes in
-`mods/cosmetic/<pack>/`; a pack you used in **Full** mode, or any pack that
-changes units or rules, goes in `mods/game/<pack>/`. Your old pack choices are
-not carried over, so tick the packs again in the room.
 
 A cosmetic mod never stops a game. If an always-enabled or a ticked cosmetic
 pack cannot be loaded (more than 256 MB of mods, for example; a damaged archive

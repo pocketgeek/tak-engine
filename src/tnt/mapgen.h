@@ -5,8 +5,8 @@
 // client and the server referee build the BYTE-IDENTICAL map from the same seed --
 // the generated terrain/features feed the hashed lockstep sim, so it must agree on
 // every peer. The parameters ride inside the mapId string ("~gen1~<hex>"), which the
-// lobby threads to every peer. Version 10 adds the retail cliff/plateau, mountain
-// and town kits; older recipes are refused (their saved .kmp maps stay playable).
+// lobby threads to every peer. A recipe is version 10, with the retail cliff/plateau,
+// mountain and town kits; an id carrying any other version is malformed.
 
 #include "tnt/tnt.h"
 
@@ -44,7 +44,7 @@ bool kitAvailable(uint8_t world, uint8_t kit);
 bool automaticPlateaus(uint8_t layout);
 
 struct Params {
-    uint16_t formatVer = 10;
+    uint16_t formatVer = 10;         // the recipe version, the only one an id may carry
     uint64_t seed = 1;
     std::string name;               // v5: optional ASCII map title, up to 24 characters
     uint8_t  mapType = Aramon;
@@ -81,9 +81,12 @@ struct Result {
 // the Params to/from the hex payload. friendlyLabel is what the UI shows.
 bool        isGeneratedMapId(const std::string& id);
 std::string encodeMapId(const Params& p);
-// Sane defaults on a malformed id. An id from an older generator keeps its version,
-// which generate() refuses ("generate a new map"); the menus upgrade it on edit.
+// An id is well formed only with the current recipe version (Params::formatVer) and
+// that version's exact payload. decodeMapId gives sane defaults for a malformed id (for
+// labels and menus); parseMapId throws std::runtime_error, for every path that builds
+// the map, so a malformed id is refused rather than built as some other map.
 Params      decodeMapId(const std::string& id);
+Params      parseMapId(const std::string& id);
 std::string friendlyLabel(const Params& p);
 
 // The generator. Deterministic in the params + the install's prefab sections

@@ -24,13 +24,12 @@ int main(int argc,char** argv){try{
  put(hostRoot,"mods/game/Beta/units/araking.fbi",std::regex_replace(text,hp,"MaxDamage=23456"));
  put(hostRoot,"mods/game/Alpha/sounds/pack-test.wav",std::string(80000,'a'));
  put(hostRoot,"mods/cosmetic/HostArt/sounds/host-art.wav","host"); // the host's own cosmetic pack: mounted locally, never sent
- put(hostRoot,"overrides/Gamma/units/araking.fbi",std::regex_replace(text,hp,"MaxDamage=777")); // legacy folder: never read
  put(peerRoot,"mods/cosmetic/Local/units/araking.fbi",std::regex_replace(text,hp,"MaxDamage=99999"));
  put(peerRoot,"mods/cosmetic/Local/sounds/pack-test.wav","local");
  put(peerRoot,"mods/game/PeerGame/units/araking.fbi",std::regex_replace(text,hp,"MaxDamage=4242")); // a guest's game pack is never used
  // Always-enabled cosmetic packs (mods/cosmetic/always_enabled/<pack>/): each player's
  // own, in every room, never sent; a gameplay file inside one is filtered out like a
- // cosmetic pack's. An archive directly in mods/cosmetic/ (0.8.13's always-on) never loads.
+ // cosmetic pack's. An archive directly in mods/cosmetic/ never loads.
  archive(hostRoot,"mods/cosmetic/always_enabled/HostAlways/host-always.hpi",{{"sounds/host-always.wav","h"}});
  archive(peerRoot,"mods/cosmetic/always_enabled/PeerAlways/peer-always.hpi",{{"sounds/peer-always.wav","p"},{"sounds/pack-test.wav","always"},{"units/araking.fbi",std::regex_replace(text,hp,"MaxDamage=31337")}});
  archive(peerRoot,"mods/cosmetic/root.hpi",{{"sounds/peer-root.wav","r"}});
