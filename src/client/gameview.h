@@ -4167,6 +4167,9 @@ private:
     // shows fully at any window size or aspect. Hit-tests undo the same transform.
     static constexpr float kLobbyW = 960.0f;
     static constexpr float kLobbyH = 540.0f;
+    // The game room's right column (its map, mods and chat): kRoomColW wide, kRoomEdge
+    // in from the canvas's right edge; the slot table stops kRoomEdge short of it.
+    static constexpr float kRoomColW = 360.0f, kRoomEdge = 20.0f;
     bool lbHot(const SDL_FRect& r) const;
     // A clickable button: panel + centered label; registers its action. The label is
     // drawn at labelPx (the cell size, uitext.h), or smaller when it would not fit the
@@ -4232,9 +4235,20 @@ private:
     // assigns), filled with player colour colorOfStart[k]
     // (the slot rows' palette), or neutral where that is -1 or missing.
     void drawStartMarkers(const SDL_FRect& img, const std::vector<int>& colorOfStart = {}, float maxRadius = 11.0f);
+    // The room's map preview, (re)built when the room's map changes.
+    void syncRoomPreview();
+    // The box the room's preview takes at (x, y): as wide as the right column and as
+    // tall as the map's shape makes it, up to maxH (then narrower); square while the
+    // shape is not known yet.
+    SDL_FRect roomPreviewBox(float x, float y, float maxH) const;
     // The room's map preview with its start markers, fitted into `box`. `authored`:
     // a scenario that places its own forces, whose starts no slot takes.
     void drawRoomPreview(const SDL_FRect& box, bool authored);
+    // A generated map's recipe as short items ("MAP TYPE: ARAMON", "MAP SEED: 7"...) in
+    // two groups (shape and terrain; kits, scattered mana and seed), none for any other
+    // id; packItems joins each group's items into lines no wider than maxW.
+    static std::vector<std::vector<std::string>> genRecipeItems(const std::string& mapId);
+    std::vector<std::string> packItems(const std::vector<std::vector<std::string>>& groups, float px, float maxW) const;
     void openBigMap();                      // the map of the preview on show (mapPreviewFor_)
     void drawClickHint(const SDL_FRect& box);   // CLICK over a hovered preview that opens it
     void drawBigMap(int winW, int winH);

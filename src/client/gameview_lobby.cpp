@@ -1271,8 +1271,10 @@ float createOptionPx(float maxW) {
         // name). The map's name heads the right column, above its preview.
         float x = 40, y = 54;
         if (!singlePlayer_) { blockText(room.name, x, y, 2.2f, {210, 210, 220, 255}); y += 34; }
+        // The right column (map, mods, chat) and the slot table's width, both from kRoomColW.
+        const float colX = winW - kRoomEdge - kRoomColW, colW = kRoomColW, rowW = colX - kRoomEdge - x;
         // Left-aligned with the preview under it; a long name runs on past the right edge.
-        blockText("MAP  " + mapTitle(room.mapId), winW - 300.0f, 62, 1.8f, {180, 185, 195, 255});
+        blockText("MAP  " + mapTitle(room.mapId), colX, 62, 1.8f, {180, 185, 195, 255});
         bool host = (room.hostId == mp_->myClientId());
         // MAP SCENARIO (259): the room plays its map's scenario when the option is on, or
         // for a Test Map copy, read from the verified package (the host's own until then).
@@ -1291,59 +1293,31 @@ float createOptionPx(float maxW) {
         // before the package is verified); the rule cells that follow it agree with it.
         const bool scenarioShown = fileMap && (room.opts.mapScenario != 0 || scenarioOn);
         // The room's map, with its starts numbered and coloured by who opens there,
-        // heads the right column; the mod packs and the chat sit below it.
+        // heads the right column; the mod packs and the chat sit right under it.
         const bool roomMap = room.mission.empty();
-        // Single player has no chat under the mods, so its map takes the column's whole
-        // width; a multiplayer room keeps the space for its chat.
-        const float kRoomMap = singlePlayer_ ? 280 : 140, mapDrop = roomMap ? kRoomMap + 5 : 0;
-        float modBottom=112+mapDrop;
+        // The preview is as wide as the column and as tall as the map's shape makes it.
+        // Single player has no chat, so a square map takes the column's whole width; a
+        // multiplayer room keeps room under the mods line for a few rows of chat.
+        constexpr float kPreviewY = 84, kChatInputH = 52, kChatMinH = 104, kModsH = 44;
+        const float previewMaxH = singlePlayer_ ? colW : float(winH) - kChatInputH - 6 - kChatMinH - kModsH - kPreviewY;
+        if (roomMap) syncRoomPreview();
+        const SDL_FRect pv = roomMap ? roomPreviewBox(colX, kPreviewY, previewMaxH) : SDL_FRect{colX, kPreviewY, 0, 0};
+        float modBottom=0;
         {
-            // MODS, in the right column under the map. ALWAYS ON: the always-enabled
-            // packs (mods/<kind>/always_enabled/<pack>), named and locked, never ticked.
-            // The cosmetic ones load in every game (campaigns included).
-            // COSMETIC: every player ticks their own mods/cosmetic packs (not in a
-            // mission room); they are never sent anywhere and cannot change the game.
-            // GAME: only the host of a skirmish room ticks mods/game packs; they and the
-            // host's always-enabled game packs are sent to every player, and everyone
-            // else sees the host's choice. A room is OFF only when a 0.8.12 or 0.8.13 host chose so.
+            // MODS, one line under the map: what loads, as many names as fit then +N,
+            // each in its kind's colour -- green the always-enabled packs
+            // (mods/<kind>/always_enabled/<pack>, locked, never ticked; the cosmetic ones
+            // load in every game, campaigns included), grey the cosmetic packs this player
+            // ticked (not in a mission room; never sent anywhere, cannot change the game),
+            // blue the game packs. Only the host of a skirmish room ticks mods/game packs;
+            // they and the host's always-enabled game packs are sent to every player, and
+            // everyone else sees the host's choice. The MODS button at the line's end opens
+            // the mods screen (drawModsScreen), where every list is shown in full; the game
+            // mods' status (transfer, error, VERIFIED) is a small line under it.
             scanModPacks();
             const bool gameRoom=room.mission.empty();
             const bool gameOn=gameRoom && room.opts.gameMods;
             const auto& alwaysGame=mp_->alwaysGameModPacks();
-            // A summary under the map: what is always on and what is ticked, each line as
-            // many names as fit then +N, and a MODS button to the mods screen
-            // (drawModsScreen), where both lists use the whole panel. The game mods' status
-            // (transfer, error, VERIFIED) stays here.
-            float py=87+mapDrop;
-            // A label and its names, wrapping onto further lines down the column, pushing
-            // what follows down; once the lines `after` it (one each, then the MODS button
-            // and the status) would run out of room -- the panel's foot in single player,
-            // the chat's room in multiplayer -- the last line ends with +N.
-            const float bottom=singlePlayer_ ? float(winH)-24 : float(winH)-72-140;
-            const auto namesLine=[&](const std::string& label,const std::vector<std::string>& names,SDL_Color c,int after) {
-                constexpr float kLineW=280,kPx=1.3f,kLineH=18;
-                const float reserve=float(after)*kLineH+4+28+20;
-                const int maxLines=std::max(1,int((bottom-py-reserve)/kLineH));
-                std::string line=label;
-                bool lineHasName=false;
-                int lines=1;
-                for(size_t i=0;i<names.size();++i){
-                    const std::string piece=(lineHasName?", ":"")+names[i];
-                    const bool last=i+1==names.size();
-                    // On the last line allowed, keep room for " +N" unless this is the last name.
-                    const float need=blockWidth(line+piece+(lines==maxLines && !last?" +99":""),kPx);
-                    if(need<=kLineW || !lineHasName){
-                        line+=lineHasName||line==label?piece:names[i];
-                        lineHasName=true;
-                        if(blockWidth(line,kPx)>kLineW)line=tak::uiTextFit(line,kPx,kLineW);
-                        continue;
-                    }
-                    if(lines==maxLines){line+=" +"+std::to_string(names.size()-i);break;}
-                    blockText(line,winW-296.0f,py,kPx,c);py+=kLineH;
-                    line="  "+names[i];lineHasName=true;++lines;
-                }
-                blockText(line,winW-296.0f,py,kPx,c);py+=kLineH;
-            };
             const auto splitNames=[](const std::string& joined) {
                 std::vector<std::string> out;
                 size_t at=0;
@@ -1357,33 +1331,48 @@ float createOptionPx(float maxW) {
                 }
                 return out;
             };
-            blockText("MODS",winW-296.0f,py,1.6f,{205,210,225,255});py+=22;
-            std::vector<std::string> always=alwaysCosmeticMods_;
-            if(gameOn && host)always.insert(always.end(),alwaysGame.begin(),alwaysGame.end());
-            if(!always.empty())namesLine("ALWAYS ON: ",always,{170,200,170,255},gameRoom?2:0);
+            constexpr SDL_Color kAlways{170,200,170,255},kCosmetic{200,205,215,255},kGame{150,190,235,255},kDim{150,155,165,255};
+            std::vector<std::pair<std::string,SDL_Color>> names;
+            for(const auto& n:alwaysCosmeticMods_)names.emplace_back(n,kAlways);
+            if(gameOn && host)for(const auto& n:alwaysGame)names.emplace_back(n,kAlways);
+            std::string note;   // the line under: the game mods' status, or what they wait for
             if(gameRoom) {
-                std::vector<std::string> cosmetic;
                 if(settings_)for(const auto& n:settings_->cosmeticModPacks)
-                    if(std::find(availableCosmeticMods_.begin(),availableCosmeticMods_.end(),n)!=availableCosmeticMods_.end())cosmetic.push_back(n);
-                if(cosmetic.empty())blockText("COSMETIC: NONE",winW-296.0f,py,1.3f,{150,155,165,255}),py+=18;
-                else namesLine("COSMETIC: ",cosmetic,{200,205,215,255},1);
-                if(!gameOn)blockText("GAME: OFF (HOST)",winW-296.0f,py,1.3f,{150,155,165,255}),py+=18;
-                else if(host){
-                    if(mp_->gameModPacks().empty())blockText("GAME: NONE",winW-296.0f,py,1.3f,{150,155,165,255}),py+=18;
-                    else namesLine("GAME: ",mp_->gameModPacks(),{200,205,215,255},0);
-                } else {
-                    const std::string names=mp_->modPackage()?mp_->modPackage()->mapPath:"";
-                    if(names.empty())blockText(mp_->modPackage()?"GAME (HOST): NONE":"GAME (HOST): WAITING FOR THE HOST",winW-296.0f,py,1.3f,{180,190,205,255}),py+=18;
-                    else namesLine("GAME (HOST): ",splitNames(names),{180,190,205,255},0);
-                }
-                py+=4;
-                lbBtn(winW-300.0f,py,280,22,"MODS...",true,[this]{modsScreen_=true;lbField_=0;SDL_StopTextInput();},
-                      {60,66,86,255},1.6f);
-                py+=28;
-                if(const auto status=mp_->roomModStatus();gameOn && !status.empty()){
-                    blockText(tak::uiTextFit(status,1.2f,280),winW-296.0f,py,1.2f,{205,190,135,255});py+=16;}
+                    if(std::find(availableCosmeticMods_.begin(),availableCosmeticMods_.end(),n)!=availableCosmeticMods_.end())
+                        names.emplace_back(n,kCosmetic);
+                if(!gameOn)names.emplace_back("GAME OFF (HOST)",kDim);
+                else if(host)for(const auto& n:mp_->gameModPacks())names.emplace_back(n,kGame);
+                else if(!mp_->modPackage())note="GAME MODS: WAITING FOR THE HOST";
+                else for(const auto& n:splitNames(mp_->modPackage()->mapPath))names.emplace_back(n,kGame);
+                if(const auto status=mp_->roomModStatus();gameOn && !status.empty())note=status;
             }
-            modBottom=py+4;
+            constexpr float kPx=1.3f,kBtnW=64;
+            const float py=roomMap ? pv.y+pv.h+6 : 87;
+            const float right=colX+colW-(gameRoom ? kBtnW+6 : 0);
+            const char* label="MODS: ";
+            blockText(label,colX+4,py,kPx,{205,210,225,255});
+            float nx=colX+4+blockWidth(label,kPx);
+            if(names.empty())blockText("NONE",nx,py,kPx,kDim);
+            // Each name keeps room after it for a " +N", in case the next one does not fit.
+            for(size_t i=0;i<names.size();++i){
+                const bool last=i+1==names.size();
+                const std::string sep=i ? ", " : "";
+                if(i && nx+blockWidth(sep+names[i].first+(last?"":" +99"),kPx)>right){
+                    blockText(" +"+std::to_string(names.size()-i),nx,py,kPx,kDim);
+                    break;
+                }
+                if(i){blockText(sep,nx,py,kPx,kDim);nx+=blockWidth(sep,kPx);}
+                // A first name too long for the line is cut.
+                const float room=right-nx-(last?0:blockWidth(" +99",kPx));
+                const std::string shown=tak::uiTextFit(names[i].first,kPx,std::max(20.0f,room));
+                blockText(shown,nx,py,kPx,names[i].second);
+                nx+=blockWidth(shown,kPx);
+            }
+            if(gameRoom)lbBtn(colX+colW-kBtnW,py-4,kBtnW,18,"MODS...",true,[this]{modsScreen_=true;lbField_=0;SDL_StopTextInput();},
+                              {60,66,86,255},kPx);
+            float below=py+20;
+            if(!note.empty()){blockText(tak::uiTextFit(note,1.1f,colW-4),colX+4,below-2,1.1f,{205,190,135,255});below+=12;}
+            modBottom=below+2;
         }
         // SP spectate ("watch the AIs"): the instant the host lands in the room, fill
         // every open capacity slot with an AI -- each on its own team/colour and a
@@ -1415,10 +1404,12 @@ float createOptionPx(float maxW) {
         }
         // slot table
         const char* typeName[4] = {"OPEN", "HUMAN", "AI", "CLOSED"};
+        // Each column's start in the row: type, name, AI level, side, colour, team, READY.
+        constexpr float kType = 28, kName = 92, kLevel = 156, kSide = 232, kColour = 302, kTeam = 330, kReady = 372;
         for (int i = 0; i < tak::net::kMaxSlots; ++i) {
             const auto& s = room.slots[i];
             bool mine = (i == room.mySlot);
-            SDL_FRect row{x, y, winW - 360.0f, 30};
+            SDL_FRect row{x, y, rowW, 30};
             SDL_SetRenderDrawColor(ren_, mine ? 40 : 26, mine ? 48 : 30, mine ? 66 : 40, 255);
             SDL_RenderFillRectF(ren_, &row);
             char sn[12]; std::snprintf(sn, sizeof sn, "%d", i + 1);
@@ -1427,18 +1418,17 @@ float createOptionPx(float maxW) {
             SDL_Color tcol = s.type == 1 ? SDL_Color{200, 230, 200, 255}
                            : s.type == 2 ? SDL_Color{230, 220, 150, 255}
                                          : SDL_Color{130, 135, 150, 255};
-            // Each column's text fits its column (x+34 type, x+100 name, x+178 level,
-            // x+260 faction), shrinking rather than running into the next.
+            // Each column's text fits its column, shrinking rather than running into the next.
             auto cell = [&](const std::string& t, float cx, float cy, float px, float colW, SDL_Color c) {
                 const float fpx = tak::uiTextFitPx(t, px, colW * 0.97f, px * 0.7f);
                 blockText(tak::uiTextFit(t, fpx, colW), cx, cy + (px - fpx) * 3.5f, fpx, c);
             };
-            cell(typeName[s.type % 4], x + 34, y + 8, 1.6f, 56, tcol);
+            cell(typeName[s.type % 4], x + kType, y + 8, 1.6f, 56, tcol);
             if (host && s.type != 1) {
                 // Host cycles an empty slot OPEN -> AI -> CLOSED. AI opponents are
                 // seated (and run) on the server; this is how you set up multi-AI
                 // games (including single-player vs several AIs).
-                SDL_FRect tb{x + 34, y + 6, 60, 18};
+                SDL_FRect tb{x + kType, y + 6, 60, 18};
                 lobbyHots_.push_back({tb, [this, i, t = s.type](int direction) {
                     uint8_t nt = direction > 0 ? (t == 0 ? 2 : t == 2 ? 3 : 0)
                                                : (t == 0 ? 3 : t == 3 ? 2 : 0);
@@ -1447,12 +1437,12 @@ float createOptionPx(float maxW) {
             }
             // Single player has no READY column, so the side / colour / team columns move up
             // to the MOVE HERE / KICK column (row.w - 94) and the name takes the room.
-            const float wide = singlePlayer_ ? 72.0f : 0.0f;
-            if (s.type == 1) cell(s.name, x + 100, y + 8, 1.8f, 154 + wide, {225, 228, 236, 255});
+            const float wide = singlePlayer_ ? row.w - 98 - (kTeam + 34) : 0.0f;
+            if (s.type == 1) cell(s.name, x + kName, y + 8, 1.8f, kSide - kName - 4 + wide, {225, 228, 236, 255});
             else if ((s.type == 0 || s.type == 3) && (needSeats >> i & 1))
-                blockText("NEEDED BY SCENARIO", x + 100, y + 9, 1.4f, {235, 205, 120, 255});
+                cell("NEEDED BY SCENARIO", x + kName, y + 9, 1.4f, kSide - kName - 4 + wide, {235, 205, 120, 255});
             else if (s.type == 2) {
-                cell(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.6f, 74 + wide, {210, 200, 150, 255});
+                cell(s.name.empty() ? "Computer" : s.name, x + kName, y + 8, 1.6f, kLevel - kName - 4 + wide, {210, 200, 150, 255});
                 // AI difficulty (host cycles PASSIVE -> EASY -> NORMAL -> HARD -> ABSURD ->
                 // DEFENSIVE -> ABSURDLY DEFENSIVE -> RETAIL: kCycle, which is not the wire
                 // aiLevel order that diffName and diffCol follow). RETAIL is level 6, internally Classic: the 1999 game's own AI, driven by its
@@ -1471,13 +1461,14 @@ float createOptionPx(float maxW) {
                     {170, 195, 175, 255}};  // passive (pale green): Easy that stays home
                 static constexpr uint8_t kCycle[kLevels] = {7, 1, 2, 3, 4, 0, 5, 6};
                 const uint8_t lvl = uint8_t(s.aiLevel % kLevels);
-                // Two words that overrun the 82 px column stack in two smaller lines.
+                // Two words that overrun the column stack in two smaller lines.
+                constexpr float kLevelW = kSide - kLevel - 2;
                 if (const char* gap = std::strchr(diffName[lvl], ' ')) {
-                    blockText(std::string(diffName[lvl], gap), x + 178 + wide, y + 3, 1.1f, diffCol[lvl]);
-                    blockText(gap + 1, x + 178 + wide, y + 13, 1.1f, diffCol[lvl]);
+                    cell(std::string(diffName[lvl], gap), x + kLevel + wide, y + 3, 1.1f, kLevelW, diffCol[lvl]);
+                    cell(gap + 1, x + kLevel + wide, y + 13, 1.1f, kLevelW, diffCol[lvl]);
                 } else
-                    blockText(diffName[lvl], x + 178 + wide, y + 9, 1.4f, diffCol[lvl]);
-                if (host) { SDL_FRect db{x + 176 + wide, y + 2, 82, 26};
+                    cell(diffName[lvl], x + kLevel + wide, y + 9, 1.4f, kLevelW, diffCol[lvl]);
+                if (host) { SDL_FRect db{x + kLevel - 2 + wide, y + 2, kLevelW + 2, 26};
                     lobbyHots_.push_back({db, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
                         const int at = int(std::find(kCycle, kCycle + kLevels, s2.aiLevel) - kCycle);
                         mp_->setSlot(i, s2.type, s2.faction, s2.color, s2.team, s2.ready,
@@ -1487,15 +1478,15 @@ float createOptionPx(float maxW) {
                 const int spot = bySlotSpot[size_t(i)];
                 blockText("NO START " + std::to_string(i + 1) + ": " +
                           (spot < startCount ? "USES START " + std::to_string(spot + 1) : std::string("NEAR MAP CENTRE")),
-                          x + 100, y + 21.5f, 1.1f, {235, 205, 120, 255});
+                          x + kName, y + 21.5f, 1.1f, {235, 205, 120, 255});
             }
             // faction / color / team edit: your own row, or (host) any AI row.
             bool canEdit = (mine || (host && s.type == 2));
-            cell(factionName(s.faction), x + 260 + wide, y + 8, 1.6f, 94, {200, 205, 215, 255});
-            if (canEdit) { SDL_FRect fb{x + 260 + wide, y + 6, 90, 18};
+            cell(factionName(s.faction), x + kSide + wide, y + 8, 1.6f, kColour - kSide - 4, {200, 205, 215, 255});
+            if (canEdit) { SDL_FRect fb{x + kSide + wide, y + 6, kColour - kSide - 4, 18};
                 lobbyHots_.push_back({fb, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
                     mp_->setSlot(i, s2.type, (s2.faction + direction + 5) % 5, s2.color, s2.team, s2.ready, s2.aiLevel); }}); }
-            colorSwatch(x + 360 + wide, y + 5, 20, s.color, canEdit ? std::function<void(int)>([this, i](int direction) {
+            colorSwatch(x + kColour + wide, y + 5, 20, s.color, canEdit ? std::function<void(int)>([this, i](int direction) {
                 // Cycle to the next colour NOT already held by another used slot --
                 // landing on a taken colour just blocked READY, which was a trap.
                 const auto& r2 = mpRoom();
@@ -1511,13 +1502,13 @@ float createOptionPx(float maxW) {
                 }
                 mp_->setSlot(i, s2.type, s2.faction, next, s2.team, s2.ready, s2.aiLevel); }) : nullptr);
             char tm[8]; std::snprintf(tm, sizeof tm, "T%d", s.team + 1);
-            blockText(tm, x + 392 + wide, y + 8, 1.8f, {200, 205, 215, 255});
-            if (canEdit) { SDL_FRect teb{x + 392 + wide, y + 6, 34, 18};
+            blockText(tm, x + kTeam + wide, y + 8, 1.8f, {200, 205, 215, 255});
+            if (canEdit) { SDL_FRect teb{x + kTeam + wide, y + 6, 34, 18};
                 lobbyHots_.push_back({teb, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
                     mp_->setSlot(i, s2.type, s2.faction, s2.color, uint8_t((s2.team + direction + tak::net::kMaxSlots) % tak::net::kMaxSlots), s2.ready, s2.aiLevel); }}); }
             if (s.type == 1 && !singlePlayer_) {   // SP: the player is always ready, no column
                 SDL_Color rc = s.ready ? SDL_Color{130, 230, 140, 255} : SDL_Color{120, 125, 135, 255};
-                blockText(s.ready ? "READY" : "NOT READY", x + 440, y + 8, 1.6f, rc);
+                cell(s.ready ? "READY" : "NOT READY", x + kReady, y + 8, 1.6f, row.w - 58 - kReady, rc);
             }
             // host kick button for other humans
             if (host && s.type == 1 && !mine) {
@@ -1549,7 +1540,7 @@ float createOptionPx(float maxW) {
             bx = x + 142;
         }
         // A scenario that places its own armies opens nobody at the map's starts.
-        if (roomMap) drawRoomPreview({winW - 300.0f, 84, kRoomMap, kRoomMap}, scenarioOn && scenarioLobby_.placed > 0);
+        if (roomMap) drawRoomPreview(pv, scenarioOn && scenarioLobby_.placed > 0);
         // A room playing its map's scenario may start solo, once every seat the scenario
         // needs is played; ordinary skirmishes need two. A multiplayer room (not single
         // player's private one) also needs two human players: AI alone is single player.
@@ -1569,12 +1560,18 @@ float createOptionPx(float maxW) {
         // Room readiness also includes game mods and other players. A
         // completed local map is not progress to display while packs change;
         // their status is already shown beside the pack list.
-        // The status beside the buttons stops short of the map column (winW - 300),
-        // shrunk before it is cut, as the refusal line below is.
+        // The status beside the buttons stops short of the map column, shrunk before
+        // it is cut, as the refusal line below is; too long for one line even then, it
+        // takes two.
         const auto status = [&](const std::string& text) {
-            const float room = std::max(40.0f, winW - 312.0f - (bx + 280));
-            const float px = tak::uiTextFitPx(text, 1.3f, room, 0.9f);
-            blockText(tak::uiTextFit(text, px, room), bx + 280, y + 9, px, {235, 205, 120, 255});
+            const float room = std::max(40.0f, colX - 12 - (bx + 280));
+            constexpr SDL_Color amber{235, 205, 120, 255};
+            const float px = tak::uiTextFitPx(text, 1.3f, room, 1.1f);
+            if (blockWidth(text, px) <= room) { blockText(text, bx + 280, y + 9, px, amber); return; }
+            auto rows = tak::uiTextWrap(text, 1.1f, room);
+            for (size_t k = 2; k < rows.size(); ++k) rows[1] += " " + rows[k];
+            blockText(rows[0], bx + 280, y + 3, 1.1f, amber);
+            if (rows.size() > 1) blockText(tak::uiTextFit(rows[1], 1.1f, room), bx + 280, y + 16, 1.1f, amber);
         };
         const auto& mapStatus = mp_->mapStatus();
         if (!room.mapsReady && !mp_->modPending() && !mp_->modBusy() &&
@@ -1587,19 +1584,22 @@ float createOptionPx(float maxW) {
             // Shrunk before it is cut: a refusal that names a unit and the way out (a
             // scenario unit CRUSADES leaves out) should be read whole.
             const std::string why = "CANNOT START: " + mp_->startError();
-            const float px = tak::uiTextFitPx(why, 1.1f, winW - 360.0f, 0.8f);
-            blockText(tak::uiTextFit(why, px, winW - 360.0f), x, y + 33, px, {255, 130, 110, 255});
+            const float px = tak::uiTextFitPx(why, 1.1f, rowW, 0.8f);
+            blockText(tak::uiTextFit(why, px, rowW), x, y + 33, px, {255, 130, 110, 255});
         }
         // Creation settings are read-only here and come from the room, not
         // this client's saved preferences. Keep every rule visible with 8 slots.
         y += 44;
         const SDL_Color infoColor{205,210,225,255};
         // Six rows of two columns at a 16.5 pitch (POWER CODES and MAP SCENARIO are the
-        // sixth), above a MAP SCENARIO's details (from y+99) or a generated map's recipe
-        // (from y+98).
+        // sixth), above a MAP SCENARIO's details (from y+99), across the slot table's
+        // width: a label too long for its column shrinks. A generated map's recipe is
+        // on the preview's hover box and the full-window map instead.
         constexpr float kInfoPitch = 16.5f;
+        const float infoColW = std::floor(rowW / 2);
         auto info = [&](int row, int column, const std::string& label) {
-            blockText(label,x+column*300.0f,y+row*kInfoPitch,1.6f,infoColor);
+            const float px = tak::uiTextFitPx(label, 1.6f, infoColW - 8, 1.2f);
+            blockText(tak::uiTextFit(label, px, infoColW - 8), x+column*infoColW, y+row*kInfoPitch+(1.6f-px)*3.5f, px, infoColor);
         };
         auto onOff = [](bool value) { return value ? "ON" : "OFF"; };
         info(0,0,std::string("CRUSADES: ")+onOff(room.opts.crusades));
@@ -1621,7 +1621,7 @@ float createOptionPx(float maxW) {
         // hint that this line of the read-only list is a toggle.
         if(!singlePlayer_) {
             const std::string label=std::string("ALLOW SPECTATORS: ")+onOff(room.opts.allowSpectators);
-            const SDL_FRect hit{x+300.0f,y+4*kInfoPitch-2,blockWidth(label,1.6f),18};
+            const SDL_FRect hit{x+infoColW,y+4*kInfoPitch-2,blockWidth(label,1.6f),18};
             blockText(label,hit.x,y+4*kInfoPitch,1.6f,host && lbHot(hit) ? SDL_Color{180,200,240,255} : infoColor);
             if(host) lobbyHots_.push_back({hit,[this](int) {
                 auto o=mpRoom().opts; o.allowSpectators=o.allowSpectators?0:1; mp_->setGameOptions(o); }});
@@ -1653,7 +1653,7 @@ float createOptionPx(float maxW) {
             int detail=0;
             auto rule=[&](const std::string& text,bool warning=false) {
                 if(detail>=6)return;
-                blockText(text,x+float(detail%2)*300.0f,y+99+float(detail/2)*12.5f,1.2f,warning ? amber : infoColor);
+                blockText(tak::uiTextFit(text,1.2f,infoColW-8),x+float(detail%2)*infoColW,y+99+float(detail/2)*12.5f,1.2f,warning ? amber : infoColor);
                 ++detail;
             };
             if(testUseOnly && !wanted) rule("TEST MAP: "+tak::sim::scenarioUseOnlyLine(scenarioLobby_,false));
@@ -1678,37 +1678,13 @@ float createOptionPx(float maxW) {
                 if(scenarioLobby_.placed>0 && empty) rule("NO PLACED UNITS: PLAYER "+tak::sim::seatList(empty),true);
             }
         }
-        if(tak::mapgen::isGeneratedMapId(room.mapId)) {
-            try {
-                const auto gp=tak::mapgen::decodeMapId(room.mapId);
-                const auto level=[](uint8_t v){return v==0?"NONE":v<86?"LOW":v<171?"MED":"HIGH";};
-                std::string scatter=tak::mapgen::scatterName(gp.manaScatter);
-                for(char& ch:scatter)ch=char(std::toupper(static_cast<unsigned char>(ch)));
-                static const char* mapTypes[]={"ARAMON","TAROS","VERUNA","ZHON","CREON"};
-                const std::string shape=std::string("MAP TYPE: ")+mapTypes[gp.mapType%tak::mapgen::kMapTypes]+
-                    "  LAYOUT: "+tak::mapgen::layoutName(gp.layout)+"  SIZE: "+
-                    std::to_string(gp.widthCells/32)+" X "+std::to_string(gp.heightCells/32)+
-                    "  PLAYERS: "+std::to_string(gp.players);
-                const std::string terrain=std::string("FORESTS: ")+level(gp.treeDensity)+
-                    "  ROCKS: "+level(gp.rockDensity)+"  MANA: "+level(gp.manaDensity)+
-                    "  WATER: "+(tak::mapgen::automaticWater(gp.layout)?"AUTO":level(gp.waterDensity))+
-                    "  HILLS: "+level(gp.reliefDensity);
-                blockText(shape,x,y+98,1.1f,infoColor);
-                blockText(terrain,x,y+112,1.1f,infoColor);
-                blockText("MAP SEED: "+std::to_string(gp.seed)+"  SCATTERED MANA: "+scatter,x,y+126,1.1f,infoColor);
-                const auto kit=[&](uint8_t v,uint8_t which){return tak::mapgen::kitAvailable(gp.mapType,which)?level(v):"NONE";};
-                blockText(std::string("PLATEAUS: ")+(tak::mapgen::automaticPlateaus(gp.layout)?"AUTO":kit(gp.plateauDensity,tak::mapgen::KitPlateaus))+
-                          "  MOUNTAINS: "+kit(gp.mountainDensity,tak::mapgen::KitMountains)+
-                          (gp.mapType==tak::mapgen::Zhon?"  VILLAGES: ":"  TOWNS: ")+kit(gp.townDensity,tak::mapgen::KitTowns),x,y+140,1.1f,infoColor);
-            } catch(const std::exception&) {} // Invalid map IDs cannot start.
-        }
         // chat panel on the right (multiplayer only -- there's no one to chat with in SP)
         if (!singlePlayer_) {
             // The message box runs from under the mods down to the line the text field and
             // SEND share.
-            float chx = winW - 300.0f, chy = modBottom, chw = 280;
+            float chx = colX, chy = modBottom, chw = colW;
             constexpr float kLineH = 16, kSb = 8;
-            const float inputY = winH - 52.0f;
+            const float inputY = winH - kChatInputH;
             SDL_SetRenderDrawColor(ren_, 22, 24, 32, 255);
             SDL_FRect cp{chx, chy, chw, std::max(40.0f, inputY - 6 - chy)}; SDL_RenderFillRectF(ren_, &cp);
             chatRect_ = cp;
@@ -1746,6 +1722,59 @@ float createOptionPx(float maxW) {
             lbBtn(chx + chw - 62, inputY, 56, 24, "SEND", !chatDraft_.empty(), [this] {
                 mp_->chat(chatDraft_); chatDraft_.clear(); chatScroll_ = 0; });
         }
+        // A generated map's recipe, under the pointer on its preview: a box in the lower
+        // half of the preview, clear of the CLICK band, or hung under it (over the mods
+        // and the chat) when the preview is too short to hold it.
+        if (roomMap && lbHot(pv) && !genPreviewPending_ && mapPreviewTex_) {
+            const auto lines = packItems(genRecipeItems(room.mapId), 1.1f, pv.w - 12);
+            if (!lines.empty()) {
+                constexpr float kPitch = 13;
+                const float h = float(lines.size()) * kPitch + 8;
+                const bool inside = pv.h / 2 + 14 + h <= pv.h;
+                const SDL_FRect bx{pv.x, inside ? pv.y + pv.h - h : pv.y + pv.h + 1, pv.w, h};
+                SDL_SetRenderDrawColor(ren_, 12, 14, 20, inside ? 210 : 255); SDL_RenderFillRectF(ren_, &bx);
+                SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &bx);
+                for (size_t k = 0; k < lines.size(); ++k)
+                    blockText(lines[k], bx.x + 6, bx.y + 5 + float(k) * kPitch, 1.1f, {205, 210, 225, 255});
+            }
+        }
+    }
+
+    std::vector<std::vector<std::string>> GameView::genRecipeItems(const std::string& mapId) {
+        if (!tak::mapgen::isGeneratedMapId(mapId)) return {};
+        const auto gp = tak::mapgen::decodeMapId(mapId);
+        const auto level = [](uint8_t v) { return v == 0 ? "NONE" : v < 86 ? "LOW" : v < 171 ? "MED" : "HIGH"; };
+        const auto kit = [&](uint8_t v, uint8_t which) { return tak::mapgen::kitAvailable(gp.mapType, which) ? level(v) : "NONE"; };
+        std::string scatter = tak::mapgen::scatterName(gp.manaScatter);
+        for (char& ch : scatter) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+        static const char* mapTypes[] = {"ARAMON", "TAROS", "VERUNA", "ZHON", "CREON"};
+        return {{std::string("MAP TYPE: ") + mapTypes[gp.mapType % tak::mapgen::kMapTypes],
+                std::string("LAYOUT: ") + tak::mapgen::layoutName(gp.layout),
+                "SIZE: " + std::to_string(gp.widthCells / 32) + " X " + std::to_string(gp.heightCells / 32),
+                "PLAYERS: " + std::to_string(gp.players),
+                std::string("FORESTS: ") + level(gp.treeDensity),
+                std::string("ROCKS: ") + level(gp.rockDensity),
+                std::string("MANA: ") + level(gp.manaDensity),
+                std::string("WATER: ") + (tak::mapgen::automaticWater(gp.layout) ? "AUTO" : level(gp.waterDensity)),
+                std::string("HILLS: ") + level(gp.reliefDensity)},
+               {std::string("PLATEAUS: ") + (tak::mapgen::automaticPlateaus(gp.layout) ? "AUTO" : kit(gp.plateauDensity, tak::mapgen::KitPlateaus)),
+                std::string("MOUNTAINS: ") + kit(gp.mountainDensity, tak::mapgen::KitMountains),
+                std::string(gp.mapType == tak::mapgen::Zhon ? "VILLAGES: " : "TOWNS: ") + kit(gp.townDensity, tak::mapgen::KitTowns),
+                "SCATTERED MANA: " + scatter,
+                "MAP SEED: " + std::to_string(gp.seed)}};
+    }
+
+    std::vector<std::string> GameView::packItems(const std::vector<std::vector<std::string>>& groups, float px, float maxW) const {
+        std::vector<std::string> lines;
+        for (const auto& items : groups) {
+            bool fresh = true;   // each group starts a line
+            for (const auto& item : items) {
+                if (!fresh && blockWidth(lines.back() + "  " + item, px) <= maxW) lines.back() += "  " + item;
+                else lines.push_back(tak::uiTextFit(item, px, maxW));
+                fresh = false;
+            }
+        }
+        return lines;
     }
 
     GameView::RoomStarts GameView::roomStarts() {
@@ -1807,7 +1836,7 @@ float createOptionPx(float maxW) {
         }
     }
 
-    void GameView::drawRoomPreview(const SDL_FRect& box, bool authored) {
+    void GameView::syncRoomPreview() {
         const auto& room = mpRoom();
         // A verified map package is the map every peer plays (a joiner may not have it,
         // or may hold a different map under the same name); otherwise the room's map is
@@ -1824,6 +1853,27 @@ float createOptionPx(float maxW) {
             }
             mapPreviewFor_ = key;
         }
+    }
+
+    SDL_FRect GameView::roomPreviewBox(float x, float y, float maxH) const {
+        // The map's shape: a generated map's from its id (known while it is still being
+        // rolled, when the last map's picture is on show), a file map's from its picture;
+        // square while neither is known.
+        const auto& id = mpRoom().mapId;
+        float w = 1, h = 1;
+        if (tak::mapgen::isGeneratedMapId(id)) {
+            const auto gp = tak::mapgen::decodeMapId(id);
+            w = gp.widthCells; h = gp.heightCells;
+        } else if (mapPreviewTex_ && mapPreviewW_ > 0 && mapPreviewH_ > 0) {
+            w = float(mapPreviewW_); h = float(mapPreviewH_);
+        }
+        const float sc = std::min(kRoomColW / w, maxH / h);
+        return {x, y, std::round(w * sc), std::round(h * sc)};
+    }
+
+    void GameView::drawRoomPreview(const SDL_FRect& box, bool authored) {
+        const auto& room = mpRoom();
+        syncRoomPreview();
         SDL_SetRenderDrawColor(ren_, 18, 20, 28, 255); SDL_RenderFillRectF(ren_, &box);
         if (mapPreviewTex_ && mapPreviewW_ > 0) {
             const float sc = std::min(box.w / float(mapPreviewW_), box.h / float(mapPreviewH_));
@@ -1906,22 +1956,31 @@ float createOptionPx(float maxW) {
         const SDL_FRect all{0, 0, float(winW), float(winH)};
         SDL_RenderFillRectF(ren_, &all);
         // The map fills the window above a footer as tall as the lobby's (BACK at 40 from
-        // the bottom), with the lobby's 16 margin round it.
+        // the bottom), with the lobby's 16 margin round it; a generated map's recipe takes
+        // a line or two between them.
+        const bool fromRoom = bigMapFor_.rfind("room:", 0) == 0;
+        const std::string mapId = fromRoom ? mpRoom().mapId : mpMapId_;
+        constexpr float kRecipePx = 1.1f, kRecipePitch = 13;
+        const auto recipe = packItems(genRecipeItems(mapId), kRecipePx, lw - 2 * kCreateMargin);
+        const float recipeH = recipe.empty() ? 0 : float(recipe.size()) * kRecipePitch + 4;
         const SDL_FRect area{kCreateMargin * s, kCreateMargin * s, (lw - 2 * kCreateMargin) * s,
-                             (lh - kCreateMargin - 50) * s};
+                             (lh - kCreateMargin - 50 - recipeH) * s};
         const SDL_FRect r = bigMap_->draw(area);
         if (r.w > 0 && mapPreviewWorldW_ > 0) {
             // The starts as the preview shows them, in the room's colours there.
             const SDL_FRect img{r.x, r.y, mapPreviewWorldW_ * r.w / bigMap_->worldW(),
                                 mapPreviewWorldH_ * r.h / bigMap_->worldH()};
-            drawStartMarkers(img, bigMapFor_.rfind("room:", 0) == 0 ? roomPreviewColors_ : std::vector<int>{}, 16 * s);
+            drawStartMarkers(img, fromRoom ? roomPreviewColors_ : std::vector<int>{}, 16 * s);
         }
         // The footer in the lobby's units, from the window's corner: lobbyMouse reads
         // the pointer the same way while this is open.
         lobbyOffX_ = lobbyOffY_ = 0;
         SDL_RenderSetScale(ren_, s, s);
         lbBtn(kCreateMargin, lh - 40, 120, 30, "BACK", true, [this] { bigMap_.reset(); });
-        const std::string title = mapTitle(bigMapFor_.rfind("room:", 0) == 0 ? mpRoom().mapId : mpMapId_);
+        for (size_t k = 0; k < recipe.size(); ++k)
+            blockText(recipe[k], (lw - blockWidth(recipe[k], kRecipePx)) / 2,
+                      lh - 50 - recipeH + 2 + float(k) * kRecipePitch, kRecipePx, {205, 210, 225, 255});
+        const std::string title = mapTitle(mapId);
         const std::string fitted = tak::uiTextFit(title, 1.8f, lw - 2 * (kCreateMargin + 140), false);
         blockText(fitted, (lw - blockWidth(fitted, 1.8f)) / 2, lh - 32, 1.8f, {200, 205, 220, 255});
         SDL_RenderSetScale(ren_, 1.0f, 1.0f);
