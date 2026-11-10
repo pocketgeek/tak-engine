@@ -79,7 +79,7 @@ enum class HoverKind {
 enum class CursorStage { Fixed, Armed, Hover };
 
 struct CursorFrame {
-    bool modalUi = false;          // lobby, exit menu, give-units menu, Options
+    bool modalUi = false;          // lobby, exit menu, give-units menu, Options, Benchmark results
     PointerArea area = PointerArea::Unknown;
     bool watcher = false;          // a spectator or replay: no orders to show
     bool watcherOverUnit = false;  // ...with a finished unit under the pointer

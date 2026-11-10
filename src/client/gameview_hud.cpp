@@ -177,7 +177,9 @@ namespace {
         using namespace tak::client;
         const PointerArea area = pointerArea();
         CursorFrame frame;
-        frame.modalUi = inLobbyPhase() || exitMenu_ || giveUnitsMenu_ || options_;
+        // The Benchmark's results screen lies over the frozen game: the pointer there is on
+        // the results (SAVE AS JPG, DONE), never on a unit under them.
+        frame.modalUi = inLobbyPhase() || exitMenu_ || giveUnitsMenu_ || options_ || benchStatsShown_;
         frame.area = area;
         frame.watcher = watchOnly();
         if (frame.watcher && !frame.modalUi && area == PointerArea::World && !dragging_) {
