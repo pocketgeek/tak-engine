@@ -62,11 +62,11 @@ further.
 
 ## Play online
 
-![The Connect to Server panel: the default server tak.pgnet.us, CUSTOM..., two remembered servers each with a DELETE button, the account name and password fields, the note A NEW NAME IS REGISTERED WHEN YOU SIGN IN, and the CONNECT and BACK buttons](img/mp-connect.jpg)
+![The Connect to Server panel: the default server tak.pgnet.us, LOCAL SERVER (HOST), NEW SERVER..., two remembered servers each with a DELETE button, the account name and password fields side by side, the note A NEW NAME IS REGISTERED WHEN YOU SIGN IN, and BACK on the left with SPECTATE and CONNECT on the right](img/mp-connect.jpg)
 
 1. Click the **Multiplayer** door.
 2. Pick a server from the list (the official TAK Engine server, `tak.pgnet.us`,
-   is first, marked **DEFAULT**), or **CUSTOM...** to type an address.
+   is first, marked **DEFAULT**), or **NEW SERVER...** to type an address.
 3. Type an account name and a password, then click **CONNECT**. A name the
    server has not seen before is registered as you sign in.
 4. In the game list, click a game to join it, or click **CREATE** to open your

@@ -119,7 +119,7 @@ int main(int argc, char** argv) try {
               monarch.scenarioWeapon > 2.49f && monarch.scenarioWeapon < 2.51f,
               "the known custom type lost its stats beside the skipped one");
         check(sim::inspectScenario(view, cfg.mapPath, &crusades).status == sim::ScenarioStatus::Ok,
-              "the create screen does not offer a scenario whose only loss is a custom type");
+              "the CHANGE MAP panel does not offer a scenario whose only loss is a custom type");
     }
     {   // (b) A placed unit Crusades lacks is refused, by name, for the player.
         auto placed = scenario;
@@ -172,7 +172,7 @@ int main(int argc, char** argv) try {
         check(refused.empty(), "a Crusades Test Map refused a Use Only unit of the standard balance: " + refused);
         check(world.units().size() == 2, "the Crusades Test Map lost its placements");
         check(sim::inspectScenario(view, cfg.mapPath, &crusades).status == sim::ScenarioStatus::Ok,
-              "the create screen does not offer a Crusades Test Map whose Use Only names zonspide");
+              "the CHANGE MAP panel does not offer a Crusades Test Map whose Use Only names zonspide");
         useOnly("[ARAKING]\n{\n}\n[ZONSPIDX]\n{\n}\n");
         sim::World typo;
         refused.clear();
@@ -180,7 +180,7 @@ int main(int argc, char** argv) try {
         check(refused.find("Unknown authored Use Only unit: zonspidx") != std::string::npos,
               "a Test Map's Use Only typo was accepted: " + refused);
         check(sim::inspectScenario(view, cfg.mapPath, &crusades).status == sim::ScenarioStatus::MissingType,
-              "the create screen offers a Test Map with a Use Only typo");
+              "the CHANGE MAP panel offers a Test Map with a Use Only typo");
     }
     std::printf("PASS: Crusades scenario custom types skipped, placed types refused by name, Check Map warns\n");
     return 0;

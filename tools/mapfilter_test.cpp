@@ -1,4 +1,4 @@
-// mapfilter_test -- the create screen's map list FILTER (client/mapfilter.h): a map stays
+// mapfilter_test -- the CHANGE MAP panel's map list FILTER (client/mapfilter.h): a map stays
 // listed when its title or name contains the text, ignoring case; empty lists everything.
 
 #include "client/mapfilter.h"

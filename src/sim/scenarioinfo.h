@@ -3,7 +3,7 @@
 // MAP SCENARIO: what a map's own scenario would do if a room turned it
 // on -- read from the map's .ota, .crt and Use Only .tdf alone, without building a world.
 //
-// One inspector serves the create screens (the map list's marker and the selected map's
+// One inspector serves the CHANGE MAP panel (the map list's marker and the selected map's
 // button), the room's rule lines and seat tags, the server's START checks, the lobby
 // capacity and the tests. It is deliberately separate from setupMatch, which mixes the
 // same checks with world mutations (custom stats, the neutral owner); scenario_info_test
@@ -66,7 +66,7 @@ struct ScenarioInfo {
     // Player 1 -- the room's creator, and in single player the human -- has an army
     // once the scenario's placements replace the Monarchs (rules-only maps keep them).
     bool seatOneArmy() const { return placed == 0 || (armySeats & 1) != 0; }
-    // The create screens offer it. Player 1's army is not a status: setupMatch starts a
+    // The CHANGE MAP panel offers it. Player 1's army is not a status: setupMatch starts a
     // map that gives player 1 nothing to command, it is just not a game anyone can play.
     // (40 of 186 downloaded scenario maps checked place only wildlife, villagers, scenery
     // or lodestones for player 1; their authors used the scenario editor to decorate.)
@@ -90,11 +90,11 @@ ScenarioInfo inspectScenario(const hpi::Vfs& vfs, const std::string& mapPath, co
 std::string seatList(uint8_t seats);
 
 struct ScenarioLine { std::string text; bool warning = false; };
-// Why the create screen greys the button (uppercase, <= 26 characters a line): the
+// Why the CHANGE MAP panel greys the button (uppercase, <= 26 characters a line): the
 // status, or for an Ok map, that player 1 gets no army. Empty for an offerable map. A
 // Test Map copy is the caller's case (TEST COPY: ALWAYS ON).
 std::vector<std::string> scenarioReason(const ScenarioInfo&);
-// What turning the scenario on changes: compact for the create screens (<= 26 characters
+// What turning the scenario on changes: compact for the CHANGE MAP panel (<= 26 characters
 // a line), full for the room's rule lines (<= 44).
 std::vector<ScenarioLine> scenarioSummary(const ScenarioInfo&, bool compact);
 // The summary's Use Only line on its own ("BUILDS 6 UNIT TYPES" / "ONLY 6 UNIT TYPES

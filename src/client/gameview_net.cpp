@@ -1748,6 +1748,7 @@ int roomRuleValue(const tak::net::GameOptions& o, tak::RoomField field) {
     void GameView::createRoomFromPrefs() {
         if (!mp_ || mp_->state() != tak::net::MpClient::State::Lobby) { roomActError_ = "not in the game list"; return; }
         if (roomCreateSent_) { roomActError_ = "a game is already being opened"; return; }
+        roomOpenError_.clear();
         // The browser's CREATE makes a multiplayer room; the doors named theirs.
         if (roomKind_ == RoomKind::None) roomKind_ = singlePlayer_ ? RoomKind::SinglePlayer : RoomKind::Multiplayer;
         rememberRoom_ = lobbyAutoMode_ == 0 && roomForcedMap_.empty();
@@ -1811,7 +1812,7 @@ int roomRuleValue(const tak::net::GameOptions& o, tak::RoomField field) {
             if (t.remembered && why.empty()) why = failed;
         }
         if (opened.empty()) {   // a --play-map map that cannot be built here: the lobby says why
-            roomActError_ = failed;
+            roomActError_ = roomOpenError_ = failed;
             roomAutoCreate_ = false;
             return;
         }

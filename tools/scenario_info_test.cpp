@@ -1,7 +1,7 @@
 // scenario_info_test -- MAP SCENARIO (protocol 259): sim::inspectScenario reads a map's
 // scenario facts from its .ota/.crt/.tdf, and agrees with setupMatch.
 //
-// The inspector decides what the create screens offer, which seats the room tags and
+// The inspector decides what the CHANGE MAP panel offers, which seats the room tags and
 // requires, and what the server accepts at START, without building a world. setupMatch
 // remains the authority, so the matrix at the end runs every case through both: with a
 // registry, status Ok exactly when setupMatch (MatchConfig::mapScenario, every required

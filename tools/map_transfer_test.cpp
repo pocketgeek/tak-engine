@@ -1012,7 +1012,7 @@ int main(int argc, char** argv) try {
         auto vfs=hpi::mountRetailRoot(argv[1]);
         {
             // MAP SCENARIO (259) on the shipped maps, read from the very packages a room
-            // verifies: what the create screens offer and the seats the room requires.
+            // verifies: what the CHANGE MAP panel offers and the seats the room requires.
             using S=sim::ScenarioStatus;
             sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,false);
             auto info=[&](const char* name){return net::maps::scenarioInfo(*net::maps::build(vfs,name),&registry);};

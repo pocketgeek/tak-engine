@@ -4298,6 +4298,7 @@ private:
     std::string roomDefaultMap_;   // the launch's map (setMpMapId): the fallback after the remembered one
     std::string roomStartPass_;    // LOCAL SERVER: the game password typed on CONNECT
     std::string roomOpenNote_;     // why the remembered map was passed over: the new room's first note
+    std::string roomOpenError_;    // why no game could be opened here (no map could be built): the opening screen says it
     int lobbyAutoMode_ = 0;        // mpAutoStep's autoMode: a harness room (not 0) remembers nothing
     // A room-first session's lobby (PLAY THE MACHINE, LOCAL SERVER host, --play-map, the CLI
     // game) has no game list: OPENING THE GAME... while its room is made, or why it could

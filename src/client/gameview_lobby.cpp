@@ -106,7 +106,9 @@
     void GameView::drawRoomOpening(int winW, int winH) {
         const float cx = winW / 2.0f, my = winH / 2.0f - 40;
         // A refused CreateGame (the server's reason), or a map that could not be built here.
-        const std::string why = !mp_->joinError().empty() ? mp_->joinError() : mp_->createError();
+        const std::string why = !mp_->joinError().empty()   ? mp_->joinError()
+                              : !mp_->createError().empty() ? mp_->createError()
+                                                            : roomOpenError_;
         if (roomAutoCreate_ || roomCreateSent_ || why.empty()) {
             const char* note = "OPENING THE GAME...";
             blockText(note, cx - blockWidth(note, 2.0f) / 2, my + 20, 2.0f, {200, 200, 210, 255});
@@ -741,11 +743,14 @@
         const auto& room = mp_->room();
         const float colX = f.colX, colW = f.colW;
         const bool host = f.host, roomMap = f.roomMap;
-        // Left-aligned with the preview under it; a long name runs on past the right edge.
+        // Left-aligned with the preview under it, and kept to the column: a long name (a
+        // Test Map copy's "test <n> [<fingerprint>]") shrinks a little, then is cut with "...".
         // A map or MAP SCENARIO change lights it, and the preview's rim below.
         const SDL_FRect head{colX, 58, colW, 20};
         drawRoomFlash(RoomField::Map, head); drawRoomFlash(RoomField::Scenario, head);
-        blockText("MAP  " + mapTitle(room.mapId), colX, 62, 1.8f, {180, 185, 195, 255});
+        const std::string mapHead = "MAP  " + mapTitle(room.mapId);
+        const float mapHeadPx = tak::uiTextFitPx(mapHead, 1.8f, colW, 1.4f);
+        blockText(tak::uiTextFit(mapHead, mapHeadPx, colW), colX, 62 + (1.8f - mapHeadPx) * 4, mapHeadPx, {180, 185, 195, 255});
         // The room's map, with its starts numbered and coloured by who opens there,
         // heads the right column; the mod packs and the chat sit right under it.
         // The preview is as wide as the column and as tall as the map's shape makes it.

@@ -237,8 +237,8 @@ links to the section that explains it in full.
 7. **Save it.** Press **Ctrl+S**. The map is saved as
    `Twin Rivers.kmp` in your game's `Maps` folder.
    ([Saving](#saving-opening-and-sharing))
-8. **Try it.** Press **F5**. The game opens a private lobby with your map. Set
-   seat 2 to a computer player and start. Close the game to come back to the
+8. **Try it.** Press **F5**. The game opens a private game room with your map.
+   Set seat 2 to a computer player and start. Close the game to come back to the
    editor. ([Testing](#testing-a-map-in-the-game))
 9. **Play it for real.** Start the game (restart it if it was already running).
    *Twin Rivers* is now in the skirmish map list as a 2-player map, and you can
@@ -294,7 +294,7 @@ map. It needs no map.
    ([Setting a unit](#setting-a-unit), [Presets](#presets))
 4. **Save.** Click **SAVE TO PACK...**. It writes `mods/game/<pack>/ai/` in your
    game data folder.
-5. **Test and play.** **TEST IN GAME...** picks a map and opens a private lobby
+5. **Test and play.** **TEST IN GAME...** picks a map and opens a private game room
    with the pack ticked; seat computer players at the levels you changed
    (**RETAIL** for the DEFAULT AI). To play with it later, the host ticks the
    pack with **MODS...** in the game room.
@@ -1841,7 +1841,7 @@ THE MACHINE, kept on your map. It has no **CHANGE MAP...** button, its **LEAVE**
 button reads **QUIT**, and nothing you set in it is remembered for your other
 games:
 
-![The game's single-player room, PLAY THE MACHINE, for map test followed by a number and a fingerprint (the name runs on past the edge): seat 1 HUMAN PLAYER with a WATCH button, seats 2 to 4 OPEN, tagged NEEDED BY SCENARIO and each with a MOVE HERE button, seats 5 to 8 CLOSED, START greyed beside QUIT, the match rules with START LOCATIONS: FIXED and MONARCH EXPENDABLE: SCENARIO greyed and MAP SCENARIO: ON (TEST MAP), followed under the two columns by PLACED UNITS REPLACE MONARCHS, NEEDS SEATS 1-4, ONLY 6 UNIT TYPES CAN BE BUILT and ENDS ONLY BY THE SCENARIO'S RULES, and the map preview with starts 1 to 4 and no CHANGE MAP button under it](img/cartographer/test-lobby.jpg)
+![The game's single-player room, PLAY THE MACHINE, for map test followed by a number and a fingerprint (cut with ... to fit its column): seat 1 HUMAN PLAYER with a WATCH button, seats 2 to 4 OPEN, tagged NEEDED BY SCENARIO and each with a MOVE HERE button, seats 5 to 8 CLOSED, START greyed beside QUIT, the match rules with START LOCATIONS: FIXED and MONARCH EXPENDABLE: SCENARIO greyed and MAP SCENARIO: ON (TEST MAP), followed under the two columns by PLACED UNITS REPLACE MONARCHS, NEEDS SEATS 1-4, ONLY 6 UNIT TYPES CAN BE BUILT and ENDS ONLY BY THE SCENARIO'S RULES, and the map preview with starts 1 to 4 and no CHANGE MAP button under it](img/cartographer/test-lobby.jpg)
 
 *The game's room for a Test Map of King of the Hill. Its scenario needs four players, so seats 2 to 4 are tagged and START waits for them.*
 
@@ -2043,8 +2043,8 @@ takclient --play-map "/home/player/Games/TA Kingdoms/Maps/Twin Rivers.kmp"
 On Windows the program is `takclient.exe`, in the same folder as
 `cartographer.exe`; on macOS it is inside the app, at
 `Total Annihilation - Kingdoms.app/Contents/MacOS/takclient`. This opens the
-same private lobby as F5 in Cartographer. The `.kmp` must contain exactly one
-map. Add `--game-mod "<pack>"` to tick one game mod in that lobby (see
+same private game room as F5 in Cartographer. The `.kmp` must contain exactly one
+map. Add `--game-mod "<pack>"` to tick one game mod in that room (see
 [Making an AI mod without a map](#making-an-ai-mod-without-a-map)). Afterwards the scenario's test copy stays in the player's map list (with a
 fingerprint in brackets), so they can choose it from there next time.
 
