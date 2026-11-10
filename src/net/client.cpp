@@ -916,6 +916,13 @@ void MpClient::leaveGame() {
     sendPing(nowMs());                 // its Pong: the server has taken the leave (takes())
     leavePongs_ = pingsOut_.size();
     resetModTransfer();resetMapTransfer();
+    // What the game's stream left here goes with it: the next game on this connection
+    // counts its ticks from 0 again, and must find none of these waiting under them. A
+    // watched game's stream is taken before its GameStarting is (which may wait for a
+    // package, takes()), so a WATCH taken back in that wait leaves one too.
+    bundles_.clear(); jitterHeld_.clear(); nextBundleTick_ = 0;
+    waiting_.clear(); paused_ = false;
+    chat_.clear(); voice_.clear(); inputDropped_.clear();
     room_ = RoomView{};
     state_ = State::Lobby;
 }

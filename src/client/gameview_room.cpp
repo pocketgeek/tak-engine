@@ -877,6 +877,10 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
 
     // The password this client's player typed for a room is the room's own while in it, and
     // gone when it is left; one typed for a request that was refused or given up goes too.
+    // So does one the room's table shows it no longer has: this client changes no password
+    // in a room, but the server still takes SetRoomInfo from one that does, and a lock that
+    // was dropped and set again is not the password typed here. (The table says only
+    // whether there is one: a password changed in one step cannot be told from here.)
     void GameView::roomPasswordStep() {
         using S = tak::net::MpClient::State;
         const S st = mp_->state();
@@ -884,6 +888,12 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
             if (!roomPassAsked_.empty()) {
                 roomPass_ = roomPassAsked_;
                 tak::crypto::wipe(roomPassAsked_);
+            }
+            const auto& room = mp_->room();
+            if (room.id && !room.passworded && !roomPass_.empty()) {   // (id 0: its first table is still to come)
+                tak::crypto::wipe(roomPass_);
+                roomPassShown_ = false;
+                std::fprintf(stderr, "room: password forgotten (the room has none now)\n");
             }
             return;
         }

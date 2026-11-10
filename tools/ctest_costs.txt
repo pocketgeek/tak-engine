@@ -130,7 +130,7 @@ legion_verify_battle-assault 11
 preview_lifetime 11
 server_voice 11
 terrain_schedule 10
-room_flow 120
+room_flow 131
 legion_gen1_route_21096_o1 10
 legion_motion_wall_wanderers_on 10
 legion_scenario_mixed2 10

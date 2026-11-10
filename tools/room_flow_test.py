@@ -48,6 +48,16 @@ cannot finish prints why and ends the client. TAK_QUIT_TICK ends a game that sta
      game running; the room's guest is a scripted peer): the room says CANNOT START: server
      running-game capacity reached; retry later, stays open and still takes its host's
      changes.
+  15 presses aimed at the screen before (press: steps, which go the pointer's way). The
+     CREATE window's CREATE lies over the room's LEAVE: a press that lands there as the room
+     opens, and the second press of a double click on CREATE that comes later, are dropped
+     (the client says so) and the player is still in the room. A click of its own on that
+     spot is LEAVE; a press as the game list appears is dropped again, and a click on the
+     list once it has stood joins the game in its first row.
+  16 a password the room no longer has: the host here is a scripted peer that still sends
+     SetRoomInfo (this client does not). A guest who typed the password has it behind SHOW;
+     when the room's table shows the lock gone the client forgets it (and says so, never
+     the password), so a lock set again later is not shown as the one typed.
 
 Debug builds only (TAK_ROOM_SCRIPT, TAK_QUIT_TICK and the CLI game are debug hooks).
 
@@ -604,6 +614,142 @@ def case_running_limit(args, root):
             server.kill(); server.wait()
 
 
+def case_stale_press(args, root):
+    """Presses aimed at the screen before: a double click on CREATE does not LEAVE the room it opens."""
+    server, port, slog_path = account_server(args, root, 'case15-server')
+    host = None
+    try:
+        # Another player's game, for the list's first row.
+        hsteps = ['create:First', 'wait:humans=2']
+        hhome, henv = profile(root, 'case15-host', ';'.join(hsteps),
+                              {'TAK_MENU_PICK': 'connect:alice:alicepass1@tcp://127.0.0.1:%d' % port})
+        hlog_path = hhome / 'client.log'
+        with open(hlog_path, 'w') as out:
+            host = subprocess.Popen([args.client, 'menu', '--data', args.data, '--winsize', '960', '540'], cwd=hhome,
+                                    env=henv, stdout=out, stderr=subprocess.STDOUT)
+        wait_for(hlog_path, 'room script: create:First: done', host)
+        # (400, 359) is on the CREATE window's CREATE and on a multiplayer room's LEAVE,
+        # (850, 87) on the game list's CREATE and (300, 149) on its first row. A dropped
+        # press changes nothing, so each is followed by a step that fails had it been taken.
+        steps = ['window:create:Twice:pw', 'browser:400',
+                 'press:400:359',          # the window's CREATE
+                 'wait:humans=1',          # the room is open
+                 'press:400:359',          # lands as the room opens, over LEAVE: dropped
+                 'showpass:1',             # still in the room (in the list this step fails)
+                 'press:400:359:2:400',    # the second press of a double click, later: dropped
+                 'showpass:0',             # still in the room
+                 'press:400:359',          # a click of its own there is LEAVE
+                 'press:850:87',           # lands as the list appears, on its CREATE: dropped
+                 'browser:400',
+                 'press:300:149',          # a click on First's row (under a window it is none)
+                 'wait:humans=2']
+        # What each press came to, in order.
+        presses = ['taken', 'dropped', 'dropped', 'taken', 'dropped', 'taken']
+        home, env = profile(root, 'case15', ';'.join(steps),
+                            {'TAK_MENU_PICK': 'connect:bob:bobpass12@tcp://127.0.0.1:%d' % port})
+        log = ''
+        try:
+            log = run_until(args.client, ['menu', '--data', args.data], env, home, 'room script: finished', timeout=90)
+            wait_for(hlog_path, 'room script: finished', host, 30)
+            slog_text = slog_path.read_text(errors='replace')
+            script_ran(log, steps)
+            # (The client says a press was dropped before the step that made it ends.)
+            came, dropped = [], False
+            for line in log.splitlines():
+                if line.startswith('lobby: press dropped'):
+                    dropped = True
+                elif re.match(r'room script: press:.*: done$', line):
+                    came.append('dropped' if dropped else 'taken')
+                    dropped = False
+            assert came == presses, 'what the presses came to: %r, not %r' % (came, presses)
+            made = re.search(r"client (\d+) created game (\d+) 'Twice'", slog_text)
+            assert made, 'the press on CREATE did not create the game'
+            # One room 'Twice', entered once and left once (the steps ran in order: after SHOW,
+            # by the click that was a click on LEAVE).
+            assert len(re.findall(r"room: game \d+ 'Twice'", log)) == 1, 'the room was entered more than once'
+            assert len(re.findall(r'game %s dissolved' % made[2], slog_text)) == 1, 'the room was not left once'
+            assert len(re.findall(r'client %s joined game \d+ at slot 1' % made[1], slog_text)) == 1, \
+                'the player did not join First once, by the click on the list that had stood'
+            assert re.search(r"room: game \d+ 'First'", log), "the player is not in First's room"
+        except AssertionError as e:
+            raise AssertionError('%s\nclient:\n%s\nhost:\n%s\nserver:\n%s' % (
+                e, log[-3000:], hlog_path.read_text(errors='replace')[-1500:],
+                slog_path.read_text(errors='replace')[-2000:]))
+    finally:
+        if host is not None and host.poll() is None:
+            host.terminate()
+            try:
+                host.wait(20)
+            except subprocess.TimeoutExpired:
+                host.kill(); host.wait()
+        if server.poll() is None:
+            server.kill(); server.wait()
+
+
+def case_password_dropped(args, root):
+    """A password the room's table says is gone is forgotten, not shown behind SHOW."""
+    import server_net as auth
+    from server_disconnect_test import Player
+    from server_host_test import options
+    from server_public_test import login
+    server, port, slog_path = account_server(args, root, 'case16-server')
+    host = proc = None
+    typed = 'birch-Qz1'
+    try:
+        h = int(re.search(r'retail gameplay hash ([0-9a-f]+)', slog_path.read_text(errors='replace'))[1], 16)
+        # The host: a scripted peer with an account, in a locked room on a generated map.
+        host = Player(login(port, h, 'carol'))
+        host.send('CreateGame', auth.field('Locked') + auth.field(typed) + auth.field(recipe(2)) + auth.field('') +
+                  options() + bytes([2, 0, 0]))
+        assert host.take('JoinResult').num('<B') == 1, 'the scripted host could not create its room'
+        table = lambda: auth.lobby(auth.Reader(host.other[auth.MSG['LobbyState']][-1]))
+        assert host.pump(5, lambda p: p.other.get(auth.MSG['LobbyState'])) and table()[6] == 1, 'the room is not locked'
+        steps = ['join:Locked:' + typed, 'showpass:1', 'wait:ready=1']
+        home, env = profile(root, 'case16', ';'.join(steps),
+                            {'TAK_MENU_PICK': 'connect:bob:bobpass12@tcp://127.0.0.1:%d' % port})
+        path = home / 'client.log'
+        with open(path, 'w') as out:
+            proc = subprocess.Popen([args.client, 'menu', '--data', args.data, '--winsize', '960', '540'], cwd=home,
+                                    env=env, stdout=out, stderr=subprocess.STDOUT)
+        try:
+            deadline = time.monotonic() + 90
+            dropped = False
+            while 'room script: finished' not in path.read_text(errors='replace'):
+                assert proc.poll() is None, 'the client ended (exit %s)' % proc.returncode
+                assert time.monotonic() < deadline, 'the script did not finish'
+                host.pump(0.05)
+                if not dropped and 'room script: showpass:1: done' in path.read_text(errors='replace'):
+                    # The guest shows the password it typed. The host drops the lock, then
+                    # readies: the guest's script goes on once that table is there.
+                    dropped = True
+                    host.send('SetRoomInfo', bytes([2]) + auth.field('') + auth.field(''))
+                    assert host.pump(5, lambda p: table()[6] == 0), 'the server did not drop the lock'
+                    seat = table()[3][0][0]
+                    auth.slot_update(host, 0, 1, seat[1], seat[2], seat[3], 1, 2)
+            time.sleep(0.3)
+            log, slog_text = path.read_text(errors='replace'), slog_path.read_text(errors='replace')
+            script_ran(log, steps)
+            shown, forgot = log.find('room: password shown'), log.find('room: password forgotten')
+            assert 0 <= shown < forgot, 'the client still holds a password the room no longer has'
+            assert re.search(r'game \d+: password cleared', slog_text), 'the server did not take the SetRoomInfo'
+            told = [line for line in (log + slog_text).splitlines() if typed in line and not line.startswith('room script: ')]
+            assert not told, 'a log has the password: %r' % told
+        except AssertionError as e:
+            raise AssertionError('%s\nclient:\n%s\nserver:\n%s' % (
+                e, path.read_text(errors='replace')[-3000:], slog_path.read_text(errors='replace')[-2000:]))
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(20)
+            except subprocess.TimeoutExpired:
+                proc.kill(); proc.wait()
+        if host is not None:
+            host.close()
+        if server.poll() is None:
+            server.kill(); server.wait()
+
+
 def hpi_read(hpitool, data, path):
     """One file of the install, from the archive that wins it."""
     where = subprocess.run([hpitool, 'where', str(data), path], capture_output=True, text=True, check=True).stdout
@@ -730,7 +876,8 @@ def case_unready(args, root):
 
 CASES = {1: case_single_player, 2: case_watch, 3: case_capacity, 4: case_unready, 5: case_door, 6: case_play_map,
          7: case_fallback, 8: case_lan_host, 9: case_online_create, 10: case_scenario_confirm, 11: case_windows,
-         12: case_leave_race, 13: case_game_limit, 14: case_running_limit}
+         12: case_leave_race, 13: case_game_limit, 14: case_running_limit, 15: case_stale_press,
+         16: case_password_dropped}
 
 
 def main():

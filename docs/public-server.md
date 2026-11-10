@@ -333,7 +333,8 @@ read, so it can be read-only to the service account.
 Ordinary lobby/chat/setting requests have per-connection, account, IP and global
 work budgets. Expensive creation/start/map-offer requests cost more than small
 queries; map chunks have separate byte budgets. Keepalive has a connection
-budget so one abusive connection cannot disconnect its healthy NAT neighbours.
+budget so one abusive connection cannot disconnect its healthy NAT neighbours;
+so does leaving a game, which is never dropped on a budget its neighbours spent.
 Authentication retains its own throttles. Account-file
 rewrites are also limited globally. New connections are limited before TLS
 allocation (32 per IP and 128 globally per second). Upload reads apply

@@ -1869,14 +1869,15 @@ int roomRuleValue(const tak::net::GameOptions& o, tak::RoomField field) {
             return false;
         };
         // create, join and window act in the browser; every other step in the room, once this
-        // mode has seated its player (showpass, shot and browser: there, or in the browser).
-        // The step's limit runs from when it can act.
+        // mode has seated its player (showpass, shot, press and browser: there, or in the
+        // browser). The step's limit runs from when it can act.
         const bool browserVerb = step.verb == "create" || step.verb == "create!" || step.verb == "join" ||
                                  step.verb == "join!" || step.verb == "window";
         if (!roomScriptActed_) {
             const bool inRoom = st == S::InRoom && (autoMode == 0 || mpReadied_);
             const bool inBrowser = st == S::Lobby && !singlePlayer_ && !lanHost_ && !mp_->lanServer();
-            const bool either = step.verb == "shot" || step.verb == "showpass" || step.verb == "browser";
+            const bool either = step.verb == "shot" || step.verb == "showpass" || step.verb == "browser" ||
+                                step.verb == "press";
             const bool due = browserVerb ? inBrowser : inRoom || (either && inBrowser);
             if (!due) { roomScriptDueMs_ = 0; return true; }
         }
@@ -2074,6 +2075,28 @@ int roomRuleValue(const tak::net::GameOptions& o, tak::RoomField field) {
                 std::fprintf(stderr, "room script: %s: refused: CANNOT START: %s\n", step.text.c_str(), mp_->startError().c_str());
                 done = true;
             } else done = roomScriptActed_ && !wantRefusal && started;
+        } else if (step.verb == "press") {
+            // press:<x>:<y>[:<clicks>[:<ms>]]: the left button pressed and released at (x, y)
+            // of the lobby's 960x540, through input() as SDL delivers it, <ms> after the step
+            // came due. <clicks> is the press's click count (2: the second press of a double
+            // click). The one step that goes the pointer's way: what it hits is the test's.
+            float px = 0, py = 0;
+            int clicks = 1, after = 0;
+            if (std::sscanf(step.arg.c_str(), "%f:%f:%d:%d", &px, &py, &clicks, &after) < 2 || clicks < 1 || clicks > 255)
+                return fail("no point '" + step.arg + "'");
+            if (now - roomScriptDueMs_ >= uint64_t(std::max(after, 0))) {
+                int w = 0, h = 0;
+                SDL_GetRendererOutputSize(ren_, &w, &h);
+                SDL_Event e{};
+                e.button.button = SDL_BUTTON_LEFT; e.button.clicks = Uint8(clicks);
+                e.button.x = int(std::lround((px + lobbyOffX_) * lobbyScale_));
+                e.button.y = int(std::lround((py + lobbyOffY_) * lobbyScale_));
+                for (const Uint32 type : {Uint32(SDL_MOUSEBUTTONDOWN), Uint32(SDL_MOUSEBUTTONUP)}) {
+                    e.type = type; e.button.state = type == SDL_MOUSEBUTTONDOWN ? SDL_PRESSED : SDL_RELEASED;
+                    input(e, w, h);
+                }
+                roomScriptActed_ = done = true;
+            }
         } else if (step.verb == "shot") {
             if (!roomScriptActed_) { roomShotPath_ = step.arg; roomScriptActed_ = true; }
             std::error_code ec;

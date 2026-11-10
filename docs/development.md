@@ -346,7 +346,11 @@ room's password, or beside the password field of an open window; the room prints
 `room: password shown` or `room: password hidden` when it changes, never the
 password), `shot:<png>` and `browser:<ms>` (the game list, and nothing else, for that
 long: after `leave` it fails if a room opens again). `start!` expects the server to
-refuse the START and ends on the reason the room shows, which it prints. Each step
+refuse the START and ends on the reason the room shows, which it prints.
+`press:<x>:<y>[:<clicks>[:<ms>]]` is the one step that goes the pointer's way: the
+left button pressed and released at that point of the lobby's 960×540, as SDL delivers
+it, `<ms>` after the step came due; `<clicks>` is the press's click count (2 for the
+second press of a double click). Each step
 waits for its own result and ends the run with
 the reason if it does not come within 10 s (30 s for `wait`, 20 s for `create!` and
 `join!`). With `TAK_MENU_PICK=singleplayer` it drives the room the PLAY THE MACHINE

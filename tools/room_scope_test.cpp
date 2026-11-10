@@ -18,6 +18,9 @@
 //    (LeaveGame follows the request, so the server leaves the room it opened), its late
 //    no is not news, and the next request's answer is not taken for it. A taken-back
 //    Spectate starts no game and does not make the next seated start a spectator's.
+//  - A Spectate taken back while its GameStarting waits for a package (watchLoading): the
+//    bundles, pause, wait and chat taken behind it are gone, and the next game on the
+//    connection plays only its own ticks.
 //  - The first LobbyState after each real way in is still taken: CreateGame, JoinGame, a
 //    seat move, a host succession, Spectate (GameStarting) and Rejoin (Reseated).
 #include "net/client.h"
@@ -332,6 +335,61 @@ void watchCase(const std::filesystem::path& scratch) {
     server.send(client, {{net::Msg::TickBundle, tickBundle(0)}});
     check(client.state() == S::InGame && client.bufferedBundles() == 1, "watch: the bundle log follows");
 }
+
+// A WATCH whose GameStarting waits for a package (the game's mods, which this client does
+// not hold): the stream behind it is taken while it waits, and the watch is then taken
+// back. Nothing of the watched game may be left for the next game on this connection.
+void heldWatchCase(const std::filesystem::path& scratch) {
+    Server server; net::MpClient client;
+    client.setMapRoot(scratch / "data"); client.setCacheRoot(scratch / "cache");
+    check(client.connect("127.0.0.1", server.port, "Player"), "held watch: connect");
+    server.accept(client);
+    welcome(server, client);
+    client.spectate(20, "");
+    check(server.sent(client) == Kinds{net::Msg::Spectate}, "held watch: spectate request");
+    check(!client.watchLoading(), "held watch: nothing is loading before the server's answer");
+    // As Server::sendGameStarting(catchUp): ModOffer, GameStarting, then the bundle log (a
+    // generated map: nothing holds the stream at the server) and what the room is told.
+    {
+        auto live = room(20, "Live", 7, 1, -1); live.mission.clear(); live.mapId = "~gen1~x"; live.opts.gameMods = 1;
+        net::Writer start; net::put(start, live); start.u8(0xFF); start.u32(7); start.u64(0); start.u32(3);
+        server.send(client, {{net::Msg::ModOffer, offer(20, "mods")},
+                             {net::Msg::GameStarting, start},
+                             {net::Msg::TickBundle, tickBundle(0)},
+                             {net::Msg::TickBundle, tickBundle(1)},
+                             {net::Msg::TickBundle, tickBundle(2)},
+                             {net::Msg::Pause, byte(1)},
+                             {net::Msg::Waiting, waiting()},
+                             {net::Msg::Chat, chat("Other", "a line of the watched game")}});
+    }
+    check(server.sent(client) == Kinds{net::Msg::ModRequest}, "held watch: the game's mods are asked for");
+    check(client.state() == S::Lobby && !client.starting(), "held watch: GameStarting waits for the game's mods");
+    check(client.watchLoading() && client.modStatus() == "DOWNLOADING GAME MODS", "held watch: it says it is loading, and what");
+    check(client.bufferedBundles() == 3 && client.paused(), "held watch: the stream behind GameStarting is taken while it waits");
+    // CANCEL in the WATCH window: the request is taken back.
+    client.leaveGame();
+    check(server.sent(client) == Kinds({net::Msg::LeaveGame, net::Msg::Ping}), "held watch: taken back with LeaveGame, then a Ping");
+    server.send(client, {{net::Msg::TickBundle, tickBundle(3)}});   // still on its way
+    server.takeLeave();
+    server.send(client);
+    check(inList(client) && !client.watchLoading(), "held watch taken back: in the game list, nothing loading");
+    check(client.bufferedBundles() == 0, "held watch taken back: its bundles are still buffered");
+    check(!client.paused() && client.waiting().empty(), "held watch taken back: the watched game's pause or wait is still set");
+    check(client.takeChat().empty(), "held watch taken back: the watched game's chat line was kept");
+    // The player then joins a room and its game starts: its ticks are its own.
+    client.joinGame(12, "");
+    server.sent(client);
+    server.send(client, {{net::Msg::JoinResult, joinResult(true, 1, "", 3)},
+                         {net::Msg::LobbyState, lobbyState(room(12, "B", 7, 3, 1))}});
+    check(client.state() == S::InRoom && client.room().id == 12, "joined after a held watch taken back");
+    server.send(client, {{net::Msg::GameStarting, gameStarting(room(12, "B", 7, 3, 1), 1)}});
+    check(client.starting() && !client.isSpectator() && client.bufferedBundles() == 0 && !client.paused(),
+          "the start after a held watch taken back holds none of the watched game's ticks");
+    server.send(client, {{net::Msg::TickBundle, tickBundle(0)}});   // the game's first tick, and only that
+    net::Bundle bundle;
+    const bool first = client.takeBundle(0, bundle), second = client.takeBundle(1, bundle), third = client.takeBundle(2, bundle);
+    check(first && !second && !third, "the game after a held watch taken back played the watched game's bundles as its ticks");
+}
 }  // namespace
 
 int main() {
@@ -340,7 +398,7 @@ int main() {
         ("tak-room-scope-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(scratch / "data");
     std::filesystem::create_directories(scratch / "cache");
-    for (const auto& run : {lobbyCases, watchCase}) {
+    for (const auto& run : {lobbyCases, watchCase, heldWatchCase}) {
         try { run(scratch); }
         catch (const std::exception& e) { std::printf("  FAIL %s\n", e.what()); ++failures; }
     }

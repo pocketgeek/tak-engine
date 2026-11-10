@@ -3431,7 +3431,10 @@ bool Server::allowLobbyWork(Client& c,const Frame& f) {
     // expensive requests without revoking anybody else's session.
     // VoiceListen too: one byte, sent only when the switch changes and never repeated, so a
     // dropped one would leave this connection deaf to voice until the player toggled it.
-    if(f.kind==Msg::Ping || f.kind==Msg::Pong || f.kind==Msg::VoiceListen)return true;
+    // LeaveGame as well: it has no answer, so its sender cannot tell a dropped one (the Ping
+    // the client sends behind it is answered all the same) and would browse the game list
+    // while the room still seated it. It only frees a seat, which a budgeted request took.
+    if(f.kind==Msg::Ping || f.kind==Msg::Pong || f.kind==Msg::VoiceListen || f.kind==Msg::LeaveGame)return true;
     return keys.take("ip:"+c.peer,now,personal*4,cost) &&
        (c.account.empty() || keys.take("user:"+tak::auth::foldUsername(c.account),now,personal*2,cost)) &&
        global.take(now,shared,cost);

@@ -116,6 +116,7 @@
             SDL_RenderSetScale(ren_, 1.0f, 1.0f);
             if (bigMap_) drawBigMap(winW, winH);   // over the lobby, which still runs
             drawVoiceIndicator(winW, winH);   // voice works in the room too
+            lobbyScreenShown();   // what a press is aimed at from here (lobbyPressStale)
             return;
         }
         // Pull any chat that arrived and age the overlay on a real wall clock, so
