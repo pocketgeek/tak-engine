@@ -174,6 +174,22 @@ void get(Reader& r, SlotInfo& s) {
     s.ready = r.u8(); s.aiLevel = r.u8(); s.name = r.str();
 }
 
+void put(Writer& w, const RoomState& s) {
+    w.u32(s.id); w.str(s.name); w.str(s.mapId); w.str(s.mission);
+    put(w, s.opts);
+    w.u32(s.hostId); w.u8(s.mapsReady ? 1 : 0);
+    w.u8(s.capacity); w.u8(s.passworded ? 1 : 0); w.u32(s.roomRev); w.u8(s.changeBits); w.u32(s.mapSerial);
+    for (const auto& slot : s.slots) put(w, slot);
+}
+
+void get(Reader& r, RoomState& s) {
+    s.id = r.u32(); s.name = r.str(); s.mapId = r.str(); s.mission = r.str();
+    get(r, s.opts);
+    s.hostId = r.u32(); s.mapsReady = r.u8() != 0;
+    s.capacity = r.u8(); s.passworded = r.u8() != 0; s.roomRev = r.u32(); s.changeBits = r.u8(); s.mapSerial = r.u32();
+    for (auto& slot : s.slots) get(r, slot);
+}
+
 void putBundle(Writer& w, uint32_t tick, const std::vector<Command>& cmds, const std::vector<Event>& events) {
     w.u32(tick);
     w.u32(uint32_t(cmds.size()));

@@ -24,7 +24,7 @@ namespace tak::net {
 // Bump it whenever the wire layout changes or the simulation can compute a different
 // result from the same inputs -- a peer or replay of another number would desync.
 // The CHANGELOG records what each release changed.
-constexpr uint32_t kNetVersion = 322;
+constexpr uint32_t kNetVersion = 323;      // 323: the room edits its map and rules; transfer ids; no create screen
 constexpr uint32_t kMaxFrame = 1u << 18;   // 256 KB frame cap (hardening) -- headroom for a
                                            // big tick bundle when many units are ordered at once
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)
@@ -179,12 +179,16 @@ enum class Msg : uint8_t {
     // lobby
     ListGames,          // C->S
     GameList,           // S->C: list of GameInfo (allowSpectators last)
-    CreateGame,         // C->S: name, password, mapId, options
+    CreateGame,         // C->S: name ("" = the server's "<name>'s Game"), password, mapId, mission,
+                        // options, capacity, spectate, priv. A name or password past the limits
+                        // below is refused with JoinResult(0, 0, why).
     JoinGame,           // C->S: gameId, password
-    JoinResult,         // S->C: ok+slot or error reason
+    JoinResult,         // S->C: u8 ok, u8 slot (0xFF = watching), str why, u32 roomRev
     LeaveGame,          // C->S
-    SlotUpdate,         // C->S: slot edit (own, or any if host)
-    LobbyState,         // S->C: full slot table + settings (broadcast). In a running game too, as
+    SlotUpdate,         // C->S: slot edit (own, or any if host): u8 slot, type, faction, color,
+                        // team, ready, aiLevel, u32 roomRev (the revision the sender last saw:
+                        // a READY sent on an older view is stored as not ready)
+    LobbyState,         // S->C: RoomState (full slot table + settings; broadcast). In a running game too, as
                         // the host changes: hostId is the connection holding the host's powers (the
                         // host's seat's, or a successor's); none of the room's (0, or one gone) while
                         // nobody connected holds them.
@@ -224,11 +228,12 @@ enum class Msg : uint8_t {
     AuthResult,         // S->C: status, server signature, message [, sign-in token: a success
                         // on an encrypted connection only (src/net/auth.h)]
     MapOffer,          // both: room, map id, SHA-256, byte count
-    MapRequest,        // both: room; request the offered package
-    MapChunk,          // both: room, offset, <=64 KiB raw bytes
+    MapRequest,        // both: room, SHA-256, xfer; request the offered package (xfer: the
+                       // requester's transfer id, net/mappackage.h Receiver)
+    MapChunk,          // both: room, xfer, offset, <=64 KiB raw bytes
     MapReady,          // C->S: room, verified SHA-256
     MapError,          // both: room, explanation
-    ModOffer, ModRequest, ModChunk, ModReady, ModError,
+    ModOffer, ModRequest, ModChunk, ModReady, ModError,   // as the Map* ones; the label is "mods"
     Progress,           // C->S: u32 tick (last tick PROCESSED), u32 rttMs (the client's smoothed ping),
                         // u32 received (the newest tick whose bundle has ARRIVED, >= tick).
                         // Flow control only (WE S3), every kProgressPeriod processed
@@ -268,6 +273,8 @@ enum class Msg : uint8_t {
                         // Side, colour, team and READY move with the player; the old seat
                         // opens with the target's colour and team. The server answers the
                         // mover with JoinResult (ok, new slot) and then broadcasts LobbyState.
+                        // The host may also give kWatchSeat (leave its seat and watch), and a
+                        // watching host may take an OPEN seat again (323).
     // Disconnect wait (docs/multiplayer-design.md section 4).
     Waiting,            // S->C: u8 n, then n x (u8 slot, u32 ms left), then u8 running, u32 ms.
                         // The seated players the room is waiting for, each with its own
@@ -287,7 +294,31 @@ enum class Msg : uint8_t {
     // AuthResult; a failure counts against the login throttle.
     AuthToken,          // C->S: username, token  (sign in with it, instead of AuthBegin)
     AuthRevoke,         // C->S: username, token  (the player quit: it is no longer good)
+    // Room editing (323): the host changes its room's map and name in the lobby.
+    SetRoomMap,         // C->S (host): u32 serial, str mapId, u8 capacity, u8 mapScenario,
+                        // u8 randomStarts. Answered by a LobbyState carrying the serial
+                        // (RoomState::mapSerial), after a RoomError when refused.
+    SetRoomInfo,        // C->S (host): u8 flags (kRoomInfoName | kRoomInfoPassword), str name,
+                        // str password. Only the flagged fields apply.
+    RoomError,          // S->C: u8 request (RoomRequest), u32 serial (SetRoomMap's; 0 for
+                        // SetRoomInfo), str reason. A refusal the host can act on; never fatal,
+                        // always followed by a LobbyState to the same client.
 };
+
+// Room editing (323). MoveSeat to kWatchSeat: the host leaves its seat and watches.
+constexpr uint8_t kWatchSeat = 0xFF;
+constexpr size_t kRoomNameMax = 32;           // bytes, printable ASCII (0x20..0x7e)
+constexpr size_t kRoomPasswordMax = 128;      // bytes, printable ASCII (as the CONNECT box allows)
+constexpr uint8_t kRoomInfoName = 1, kRoomInfoPassword = 2;   // SetRoomInfo flags
+enum class RoomRequest : uint8_t { Map = 1, Info = 2 };       // RoomError
+// RoomState::changeBits: what the last roomRev bump changed.
+enum RoomChange : uint8_t { kChangeMap = 1, kChangeScenario = 2, kChangeOptions = 4,
+                            kChangePlayers = 8, kChangeMods = 16, kChangeCapacity = 32 };
+// Printable ASCII only (0x20..0x7e), as room names and passwords must be.
+inline bool printableAscii(const std::string& s) {
+    for (unsigned char ch : s) if (ch < 0x20 || ch > 0x7e) return false;
+    return true;
+}
 
 // Voice chat (Msg::VoiceUp / VoiceDown): Opus, 48 kHz mono, one 20 ms frame per message.
 constexpr size_t kVoiceMaxOpus = 400;      // bytes of one frame's packet (24 kbit/s is ~60)
@@ -403,19 +434,20 @@ struct GameOptions {
     // sim.
     uint8_t allowSpectators = 1;
     // MAP SCENARIO: 1 = play the map's own scenario (.crt placements and rules, the
-    // Use Only .tdf) instead of a skirmish. Chosen when the room is created and never
-    // changed after (SetGameOptions keeps the created value: seats and READY were set
-    // for it). The server clears it for missions, generated maps, stress and benchmark
-    // rooms, forces randomStarts off with it, and refuses START when the verified map
-    // has no scenario content or a seat the scenario needs is empty. Sim-affecting
+    // Use Only .tdf) instead of a skirmish. Chosen when the room is created; in the lobby
+    // it changes only with the map (Msg::SetRoomMap: the capacity it implies moves seats
+    // with it), never through SetGameOptions. The server clears it for missions,
+    // generated maps, stress and benchmark rooms, forces randomStarts off with it, and
+    // refuses START when the verified map has no scenario content or a seat the
+    // scenario needs is empty. Sim-affecting
     // (MatchConfig::mapScenario, in the replay header). A Test Map copy's [TAKPlaytest]
     // opt-in plays its scenario even with this 0.
     uint8_t mapScenario = 0;
     // POWER CODES (retail's "Power Codes" battle-room box, GameOptions+0x18): 1 lets
     // every player type the nine +codes (sim/powercodes.h) in the chat box. Host-set
-    // when the room is created, fixed after (SetGameOptions keeps it). The server
-    // clears it for campaign missions -- retail's gate 0x499610 refuses codes in a
-    // campaign -- and drops every Cmd::PowerCode while it is 0.
+    // in the lobby (a skirmish room adopts it from SetGameOptions), fixed once the game
+    // starts. The server clears it for campaign missions -- retail's gate 0x499610
+    // refuses codes in a campaign -- and drops every Cmd::PowerCode while it is 0.
     // Sim-affecting (MatchConfig::powerCodes, in the replay header).
     uint8_t powerCodes = 0;
 };
@@ -533,12 +565,36 @@ struct Reader {
 // and LobbyState/GameStarting. Each used to be written out
 // field by field at every site, and fixes landed in some copies only. get() is RAW:
 // it checks nothing but the pathfinder byte (an unknown mode clears r.ok; the byte is
-// still stored so the server can reject with a reason). The server's clamps and
-// creation-only rules stay explicit at its two readers.
+// still stored so the server can reject with a reason). The server's clamps, and which
+// fields a running lobby adopts (SetGameOptions' table), stay explicit at its two readers.
 void put(Writer& w, const GameOptions& o);
 void get(Reader& r, GameOptions& o);
 void put(Writer& w, const SlotInfo& s);   // type faction color team ready aiLevel, name
 void get(Reader& r, SlotInfo& s);
+
+// The room header of LobbyState and GameStarting, one codec for the server's writer and
+// the client's reader (copies drift). GameStarting appends its own tail after it.
+struct RoomState {
+    uint32_t id = 0;
+    std::string name, mapId;
+    std::string mission;           // campaign mission stem (empty = ordinary skirmish/MP)
+    GameOptions opts;
+    uint32_t hostId = 0;
+    bool mapsReady = false;
+    uint8_t capacity = kMaxSlots;  // the room's seats (slots >= capacity are CLOSED)
+    bool passworded = false;       // the room has a password (never the password itself)
+    // A change counter: every host change in the lobby but the name, the password, the
+    // speed and the host's own READY moves it on, and unreadies the ready guests. A READY
+    // sent on an older revision is stored as not ready (Msg::SlotUpdate).
+    uint32_t roomRev = 0;
+    uint8_t changeBits = 0;        // RoomChange bits of the change that made roomRev
+    uint32_t mapSerial = 0;        // the last SetRoomMap serial the server answered
+    SlotInfo slots[kMaxSlots];
+};
+// id name mapId mission, options, hostId, mapsReady, capacity, passworded, roomRev,
+// changeBits, mapSerial, then the kMaxSlots slots.
+void put(Writer& w, const RoomState& s);
+void get(Reader& r, RoomState& s);
 
 // ------- selection orders ----------------------------------------------------
 //

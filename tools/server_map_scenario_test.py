@@ -12,7 +12,8 @@ of the checks shows exactly which it lacks:
   incomplete  ON for King of the Hill with a package that leaves out its Use Only .tdf:
               START is refused, since setupMatch would read each machine's own copy,
               which the package digest does not cover
-  locked      the option is creation-only: SetGameOptions cannot turn it on or off
+  locked      the option changes only with the map (Msg::SetRoomMap, protocol 323):
+              SetGameOptions cannot turn it on or off
   sanitised   the server clears it where a map scenario cannot exist: a generated map,
               a stress test, a benchmark and a campaign mission, including a room the
               host switches to a stress test after creating it
@@ -88,8 +89,10 @@ def upload(peer, room, map_id, package):
     assert message[0] != auth.MSG['MapError'], ('map refused', r.num('<I'), r.field())
     if message[0] == auth.MSG['MapRequest']:
         assert r.num('<I') == room
+        assert r.field() == digest.encode(), 'the server asked for another package'
+        xfer = r.num('<I')   # the server's transfer id: every chunk carries it
         for offset in range(0, len(package), 65536):
-            peer.send('MapChunk', struct.pack('<II', room, offset) + package[offset:offset + 65536])
+            peer.send('MapChunk', struct.pack('<III', room, xfer, offset) + package[offset:offset + 65536])
         r = peer.receive('MapOffer')
     assert r.num('<I') == room
     r.field()
@@ -99,11 +102,11 @@ def upload(peer, room, map_id, package):
 
 def ready_host(peer, state):
     values = state[3][0][0]
-    peer.send('SlotUpdate', bytes([0, 1, values[1], values[2], values[3], 1, values[5]]))
+    auth.slot_update(peer, 0, 1, values[1], values[2], values[3], 1, values[5])
 
 
 def seat_ai(peer, slot):
-    peer.send('SlotUpdate', bytes([slot, 2, slot % 5, slot, slot, 1, 2]))
+    auth.slot_update(peer, slot, 2, slot % 5, slot, slot, 1, 2)
 
 
 def start(peer):
@@ -298,7 +301,7 @@ def main():
     if failed:
         raise SystemExit('FAIL: ' + ', '.join(failed))
     print('PASS: MAP SCENARIO -- refused without a scenario (logged), fixed starts and required seats before '
-          'START, refused for a package missing a scenario file, creation-only, cleared for '
+          'START, refused for a package missing a scenario file, kept by SetGameOptions, cleared for '
           'generated/stress/benchmark/mission rooms, off is a skirmish')
 
 

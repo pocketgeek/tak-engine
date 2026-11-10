@@ -21,8 +21,8 @@ def main():
                 p.send('CreateGame',auth.field('flood')+auth.field('')+auth.field(recipe)+auth.field('')+options()+bytes([2,0,0]))
                 p.receive('JoinResult');baseline=lobby(p.receive('LobbyState'))
                 values=baseline[3][0][0]
-                p.send('SlotUpdate',bytes([0,1,values[1],values[2],values[3],1,values[5]]))
-                p.send('SlotUpdate',bytes([1,2,1,1,1,1,0]))
+                auth.slot_update(p,0,1,values[1],values[2],values[3],1,values[5])
+                auth.slot_update(p,1,2,1,1,1,1,0)
                 p.send('StartGame');p.receive('GameStarting');p.send('Loaded')
                 # More commands than a queue can hold. The whole excess batch
                 # must be discarded before command decoding, and logs coalesced.

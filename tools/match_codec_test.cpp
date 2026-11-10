@@ -126,11 +126,24 @@ static void optionsCodec() {
 
 static void slotCodec() {
     SlotInfo slots[kMaxSlots]; fxSlots(slots, false);
-    // The LobbyState / GameStarting layout as Server::writeSlots composes it.
-    Writer w; w.u32(0x01020304); w.str("room name"); w.str("Inner Circle"); w.str("");
-    put(w, fxOpts(7)); w.u32(0xA0B0C0D0); w.u8(1);
-    for (const auto& s : slots) put(w, s);
-    golden(w.b, "040302010900726f6f6d206e616d650c00496e6e657220436972636c6500000304021105efbe00000607080b090a040c0d0ed0c0b0a0010107030101090500616c7068610204090000040600414920626f740002050601000000020301020000070070617373697665030108050003000002010703010101007800090204000200000300000700020000", "LobbyState slot table bytes");
+    // The LobbyState / GameStarting header as Server::writeSlots composes it (RoomState,
+    // protocol 323): the 322 bytes with capacity, passworded, roomRev, changeBits and
+    // mapSerial between mapsReady and the slots.
+    RoomState room; room.id = 0x01020304; room.name = "room name"; room.mapId = "Inner Circle";
+    room.opts = fxOpts(7); room.hostId = 0xA0B0C0D0; room.mapsReady = true;
+    room.capacity = 6; room.passworded = true; room.roomRev = 0x11223344; room.changeBits = 0x29; room.mapSerial = 0x55667788;
+    for (int i = 0; i < kMaxSlots; ++i) room.slots[i] = slots[i];
+    Writer w; put(w, room);
+    golden(w.b, "040302010900726f6f6d206e616d650c00496e6e657220436972636c6500000304021105efbe00000607080b090a040c0d0ed0c0b0a00106014433221129887766550107030101090500616c7068610204090000040600414920626f740002050601000000020301020000070070617373697665030108050003000002010703010101007800090204000200000300000700020000", "LobbyState slot table bytes");
+    {
+        Reader r(w.b.data(), w.b.size()); RoomState back; get(r, back);
+        bool same = r.ok && r.p == r.end && back.id == room.id && back.name == room.name && back.mapId == room.mapId &&
+                    back.mission.empty() && back.hostId == room.hostId && back.mapsReady && back.capacity == 6 &&
+                    back.passworded && back.roomRev == room.roomRev && back.changeBits == room.changeBits &&
+                    back.mapSerial == room.mapSerial;
+        for (int i = 0; i < kMaxSlots; ++i) same = same && sameSlot(back.slots[i], slots[i]);
+        check(same, "RoomState round trip");
+    }
     for (const auto& s : slots) {
         Writer one; put(one, s); Reader r(one.b.data(), one.b.size()); SlotInfo back; back.aiLevel = 77;
         get(r, back);

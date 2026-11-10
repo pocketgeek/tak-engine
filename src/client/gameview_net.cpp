@@ -1616,6 +1616,20 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
                     }
                 mpReadied_ = true;
             }
+        } else if (st == S::InRoom && (autoMode == 2 || autoMode == 3) && !mpStarted_ &&
+                   mp_->room().hostId != mp_->myClientId() && mp_->room().mySlot >= 0 &&
+                   mp_->room().slots[mp_->room().mySlot].type == 1 && !mp_->room().slots[mp_->room().mySlot].ready) {
+            // A harness guest whose READY the host's change cleared (or that never counted:
+            // sent on a room it had not seen yet) readies again, once per room revision, with
+            // the seat it chose above (a table still in flight may show the server's defaults).
+            static std::pair<uint32_t, uint32_t> readiedAt{0, 0};   // (room, roomRev)
+            const auto& r = mp_->room();
+            if (readiedAt != std::pair<uint32_t, uint32_t>{r.id, r.roomRev}) {
+                readiedAt = {r.id, r.roomRev};
+                const char* autoSide = tak::devEnv("TAK_AUTOPLAY_SIDE");
+                mp_->setSlot(r.mySlot, 1, autoSide ? facIdx(autoSide) : uint8_t(r.mySlot % 5),
+                             uint8_t(r.mySlot), uint8_t(r.mySlot), 1);
+            }
         } else if (st == S::InRoom && (autoMode == 1 || autoMode == 3 || autoMode == 4) &&
                    !mpStarted_ &&
                    mp_->room().hostId == mp_->myClientId()) {

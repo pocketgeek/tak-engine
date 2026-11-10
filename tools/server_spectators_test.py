@@ -104,11 +104,11 @@ def expect_refused(peer, room, what):
 def seat_and_start(host, state, extra=None):
     """Ready the host (slot 0), seat an AI in slot 1 unless a player holds it, start."""
     values = state[3][0][0]
-    host.send('SlotUpdate', bytes([0, 1, values[1], values[2], values[3], 1, values[5]]))
+    auth.slot_update(host, 0, 1, values[1], values[2], values[3], 1, values[5])
     if extra is None:
-        host.send('SlotUpdate', bytes([1, 2, 1, 1, 1, 1, 0]))
+        auth.slot_update(host, 1, 2, 1, 1, 1, 1, 0)
     else:
-        extra.send('SlotUpdate', bytes([1, 1, 1, 1, 1, 1, 2]))
+        auth.slot_update(extra, 1, 1, 1, 1, 1, 1, 2)
         # That ready travels on the other player's connection, and the server ignores
         # a start while a human is unready (tryStart returns with no reply): wait until
         # the host sees slot 1 seated and ready, or StartGame can arrive first.
@@ -226,7 +226,7 @@ def scenario_host_watcher(port, h):
     with contextlib.closing(login(port, h, 'Alice')) as host, contextlib.closing(login(port, h, 'Alice')) as viewer:
         state = create(host, 'watched', 1, watch=True)
         for slot in (0, 1):
-            host.send('SlotUpdate', bytes([slot, 2, slot, slot, slot, 1, 0]))
+            auth.slot_update(host, slot, 2, slot, slot, slot, 1, 0)
         # Turning it off with the host watching keeps the host's seat: it is still in
         # the room (it receives the table) and starts the game as its watcher.
         set_spectators(host, 0)

@@ -137,7 +137,8 @@ def main():
                      for n in ('Alice', 'Bob', 'Carol', 'Dave', 'Erin', 'Frank')}
             alice, bob, carol, dave = (peers[n] for n in ('Alice', 'Bob', 'Carol', 'Dave'))
 
-            recipe = '~gen1~' + (struct.pack('<HQBHH', 10, 1234, 0, 128, 128) + bytes([2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0])).hex()
+            # A 4-player recipe: the server opens a random map's seats from its player count.
+            recipe = '~gen1~' + (struct.pack('<HQBHH', 10, 1234, 0, 128, 128) + bytes([4, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0])).hex()
             alice.send('CreateGame', auth.field('voice') + auth.field('') + auth.field(recipe) + auth.field('') +
                        options() + bytes([4, 0, 0]))
             assert alice.receive('JoinResult').num('<B') == 1
@@ -171,9 +172,9 @@ def main():
 
             # Start: Alice slot 0, Bob 1, Carol 2.
             values = room[3][0][0]
-            alice.send('SlotUpdate', bytes([0, 1, values[1], values[2], values[3], 1, values[5]]))
-            bob.send('SlotUpdate', bytes([1, 1, 1, 1, 1, 1, 2]))
-            carol.send('SlotUpdate', bytes([2, 1, 2, 2, 2, 1, 2]))
+            auth.slot_update(alice, 0, 1, values[1], values[2], values[3], 1, values[5])
+            auth.slot_update(bob, 1, 1, 1, 1, 1, 1, 2)
+            auth.slot_update(carol, 2, 1, 2, 2, 2, 1, 2)
             time.sleep(0.3)
             alice.send('StartGame')
             for n in ('Alice', 'Bob', 'Carol'):

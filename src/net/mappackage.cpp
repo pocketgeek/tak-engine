@@ -290,20 +290,22 @@ std::shared_ptr<Package> decode(std::vector<uint8_t> bytes, const std::string& d
 Writer offer(uint32_t room, const std::string& mapId, const Package& p) {
     Writer w; w.u32(room); w.str(mapId); w.str(p.digest); w.u32(uint32_t(p.bytes.size())); return w;
 }
-void Receiver::begin(uint32_t roomId, uint32_t count, const std::string& h) {
+void Receiver::begin(uint32_t roomId, uint32_t xferId, uint32_t count, const std::string& h) {
     if (!roomId || !count || count > kMaxBytes || !validDigest(h)) throw std::runtime_error("invalid map offer");
-    room = roomId; size = count; digest = h; bytes.clear();
+    room = roomId; xfer = xferId; size = count; digest = h; bytes.clear();
 }
-bool Receiver::append(Reader& r) {
-    auto id = r.u32(), off = r.u32(); const size_t n = size_t(r.end - r.p);
-    if (!r.ok || id != room || !size || off != bytes.size() || !n || n > kChunkBytes || n > size - bytes.size())
+Append Receiver::append(Reader& r) {
+    auto id = r.u32(), x = r.u32(), off = r.u32(); const size_t n = size_t(r.end - r.p);
+    if (!r.ok) throw std::runtime_error("invalid map chunk");
+    if (!size || !room || id != room || x != xfer) return Append::Stale;
+    if (off != bytes.size() || !n || n > kChunkBytes || n > size - bytes.size())
         throw std::runtime_error("invalid map chunk");
-    bytes.insert(bytes.end(), r.p, r.end); return complete();
+    bytes.insert(bytes.end(), r.p, r.end); return complete() ? Append::Done : Append::More;
 }
 void Sender::pump(Conn& conn, Msg kind) {
     while (package && conn.txPending() < 2 * kChunkBytes) {
         auto n = std::min(kChunkBytes, package->bytes.size() - offset);
-        Writer w; w.u32(room); w.u32(uint32_t(offset));
+        Writer w; w.u32(room); w.u32(xfer); w.u32(uint32_t(offset));
         w.b.insert(w.b.end(), package->bytes.begin() + offset, package->bytes.begin() + offset + n);
         conn.send(kind, w); offset += n;
         if (offset == package->bytes.size()) { package.reset(); offset = 0; }

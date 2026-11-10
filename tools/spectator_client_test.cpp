@@ -81,10 +81,10 @@ struct Server {
 // A GameStarting as Server::writeSlots + sendGameStarting compose it. A non-empty
 // mission keeps the client from waiting for a map package.
 net::Writer gameStarting(uint32_t room, uint8_t slot, uint8_t allowSpectators) {
-    net::Writer w; w.u32(room); w.str("room"); w.str("Inner Circle"); w.str("mission");
-    net::GameOptions o; o.allowSpectators = allowSpectators; net::put(w, o);
-    w.u32(1); w.u8(1);
-    for (int i = 0; i < net::kMaxSlots; ++i) { net::SlotInfo s; s.type = i < 2 ? 1 : 3; s.color = uint8_t(i); net::put(w, s); }
+    net::RoomState r; r.id = room; r.name = "room"; r.mapId = "Inner Circle"; r.mission = "mission";
+    r.opts.allowSpectators = allowSpectators; r.hostId = 1; r.mapsReady = true; r.capacity = 2; r.roomRev = 1;
+    for (int i = 0; i < net::kMaxSlots; ++i) { r.slots[i].type = i < 2 ? 1 : 3; r.slots[i].color = uint8_t(i); }
+    net::Writer w; net::put(w, r);
     w.u8(slot); w.u32(7); w.u64(42); w.u32(0);
     return w;
 }
@@ -117,7 +117,7 @@ int main() {
         // WATCH the closed room: refused, with the reason kept for the browser.
         client.spectate(11, "");
         check(server.receive(client).kind == net::Msg::Spectate, "spectate request");
-        { net::Writer w; w.u8(0); w.u8(0); w.str("spectators are not allowed in this game");
+        { net::Writer w; w.u8(0); w.u8(0); w.str("spectators are not allowed in this game"); w.u32(0);
           server.send(net::Msg::JoinResult, w, client); }
         check(client.joinError() == "spectators are not allowed in this game", "refusal reason kept");
         check(client.state() == net::MpClient::State::Lobby && !client.isSpectator(), "refused watcher stays in the lobby");
@@ -126,8 +126,9 @@ int main() {
         client.joinGame(12, "");
         check(client.joinError().empty(), "a new request clears the old refusal");
         check(server.receive(client).kind == net::Msg::JoinGame, "join request");
-        { net::Writer w; w.u8(1); w.u8(1); w.str(""); server.send(net::Msg::JoinResult, w, client); }
+        { net::Writer w; w.u8(1); w.u8(1); w.str(""); w.u32(3); server.send(net::Msg::JoinResult, w, client); }
         check(client.state() == net::MpClient::State::InRoom && client.room().mySlot == 1, "seated in slot 1");
+        check(client.room().roomRev == 3, "the JoinResult's room revision is kept for the first READY");
         server.send(net::Msg::GameStarting, gameStarting(12, 1, 1), client);
         check(client.starting(), "game starting");
         check(!client.isSpectator(), "a refused watch turned the next seated start into a spectator start");

@@ -48,8 +48,8 @@ def begin(port, h, alice_name, bob_name, bob_loads):
     joined = bob.take('JoinResult')
     assert joined.num('<B') == 1 and joined.num('<B') == 1
     values = state[3][0][0]
-    alice.send('SlotUpdate', bytes([0, 1, values[1], values[2], values[3], 1, values[5]]))
-    bob.send('SlotUpdate', bytes([1, 1, 1, 1, 1, 1, 2]))
+    auth.slot_update(alice, 0, 1, values[1], values[2], values[3], 1, values[5])
+    auth.slot_update(bob, 1, 1, 1, 1, 1, 1, 2)
     assert alice.pump(10, lambda p: any(lobby(auth.Reader(b))[3][1][0][4] for b in p.other.get(auth.MSG['LobbyState'], [])))
     alice.send('StartGame')
     for p in (alice, bob):

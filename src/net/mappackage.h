@@ -31,17 +31,24 @@ bool authoredScenario(const hpi::Vfs& vfs, const std::string& mapPath);
 sim::ScenarioInfo scenarioInfo(const Package& package, const sim::TypeRegistry* reg = nullptr);
 bool validDigest(const std::string& digest);
 Writer offer(uint32_t room, const std::string& mapId, const Package& package);
+// A transfer (MapRequest/MapChunk, ModRequest/ModChunk): the receiving side picks the
+// transfer id `xfer` (a per-connection counter) when it asks, and every chunk carries the
+// room and the xfer it answers, so a chunk left over from an earlier request (the room's
+// map changed, or the same package was asked for again) can be told from the current one.
+enum class Append { Stale, More, Done };
 struct Receiver {
-    uint32_t room = 0, size = 0;
+    uint32_t room = 0, xfer = 0, size = 0;
     std::string digest;
     std::vector<uint8_t> bytes;
-    void begin(uint32_t roomId, uint32_t count, const std::string& hash);
-    // Rejects reordered, duplicate, oversized, or unsolicited chunks.
-    bool append(Reader& r);
+    void begin(uint32_t roomId, uint32_t xferId, uint32_t count, const std::string& hash);
+    // A chunk: u32 room, u32 xfer, u32 offset, bytes. Stale: no receive, or another room or
+    // xfer (the caller drops it quietly). Throws for a reordered, duplicate or oversized
+    // chunk of the current transfer.
+    Append append(Reader& r);
     bool complete() const { return size && bytes.size() == size; }
 };
 struct Sender {
-    uint32_t room = 0;
+    uint32_t room = 0, xfer = 0;   // xfer: the request's, echoed in every chunk
     size_t offset = 0;
     std::shared_ptr<const Package> package;
     void pump(Conn& conn, Msg kind=Msg::MapChunk);
