@@ -245,6 +245,7 @@ std::string defaultGameName(const std::string& player) {
         const auto& games = mp_->games();
         if (games.empty())
             blockText("NO GAMES -- CREATE ONE, OR REFRESH", x + 8, y + 10, 1.8f, {150, 150, 160, 255});
+        const bool loading = browserWatchLoading();   // a WATCH is on its way in: no other until it is, or is taken back
         for (const auto& g : games) {
             SDL_FRect row{x, y, w, 30};
             bool hot = lbHot(row) && !g.running;
@@ -264,7 +265,7 @@ std::string defaultGameName(const std::string& player) {
                 // red) and a click still asks: the server is the authority, and its
                 // refusal puts the reason on the CANNOT JOIN line below.
                 blockText("LIVE", x + w - 158, y + 8, 1.6f, {230, 140, 120, 255});
-                lbBtn(x + w - 96, y + 3, 92, 24, g.allowSpectators ? "WATCH" : "NO WATCH", true,
+                lbBtn(x + w - 96, y + 3, 92, 24, g.allowSpectators ? "WATCH" : "NO WATCH", !loading,
                       [this, id = g.id] { browserGameClick(id, true); },
                       g.allowSpectators ? SDL_Color{60, 66, 86, 255} : SDL_Color{86, 52, 52, 255});
             } else {
@@ -272,7 +273,12 @@ std::string defaultGameName(const std::string& player) {
             }
             y += 34;
         }
-        if (const std::string why = browserLine(); !why.empty())
+        // The bottom line: a WATCH that is loading says what is arriving, with CANCEL to take
+        // it back (a locked game's window says and does the same); else the last refusal.
+        if (const std::string loading = window ? std::string() : browserLoading(); !loading.empty()) {
+            blockText(tak::uiTextFit(loading, 1.6f, winW - 2 * x - 270), x, winH - 31.0f, 1.6f, {200, 200, 210, 255});
+            lbBtn(winW - 270.0f, winH - 40.0f, 120, 30, "CANCEL", true, [this] { browserTakeBack(); });
+        } else if (const std::string why = browserLine(); !why.empty())
             blockText(tak::uiTextFit(why, 1.6f, winW - 2 * x - 140), x, winH - 31.0f, 1.6f, {255, 130, 110, 255});
         lbBtn(winW - 140.0f, winH - 40.0f, 120, 30, "BACK", true, [this] { menuRequested_ = true; });
         lobbyModal_ = false;
@@ -282,12 +288,34 @@ std::string defaultGameName(const std::string& player) {
     // Why the server turned the last JOIN / WATCH away (game full, spectators not
     // allowed...), in its own case (as the CONNECT dialog shows server text) -- until the
     // next request clears it. A refusal a window showed (a wrong password) is not repeated
-    // here. A request that got no answer says so too, unless a window is there to say it.
-    // One that CANCEL took back has nothing to say: its answer is dropped (browserTakeBack).
+    // here. A request that got no answer says so too, unless a window is there to say it
+    // (a WATCH whose game ended while it was loading: that). One that CANCEL took back has
+    // nothing to say: its answer is dropped (browserTakeBack).
     std::string GameView::browserLine() const {
         if (!mp_->joinError().empty() && !browserLineQuiet_) return "CANNOT JOIN: " + mp_->joinError();
         const bool window = browserWin_.kind != BrowserWindow::Kind::None;
-        return roomRequestOut() && !browserBusy() && !window ? "NO ANSWER FROM THE SERVER" : "";
+        if (!roomRequestOut() || browserBusy() || window) return "";
+        return roomJoinSent_ && mp_->watchLoading() ? "THE GAME HAS CLOSED" : "NO ANSWER FROM THE SERVER";
+    }
+
+    // The WATCH the browser waits on has its answer: the server took it (GameStarting came,
+    // and waits in MpClient for the game's map and game mods to arrive and verify), so no
+    // clock runs on it. Unless its game has left the list: the server answers no list while
+    // it has this client in a game, so that game has ended and nothing more of it is coming.
+    bool GameView::browserWatchLoading() const {
+        if (!roomJoinSent_ || !browserWatchId_ || !mp_->watchLoading()) return false;
+        const auto& games = mp_->games();
+        return std::any_of(games.begin(), games.end(), [&](const tak::net::GameInfo& g) { return g.id == browserWatchId_; });
+    }
+
+    std::string GameView::browserLoading() const {
+        if (!browserWatchLoading()) return {};
+        // The package still on its way, the map first (or why one could not be used).
+        const std::string& map = mp_->mapStatus();
+        if (!map.empty() && map != "MAP READY" && map.rfind("MAP VERIFIED", 0) != 0) return map;
+        const std::string& mods = mp_->modStatus();
+        if (!mods.empty() && mods.rfind("GAME MODS VERIFIED", 0) != 0) return mods;
+        return "LOADING THE GAME...";
     }
 
     // The request the browser waits on is let go of: CANCEL took it back, or no answer came.
@@ -317,6 +345,7 @@ std::string defaultGameName(const std::string& player) {
         tak::crypto::wipe(roomPassAsked_);
         if (!watch) roomPassAsked_ = password;
         roomJoinSent_ = true; roomRequestMs_ = SDL_GetTicks64();
+        browserWatchId_ = watch ? id : 0;
         browserLineQuiet_ = false;
         return true;
     }
@@ -473,12 +502,15 @@ std::string defaultGameName(const std::string& player) {
             passwordField(y, "");
             y += 48;
         }
-        // One line under the fields: the wait, why the game can no longer be asked into, an
-        // earlier request the server has yet to answer (a game's row clicked just before: why
-        // the button is grey), or the last answer (a refusal in the server's own words; a
-        // long one takes two rows).
+        // One line under the fields: the wait (for a WATCH the server took: the map or game
+        // mods arriving), why the game can no longer be asked into, an earlier request the
+        // server has yet to answer (a game's row clicked just before: why the button is
+        // grey), or the last answer (a refusal in the server's own words; a long one takes
+        // two rows).
         constexpr SDL_Color kWait{200, 200, 210, 255}, kWarn{255, 130, 110, 255};
-        if (waiting)
+        if (const std::string loading = waiting ? browserLoading() : std::string(); !loading.empty())
+            blockText(tak::uiTextFit(loading, 1.6f, fw), fx, y, 1.6f, kWait);   // the watch was taken: what is arriving
+        else if (waiting)
             blockText(create ? "OPENING THE GAME..." : w.kind == Kind::Watch ? "OPENING..." : "JOINING...", fx, y, 1.6f, kWait);
         else if (gone) blockText(gone, fx, y, 1.6f, kWarn);
         else if (browserBusy()) blockText("WAITING FOR THE SERVER...", fx, y, 1.6f, kWait);
@@ -502,8 +534,8 @@ std::string defaultGameName(const std::string& player) {
 
     // Enter is the window's JOIN / WATCH / CREATE, Esc its CANCEL, Tab the CREATE window's
     // other field. A click reaches the window's own widgets only, and one that misses them
-    // (or lands on SHOW / HIDE) leaves the caret where it is. The rest of the double click
-    // that opened the window is no click in it: its CANCEL lies over the list's rows.
+    // (or lands on SHOW / HIDE) leaves the caret where it is. (The rest of the double click
+    // that opened the window never gets here: lobbyPressStale.)
     // Typing and Backspace go on to lobbyInput's fields.
     bool GameView::browserWindowInput(const SDL_Event& e) {
         if (e.type == SDL_KEYDOWN) {
@@ -518,8 +550,6 @@ std::string defaultGameName(const std::string& player) {
         }
         if (e.type == SDL_MOUSEBUTTONDOWN) {
             mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
-            if (browserWin_.fresh && e.button.clicks > 1) return true;
-            browserWin_.fresh = false;
             float mx, my; lobbyMouse(mx, my);
             if (e.button.button == SDL_BUTTON_LEFT)
                 for (auto& hot : lobbyHots_)
@@ -1444,11 +1474,58 @@ std::string defaultGameName(const std::string& player) {
         my = mouseY_ / lobbyScale_ - lobbyOffY_;
     }
 
+    // What the lobby shows under the pointer: the screen (connecting, the game list or a
+    // room on its way, a room, the end of the connection) and whatever lies over it.
+    uint32_t GameView::lobbyScreenNow() const {
+        using S = tak::net::MpClient::State;
+        const S st = mp_ ? mp_->state() : S::Offline;
+        const bool room = st == S::InRoom;
+        uint32_t screen = 1 + uint32_t(st);
+        for (const uint32_t over : {st == S::Lobby ? uint32_t(browserWin_.kind) : 0u, uint32_t(room && modsScreen_),
+                                    uint32_t(room && picker_.open), uint32_t(room && lanLeavePrompt_),
+                                    uint32_t(bigMap_ != nullptr)})
+            screen = screen * 8 + over;
+        return screen;
+    }
+
+    void GameView::lobbyScreenNote() {
+        const uint32_t screen = lobbyScreenNow();
+        if (screen != lobbyScreen_) { lobbyScreen_ = screen; ++lobbyScreenSeq_; }
+    }
+
+    // The lobby's frame is drawn: its screen is on show, from now if it is a new one.
+    void GameView::lobbyScreenShown() {
+        lobbyScreenNote();
+        if (lobbyShownSeq_ == lobbyScreenSeq_) return;
+        lobbyShownSeq_ = lobbyScreenSeq_; lobbyShownMs_ = SDL_GetTicks64();
+    }
+
+    // A press after the screen changed under the pointer, which its player cannot have aimed
+    // at this screen: the rest of a double click (SDL counts the presses of one), one that
+    // comes before this screen was drawn at all (an earlier press in the same batch changed
+    // it: the buttons under the pointer are still the old screen's), or within
+    // kLobbySettleMs of its first frame. The next single click on a screen that has stood
+    // for that long is taken, and is that screen's first.
+    bool GameView::lobbyPressStale(const SDL_Event& e) {
+        lobbyScreenNote();
+        if (lobbyScreenSeq_ != lobbyPressSeq_ &&
+            (e.button.clicks > 1 || lobbyShownSeq_ != lobbyScreenSeq_ ||
+             SDL_GetTicks64() - lobbyShownMs_ < kLobbySettleMs)) return true;
+        lobbyPressSeq_ = lobbyScreenSeq_;
+        return false;
+    }
+
     void GameView::lobbyInput(const SDL_Event& e, int winW, int winH) {
         (void)winW; (void)winH;
         if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
             if (genSlider_ >= 0 || lbField_ == 5) applyGenParams();
             genSlider_ = -1; mapDrag_ = false;
+        }
+        // A press aimed at the screen before this one is no click here (lobbyPressStale).
+        if (e.type == SDL_MOUSEBUTTONDOWN && lobbyPressStale(e)) {
+            mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
+            std::fprintf(stderr, "lobby: press dropped (the screen under it had just changed)\n");
+            return;
         }
         // The full-window map view: BACK (its only button) or Esc closes it; nothing
         // else reaches the lobby under it.

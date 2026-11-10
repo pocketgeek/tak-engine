@@ -4243,18 +4243,42 @@ private:
     void colorSwatch(float x, float y, float s, int color, std::function<void(int)> action);
 
     void drawLobby(int winW, int winH);
+    // A press is aimed at the screen its player saw. The lobby's screens lie over one another
+    // (a window's CREATE over the room's LEAVE, its CANCEL and LEAVE over the game list's
+    // rows, a row over the password window it opens), so a press that follows a change of
+    // the screen under the pointer too closely to be meant for the new one is no click on
+    // it: the rest of a double click, and any press within kLobbySettleMs of the new
+    // screen's first frame (a room that opens or closes as the button goes down).
+    static constexpr uint64_t kLobbySettleMs = 300;
+    uint32_t lobbyScreenNow() const;   // the screen (the game list, a room...) and what lies over it
+    uint32_t lobbyScreen_ = 0;         // ... as last noted, and how many times it has changed
+    uint32_t lobbyScreenSeq_ = 0;
+    uint32_t lobbyShownSeq_ = 0;       // the change the last finished frame showed, and since when
+    uint64_t lobbyShownMs_ = 0;
+    uint32_t lobbyPressSeq_ = 0;       // the change the last press that was taken saw
+    void lobbyScreenNote();
+    void lobbyScreenShown();           // draw: the lobby's frame is done
+    bool lobbyPressStale(const SDL_Event& e);   // lobbyInput: this press was aimed at another screen
 
     void drawBrowser(int winW, int winH);
     // ---- the game browser's requests and windows (gameview_lobby.cpp) ----
     // The browser asks the server one thing at a time (CreateGame, JoinGame, Spectate):
     // roomCreateSent_ / roomJoinSent_ while the last is unanswered, roomRequestMs_ when it
     // went. One with no answer after kRoomAnswerMs has none coming (a busy server drops
-    // requests), and the next request gives it up first.
+    // requests), and the next request gives it up first. A WATCH the server took whose map
+    // or game mods are still on their way here (MpClient::watchLoading) has its answer: it
+    // waits for the download, however long, and says how far that is.
     static constexpr uint64_t kRoomAnswerMs = 10000;
     bool roomJoinSent_ = false;
     uint64_t roomRequestMs_ = 0;
     bool roomRequestOut() const { return roomCreateSent_ || roomJoinSent_; }
-    bool browserBusy() const { return roomRequestOut() && SDL_GetTicks64() - roomRequestMs_ <= kRoomAnswerMs; }
+    bool browserBusy() const {
+        return roomRequestOut() && (browserWatchLoading() || SDL_GetTicks64() - roomRequestMs_ <= kRoomAnswerMs);
+    }
+    uint32_t browserWatchId_ = 0;        // the game the WATCH on its way asked for (a create or a join: 0)
+    bool browserWatchLoading() const;    // ... which the server took, and whose packages are arriving
+    // Then: what is arriving ("DOWNLOADING MAP 37%"), as a room says it. Empty otherwise.
+    std::string browserLoading() const;
     bool browserRequestFree();   // none unanswered (a stale one is given up: LeaveGame); false while one waits
     bool browserJoin(uint32_t id, const std::string& password, bool watch);   // JoinGame / Spectate; false: not sent
     // The password that went with the CreateGame or JoinGame on its way, as this client's
@@ -4283,7 +4307,6 @@ private:
         int focus = 0;              // the field the caret returns to after an answer
         bool asked = false;         // this window's request is the one unanswered
         std::string error;          // the red line: the server's refusal, or no answer
-        bool fresh = true;          // no press has reached it yet (browserWindowInput: a double click on a row)
     } browserWin_;
     bool browserLineQuiet_ = false;   // a window showed the last refusal: not on the browser's line too
     // The request the browser waits on is let go of (CANCEL in its window, or NO ANSWER):
@@ -4446,7 +4469,8 @@ private:
     // The room's password, when this client's player typed it to make or enter the room:
     // the name line shows it behind SHOW / HIDE (hidden whenever a room is entered). Empty
     // in a room without one, and in a room whose password this client never learned (a
-    // successor host): that line reads LOCKED. Wiped when the room is left.
+    // successor host): that line reads LOCKED. Wiped when the room is left, and when its
+    // table shows the room without a password (roomPasswordStep).
     std::string roomPass_;
     bool roomPassShown_ = false;
     void roomPasswordStep();            // mpAutoStep: the asked password becomes the room's; the wipes

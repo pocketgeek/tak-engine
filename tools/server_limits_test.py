@@ -13,9 +13,15 @@ level:
            "server running-game capacity reached; retry later"), the room is still there
            with its host and still answers it, and once the running game has ended the
            same START starts the game.
+  leave    with the address's shared request budget spent for the second (other connections
+           from it flood ListGames), a seated player's LeaveGame is still taken: the room
+           sees the seat open. LeaveGame has no answer, and the Ping a client sends behind it
+           is answered whatever the budget, so a dropped one left a seat its owner could not
+           see while it browsed the game list.
 """
 import argparse
 from pathlib import Path
+import struct
 import tempfile
 import time
 import traceback
@@ -23,7 +29,7 @@ import traceback
 import server_net as auth
 from server_net import field, lobby
 from server_disconnect_test import pump_all, recipe
-from server_host_test import Seat, close_all, create, options, ready_and_start, started
+from server_host_test import Seat, close_all, create, join, options, ready_and_start, started
 from server_public_test import server
 
 MAX_GAMES, MAX_RUNNING = 2, 1
@@ -103,7 +109,40 @@ def scenario_start(port, h):
         close_all(alice, carol, dave)
 
 
-CASES = [('create', scenario_create), ('start', scenario_start)]
+def scenario_leave(port, h):
+    host, guest = Seat(port, h, 'Host'), Seat(port, h, 'Guest')
+    floods = [Seat(port, h, 'Flood%d' % i) for i in range(6)]
+    try:
+        room = create(host, 'budget')
+        join(guest, room, 1)
+        seated = lambda body: lobby(auth.Reader(body))[3][1][0][0] == 1   # seat 1 holds a player
+        assert host.pump(5, lambda p: seated(p.other[auth.MSG['LobbyState']][-1])), 'the guest was never seated'
+        time.sleep(1.2)   # every budget's one-second window is over
+        # 600 requests from this address in one window: 100 a connection (its own budget is
+        # 128), against the address's 512. Each flood's Ping is answered behind them.
+        burst = struct.pack('<IB', 1, auth.MSG['ListGames']) * 100
+        for f in floods:
+            f.socket.sendall(burst)
+            f.send('Ping')
+        assert pump_all(floods, 10, lambda: all(f.other.get(auth.MSG['GameList']) for f in floods)), 'the flood was not answered'
+        pump_all(floods, 0.3)
+        lists = sum(len(f.other.get(auth.MSG['GameList'], [])) for f in floods)
+        assert 0 < lists < 600 and not any(f.closed for f in floods), \
+            ('the address budget was not spent (the case would test nothing), or a flood was disconnected', lists)
+        # The same window: the guest's LeaveGame, and the Ping MpClient::leaveGame sends behind it.
+        seen = len(host.other[auth.MSG['LobbyState']])
+        guest.send('LeaveGame')
+        guest.send('Ping')
+        assert host.pump(5, lambda p: len(p.other[auth.MSG['LobbyState']]) > seen and
+                         not seated(p.other[auth.MSG['LobbyState']][-1])), \
+            "the LeaveGame was dropped on the address's request budget: the room still seats a player who left"
+        time.sleep(1.2)   # (a ListGames is the address budget's to drop: the next window)
+        assert not guest.closed and room in guest.games(), 'the player who left is not back in the game list'
+    finally:
+        close_all(host, guest, *floods)
+
+
+CASES = [('create', scenario_create), ('start', scenario_start), ('leave', scenario_leave)]
 
 
 def main():
@@ -130,7 +169,8 @@ def main():
     if failed:
         raise SystemExit('FAIL: ' + ', '.join(failed))
     print('PASS: the game limit refuses CreateGame with JoinResult(0) and the running-game limit refuses START '
-          'with a start refusal; both keep the connection, and the request passes once there is room')
+          'with a start refusal; both keep the connection, and the request passes once there is room. '
+          "A LeaveGame is taken with the address's request budget spent")
 
 
 if __name__ == '__main__':

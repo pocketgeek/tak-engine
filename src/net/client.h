@@ -196,6 +196,8 @@ public:
     // at once). Either way this client is in no room from here: what the server sent it as
     // a member of that room, or in answer to that request, is dropped as it arrives -- the
     // room's tables and transfers, a late yes or no, a watched game's start (see takes()).
+    // What was already taken of a game's stream goes too (its bundles, pause, wait, chat
+    // and voice: a watch still loading, watchLoading(), has taken them before its start).
     // The next request may go out at once; its answer is told apart from those.
     void leaveGame();
     void setSlot(int slot, uint8_t type, uint8_t faction, uint8_t color,
@@ -389,6 +391,10 @@ public:
     // replies with GameStarting (slot 0xFF -> mySlot -1) and the bundle log, then
     // streams live bundles. A spectator sends no commands or hashes.
     void spectate(uint32_t gameId, const std::string& password);
+    // A watch the server has taken whose game cannot open here yet: its GameStarting waits
+    // for the packages it names (the map, the game mods), which mapStatus() and modStatus()
+    // follow. The server has this client in the game meanwhile; leaveGame() takes it back.
+    bool watchLoading() const { return state_ == State::Lobby && pendingMapStart_.has_value(); }
     bool isSpectator() const { return spectator_; }
     // True when the last GameStarting was a spectator's (the world must be rebuilt and
     // the bundle log replayed). Cleared once consumed.

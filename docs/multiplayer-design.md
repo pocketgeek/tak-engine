@@ -494,6 +494,17 @@ game's `GameStarting` and bundles -- arrives before the `Pong` and is dropped, s
 is never taken for the answer to the next request. No wire format changed: old and
 new builds of protocol 323 play together.
 
+A watched game's stream is taken before its `GameStarting` is: that message waits in
+`MpClient` until the packages it names have arrived and verified
+(`MpClient::watchLoading`), while the bundle log, a `Pause`, a `Waiting` and chat
+lines behind it are stored. `leaveGame` therefore also clears what a game's stream
+left (the buffered bundles and their tick counter, the pause, the wait, chat, voice):
+a watch taken back during that wait used to leave its bundles under the tick numbers
+of the next game on the connection. The server takes a `LeaveGame` whatever the
+request budgets say (it is exempt from the shared ones, as `Ping` is): it has no
+answer, so a dropped one left its sender browsing the game list while the room still
+seated it.
+
 ### Game messages
 
 | Msg | Payload | Notes |
@@ -588,7 +599,8 @@ ENDs can never outnumber relayed audio frames. 300 frames a second, a malformed
 frame or a client sending `VoiceDown` fails that connection; 4,000 frames a second
 across the server. `VoiceListen` is exempt from the lobby budgets shared by an
 address, an account and the server (a dropped one would never be repeated), but
-not from the connection's own. The client
+not from the connection's own (`LeaveGame` likewise: see
+[Room scope](#room-scope-what-a-client-takes-and-when)). The client
 (`client/voice.h`) captures and plays on SDL audio devices of its own, buffers
 2–8 frames per talker, rebuilds a frame the server dropped from the next frame's
 FEC, and conceals a late one. It sends while the push-to-talk key is held or,
@@ -1044,7 +1056,11 @@ unready nobody.
   sends only the printable ASCII of a name, cut to 32 bytes, so a remembered or
   typed name the server would refuse still creates the room. The server still
   takes `SetRoomInfo`, but the client no longer sends it: a game's name and
-  password are set when it is created (below) and are static in the room.
+  password are set when it is created (below) and are static in the room. (A
+  client that does send it can still change them. The table carries only whether
+  there is a password, so this client forgets the one it shows behind SHOW when
+  a table says the lock is gone, and cannot tell a password changed in one step;
+  retiring `SetRoomInfo` at the next protocol version closes that.)
 - **The game browser's windows and the room's name line**
   (`gameview_lobby.cpp`: `BrowserWindow`, `browserStep`). The browser has no
   password field. CREATE opens a modal window for GAME NAME (default
@@ -1056,9 +1072,16 @@ unready nobody.
   server's refusal (`CANNOT JOIN: wrong password`) with the text kept, NO ANSWER
   FROM THE SERVER after 10 s (the next request first gives the stale one up with
   `LeaveGame`), THE GAME HAS CLOSED / STARTED when the list no longer offers
-  it. CANCEL or Esc while a window's own `JoinGame`, `Spectate` or `CreateGame`
-  is still unanswered takes it back (`browserTakeBack`, which NO ANSWER's retry
-  uses too): the password that went with it is wiped and `MpClient::leaveGame`
+  it. A WATCH the server took whose map or game mods this client still has to
+  download is answered, not silent (`MpClient::watchLoading`: its `GameStarting`
+  waits for them): no clock runs on it, the window (or, for an unlocked game,
+  the browser's bottom line, with a CANCEL of its own) says what is arriving
+  (DOWNLOADING MAP 37%), WATCH stays greyed and CANCEL takes it back. If that
+  game ends meanwhile the list, which the server answers again, no longer has it:
+  THE GAME HAS CLOSED. CANCEL or Esc while a window's own `JoinGame`, `Spectate`
+  or `CreateGame` is still unanswered takes it back (`browserTakeBack`, which NO
+  ANSWER's retry uses too): the password that went with it is wiped and
+  `MpClient::leaveGame`
   does the rest -- `LeaveGame` follows the request, so a room or watched game the
   server opens for it is left there at once, and its answer, yes or no, is
   dropped when it arrives (see
@@ -1069,9 +1092,13 @@ unready nobody.
   at its game limit refuses CREATE in the window like any other refusal
   (CANNOT OPEN A GAME: server game capacity reached), with the typed name and
   password kept.
-  The second press of a double click on a locked game's row is not a click in
-  the window it opened (CANCEL lies over the list's rows). An unlocked
-  game is joined at once and its refusal stays on the browser's CANNOT JOIN
+  The lobby's screens lie over one another (a window's CREATE over the room's
+  LEAVE, its CANCEL and LEAVE over the list's rows, a row over the password
+  window's buttons), so a press aimed at the screen before is dropped
+  (`lobbyPressStale`): the rest of a double click that changed the screen under
+  the pointer, and any press within 300 ms of the new screen's first frame (a
+  room that opens or closes as the button goes down); the client's log says so.
+  An unlocked game is joined at once and its refusal stays on the browser's CANNOT JOIN
   line, which also says NO ANSWER FROM THE SERVER for a request no window is
   waiting on. In every multiplayer room the name line is static, for the host
   as for a guest: the name, then LOCKED, or, when this client's player typed

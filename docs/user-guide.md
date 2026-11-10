@@ -2393,7 +2393,10 @@ wrong password, a full game), the window says why and keeps what you typed, so y
 can correct it and try again; it also says when the server does not answer, and
 when the game has closed or started in the meantime. **CANCEL** while the server
 has not yet answered a **JOIN**, a **WATCH** or a **CREATE** takes the request
-back: you stay in the game list, and can ask again at once.
+back: you stay in the game list, and can ask again at once. A game you **WATCH**
+on a map or with game mods you do not have downloads them first: the window, or
+the line at the bottom of the game list, shows how far that is (*DOWNLOADING MAP
+37%*) for as long as it takes, and **CANCEL** there stops it.
 
 In the room, the game's name stands above the slots for everyone. When the game
 has a password, the players who typed it (the host who created the game, and
