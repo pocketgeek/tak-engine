@@ -8,7 +8,10 @@ own test within its limit -- and reads the log: the client prints "room script: 
 done" per step and "room script: finished", and the server its room lines. A script that
 cannot finish prints why and ends the client. TAK_QUIT_TICK ends a game that started.
 
-  1  single player (CLI game room): an AI seated, START; the game plays to the quit tick.
+  1  single player (CLI game room): an AI seated, CHANGE MAP to Inner Circle, START; the
+     game plays to the quit tick.
+  3  CHANGE MAP to a 6-player random map, four AIs seated, then a 2-player one: the server
+     removes the three AIs past its seats, and the game on it starts.
 
 Debug builds only (TAK_ROOM_SCRIPT, TAK_QUIT_TICK and the CLI game are debug hooks).
 
@@ -19,11 +22,18 @@ import argparse
 import os
 from pathlib import Path
 import re
+import struct
 import subprocess
 import sys
 import tempfile
 
 QUIT_TICK = 60   # a started game plays this far, then the client quits
+
+
+def recipe(players):
+    """A small generated map for `players` (the server opens its seats from that count)."""
+    return '~gen1~' + (struct.pack('<HQBHH', 10, 1234, 0, 128, 128) +
+                       bytes([players, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0])).hex()
 
 
 def profile(root, name, script, extra=None):
@@ -66,22 +76,49 @@ def script_ran(log, steps):
     assert 'room script: finished' in log, 'the script did not finish'
 
 
+def played_to_quit(log, code):
+    """The started game played to the quit tick and the client ended cleanly."""
+    assert code == 0, 'the client exited %d' % code
+    played = re.search(r'replay: wrote .*\((\d+) ticks\)', log)
+    assert played and int(played[1]) >= QUIT_TICK, 'the game did not play to the quit tick'
+
+
 def case_single_player(args, root):
-    """CLI game room: seat an AI, START, play to the quit tick."""
-    home, env = profile(root, 'case1', 'ai:1;start')
+    """CLI game room: seat an AI, CHANGE MAP, START, play to the quit tick."""
+    home, env = profile(root, 'case1', 'ai:1;map:Inner Circle;start')
     code, log = run_client(args.client, ['game', 'Athri Cay', '--data', args.data], env, home)
     try:
         assert re.search(r"client \d+ created game \d+ ", log), 'no room was created'
-        script_ran(log, ['ai:1', 'start'])
+        script_ran(log, ['ai:1', 'map:Inner Circle', 'start'])
+        # The panel's PICK: the server changed the map (an AI seated on a 4-start map stays).
+        assert re.search(r"game \d+: host changed the map to 'inner circle' \(capacity \d, scenario 0, 0 AI removed",
+                         log, re.I), 'the server did not change the map'
         assert re.search(r'game \d+ starting with 2 players', log), 'the game did not start with the AI'
-        assert code == 0, 'the client exited %d' % code
-        played = re.search(r'replay: wrote .*\((\d+) ticks\)', log)
-        assert played and int(played[1]) >= QUIT_TICK, 'the game did not play to the quit tick'
+        played_to_quit(log, code)
     except AssertionError as e:
         raise AssertionError('%s\n%s' % (e, log[-4000:]))
 
 
-CASES = {1: case_single_player}
+def case_capacity(args, root):
+    """CHANGE MAP to fewer seats: the AIs past them are removed."""
+    six, two = recipe(6), recipe(2)
+    steps = ['map:' + six, 'ai:1', 'ai:2', 'ai:3', 'ai:4', 'map:' + two, 'start']
+    home, env = profile(root, 'case3', ';'.join(steps))
+    code, log = run_client(args.client, ['game', 'Athri Cay', '--data', args.data], env, home)
+    try:
+        script_ran(log, steps)
+        assert re.search(r"game \d+: host changed the map to '%s' \(capacity 6, scenario 0, 0 AI removed" % six, log), \
+            'the 6-player map was not taken'
+        # Capacity 2: the host keeps seat 1 and the AI in seat 2; the AIs in seats 3-5 go.
+        assert re.search(r"game \d+: host changed the map to '%s' \(capacity 2, scenario 0, 3 AI removed, 0 moved" % two,
+                         log), 'the server did not remove the three AIs past the 2-player map'
+        assert re.search(r'game \d+ starting with 2 players', log), 'the game did not start with the AI that stayed'
+        played_to_quit(log, code)
+    except AssertionError as e:
+        raise AssertionError('%s\n%s' % (e, log[-4000:]))
+
+
+CASES = {1: case_single_player, 3: case_capacity}
 
 
 def main():

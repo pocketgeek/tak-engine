@@ -4183,6 +4183,7 @@
     }
 
     bool GameView::lbHot(const SDL_FRect& r) const {
+        if (lobbyModal_) return false;   // the room under the CHANGE MAP panel or the LAN leave prompt
         float mx = mouseX_ / lobbyScale_ - lobbyOffX_, my = mouseY_ / lobbyScale_ - lobbyOffY_;
         return mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
     }
