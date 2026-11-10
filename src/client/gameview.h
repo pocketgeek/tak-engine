@@ -1979,11 +1979,11 @@ private:
     // paused instead of leaving units walking on the spot.
     uint32_t animLastTick_ = 0;
     uint64_t animAdvanceMs_ = 0;
-    // The world's actual pace for animFrame: ticks advanced per second, smoothed, from the
-    // last frame's tick and performance counter (0 = start over on the next frame).
+    // The world's actual pace for animFrame: ticks advanced per second of frame time,
+    // smoothed, from the last frame's tick (not live = start over on the next frame).
     double animRate_ = 0;
     uint32_t animRateTick_ = 0;
-    uint64_t animRateCounter_ = 0;
+    bool animRateLive_ = false;
     // Max NEW units the client registers (model/COB/anim VM + Create script) per frame,
     // so a mass simultaneous spawn streams in over ~a second instead of freezing one frame.
     static constexpr int kRegistrationsPerFrame = 64;
