@@ -257,18 +257,27 @@ static void testSimThreads(SDL_Renderer* ren) {
         check(fits && o.rowLines("SIMULATION THREADS INFO").size() >= 3, "each line fits the row");
         check(says("THIS COMPUTER HAS " + std::to_string(cpus) + (cpus == 1 ? " THREAD." : " THREADS.")),
               "they say how many threads this computer has");
-        check(says("SINGLE PLAYER, A LOCAL SERVER YOU HOST AND THE BENCHMARK: HALF") &&
-              says("THE GAME (" + std::to_string((cpus + 1) / 2) + "), HALF TO ITS LOCAL SERVER (" + std::to_string(std::max(1, cpus / 2)) + ")."),
+        // The counts are sim::SimPool::sessionThreads' (tools/simpool_test.cpp pins it): on a
+        // machine with more threads than one simulation runs (kMaxThreads) they stop there.
+        auto halves = [&](int choice) {
+            const auto t = sim::SimPool::sessionThreads(choice, unsigned(cpus), true);
+            return "THE GAME (" + std::to_string(t.game) + "), HALF TO ITS LOCAL SERVER (" + std::to_string(t.server) + ").";
+        };
+        auto whole = [&](int choice) {
+            return "ALL OF THEM (" + std::to_string(sim::SimPool::sessionThreads(choice, unsigned(cpus), false).game) + ").";
+        };
+        check(says("SINGLE PLAYER, A LOCAL SERVER YOU HOST AND THE BENCHMARK: HALF") && says(halves(0)),
               "they say a game with a local server gives half to each");
-        check(says("A GAME ON SOMEONE ELSE'S SERVER: THE GAME USES ALL OF THEM (" + std::to_string(cpus) + ")."),
+        check(says("A GAME ON SOMEONE ELSE'S SERVER: THE GAME USES " + whole(0)),
               "they say a game on someone else's server uses them all");
         check(!o.rowWarn("SIMULATION THREADS"), "AUTO is not red");
-        // The right end is 2N; held, it is live but not in the file yet.
+        // The right end is 2N (two simulations of kMaxThreads at most); held, it is live
+        // but not in the file yet.
         send(o, SDL_MOUSEBUTTONDOWN, at(float(most)), y);
-        check(s.simThreads == most && most == 2 * cpus && changes == 1, "the right end is twice this machine's threads");
+        check(s.simThreads == most && most == 2 * std::min(cpus, int(sim::SimPool::kMaxThreads)) && changes == 1,
+              "the right end is twice this machine's threads");
         check(saves == 0 && loadSettings().simThreads == 0, "the slider is not saved while it is held");
-        check(says("THE GAME (" + std::to_string(cpus) + "), HALF TO ITS LOCAL SERVER (" + std::to_string(cpus) + ").") &&
-              says("ALL OF THEM (" + std::to_string(most) + ")."), "the info lines follow the slider");
+        check(says(halves(most)) && says(whole(most)), "the info lines follow the slider");
         // Every whole step down to the left end, which is AUTO; red above N only.
         bool steps = true, red = true;
         for (int n = most; n >= 0; --n) {
