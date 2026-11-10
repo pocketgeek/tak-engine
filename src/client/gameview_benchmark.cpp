@@ -1,6 +1,10 @@
 #include "client/gameview.h"
 #include "client/gamespeed.h"
 #include "client/renderdriver.h"
+#include "util/jpeg.h"
+
+#include <ctime>
+#include <fstream>
 
 
 // Out-of-line GameView method definitions (benchmark concern), split from the
@@ -13,6 +17,8 @@
         benchCliPrev_ = tak::proc::sample(0);
         benchSrvPrev_ = localServerPid_ ? tak::proc::sample(localServerPid_) : tak::proc::Sample{};
         benchStartMs_ = 0; benchNextSec_ = 10; benchSamples_.clear(); benchStatsShown_ = false;
+        benchSavePending_ = benchSaved_ = benchSaveFailed_ = false;   // a new run, a new picture
+        benchSaveNote_.clear(); benchSavePath_.clear();
     }
 
     int GameView::benchmarkElapsedSec() const {
@@ -108,6 +114,71 @@
         mapView_.clampOffset(vw, vh);
     }
 
+    void GameView::saveBenchmarkJpg(int winW, int winH) {
+        namespace fs = std::filesystem;
+        const auto text = [](const fs::path& p) { const auto t = p.u8string(); return std::string(t.begin(), t.end()); };
+        benchSaveFailed_ = true;   // until the file is in place
+        benchSavePath_.clear();
+        const std::string profile = tak::replayDir();
+        if (profile.empty()) { benchSaveNote_ = "COULD NOT SAVE: NO FOLDER FOR THIS PLAYER'S FILES"; return; }
+        const fs::path dir = tak::u8path(profile) / "benchmarks";
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        if (!fs::is_directory(dir, ec)) {
+            benchSaveNote_ = "COULD NOT SAVE: CANNOT MAKE THE FOLDER ";
+            benchSavePath_ = text(dir);
+            return;
+        }
+        // The whole frame at the size it is drawn (an explicit rect, as main()'s screenshot
+        // reads), as a JPEG in memory.
+        std::vector<uint8_t> jpg;
+        try {
+            std::vector<uint8_t> px(size_t(winW) * winH * 4);
+            const SDL_Rect area{0, 0, winW, winH};
+            if (SDL_RenderReadPixels(ren_, &area, SDL_PIXELFORMAT_RGBA32, px.data(), winW * 4) != 0)
+                throw std::runtime_error(std::string("CANNOT READ THE SCREEN (") + SDL_GetError() + ")");
+            jpg = tak::jpeg::encode(winW, winH, px, 92);
+        } catch (const std::exception& e) {
+            benchSaveNote_ = std::string("COULD NOT SAVE: ") + e.what();
+            return;
+        }
+        // benchmark-2026-11-10-143059.jpg, then -2, -3, ...: never over a file that is there.
+        const std::time_t now = std::time(nullptr);
+        std::tm local{};
+#ifdef _WIN32
+        localtime_s(&local, &now);
+#else
+        localtime_r(&now, &local);
+#endif
+        char stamp[40];
+        std::strftime(stamp, sizeof stamp, "benchmark-%Y-%m-%d-%H%M%S", &local);
+        fs::path file = dir / (std::string(stamp) + ".jpg");
+        for (int n = 2; n < 10000 && fs::exists(file, ec); ++n) file = dir / (std::string(stamp) + "-" + std::to_string(n) + ".jpg");
+        // Under a temporary name first, renamed when complete: a write that fails leaves
+        // no half picture behind.
+        fs::path part = file;
+        part += ".part";
+        bool written = false;
+        if (!fs::exists(file, ec)) {
+            std::ofstream out(part, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(jpg.data()), std::streamsize(jpg.size()));
+            out.close();
+            written = bool(out);
+            if (written) { fs::rename(part, file, ec); written = !ec; }
+            if (!written) fs::remove(part, ec);
+        }
+        if (!written) {
+            benchSaveNote_ = "COULD NOT SAVE: CANNOT WRITE IN ";
+            benchSavePath_ = text(dir);
+            return;
+        }
+        benchSaved_ = true;
+        benchSaveFailed_ = false;
+        benchSaveNote_ = "SAVED: ";
+        benchSavePath_ = text(file);
+        std::fprintf(stderr, "benchmark: saved %s (%d x %d, %zu bytes)\n", benchSavePath_.c_str(), winW, winH, jpg.size());
+    }
+
     void GameView::renderBenchmarkStats(int winW, int winH) {
         // Every SETTINGS line first: the panel's height depends on how many there are.
         std::vector<std::string> settings;
@@ -162,11 +233,13 @@
         const char* sub = subBuf;
 
         // One scale factor drives the whole panel, so it stays big + legible at 4K and
-        // all of it, DONE included, still fits a short or narrow window.
-        constexpr float titleU = 4.0f, subU = 1.8f, cellU = 2.2f, setU = 2.0f;   // text sizes
+        // all of it, the buttons and the note under them included, still fits a short or
+        // narrow window.
+        constexpr float titleU = 4.0f, subU = 1.8f, cellU = 2.2f, setU = 2.0f, noteU = 1.8f;   // text sizes
         constexpr float padU = 44, rowU = 34, setRowU = 28;
         constexpr float colU[10] = {82, 96, 122, 122, 122, 70, 122, 122, 70, 96};
-        constexpr float gapsU = 22 + 26 + 10 + 12 + 30 + 24 + 20 + 56;   // the gaps below, and DONE
+        // The gaps below, the buttons, and the note's line (kept free until there is one).
+        constexpr float gapsU = 22 + 26 + 10 + 12 + 30 + 24 + 20 + 56 + 16 + 7 * noteU;
         float tableU = 0; for (float c : colU) tableU += c;
         const int rows = int(benchSamples_.size());
         const float baseW = 2 * padU + std::max(tableU, blockWidth(sub, subU));
@@ -230,21 +303,112 @@
         for (const std::string& t : settings) { blockText(t, cxL, y, setPx, {200, 205, 215, 255}); y += setRowU * k; }
         y += 20 * k;
 
-        const float dw = 240 * k, dh = 56 * k;
-        SDL_FRect done{px0 + (panelW - dw) * 0.5f, y, dw, dh}; benchDoneRect_ = done;
-        bool hot = mouseX_ >= done.x && mouseX_ <= done.x + done.w && mouseY_ >= done.y && mouseY_ <= done.y + done.h;
-        SDL_SetRenderDrawColor(ren_, hot ? 90 : 60, hot ? 110 : 66, hot ? 150 : 86, 255); SDL_RenderFillRectF(ren_, &done);
-        SDL_SetRenderDrawColor(ren_, hot ? 180 : 100, hot ? 200 : 110, hot ? 240 : 140, 255); SDL_RenderDrawRectF(ren_, &done);
-        blockText("DONE", done.x + (dw - blockWidth("DONE", setPx)) * 0.5f, done.y + (dh - 7 * setPx) * 0.5f,
-                  setPx, {230, 234, 244, 255});
+        // SAVE AS JPG and DONE, side by side.
+        const float dw = 240 * k, dh = 56 * k, gap = 24 * k;
+        const SDL_FRect save{px0 + (panelW - 2 * dw - gap) * 0.5f, y, dw, dh};
+        const SDL_FRect done{save.x + dw + gap, y, dw, dh};
+        benchSaveRect_ = save; benchDoneRect_ = done; benchPanelRect_ = panel;
+        // `live` false is the greyed button (Options' colours for one); `hover` false
+        // leaves the pointer's highlight off, for the picture.
+        auto button = [&](const SDL_FRect& r, const char* label, bool live, bool hover) {
+            const bool hot = live && hover && mouseX_ >= r.x && mouseX_ <= r.x + r.w && mouseY_ >= r.y && mouseY_ <= r.y + r.h;
+            if (live) SDL_SetRenderDrawColor(ren_, hot ? 90 : 60, hot ? 110 : 66, hot ? 150 : 86, 255);
+            else SDL_SetRenderDrawColor(ren_, 34, 38, 46, 255);
+            SDL_RenderFillRectF(ren_, &r);
+            if (live) SDL_SetRenderDrawColor(ren_, hot ? 180 : 100, hot ? 200 : 110, hot ? 240 : 140, 255);
+            else SDL_SetRenderDrawColor(ren_, 70, 76, 92, 255);
+            SDL_RenderDrawRectF(ren_, &r);
+            blockText(label, r.x + (dw - blockWidth(label, setPx)) * 0.5f, r.y + (dh - 7 * setPx) * 0.5f, setPx,
+                      live ? SDL_Color{230, 234, 244, 255} : SDL_Color{110, 115, 125, 255});
+        };
+        // A click on SAVE AS JPG is served here, by this draw: the screen is complete but
+        // for the buttons, so they go on plain (no highlight under the pointer), the frame
+        // is read back and saved, and the buttons are then drawn over as they now are.
+        // The note is not on yet, and the cursor goes on after the whole draw (main()).
+        if (benchSavePending_) {
+            benchSavePending_ = false;
+            button(save, "SAVE AS JPG", true, false);
+            button(done, "DONE", true, false);
+            saveBenchmarkJpg(winW, winH);
+        }
+        button(save, benchSaved_ ? "SAVED" : "SAVE AS JPG", !benchSaved_, true);
+        button(done, "DONE", true, true);
+        // Where the picture went, or why there is none: until DONE.
+        std::string note = benchSaveNote_;
+        const float notePx = noteU * k, noteY = y + dh + 16 * k;
+        if (!note.empty()) {
+            if (!benchSavePath_.empty()) note += tak::uiTextFitStart(benchSavePath_, notePx, tableW - blockWidth(note, notePx));
+            else note = tak::uiTextFit(note, notePx, tableW);
+            blockText(note, px0 + (panelW - blockWidth(note, notePx)) * 0.5f, noteY, notePx,
+                      benchSaveFailed_ ? SDL_Color{240, 130, 120, 255} : SDL_Color{165, 170, 185, 255});
+        }
 #ifndef NDEBUG
-        // TAK_BENCH_REPORT: the list and DONE where they were drawn, for benchmark_pathfinding.
+        // TAK_BENCH_REPORT: the list and the buttons where they were drawn, for
+        // benchmark_pathfinding and benchmark_save; SAVE AS JPG and the note under it
+        // again whenever either changes.
         static bool reported = false;
-        if (!reported && tak::devFlag("TAK_BENCH_REPORT")) {
-            reported = true;
-            for (const std::string& t : settings) std::printf("BENCHRESULT %s\n", t.c_str());
-            std::printf("BENCHDONE %d %d %.1f %.1f %.1f %.1f\n", winW, winH, done.x, done.y, done.w, done.h);
-            std::fflush(stdout);
+        if (tak::devFlag("TAK_BENCH_REPORT")) {
+            if (!reported) {
+                reported = true;
+                for (const std::string& t : settings) std::printf("BENCHRESULT %s\n", t.c_str());
+                std::printf("BENCHDONE %d %d %.1f %.1f %.1f %.1f\n", winW, winH, done.x, done.y, done.w, done.h);
+            }
+            char at[160];
+            std::snprintf(at, sizeof at, "BENCHSAVE %d %d %.1f %.1f %.1f %.1f %s %s\n", winW, winH, save.x, save.y, save.w,
+                          save.h, benchSaved_ ? "GREYED" : "LIVE", benchSaved_ ? "SAVED" : "SAVE AS JPG");
+            std::string line = at;
+            if (!note.empty()) {
+                const float nw = blockWidth(note, notePx);
+                std::snprintf(at, sizeof at, "BENCHNOTE %.1f %.1f %.1f %.1f %s ", px0 + (panelW - nw) * 0.5f, noteY, nw,
+                              7 * notePx, benchSaveFailed_ ? "WARNING" : "PLAIN");
+                line += at + note + "\n";
+            }
+            if (line != benchSaveReported_) {
+                std::fputs((benchSaveReported_ = line).c_str(), stdout);
+                std::fflush(stdout);
+            }
+        }
+        // TAK_BENCH_CLICKS="save;shot:after.png;save": the pointer on this screen, one step
+        // every few frames so each is handled and drawn before the next. "save" clicks the
+        // middle of SAVE AS JPG where it was drawn, "hover" only moves the pointer there,
+        // "miss" clicks the panel just left of the button, "away" moves the pointer off
+        // the panel, "shot:<file>" writes this frame as a PNG (main(), with the cursor
+        // on), and "until:<file>" waits for that file to exist (a test's go-ahead).
+        // TAK_QUIT_TICK then waits for the last step (benchClicksDone).
+        if (const char* script = tak::devEnv("TAK_BENCH_CLICKS"); script && !benchClicksDone_ && --benchClickWait_ < 0) {
+            std::vector<std::string> steps;
+            for (const char* p = script; *p;) {
+                const char* e = std::strchr(p, ';');
+                steps.emplace_back(p, e ? size_t(e - p) : std::strlen(p));
+                p = e ? e + 1 : p + steps.back().size();
+            }
+            if (benchClickStep_ >= steps.size()) benchClicksDone_ = true;
+            else {
+                const std::string& step = steps[benchClickStep_++];
+                benchClickWait_ = 3;
+                SDL_Event ev{};
+                auto point = [&](float x, float y, bool click) {
+                    ev.type = SDL_MOUSEMOTION;
+                    ev.motion.x = int(x); ev.motion.y = int(y);
+                    SDL_PushEvent(&ev);
+                    if (!click) return;
+                    ev.type = SDL_MOUSEBUTTONDOWN;
+                    ev.button.button = SDL_BUTTON_LEFT;
+                    ev.button.x = int(x); ev.button.y = int(y);
+                    SDL_PushEvent(&ev);
+                    ev.type = SDL_MOUSEBUTTONUP;
+                    SDL_PushEvent(&ev);
+                };
+                if (step == "save") point(save.x + save.w * 0.5f, save.y + save.h * 0.5f, true);
+                else if (step == "hover") point(save.x + save.w * 0.5f, save.y + save.h * 0.5f, false);
+                else if (step == "miss") point(save.x - gap * 0.5f, save.y + save.h * 0.5f, true);
+                else if (step == "away") point(0, 0, false);
+                else if (step.rfind("shot:", 0) == 0) benchShotPath_ = step.substr(5);
+                else if (std::error_code ec; step.rfind("until:", 0) == 0 && !std::filesystem::exists(tak::u8path(step.substr(6)), ec)) {
+                    --benchClickStep_;
+                    benchClickWait_ = 0;
+                }
+            }
         }
 #endif
     }

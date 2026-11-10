@@ -72,12 +72,20 @@
             } else lobbyInput(e, winW, winH);
             return;
         }
-        // Benchmark results overlay: topmost of all. DONE / Esc / any click returns to menu.
+        // Benchmark results overlay: topmost of all. DONE, Esc or a click off the panel
+        // returns to the menu. SAVE AS JPG saves the screen at the next draw, once: greyed
+        // (benchSaved_) it takes no click. Nor does the rest of the panel: a click that
+        // just misses SAVE AS JPG must not throw the results away.
         if (benchStatsShown_) {
             if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
-            else if ((e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) ||
-                     (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT))
+            else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE)
                 menuRequested_ = true;   // main() tears down the game and returns to the front-end
+            else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+                const float mx = float(e.button.x), my = float(e.button.y);
+                const auto in = [&](const SDL_FRect& r) { return mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h; };
+                if (in(benchSaveRect_)) benchSavePending_ = !benchSaved_;
+                else if (in(benchDoneRect_) || !in(benchPanelRect_)) menuRequested_ = true;
+            }
             return;
         }
         // Hotkey-config overlay (opened FROM Options) sits on top of it, so it takes

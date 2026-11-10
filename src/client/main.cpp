@@ -2355,8 +2355,9 @@ int main(int argc, char** argv) {
             if (benchFrozen) {
                 // frozen -- fall through to draw() so the overlay still renders
 #ifndef NDEBUG
-                // TAK_QUIT_TICK: the results are as far as a benchmark run goes.
-                if (tak::devEnv("TAK_QUIT_TICK")) { running = false; quitApp = true; }
+                // TAK_QUIT_TICK: the results are as far as a benchmark run goes (after
+                // TAK_BENCH_CLICKS has worked its buttons, if that is set).
+                if (tak::devEnv("TAK_QUIT_TICK") && gameView->benchClicksDone()) { running = false; quitApp = true; }
 #endif
             } else if (gameView->replayMode()) {
                 gameView->replayStep(dt);   // play back a recorded .takrep
@@ -2542,6 +2543,9 @@ int main(int argc, char** argv) {
             if (const char* path=tak::devEnv("TAK_PROFILE_CAPTURE")) {
                 screenshot(ren,w,h,path);profileCaptured=true;
             }
+        // A "shot:" step of TAK_BENCH_CLICKS: the Benchmark results as about to be shown.
+        if (gameView)
+            if (const std::string path = gameView->takeBenchShot(); !path.empty()) screenshot(ren, w, h, path);
 #endif
         SDL_RenderPresent(ren);
 #ifndef NDEBUG

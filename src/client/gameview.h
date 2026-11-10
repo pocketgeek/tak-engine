@@ -447,8 +447,20 @@ public:
     void benchmarkCamera(float dt, int winW, int winH);
     // The benchmark results overlay: a per-milestone table of client/server CPU + memory,
     // fps and sim speed, plus the display settings that produced them. A single centered
-    // panel, scaled up on big displays. DONE / Esc / click -> main menu.
+    // panel, scaled up on big displays. DONE / Esc / a click off the panel -> main menu;
+    // SAVE AS JPG -> saveBenchmarkJpg, once.
     void renderBenchmarkStats(int winW, int winH);
+    // SAVE AS JPG: the frame as drawn so far (renderBenchmarkStats calls this from a draw
+    // with no hover highlight and no note, before the cursor goes on) to
+    // benchmark-YYYY-MM-DD-HHMMSS.jpg, local time, in replayDir()'s `benchmarks` folder.
+    // Sets the note the screen shows under the buttons, and benchSaved_ when it worked.
+    void saveBenchmarkJpg(int winW, int winH);
+#ifndef NDEBUG
+    // TAK_BENCH_CLICKS (renderBenchmarkStats): the script has run and its last step is
+    // on screen; and the PNG a "shot:" step asked for, of the frame about to be presented.
+    bool benchClicksDone() const { return benchClicksDone_ || !tak::devEnv("TAK_BENCH_CLICKS"); }
+    std::string takeBenchShot() { return std::exchange(benchShotPath_, {}); }
+#endif
     // Flush + join the sim worker (drains any pending simInbox_ ticks first). For the headless
     // harness to call before reading the final world hash, so it reflects every processed tick.
     // Drains: the headless harness needs the final world hash to reflect every
@@ -3395,6 +3407,21 @@ private:
     long localServerPid_ = 0;           // local takserver pid (0 = N/A, e.g. headless)
     bool benchStatsShown_ = false;      // the benchmark stats overlay is up
     SDL_FRect benchDoneRect_{};          // the stats overlay's DONE button (set each render)
+    SDL_FRect benchSaveRect_{};          // ...its SAVE AS JPG button, and the panel they are on
+    SDL_FRect benchPanelRect_{};
+    bool benchSavePending_ = false;     // SAVE AS JPG was clicked: the next draw saves the screen
+    bool benchSaved_ = false;           // saved: the button is greyed and reads SAVED until the screen is left
+    bool benchSaveFailed_ = false;      // the note below is a failure (warning colour)
+    // Under the buttons: "SAVED: " or "COULD NOT SAVE: <why>", then a path, which is cut
+    // from its START when the line is too wide (the file's name stays readable).
+    std::string benchSaveNote_, benchSavePath_;
+#ifndef NDEBUG
+    size_t benchClickStep_ = 0;         // TAK_BENCH_CLICKS: the next step, and frames until it
+    int benchClickWait_ = 0;
+    bool benchClicksDone_ = false;
+    std::string benchShotPath_;
+    std::string benchSaveReported_;     // TAK_BENCH_REPORT: the last BENCHSAVE / BENCHNOTE printed
+#endif
     int benchCamLeg_ = -1;              // benchmark flythrough: leg (faction) the camera is on
     float benchLegT_ = 0.0f;            // seconds into the current leg (drives the zoom-in)
     // The worker: pop bundles FIFO, simulate under simMutex_, hand back the state hash.

@@ -1599,6 +1599,10 @@ add_test(NAME nimbus COMMAND nimbus_test)
 add_executable(gaf_rle_test tools/gaf_rle_test.cpp)
 target_link_libraries(gaf_rle_test PRIVATE tak-formats)
 add_test(NAME gaf_rle COMMAND gaf_rle_test)
+# The JPEG writer (util/jpeg.h, the Benchmark results' SAVE AS JPG) on synthetic pictures.
+add_executable(jpeg_encode_test tools/jpeg_encode_test.cpp)
+target_link_libraries(jpeg_encode_test PRIVATE tak-formats)
+add_test(NAME jpeg_encode COMMAND jpeg_encode_test)
 add_executable(effect_inventory tools/effect_inventory.cpp)
 target_link_libraries(effect_inventory PRIVATE tak-formats)
 add_executable(retail_construction_test tools/retail_construction_test.cpp)
@@ -3223,6 +3227,12 @@ if(TAK_BUILD_CLIENT)
         add_test(NAME benchmark_pathfinding COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tools/benchmark_pathfinding_test.py" "$<TARGET_FILE:takclient>" "${TAK_TEST_DATA}")
         set_tests_properties(benchmark_pathfinding PROPERTIES TIMEOUT 300)
+        # The Benchmark results' SAVE AS JPG, clicked where it is drawn: one JPEG of the
+        # window's size in the profile's benchmarks folder and a greyed SAVED button; a
+        # folder that cannot be written says so, leaves no file and keeps the button live.
+        add_test(NAME benchmark_save COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tools/benchmark_save_test.py" "$<TARGET_FILE:takclient>" "${TAK_TEST_DATA}")
+        set_tests_properties(benchmark_save PROPERTIES TIMEOUT 300)
       endif()
       # A menu single-player launch whose local server cannot run must come back to
       # the title screen with the reason (not the multiplayer sign-in dialog, not a

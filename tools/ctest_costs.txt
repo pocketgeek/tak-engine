@@ -86,6 +86,7 @@ map_cache_readonly 20
 legion_gen1_route_54772_om1 20
 cartographer_place_features 20
 benchmark_pathfinding 20
+benchmark_save 16
 legion_scenario_strait-2x150 19
 voice_uplink 49
 retailgap_weapons 19

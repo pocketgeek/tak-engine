@@ -3220,6 +3220,15 @@ compare only runs at the same speed. They also list **Sim threads**, the
 [Simulation threads](#performance) value the run was opened with (**Auto** with
 the number it came to), so runs that differ only in that can be told apart.
 
+**Save as JPG**, beside **Done**, saves the results screen as a picture: the
+whole window as shown, without the pointer. It goes in a `benchmarks` folder in
+your per-user folder (see [Where files are kept](#where-files-are-kept)), named
+for the date and time, like `benchmark-2026-11-10-143059.jpg`, and a line under
+the buttons shows the full path. A results screen is saved once: the button then
+reads **Saved** and is greyed until you leave the screen. If the picture could
+not be saved, the line says why and the button stays ready to try again.
+**Done** or **Esc** returns to the menu.
+
 The Benchmark always plays the original game with **no mods**: it leaves out
 every cosmetic and game mod pack, ticked or in `always_enabled`, so results
 from different machines compare like for like. Your mod choices are kept for
@@ -3385,7 +3394,8 @@ Settings, saved replays and downloaded content live in a per-user folder:
 The settings file is `settings.ini`. Replays (`.takrep` files) are saved beside
 it; a game still being recorded is a `.takrep.part` file, with a small
 `.takrep.part.chk` beside it, until it ends. Local copies of YouTube streams go in its
-`videos` folder. Maps downloaded in multiplayer and Cartographer's Test Map copies go in
+`videos` folder, and pictures of [Benchmark](#benchmark) results in its `benchmarks`
+folder. Maps downloaded in multiplayer and Cartographer's Test Map copies go in
 its `MapCache` folder, downloaded game mods in `ModCache`, and random maps you have
 played in `Maps`. The game never writes into your game data folder, which may be
 read-only, and reads no `MapCache` folder there.
