@@ -123,9 +123,13 @@ float createOptionPx(float maxW) {
         }
         if (st != tak::net::MpClient::State::InRoom) modsScreen_ = false;   // left the room: back to it next time
         if (st != tak::net::MpClient::State::InRoom) lanLeavePrompt_ = false;
+        if (st != tak::net::MpClient::State::InRoom) closeMapPicker();   // the panel goes with the room
         if (st == tak::net::MpClient::State::InRoom) {
             roomStep();   // the room's reactions run while MODS is open too
+            // Under the CHANGE MAP panel or the LAN leave prompt nothing of the room lights up.
+            lobbyModal_ = picker_.open || lanLeavePrompt_;
             if (modsScreen_) drawModsScreen(winW, winH); else drawRoom(winW, winH);
+            lobbyModal_ = false;
             if (picker_.open) drawMapPicker(winW, winH);   // the CHANGE MAP panel, over the room
             if (lanLeavePrompt_) drawLanLeavePrompt(winW, winH);
             if (!roomShotPath_.empty()) roomShotCapture();   // TAK_ROOM_SCRIPT shot:, as drawn
@@ -148,6 +152,10 @@ float createOptionPx(float maxW) {
         spSpectate_ = false;
         mpReadied_ = false; mpStarted_ = false; specAutoSeated_ = false;
         lanLeavePrompt_ = false;
+        // The CHANGE MAP panel goes, and its map list is read again in the next room: maps
+        // received in this one appear there.
+        closeMapPicker(); picker_.pickSerial = 0;
+        mapListScanned_ = false;
     }
 
     // LEAVE WILL CLOSE THE GAME FOR N PLAYERS: YES leaves (the server closes the room for
@@ -559,14 +567,20 @@ float createOptionPx(float maxW) {
 
     void GameView::applyGenParams() {
         genParams_ = tak::mapgen::sanitize(genParams_);   // grows a side the layout cannot fit
-        auto previous = tak::mapgen::decodeMapId(mpMapId_);
+        // The generator's target: the CHANGE MAP panel's RANDOM candidate while it is open,
+        // else the create screen's choice.
+        std::string& id = picker_.open ? picker_.gen.id : mpMapId_;
+        std::string& path = picker_.open ? picker_.gen.path : mapPath_;
+        auto previous = tak::mapgen::decodeMapId(id);
         previous.name = genParams_.name;
-        const bool reusePreview = mapPreviewFor_ == mapPath_ &&
-            tak::mapgen::isGeneratedMapId(mpMapId_) &&
+        const bool reusePreview = mapPreviewFor_ == path &&
+            tak::mapgen::isGeneratedMapId(id) &&
             tak::mapgen::encodeMapId(previous) == tak::mapgen::encodeMapId(genParams_);
-        mpMapId_ = tak::mapgen::encodeMapId(genParams_);
-        if (reusePreview) mapPreviewFor_ = mpMapId_;
-        mapPath_ = mpMapId_;   // generated: the id IS the path (findMap returns it as-is)
+        const std::string next = tak::mapgen::encodeMapId(genParams_);
+        if (picker_.open && next != id) picker_.message.clear();   // a new candidate: the last PICK's answer is old news
+        id = next;
+        if (reusePreview) mapPreviewFor_ = id;
+        path = id;   // generated: the id IS the path (findMap returns it as-is)
     }
 
     void GameView::setGenSlider(int i, float mx) {
@@ -814,245 +828,21 @@ float createOptionPx(float maxW) {
         float lx = kCreateMargin + 320, hy = 40;   // 20 right of the 300-wide option column
         // Toggle between the map list and the random-map generator.
         bool gen = tak::mapgen::isGeneratedMapId(mpMapId_);
-
-      if (!gen) {
-        // Sort buttons: NAME / PLAYERS / SIZE. Clicking sets the sort key; clicking the
-        // active one flips ascending/descending. The active key shows an up/down arrow.
-        {
-            const char* keys[3] = {"NAME", "PLAYERS", "SIZE"};
-            const float bw = 86, bh = 20, sy = hy + 20;
-            // FILTER: a text field right of the sort buttons, as tall as they are, to the
-            // list's right edge. A dim FILTER until something is typed.
-            {
-                const float fx = lx + 3 * (bw + 6), fw = mapListW() - 3 * (bw + 6);
-                const SDL_FRect r{fx, sy, fw, bh};
-                const bool active = lbField_ == 6;
-                SDL_SetRenderDrawColor(ren_, 24, 26, 34, 255); SDL_RenderFillRectF(ren_, &r);
-                SDL_SetRenderDrawColor(ren_, active ? 200 : 90, active ? 210 : 100, active ? 130 : 130, 255);
-                SDL_RenderDrawRectF(ren_, &r);
-                if (mapFilter_.empty() && !active)
-                    blockText("FILTER", fx + 6, sy + 5, 1.5f, {110, 116, 132, 255});
-                else
-                    blockText(tak::uiTextFitStart(mapFilter_ + (active ? "_" : ""), 1.5f, fw - 12), fx + 6, sy + 5, 1.5f,
-                              {225, 230, 240, 255});
-                lobbyHots_.push_back({r, [this] { lbField_ = 6; SDL_StartTextInput(); }});
-            }
-            for (int k = 0; k < 3; ++k) {
-                float bx = lx + k * (bw + 6);
-                SDL_FRect b{bx, sy, bw, bh};
-                bool active = mapSort_ == k;
-                SDL_SetRenderDrawColor(ren_, active ? 56 : 34, active ? 74 : 38, active ? 96 : 50, 255);
-                SDL_RenderFillRectF(ren_, &b);
-                SDL_SetRenderDrawColor(ren_, 90, 100, 130, 255); SDL_RenderDrawRectF(ren_, &b);
-                const SDL_Color color = active ? SDL_Color{215, 230, 245, 255}
-                                               : SDL_Color{170, 178, 195, 255};
-                blockText(keys[k], bx + 6, sy + 5, 1.5f, color);
-                if (active) {
-                    const float ax = bx + bw - 10, ay = sy + bh / 2;
-                    const float direction = mapSortDir_ > 0 ? -1.0f : 1.0f;
-                    const SDL_Vertex arrow[] = {
-                        {{ax, ay + direction * 3}, color, {}},
-                        {{ax - 4, ay - direction * 3}, color, {}},
-                        {{ax + 4, ay - direction * 3}, color, {}}
-                    };
-                    SDL_RenderGeometry(ren_, nullptr, arrow, 3, nullptr, 0);
-                }
-                lobbyHots_.push_back({b, [this, k](int) {
-                    if (mapSort_ == k) mapSortDir_ = -mapSortDir_;   // toggle direction
-                    else { mapSort_ = k; mapSortDir_ = 1; }
-                    sortMapList();
-                    mapScroll_ = 0;
-                }});
-            }
-        }
-        // The list reaches down to y 480, above the BACK/CREATE footer.
-        const float boxX = lx, boxY = hy + 46, boxW = mapListW(), boxH = 480 - boxY, rowH = 24, sbW = 12;
-        // The rows on show: every map, or those whose title or name holds the FILTER text
-        // (case-insensitive).
-        std::vector<int> shown;
-        {
-            const std::string want = tak::mapfilter::lower(mapFilter_);
-            for (int i = 0; i < int(mapList_.size()); ++i)
-                if (tak::mapfilter::matches(mapList_[size_t(i)].title, mapList_[size_t(i)].name, want)) shown.push_back(i);
-        }
-        const int total = int(shown.size());
-        mapVisRows_ = int(boxH / rowH);
-        mapTotalRows_ = total;
-        clampMapScroll();
-        mapListRect_ = {boxX, boxY, boxW, boxH};
-        // box background + border
-        SDL_FRect box{boxX, boxY, boxW, boxH};
-        SDL_SetRenderDrawColor(ren_, 24, 26, 34, 255); SDL_RenderFillRectF(ren_, &box);
-        SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &box);
-        const float rowW = boxW - sbW - 4;
-        const float infoW = 108;                    // right-side "S 2P 8x8" column
-        const float nameW = rowW - infoW - 12;      // the name column, at px 2.0
-        for (int r = 0; r < mapVisRows_; ++r) {
-            const int at = mapScroll_ + r;
-            if (at >= total) break;
-            const MapInfo& m = mapList_[size_t(shown[size_t(at)])];
-            const std::string& nm = m.name;
-            const std::string& pth = m.path;
-            bool sel = (nm == mpMapId_);
-            SDL_FRect row{boxX + 2, boxY + r * rowH, rowW, rowH};
-            bool hot = lbHot(row);
-            SDL_Color rc = sel ? SDL_Color{44, 78, 44, 255}
-                         : hot ? SDL_Color{40, 46, 62, 255} : SDL_Color{24, 26, 34, 255};
-            SDL_SetRenderDrawColor(ren_, rc.r, rc.g, rc.b, 255); SDL_RenderFillRectF(ren_, &row);
-            const std::string& title = m.title.empty() ? nm : m.title;
-            std::string label = tak::uiTextFit(title, 2.0f, nameW, false);
-            // Keep part of a generated map's recipe suffix visible even when a
-            // long title needs shortening, so duplicate titles can be told apart.
-            if (label != title && title.size() > 17 &&
-                title[title.size()-17] == '-' &&
-                std::all_of(title.end()-16,title.end(),[](char c) {
-                    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
-                })) {
-                const std::string tail = "~" + title.substr(title.size()-8);
-                label = tak::uiTextFit(title, 2.0f, nameW - blockWidth(tail, 2.0f), false) + tail;
-            }
-            blockText(label,
-                      boxX + 8, row.y + (rowH - 14) / 2, 2.0f,
-                      sel ? SDL_Color{200, 240, 200, 255} : SDL_Color{220, 225, 235, 255});
-            // Right-aligned player count + size, e.g. "4P 16x16".
-            char info[24];
-            if (m.sizeW > 0) std::snprintf(info, sizeof info, "%dP %dx%d", m.players, m.sizeW, m.sizeH);
-            else std::snprintf(info, sizeof info, "%dP", m.players);
-            const float infoX = boxX + rowW - blockWidth(info, 1.5f) - 6;
-            blockText(info, infoX, row.y + (rowH - 11) / 2, 1.5f,
-                      sel ? SDL_Color{170, 210, 170, 255} : SDL_Color{150, 160, 178, 255});
-            // MAP SCENARIO: a gold S marks a map with a playable scenario (or a Test Map copy).
-            if (scenarioOffered(m.scenario) || (m.scenario.marker && m.scenario.runnable()))
-                blockText("S", infoX - 14, row.y + (rowH - 11) / 2, 1.5f, {230, 200, 120, 255});
-            lobbyHots_.push_back({row, [this, nm, pth] {
-                mpMapId_ = nm; mapPath_ = pth;
-                if (settings_) { settings_->prefsFor(singlePlayer_).map = nm; saveSettings(*settings_); }  // remember it
-            }});
-        }
-        // Scrollbar: track + a proportional, draggable thumb (also wheel-scrollable).
-        if (total > mapVisRows_) {
-            float trackX = boxX + boxW - sbW;
-            SDL_FRect track{trackX, boxY, sbW, boxH};
-            SDL_SetRenderDrawColor(ren_, 30, 32, 42, 255); SDL_RenderFillRectF(ren_, &track);
-            float thumbH = std::max(24.0f, boxH * mapVisRows_ / total);
-            float thumbY = boxY + (boxH - thumbH) * mapScroll_ / float(total - mapVisRows_);
-            mapThumbRect_ = {trackX, thumbY, sbW, thumbH};
-            SDL_SetRenderDrawColor(ren_, mapDrag_ ? 130 : 90, mapDrag_ ? 150 : 100,
-                                   mapDrag_ ? 190 : 130, 255);
-            SDL_RenderFillRectF(ren_, &mapThumbRect_);
+        if (!gen) {
+            // The list (gameview_mappicker.cpp) reaches down to y 480, above the BACK/CREATE
+            // footer. Its selection is picker_.file while the CHANGE MAP panel is closed (the
+            // panel seeds its own when it opens); a click also sets mpMapId_ and mapPath_.
+            picker_.file = {mpMapId_, mapPath_};
+            drawMapListBox({lx, hy + 20, mapListW(), 480 - (hy + 20)}, picker_.file);
         } else {
-            mapThumbRect_ = {0, 0, 0, 0};
+            drawGeneratorControls(lx, hy + 20);   // the random-map params panel (replaces the list)
         }
 
-      } else {
-        // ---- random-map params panel (replaces the list) --------------------------
-        static const char* kTypeName[tak::mapgen::kMapTypes] = {"ARAMON", "TAROS", "VERUNA", "ZHON", "CREON"};
-        // One rhythm for the whole panel: every control is kRowH tall and every gap
-        // is kGap. The rows used to step by 30, 30, 36 and then 44, so the buttons
-        // sat tighter than the sliders and the run of sliders drifted out of line
-        // with everything above it.
-        const float kRowH = 24, kGap = 6, kBtnW = 300;
-        const float kSliderH = 30;   // label (11) + 5 + bar (14)
-        const float kHalfW = (kBtnW - kGap) / 2;
-        // Where the list's sort buttons sit, level with the first option row.
-        float px = lx, py = hy + 20;
-        lbField(px, py, kBtnW, "MAP NAME (OPTIONAL)", genParams_.name, 5); py += 44;
-        lbCycle(px, py, kBtnW, kRowH, std::string("TYPE:  ") + kTypeName[genParams_.mapType % tak::mapgen::kMapTypes],
-              true, [this](int direction) { genParams_.mapType = uint8_t((genParams_.mapType + direction + tak::mapgen::kMapTypes) % tak::mapgen::kMapTypes);
-                             if(genParams_.layout>=tak::mapgen::Maze) genParams_.layout=tak::mapgen::themedLayout(genParams_.mapType);
-                             applyGenParams(); }); py += kRowH + kGap;
-        lbCycle(px, py, kBtnW, kRowH, std::string("LAYOUT:  ") + tak::mapgen::layoutName(genParams_.layout),
-              true, [this](int direction) { const int index=genParams_.layout>=tak::mapgen::Maze?3:genParams_.layout;
-                             const int next=(index+direction+4)%4;
-                             genParams_.layout=next==3?tak::mapgen::themedLayout(genParams_.mapType):uint8_t(next);
-                             applyGenParams(); }); py += kRowH + kGap;
-        char pl[32]; std::snprintf(pl, sizeof pl, "PLAYERS:  %d", int(genParams_.players));
-        lbCycle(px, py, kBtnW, kRowH, pl, true, [this](int direction) {
-            genParams_.players = uint8_t(2 + (genParams_.players - 2 + direction + 7) % 7);
-            applyGenParams();
-        }); py += kRowH + kGap;
-        // WIDTH and HEIGHT, in sections (32 cells), each on its own: a step offers only the
-        // sizes the layout can build with the other side as it is (sanitize keeps both).
-        const auto sizeCycle = [this](bool height, int direction) {
-            const int cur = (height ? genParams_.heightCells : genParams_.widthCells) / 32;
-            std::vector<int> sizes;
-            for (int size : tak::mapgen::kSizeSteps) {
-                auto candidate = genParams_;
-                (height ? candidate.heightCells : candidate.widthCells) = uint16_t(size * 32);
-                const auto kept = tak::mapgen::sanitize(candidate);
-                if (kept.widthCells == candidate.widthCells && kept.heightCells == candidate.heightCells)
-                    sizes.push_back(size);
-            }
-            if (sizes.empty()) return;
-            const auto at = std::find(sizes.begin(), sizes.end(), cur);
-            const int index = at == sizes.end() ? (direction > 0 ? -1 : 0) : int(at - sizes.begin());
-            const int next = sizes[size_t((index + direction + int(sizes.size())) % int(sizes.size()))];
-            (height ? genParams_.heightCells : genParams_.widthCells) = uint16_t(next * 32);
-            applyGenParams();
-        };
-        char wl[32]; std::snprintf(wl, sizeof wl, "WIDTH:  %d", genParams_.widthCells / 32);
-        lbCycle(px, py, kHalfW, kRowH, wl, true, [sizeCycle](int direction) { sizeCycle(false, direction); });
-        char hl[32]; std::snprintf(hl, sizeof hl, "HEIGHT:  %d", genParams_.heightCells / 32);
-        lbCycle(px + kHalfW + kGap, py, kHalfW, kRowH, hl, true, [sizeCycle](int direction) { sizeCycle(true, direction); });
-        py += kRowH + kGap * 2;   // a wider break between the pickers and the sliders
-        // Nine sliders in two half-width columns; each level reads at the right end of
-        // its label line, where the bar's column ends.
-        int column = 0;
-        auto slider = [&](int idx, const char* label, uint8_t val, bool enabled = true, const char* off = "AUTO") {
-            const float bx = px + column * (kHalfW + kGap), by = py + 16, bw = kHalfW, bh = 14;
-            genSliderRect_[idx] = enabled ? SDL_FRect{bx, by, bw, bh} : SDL_FRect{};
-            SDL_FRect bar{bx, by, bw, bh};
-            SDL_SetRenderDrawColor(ren_, 30, 34, 46, 255); SDL_RenderFillRectF(ren_, &bar);
-            float t = enabled ? val / 255.0f : 0.0f;
-            SDL_FRect fill{bx, by, bw * t, bh};
-            SDL_SetRenderDrawColor(ren_, 70, 120, 90, 255); SDL_RenderFillRectF(ren_, &fill);
-            SDL_FRect handle{bx + bw * t - 3, by - 2, 6, bh + 4};
-            SDL_SetRenderDrawColor(ren_, 200, 220, 200, 255); if (enabled) SDL_RenderFillRectF(ren_, &handle);
-            SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &bar);
-            static const char* kScatterShort[tak::mapgen::kScatterLevels] = {"NONE", "MIN", "MED", "HIGH", "MAX"};
-            const std::string level = !enabled ? off : idx==2 ? "+" + std::to_string(tak::mapgen::extraManaRounds(val)) + "/P" :
-                idx==5 ? kScatterShort[std::min<int>(genParams_.manaScatter, tak::mapgen::kScatterLevels - 1)] :
-                val == 0 ? "NONE" : val < 86 ? "LOW" : val < 171 ? "MED" : "HIGH";
-            const float levelW = blockWidth(level, 1.3f);
-            // The label shrinks, if it must, to leave the level its room on the line.
-            blockText(label, bx, py + 2, tak::uiTextFitPx(label, 1.3f, bw - levelW - 8), {180, 185, 195, 255});
-            blockText(level, bx + bw - levelW, py + 2, 1.3f, {160, 165, 180, 255});
-            if (++column == 2) { column = 0; py += kSliderH + kGap; }
-        };
-        const uint8_t world = genParams_.mapType, layout = genParams_.layout;
-        slider(0, "FORESTS", genParams_.treeDensity);
-        slider(1, "ROCKS", genParams_.rockDensity);
-        slider(2, "EXTRA MANA", genParams_.manaDensity);
-        // Neutral spots scattered by AREA, apart from the per-player extra spots (a
-        // level, not a count: the same level puts four times as many on a map twice as
-        // wide). Five notches, NONE..MAX; MAX = a six-spot home's density.
-        slider(5, "SCATTERED MANA", uint8_t(genParams_.manaScatter * 255 / (tak::mapgen::kScatterLevels - 1)));
-        slider(3, "WATER", genParams_.waterDensity, !tak::mapgen::automaticWater(layout));
-        slider(4, layout==tak::mapgen::Highlands?"HIGHLANDS":"HILLS", genParams_.reliefDensity, layout!=tak::mapgen::Maze);
-        // v10 retail kits. Maze walls and Creon highlands are the layout's own high
-        // ground; Veruna ships no mountain kit.
-        slider(6, "PLATEAUS", genParams_.plateauDensity, !tak::mapgen::automaticPlateaus(layout) &&
-               tak::mapgen::kitAvailable(world, tak::mapgen::KitPlateaus));
-        slider(7, "MOUNTAINS", genParams_.mountainDensity, tak::mapgen::kitAvailable(world, tak::mapgen::KitMountains), "NONE");
-        slider(8, world==tak::mapgen::Zhon?"VILLAGES":"TOWNS", genParams_.townDensity,
-               tak::mapgen::kitAvailable(world, tak::mapgen::KitTowns), "NONE");
-        // The seed button shares the last row with TOWNS.
-        py += 8;
-        px += kHalfW + kGap;
-        lbBtn(px, py, kHalfW, kRowH, "RE-ROLL SEED", true, [this] {
-            genParams_.seed = genParams_.seed * 6364136223846793005ULL + 1442695040888963407ULL;
-            applyGenParams();
-        });
-        px -= kHalfW + kGap;
-      }
-
-        // Preview panel, right of the list / params column. A real map shows its
-        // embedded minimap; a generated map shows a live thumbnail rolled from its
-        // seed (both go through buildMapPreview -> mapPreviewTex_).
-        // Against the right margin; the map list widens to 12 short of it. Beside the
-        // generator's narrower panel the preview grows into the free space: as wide as
-        // the gap from the 300-wide panel (plus 20) to the margin, top level with the
-        // panel's, and as tall as leaves room for the size line and button under it
+        // Preview panel, right of the list / params column, with the map's dims and (a file
+        // map) MAP SCENARIO under it. Against the right margin; the map list widens to 12
+        // short of it. Beside the generator's narrower panel the preview grows into the free
+        // space: as wide as the gap from the 300-wide panel (plus 20) to the margin, top level
+        // with the panel's, and as tall as leaves room for the size line and button under it
         // above the footer at 500.
         float pvW = 192, pvy = hy + 46;
         if (gen) {
@@ -1060,85 +850,13 @@ float createOptionPx(float maxW) {
             pvW = std::min(kLobbyW - kCreateMargin - (lx + 320), kLobbyH - 48 - pvy - 58);
         }
         const float pvH = pvW, pvx = kLobbyW - kCreateMargin - pvW;
-        SDL_FRect pbox{pvx, pvy, pvW, pvH};
-        SDL_SetRenderDrawColor(ren_, 18, 20, 28, 255); SDL_RenderFillRectF(ren_, &pbox);
-        if (mapPreviewFor_ != mapPath_) buildMapPreview(mapPath_);
-        if (mapPreviewTex_ && mapPreviewW_ > 0) {
-            float sc = std::min(pvW / float(mapPreviewW_), pvH / float(mapPreviewH_));
-            float iw = mapPreviewW_ * sc, ih = mapPreviewH_ * sc;
-            SDL_FRect dst{pvx + (pvW - iw) / 2, pvy + (pvH - ih) / 2, iw, ih};
-            SDL_RenderCopyF(ren_, mapPreviewTex_, nullptr, &dst);
-            drawStartMarkers(dst);   // no slots yet: the room tints them
-        } else if (gen && !genPreviewError_.empty()) {
-            // A recipe the retail data cannot build: the reason in the box.
-            for (const auto& [line, y, color] : {std::tuple{"MAP UNAVAILABLE", -16.0f, SDL_Color{180, 185, 195, 255}},
-                                                 std::tuple{"CHECK RETAIL DATA", 4.0f, SDL_Color{220, 140, 120, 255}}})
-                blockText(line, pvx + (pvW - blockWidth(line, 1.4f)) / 2, pvy + pvH / 2 + y, 1.4f, color);
-        } else {
-            const char* none = gen ? "GENERATING" : "NO PREVIEW";
-            blockText(none, pvx + (pvW - blockWidth(none, 1.6f)) / 2, pvy + pvH / 2 - 7, 1.6f,
-                      {120, 125, 140, 255});
-        }
-        SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &pbox);
-        if (gen && genPreviewPending_ && mapPreviewTex_) {   // the last map's picture, until the new one is rolled
-            const char* note = "GENERATING";
-            const SDL_FRect band{pvx, pvy + pvH / 2 - 14, pvW, 28};
-            SDL_SetRenderDrawColor(ren_, 12, 14, 20, 200); SDL_RenderFillRectF(ren_, &band);
-            blockText(note, pvx + (pvW - blockWidth(note, 1.6f)) / 2, pvy + pvH / 2 - 7, 1.6f, {200, 205, 220, 255});
-        }
-        if (mapPreviewTex_ && mapPreviewW_ > 0 && !genPreviewPending_) {
-            lobbyHots_.push_back({pbox, [this] { openBigMap(); }});   // full window
-            drawClickHint(pbox);
-        }
-        if (!mapPreviewDims_.empty())
-            blockText(mapPreviewDims_, pvx, pvy + pvH + 8, 1.6f, {160, 165, 180, 255});
+        drawPickPreview({pvx, pvy, pvW, pvH}, mpMapId_, mapPath_, true);
         // Keep the generator action below the preview and map description.
         lbCycle(pvx, pvy + pvH + 32, pvW, 26, gen ? "PICK AN EXISTING MAP" : "GENERATE RANDOM MAP", true,
               [this, gen](int) {
                   if (gen) { mpMapId_.clear(); mapPath_.clear(); }  // drop back to the list
                   else applyGenParams();                           // encode the current gen params
               });
-        // MAP SCENARIO: play the map's own scenario -- its placed armies,
-        // trigger rules and Use Only list -- instead of a skirmish. Off for every map until
-        // chosen; greyed, with the reason, when the map has no playable scenario. The lines
-        // under it say what turning it on changes (dim while it is off).
-        if (!gen && !mapPath_.empty()) {
-            const float y0 = pvy + pvH + 68;
-            const bool testCopy = createScenario_.marker && createScenario_.runnable();
-            // A Test Map copy of a map whose only scenario content is a Use Only list
-            // (hasscenario stays 0) plays no scenario, but its opt-in still applies the list.
-            const bool testUseOnly = createScenario_.marker && !createScenario_.hasScenario &&
-                                     createScenario_.useOnlyTypes >= 0;
-            const bool offered = scenarioOffered(createScenario_);
-            lbCycle(pvx, y0, pvW, 26, (createMapScenario_ && offered) || testCopy ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF",
-                    offered, [this](int) { createMapScenario_ = !createMapScenario_; });
-            std::vector<std::pair<std::string, SDL_Color>> lines;
-            const SDL_Color grey{150, 155, 165, 255}, dim{130, 135, 150, 255}, normal{205, 210, 225, 255},
-                            amber{235, 205, 120, 255};
-            if (testCopy) {
-                lines.push_back({"TEST COPY: ALWAYS ON", grey});
-                for (const auto& l : tak::sim::scenarioSummary(createScenario_, true))
-                    lines.push_back({l.text, l.warning ? amber : normal});
-            } else if (testUseOnly) {
-                lines.push_back({"TEST COPY: USE ONLY LIST", grey});
-                lines.push_back({tak::sim::scenarioUseOnlyLine(createScenario_, true), normal});
-            } else if (!offered) {
-                for (const auto& l : tak::sim::scenarioReason(createScenario_)) lines.push_back({l, grey});
-            } else {
-                // Offered only because a game mod pack may supply a missing unit type.
-                if (!createScenario_.offerable()) {
-                    // The pack's own name (its capitals under MODERN), cut to the column.
-                    lines.push_back({tak::uiTextFit("PACK NEEDED: " + createScenario_.detail, 1.2f, 190), amber});
-                }
-                for (const auto& l : tak::sim::scenarioSummary(createScenario_, true))
-                    lines.push_back({l.text, !createMapScenario_ ? dim : l.warning ? amber : normal});
-            }
-            // Four lines at a 16 pitch, or a fifth (a test copy's or the pack warning on
-            // top of a full summary) at 14, all clear of the CREATE footer at 500.
-            const float pitch = lines.size() > 4 ? 14.0f : 16.0f;
-            for (size_t i = 0; i < lines.size() && i < 5; ++i)
-                blockText(lines[i].first, pvx, y0 + 32 + float(i) * pitch, 1.2f, lines[i].second);
-        }
     }
 
     // The mods screen (the room's MODS... button): COSMETIC and GAME side by side over the
@@ -1283,11 +1001,23 @@ float createOptionPx(float maxW) {
         // heads the right column; the mod packs and the chat sit right under it.
         // The preview is as wide as the column and as tall as the map's shape makes it.
         // Single player has no chat, so a square map takes the column's whole width; a
-        // multiplayer room keeps room under the mods line for a few rows of chat.
-        constexpr float kPreviewY = 84, kChatInputH = 52, kChatMinH = 104, kModsH = 44;
-        const float previewMaxH = singlePlayer_ ? colW : float(winH) - kChatInputH - 6 - kChatMinH - kModsH - kPreviewY;
-        if (roomMap) syncRoomPreview();
+        // multiplayer room keeps room under the mods line for a few rows of chat, and under
+        // the preview for the host's CHANGE MAP button -- for every player, so host and
+        // guests see the same preview (a guest's chat gets the button's room).
+        constexpr float kPreviewY = 84, kChatInputH = 52, kChatMinH = 104, kModsH = 44, kChangeMapH = 26;
+        const float previewMaxH = singlePlayer_ ? colW
+                                : float(winH) - kChatInputH - 6 - kChatMinH - kModsH - kPreviewY - kChangeMapH;
+        // While the CHANGE MAP panel is open its candidate owns the shared preview texture:
+        // the room keeps the size its own preview had (roomPreviewSize_).
+        if (roomMap && !picker_.open) { syncRoomPreview(); roomPreviewSize_ = {mapPreviewW_, mapPreviewH_}; }
         const SDL_FRect pv = roomMap ? roomPreviewBox(colX, kPreviewY, previewMaxH) : SDL_FRect{colX, kPreviewY, 0, 0};
+        // CHANGE MAP... (the host of a skirmish room; not a --play-map room, which exists to
+        // test its one map): the panel over the room (gameview_mappicker.cpp). Shown while a
+        // START or a map change is pending too, disabled, so the lines under it stay put.
+        const bool changeMap = roomMap && host && !room.opts.benchmark && roomForcedMap_.empty();
+        if (changeMap)
+            lbBtn(colX, pv.y + pv.h + 6, 120, 20, "CHANGE MAP...", mp_->roomEditable() && !mp_->roomMapPending(),
+                  [this] { openMapPicker(); }, {60, 66, 86, 255}, 1.3f);
         float modBottom=0;
         {
             // MODS, one line under the map: what loads, as many names as fit then +N,
@@ -1336,7 +1066,7 @@ float createOptionPx(float maxW) {
                 if(const auto status=mp_->roomModStatus();gameOn && !status.empty())notes.push_back(status);
             }
             constexpr float kPx=1.3f,kBtnW=64;
-            const float py=roomMap ? pv.y+pv.h+6 : 87;
+            const float py=roomMap ? pv.y+pv.h+6+(changeMap ? kChangeMapH : 0) : 87;
             drawRoomFlash(RoomField::Mods,{colX,py-4,colW,18});   // the host changed the game mods
             const float right=colX+colW-(gameRoom ? kBtnW+6 : 0);
             const char* label="MODS: ";
@@ -1369,7 +1099,11 @@ float createOptionPx(float maxW) {
         if (roomMap) {
             const SDL_FRect rim{pv.x - 3, pv.y - 3, pv.w + 6, pv.h + 6};
             drawRoomFlash(RoomField::Map, rim); drawRoomFlash(RoomField::Scenario, rim);
-            drawRoomPreview(pv, f.scenarioOn && scenarioLobby_.placed > 0);
+            if (!picker_.open) drawRoomPreview(pv, f.scenarioOn && scenarioLobby_.placed > 0);
+            else {   // under the panel: the preview's empty frame
+                SDL_SetRenderDrawColor(ren_, 18, 20, 28, 255); SDL_RenderFillRectF(ren_, &pv);
+                SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &pv);
+            }
         }
         // chat panel on the right (multiplayer only -- there's no one to chat with in SP)
         if (!singlePlayer_) {
@@ -1419,7 +1153,7 @@ float createOptionPx(float maxW) {
         // column (a tall map's preview is narrow) in the lower half of the preview, clear
         // of the CLICK band, or hung under it (over the mods and the chat) when the preview
         // is too short to hold it -- never past the bottom of the screen.
-        if (roomMap && lbHot(pv) && !genPreviewPending_ && mapPreviewTex_) {
+        if (roomMap && !picker_.open && lbHot(pv) && !genPreviewPending_ && mapPreviewTex_) {
             const auto lines = packItems(genRecipeItems(room.mapId), 1.1f, colW - 12);
             if (!lines.empty()) {
                 constexpr float kPitch = 13;
@@ -1559,6 +1293,8 @@ float createOptionPx(float maxW) {
         if (tak::mapgen::isGeneratedMapId(id)) {
             const auto gp = tak::mapgen::decodeMapId(id);
             w = gp.widthCells; h = gp.heightCells;
+        } else if (picker_.open) {   // the CHANGE MAP panel's candidate owns the picture: the room's size, kept
+            if (roomPreviewSize_.x > 0 && roomPreviewSize_.y > 0) { w = float(roomPreviewSize_.x); h = float(roomPreviewSize_.y); }
         } else if (mapPreviewTex_ && mapPreviewW_ > 0 && mapPreviewH_ > 0) {
             w = float(mapPreviewW_); h = float(mapPreviewH_);
         }
@@ -1603,11 +1339,12 @@ float createOptionPx(float maxW) {
 
     void GameView::openBigMap() {
         // The map of the preview on show: the room's (its verified package if it has one,
-        // as drawRoomPreview reads it) or the create screen's choice. A downloaded map
-        // reads through a view holding its archive's files; a generated one is rolled
-        // again from its id, through the base data only (as the game builds it).
+        // as drawRoomPreview reads it), the CHANGE MAP panel's candidate or the create
+        // screen's choice. A downloaded map reads through a view holding its archive's
+        // files; a generated one is rolled again from its id, through the base data only
+        // (as the game builds it).
         const bool room = mapPreviewFor_.rfind("room:", 0) == 0;
-        std::string path = room ? mpRoom().mapId : mapPath_;
+        std::string path = room ? mpRoom().mapId : picker_.open ? (picker_.random ? picker_.gen : picker_.file).path : mapPath_;
         if (path.empty()) return;
         static const char* kWorld[tak::mapgen::kMapTypes] = {"aramon", "taros", "veruna", "zhon", "creon"};
         try {
@@ -1654,7 +1391,7 @@ float createOptionPx(float maxW) {
         // the bottom), with the lobby's 16 margin round it; a generated map's recipe takes
         // a line or two between them.
         const bool fromRoom = bigMapFor_.rfind("room:", 0) == 0;
-        const std::string mapId = fromRoom ? mpRoom().mapId : mpMapId_;
+        const std::string mapId = fromRoom ? mpRoom().mapId : picker_.open ? (picker_.random ? picker_.gen : picker_.file).id : mpMapId_;
         constexpr float kRecipePx = 1.1f, kRecipePitch = 13;
         const auto recipe = packItems(genRecipeItems(mapId), kRecipePx, lw - 2 * kCreateMargin);
         const float recipeH = recipe.empty() ? 0 : float(recipe.size()) * kRecipePitch + 4;
