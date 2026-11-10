@@ -5,12 +5,11 @@
 // server buckets them per tick, closes one tick every 1/30 s, and broadcasts a
 // TickBundle to every client in the game. Clients advance their sims in step.
 //
-// With --data the server runs a REFEREE sim (a headless World built by the same
-// setupMatch the clients use) that also hosts the AI players: each tick the AI
-// controllers append their orders to the bundle, and the referee's own state
-// hash is the canonical one clients are checked against (with a suspicion rule
-// that blames the referee if every client agrees against it). Without --data the
-// server is a pure relay and clients cross-check hashes among themselves (M3).
+// The server runs a REFEREE sim (a headless World built by the same setupMatch
+// the clients use, from the install --data names) that also hosts the AI players:
+// each tick the AI controllers append their orders to the bundle, and the
+// referee's own state hash is the canonical one clients are checked against (with
+// a suspicion rule that blames the referee if every client agrees against it).
 
 #include "net/mappackage.h"
 #include "util/u8path.h"
@@ -1255,8 +1254,8 @@ bool Server::voiceBehind(Client& d, const Room& r, uint64_t now) {
 // Voice chat: one frame from a talker in room r, to the recipients its VOICE mask picks
 // with exactly the Chat rules -- the whole room (spectators included) while the room is
 // not running, otherwise the seated players whose bit is set, and the spectators when the
-// frame carries kVoiceSpectators; a spectator
-// in a running game reaches nobody (spectators never talk in game) -- minus the
+// frame carries kVoiceSpectators; a spectator in a running game reaches nobody
+// (spectators never talk in game) -- minus the
 // talker, minus anyone who has not asked for voice or is still catching up, and minus
 // anyone lagging the running game (voiceBehind). Sent as low-priority frames
 // (Conn::sendLow), which a backed-up recipient drops.
@@ -3661,12 +3660,8 @@ static int serverMain(int argc, char** argv) {
     if(tlsCert.empty()!=tlsKey.empty() || (!loopbackOnly && tlsCert.empty() && !allowPlaintext && !acmeOption)) {
         std::fprintf(stderr,"takserver: public listeners require --tls-cert and --tls-key, or --acme-domain and --acme-agree-tos. Use --local for private games, or explicitly --allow-plaintext for a trusted LAN/test network.\n");return 1;
     }
-    // --data is mandatory. The server used to run without it as a pure relay, with
-    // the clients cross-checking hashes among themselves; that mode is gone. It gave
-    // up the canonical referee hash (so a lone client could not be told apart from a
-    // desynced one), it could not host AI players at all, and it made a whole second
-    // set of paths that no shipped configuration exercised -- single-player launches
-    // its private server with --data, and so does every harness.
+    // --data is mandatory: the referee sim that gives the canonical hash and the AI
+    // players both read it.
     if (dataRoot.empty()) {
         std::fprintf(stderr,
             "takserver: --data <retail-install-dir> is required.\n"

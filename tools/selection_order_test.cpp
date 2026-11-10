@@ -1,10 +1,10 @@
-// selection_order_test -- explicit selection orders (Cmd::Order, protocol 267) from
+// selection_order_test -- explicit selection orders (Cmd::Order) from
 // the wire to the sim (Legion 10,000 stage 3).
 //
 //  1. Codec: varints and member deltas round-trip and refuse overlong, zero or
 //     out-of-range encodings; orderRecordBytes is the record Writer::cmd writes; a
 //     bundle mixing commands and orders round-trips, a strict read validates every
-//     order whole and refuses one under protocol 266.
+//     order whole.
 //  2. packClick: a verb run becomes one order (members sorted, serials consecutive);
 //     runs split on another verb or target, a repeated unit, kOrderMaxMembers;
 //     other verbs pass through; the right-click move is OrderShape::Offsets.

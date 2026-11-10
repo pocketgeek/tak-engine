@@ -407,9 +407,7 @@
             // in-sim script -- exactly as the game did. Replaying it through
             // setupMatch produced a plain skirmish on the mission's map: none of the
             // placed units, none of the scripting, so the recorded commands landed in
-            // a world that had nothing to do with the one they came from. The
-            // recorded mission stem is new in format 6; before it, the loader could
-            // not have known.
+            // a world that had nothing to do with the one they came from.
             missionStem_ = mission;
             int human = 0;
             tak::sim::MissionSetup ms;

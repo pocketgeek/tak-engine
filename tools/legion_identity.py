@@ -5,10 +5,9 @@ tools/legion_identity.sh is the driver; it calls this file for three jobs:
 
   patch-replay SRC DST PROTOCOL
       Copy a .takrep and retarget it at another simulation build: the u32
-      protocol at byte offset 8 becomes PROTOCOL, and for PROTOCOL >= 239 the
-      empty TOV1 override-pack digest is replaced by the empty TOV2 digest (the
-      239 build refuses the TOV1 one; both packs are empty, so the replayed
-      world is the same).
+      protocol at byte offset 8 becomes PROTOCOL. SRC must be replay format
+      REPLAY_FORMAT (src/net/replayhdr.h kReplayFormat), the only one a build
+      reads; anything else is refused here.
 
   crowdbench --out DIR --base BIN --cand BIN --cores LIST [--quick] [--verify]
       Run the crowdbench identity matrix on both binaries in one job pool
@@ -107,24 +106,19 @@ MATRIX_QUICK = (
     ("maze", 200, 1, 2, "retail", "workers"),
 )
 
-TOV1_EMPTY = hashlib.sha256(b"TOV1" + struct.pack("<II", 0, 0)).hexdigest().encode()
-TOV2_EMPTY = hashlib.sha256(b"TOV2" + struct.pack("<II", 0, 0)).hexdigest().encode()
+REPLAY_FORMAT = 15   # src/net/replayhdr.h kReplayFormat
 
 
 def patch_replay(args):
     data = bytearray(Path(args.src).read_bytes())
     if data[:4] != b"TAKR":
         raise SystemExit(f"{args.src}: not a .takrep")
-    old = struct.unpack_from("<I", data, 8)[0]
+    fmt, old = struct.unpack_from("<II", data, 4)
+    if fmt != REPLAY_FORMAT:
+        raise SystemExit(f"{args.src}: replay format {fmt}, builds read format {REPLAY_FORMAT} only")
     struct.pack_into("<I", data, 8, args.protocol)
-    swapped = 0
-    if args.protocol >= 239:
-        at = data.find(TOV1_EMPTY, 0, 4096)
-        if at >= 0:
-            data[at:at + len(TOV2_EMPTY)] = TOV2_EMPTY
-            swapped = 1
     Path(args.dst).write_bytes(bytes(data))
-    print(f"{Path(args.src).name}: protocol {old} -> {args.protocol}, tov1->tov2 {swapped}")
+    print(f"{Path(args.src).name}: protocol {old} -> {args.protocol}")
 
 
 # ---------------------------------------------------------------- crowdbench

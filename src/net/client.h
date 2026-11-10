@@ -94,8 +94,8 @@ public:
     const std::shared_ptr<maps::Package>& mapPackage() const { return mapPackage_; }
     // The host's ticked mods/game packs. A room this player hosts sends them, with
     // the always-enabled ones (mods/game/always_enabled/), as one package to every
-    // player whenever the room has game mods on (every non-campaign room a current
-    // host creates; 0 only from a 0.8.12 or 0.8.13 host's GAME MODS: OFF or a debug --mods).
+    // player whenever the room has game mods on (every non-campaign room a host
+    // creates, unless a debug --mods turned them off).
     void setGameModPacks(std::vector<std::string> names);
     const std::vector<std::string>& gameModPacks() const { return gameModPacks_; }
     // False (debug --mods none|cosmetic) drops every game pack, always-enabled ones too.
@@ -239,7 +239,7 @@ public:
     // Drain chat lines received since the last call (sender, text).
     std::vector<std::pair<std::string, std::string>> takeChat() { auto c = std::move(chat_); chat_.clear(); return c; }
 
-    // ---- voice chat (protocol 276; presentation only, see net/protocol.h) ----------
+    // ---- voice chat (presentation only, see net/protocol.h) ------------------------
     // Whether this connection wants voice relayed to it (voice chat switched on). Sent
     // only when it changes, and again after every new connection; the server sends no
     // voice to a connection that never said yes.
@@ -318,7 +318,7 @@ public:
     // data, so a game-mod mismatch is caught
     // before the game starts, not as a mid-game desync.
     void reportLoaded(uint64_t dataHash = 0);
-    // ---- the disconnect wait (protocol 289) --------------------------------
+    // ---- the disconnect wait --------------------------------------------------
     // The seated players the server is waiting for, each with the local time its seat
     // goes to an AI (Msg::Waiting). Empty while the game runs.
     struct Wait { uint8_t slot = 0; uint64_t untilMs = 0; };   // untilMs on clockMs()

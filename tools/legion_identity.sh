@@ -39,9 +39,9 @@
 #               builds. Runs in the background beside the other sections.
 #   replays     L-bench, L-2h, R-bench, R-2h (--quick: L-bench, R-bench) from
 #               --replays, copied to the output dir with the protocol at byte 8
-#               patched to each build's kNetVersion (and the empty TOV1 override
-#               digest swapped for TOV2 from protocol 239). Final hash plus the
-#               per-checkpoint section hashes (TAK_HASHDETAIL, every 300 ticks).
+#               patched to each build's kNetVersion (the recordings must be the
+#               current replay format). Final hash plus the per-checkpoint
+#               section hashes (TAK_HASHDETAIL, every 300 ticks).
 #   golden      navigation_checkpoint_test legion|retail serial: all 24 checkpoints.
 #   crowdbench  the matrix in legion_identity.py (full: 504 rows per build, both
 #               modes, seeds 0/1/2, serial and --workers; --quick: 12 rows).
@@ -66,7 +66,7 @@ set -u
 usage() { sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2; }
 
 BASE= CAND= QUICK=0 VERIFY=0 OUT= SKIP= MPAI_TIME= JOBS= NOCACHE=0 CACHE_DIR=
-REPLAYS=/home/pocket_geek/TAK/.claude/worktrees/agent-aee1376d023cc8440/build-lsp/replays
+REPLAYS=/home/pocket_geek/tak-tmp/we-replays
 DATA=
 CORES=$(taskset -cp $$ 2>/dev/null | sed 's/.*: //')
 while [ $# -gt 0 ]; do

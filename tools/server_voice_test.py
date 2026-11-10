@@ -69,7 +69,7 @@ class Listener:
                     # the room a few ticks ahead of us.
                     tick = struct.unpack_from('<I', body, 1)[0]
                     if tick % 4 == 0:
-                        self.peer.send('Progress', struct.pack('<II', tick, 20))
+                        self.peer.send('Progress', struct.pack('<III', tick, 20, tick))
                 with self.lock:
                     self.frames.append((body[0], body[1:]))
         except (RuntimeError, OSError):

@@ -232,8 +232,8 @@ enum class Msg : uint8_t {
     ModOffer, ModRequest, ModChunk, ModReady, ModError,
     Progress,           // C->S: u32 tick (last tick PROCESSED), u32 rttMs (the client's smoothed ping),
                         // u32 received (the newest tick whose bundle has ARRIVED, >= tick).
-                        // Flow control only (WE S3), every
-                        // kProgressPeriod processed ticks: it moves the sender's ack tick and its
+                        // Flow control only (WE S3), every kProgressPeriod processed
+                        // ticks: it moves the sender's ack tick and its
                         // lead (flowLeadTicks), is never hash-checked and never recorded. A tick
                         // the server has not closed is ignored, as for StateHash. `received`
                         // tells a slow link (bundles late to arrive) from a slow machine
@@ -412,15 +412,15 @@ struct GameOptions {
     // for it). The server clears it for missions, generated maps, stress and benchmark
     // rooms, forces randomStarts off with it, and refuses START when the verified map
     // has no scenario content or a seat the scenario needs is empty. Sim-affecting
-    // (MatchConfig::mapScenario, replay format 13). A Test Map copy's [TAKPlaytest] opt-in plays
-    // its scenario even with this 0.
+    // (MatchConfig::mapScenario, in the replay header). A Test Map copy's [TAKPlaytest]
+    // opt-in plays its scenario even with this 0.
     uint8_t mapScenario = 0;
     // POWER CODES (retail's "Power Codes" battle-room box, GameOptions+0x18): 1 lets
     // every player type the nine +codes (sim/powercodes.h) in the chat box. Host-set
     // when the room is created, fixed after (SetGameOptions keeps it). The server
     // clears it for campaign missions -- retail's gate 0x499610 refuses codes in a
     // campaign -- and drops every Cmd::PowerCode while it is 0.
-    // Sim-affecting (MatchConfig::powerCodes, replay format 14).
+    // Sim-affecting (MatchConfig::powerCodes, in the replay header).
     uint8_t powerCodes = 0;
 };
 

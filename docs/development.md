@@ -240,8 +240,8 @@ tools/we_timing.sh --base ... --cand ... --replays <dir of .takrep>   # exact mo
   (`map named Ulasem Arena`), so the files need `--data`. `R-2h-1800` and `L-2h-1800` are cut at tick 1800 (11.9k units,
   falling through the 9.5-10.5k window), the bench ones at 1900 (just after the 60 s benchmark ramp: the ramp's spawns are
   World::tick work a situation cannot replay). Re-cut with the o2 `takclient` of the tree whose recordings play back
-  (`legion_identity.py patch-replay` re-stamps the protocol) when Legion behaviour changes: an L situation holds the
-  trajectory of the build that cut it.
+  (`legion_identity.py patch-replay` re-stamps the protocol of a current-format recording) when Legion behaviour
+  changes: an L situation holds the trajectory of the build that cut it.
 - **Run shape.** Per situation, two swapped concurrent pairs (base on 0-1 + candidate on 2-3, then swapped) per round:
   `legion_scenario --workers --catchup 60 --ticks warm+measure` with `TAK_PHASE=1`. Defaults: warm-up 1000 ticks (dropped),
   measure 1000. `--catchup N` gives the path service an unlimited budget for the first N ticks: a situation re-issues

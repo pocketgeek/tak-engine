@@ -108,7 +108,7 @@ class Player:
             events = [(body[pos + 4 + 2 * i], body[pos + 5 + 2 * i]) for i in range(ne)]
             self.bundles[tick] = (body, cmds, events)
             if tick % 4 == 0:
-                self.send('Progress', struct.pack('<II', tick, 10))
+                self.send('Progress', struct.pack('<III', tick, 10, tick))
         elif kind == auth.MSG['Waiting']:
             n = body[0]
             self.waits.append((time.monotonic(), [struct.unpack_from('<BI', body, 1 + 5 * i) for i in range(n)]))

@@ -21,7 +21,7 @@
 
 namespace tak::net {
 
-// Bump when the layout changes (and bump kNetVersion with it).
+// Bump when the layout changes.
 inline constexpr uint32_t kReplayFormat = 15;
 
 // The largest .takrep the loaders accept (the client picker and the writer's re-read).

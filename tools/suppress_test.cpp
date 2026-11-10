@@ -34,8 +34,8 @@
 //     keeps the order and carries no target;
 //   - a switcher flyer whose selected weapon becomes `dropped` takes the
 //     lost-target exit: VTOL_SEEKATTACK at the point;
-//   - the same run twice gives the same state hash; the wire takes the
-//     command from protocol 312 only.
+//   - the same run twice gives the same state hash; the command round-trips
+//     the wire.
 //
 // A dev harness; not shipped in a game.
 
