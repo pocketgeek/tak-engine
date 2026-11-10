@@ -2985,6 +2985,14 @@ public:
     // Call it between ticks, on the thread that ticks this World (or before
     // that thread starts): the pool is rebuilt at the next simPool() call.
     void setSimWorkers(int n) { simWorkers_ = std::min(n, int(SimPool::kMaxWorkers)); autoWorkers_ = -1; }
+    // Pin the SimPool's workers (scheduling only, like the above): worker k to
+    // cpus[k], a worker past the end to no CPU. cpus[0] is for the thread that
+    // ticks this World, which whoever owns that thread pins (sim/simcpus.h): the
+    // client's sim worker and takserver's per-game worker do, a main thread never
+    // is. From SimPool::handOut, or a game's part of takserver --sim-cpus; call it
+    // as setSimWorkers is called. The pool is rebuilt at the next simPool() call
+    // if the CPUs changed. Never called: no thread's CPUs are touched.
+    void setSimCpus(std::vector<int> cpus) { simCpus_ = std::move(cpus); simPin_ = true; }
     // Deterministic digest of sim state, for lockstep sync checking.
     struct WeaponAimSolution {
         uint16_t heading=0,pitch=0;
@@ -4527,6 +4535,8 @@ private:
     // since setSimWorkers; -1 until then. Kept, and this World's own over
     // restoreFrom, so a session's width is fixed whatever the CPU mask does later.
     int autoWorkers_ = -1;
+    bool simPin_ = false;          // setSimCpus: the pool's workers are pinned ...
+    std::vector<int> simCpus_;     // ... to these, by slot
     // The intra-tick worker pool (0 workers when serialThreads_), created on
     // first use; see simPool().
     LeftEmptyOnCopy<std::unique_ptr<SimPool>> pool_;

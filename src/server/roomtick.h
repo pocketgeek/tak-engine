@@ -14,6 +14,11 @@ struct TickInput {
     // The threads this tick's simulation may use, its own included (the game's
     // share of takserver --sim-threads at submission); 0 leaves the World's width.
     unsigned simThreads=0;
+    // takserver --sim-cpus: this game's CPUs at submission, by slot (its worker
+    // thread, then its pool's workers; a slot past the end is not pinned). simPin
+    // false: the server pins nothing, and no thread's CPUs are touched.
+    bool simPin=false;
+    std::vector<int> simCpus;
     // Who reads the referee's hash: seated humans' desync reports (every
     // kHashPeriod ticks) and the recorded replay's checkpoint trail (every 10th
     // of those, with posDigest). Neither: the hash and posDigest are skipped.

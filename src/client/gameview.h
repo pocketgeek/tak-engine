@@ -50,6 +50,7 @@
 #include "sim/scenario.h"
 #include "sim/scenarioinfo.h"
 #include "sim/sim.h"
+#include "sim/simcpus.h"
 #include "tdf/tdf.h"
 #include "tdo/tdo.h"
 #include "terrain/terrain.h"
@@ -276,9 +277,16 @@ public:
     // before this view's World ticks: a change in Options is for the next game opened.
     // localServer: the session runs on a local server this client started, which was
     // given the other half (sim::SimPool::sessionThreads); any other session's
-    // simulation gets them all. Scheduling only, never a hash.
-    void latchSimThreads(int choice, bool localServer);
-    void logSimThreads() const;   // "sim threads: ..." on stderr: what this session's simulation runs on, and why
+    // simulation gets them all. pin: PIN THREADS TO CORES (Settings::simPin) as this
+    // launch applies it: each of the simulation's threads takes its CPU of the hand-out
+    // (sim::SimPool::handOut; the local server was given the others), the sim worker
+    // thread the first; a thread without one is not pinned, and neither is the main
+    // thread where it ticks the World itself (a replay, the headless harness).
+    // Scheduling only, never a hash.
+    void latchSimThreads(int choice, bool localServer, bool pin);
+    // "sim threads: ..." on stderr: what this session's simulation runs on, why, and the
+    // CPUs its threads are pinned to. ownThread: the sim worker ticks it, not the main thread.
+    void logSimThreads(bool ownThread) const;
 
     // Open the in-game Options overlay (from the Esc menu). onChange applies audio,
     // camera, UI scale and window state live; the host saves on close.
@@ -2472,6 +2480,8 @@ private:
     int simThreads_ = 0;                              // latchSimThreads: this session's SIMULATION THREADS (0 = AUTO)
     tak::sim::SimPool::Session simSession_{1, 1, 0};  // ... as the threads set, this simulation's and its local server's (0: none)
     bool simDebugAuto_ = false;                       // ... AUTO decided by a debug build's TAK_SIM_WORKERS
+    bool simPin_ = false;                             // ... pinned to CPUs (latchSimThreads)
+    std::vector<int> simCpus_;                        // ... these, by slot: [0] the thread that ticks the World, then its pool's workers
     std::unique_ptr<tak::OptionsScreen> options_;     // in-game Options overlay
     std::unique_ptr<tak::HotkeysScreen> hotkeysScreen_;   // opened from Options -> CONTROLS
     tak::Hotkeys hotkeys_;                             // effective bindings (from settings)

@@ -1,9 +1,11 @@
 #include "simpool.h"
+#include "sim/simcpus.h"
 
 #include <chrono>
 #include <cstdlib>
 #if defined(__linux__)
 #include <sched.h>
+#include <unistd.h>
 #endif
 #if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
@@ -28,8 +30,10 @@ unsigned SimPool::usableCpus() {
     unsigned cpus=std::thread::hardware_concurrency();
 #if defined(__linux__)
     // The CPUs this process may run on (taskset, containers), not the machine's.
+    // Its main thread's: the calling thread's own (pid 0) is one CPU once it is
+    // pinned (sim/simcpus.h).
     cpu_set_t set;
-    if (sched_getaffinity(0,sizeof(set),&set)==0) cpus=unsigned(CPU_COUNT(&set));
+    if (sched_getaffinity(getpid(),sizeof(set),&set)==0) cpus=unsigned(CPU_COUNT(&set));
 #endif
     return std::max(1u,cpus);
 }
@@ -47,7 +51,31 @@ unsigned SimPool::defaultWorkers() {
     return std::min(3u,usableCpus()/8);
 }
 
-SimPool::SimPool(unsigned workers) {
+SimPool::Session SimPool::session(int choice,const Cpus& cpus,bool localServer,bool* debugAuto) {
+    Session s=sessionThreads(choice,cpus,localServer);
+    const int debug=choice<=0 ? debugWorkers() : -1;
+    if (debugAuto) *debugAuto=debug>=0;
+    if (debug>=0) {
+        s.game=unsigned(debug)+1;
+        s.server=localServer ? s.game : 0;
+        s.total=s.game+s.server;
+    }
+    return s;
+}
+
+SimPool::HandOut SimPool::handOut(const std::vector<int>& order,const Session& session,bool localServer,bool pin) {
+    HandOut out;
+    const size_t count=pin ? std::min<size_t>(session.total,order.size()) : 0;
+    for (size_t i=0;i<count;++i) {
+        const bool server=localServer && (i&1);
+        std::vector<int>& to=server ? out.server : out.game;
+        if (to.size()<(server ? session.server : session.game)) to.push_back(order[i]);
+    }
+    return out;
+}
+
+SimPool::SimPool(unsigned workers,const std::vector<int>* cpus)
+    :pin_(cpus!=nullptr),cpus_(cpus ? *cpus : std::vector<int>{}) {
     threads_.reserve(workers);
     for (unsigned k=1;k<=workers;++k) threads_.emplace_back([this,k]{work(k);});
 }
@@ -126,6 +154,9 @@ void SimPool::finish() {
 }
 
 void SimPool::work(unsigned slot) {
+    // A new thread starts on its creator's CPUs, which is one CPU when that is a
+    // pinned simulation thread: take this slot's own, or all of the process's.
+    if (pin_) placeThisThread(slot<cpus_.size() ? cpus_[slot] : -1);
     uint64_t seen=0;
     for (;;) {
         bool ready=false;

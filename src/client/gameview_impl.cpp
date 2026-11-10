@@ -246,28 +246,34 @@
         hotkeys_.load(s.hotkeys);                         // Options: rebindable hotkeys
     }
 
-    void GameView::latchSimThreads(int choice, bool localServer) {
+    void GameView::latchSimThreads(int choice, bool localServer, bool pin) {
         // k threads: the thread that ticks the World (the sim worker, or this one for a
         // replay and the headless harness) plus k - 1 SimPool workers. Nothing has
         // ticked yet, and the World builds its pool at its first pooled pass, on the
         // thread that ticks it.
         using tak::sim::SimPool;
         simThreads_ = std::max(0, choice);
-        simSession_ = SimPool::sessionThreads(simThreads_, SimPool::usableCpus(), localServer);
+        const tak::sim::CpuTopology cpus = tak::sim::detectCpus();
         // A debug build's TAK_SIM_WORKERS overrides AUTO, and only AUTO: this simulation
         // runs it, and so does the local server's (started with auto, it reads it too).
-        const int debug = simThreads_ == 0 ? SimPool::debugWorkers() : -1;
-        simDebugAuto_ = debug >= 0;
-        if (simDebugAuto_) {
-            simSession_.game = unsigned(debug) + 1;
-            if (localServer) simSession_.server = unsigned(debug) + 1;
-        }
+        simSession_ = SimPool::session(simThreads_, cpus, localServer, &simDebugAuto_);
         writableWorld().setSimWorkers(int(simSession_.game) - 1);
+        // Pinned: the game's CPUs of the hand-out, a slot each (simWorkerLoop takes the
+        // first, the World's pool the rest).
+        simPin_ = pin && cpus.canPin;
+        simCpus_ = SimPool::handOut(cpus.order, simSession_, localServer, simPin_).game;
+        if (simPin_) writableWorld().setSimCpus(simCpus_);
     }
 
-    void GameView::logSimThreads() const {
-        // sim threads: 12 (auto: 24, half; local server 12) / 4 (of 8, half; local server 4)
-        // / 24 (auto) / 8: the count this simulation runs, and where it came from.
+    void GameView::logSimThreads(bool ownThread) const {
+        // sim threads: 4 (auto: 8, half; local server 4) pinned to cpus 0,2,4,6 / 4 (of 8,
+        // half; local server 4) / 8 (auto) / 8: the count this simulation runs, where it
+        // came from, and the CPUs its threads are pinned to (none: nothing more). The main
+        // thread takes no CPU: where it ticks the World, the first is left out.
+        std::vector<int> pinned = simCpus_;
+        if (!ownThread && !pinned.empty()) pinned.erase(pinned.begin());
+        const std::string cpus = tak::sim::pinnedText(tak::sim::cpuListText(pinned),
+                                                      simSession_.game - unsigned(pinned.size()));
         char from[96] = "";
         if (simDebugAuto_ && simSession_.server)
             std::snprintf(from, sizeof from, " (auto: TAK_SIM_WORKERS; local server %u)", simSession_.server);
@@ -276,7 +282,7 @@
             std::snprintf(from, sizeof from, " (%s %u, half; local server %u)", simThreads_ > 0 ? "of" : "auto:",
                           simSession_.total, simSession_.server);
         else if (simThreads_ == 0) std::snprintf(from, sizeof from, " (auto)");
-        std::fprintf(stderr, "sim threads: %u%s\n", simSession_.game, from);
+        std::fprintf(stderr, "sim threads: %u%s%s\n", simSession_.game, from, cpus.c_str());
     }
 
     // The AUDIO page (Esc menu > AUDIO): sound device, volumes, speakers, CUSTOM MUSIC.
@@ -456,7 +462,7 @@
         } else {
             spots = tak::sim::setupMatch(writableWorld(), registry_, cfg);
         }
-        logSimThreads();   // what this playback's simulation runs on
+        logSimThreads(false);   // what this playback's simulation runs on (the main thread ticks it)
         replayBundles_ = std::move(bundles);
         replayMode_ = true;
         replayKeyBudget_ = tak::replaybar::keyframeBudget(uint64_t(SDL_GetSystemRAM()) << 20);
@@ -3538,6 +3544,8 @@
     }
 
     void GameView::simWorkerLoop() {
+        // PIN THREADS TO CORES: this thread is the simulation's first (latchSimThreads).
+        if (simPin_) tak::sim::placeThisThread(simCpus_.empty() ? -1 : simCpus_.front());
         for (;;) {
             SimJob job;
             {
@@ -3575,6 +3583,10 @@
 
     void GameView::startSimThread() {
         if (useSimThread_) return;
+        // A thread starts on its creator's CPUs: started by the pinned sim worker at its
+        // first big capture, the capture pool's threads would all share that one CPU.
+        // Pinned sessions start them here instead, on this thread's.
+        if (simPin_ && !capturePool_) capturePool_ = std::make_unique<ThreadPool>(kCaptureThreads);
         useSimThread_ = true;
         simQuit_ = false;
         simThread_ = std::thread([this]{ simWorkerLoop(); });

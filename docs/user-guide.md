@@ -1925,7 +1925,8 @@ at the bottom right). A
 slider is saved when you let go of it, a dropdown when you pick a choice, and your player name when you press
 Enter or click elsewhere. **Defaults** asks first (**Reset to defaults?**
 **Yes** / **No**), then puts that page's options back to their defaults; the
-**Game** page's puts **Simulation threads** back to Auto and leaves your player name
+**Game** page's puts **Simulation threads** back to Auto and **Pin threads to
+cores** back On, and leaves your player name
 and data folder alone, and no page touches
 key bindings, audio or voice chat. It also sets UI Scale and Cursor Size
 back to 100% and 1×, not to the display scale the
@@ -1969,13 +1970,31 @@ is the one both use next time.
 | Option | Default | What it does |
 | --- | --- | --- |
 | **Simulation threads** | Auto | How many of your processor's threads the game's simulations may use. The slider starts at **Auto** on the left, then goes from 1 up to twice the threads your computer has (at most 128). |
+| **Pin threads to cores** | On | Keeps each simulation thread on a processor core of its own. Off lets the system place and move them. Greyed out on macOS, which does not let a game pin threads. |
 
-**Auto** is every thread your computer has. The slider shows the number, for
-example **Auto (24)**, and the lines under it say how many threads this computer
-has and what your choice comes to in each kind of game.
+Many processors have two kinds of core, fast **performance cores** and slower
+**efficiency cores**, and some run two threads on a core (**hyperthreading**).
+The lines under the slider say what this computer has, for example *8
+performance cores and 16 efficiency cores, no hyperthreading: 24 threads*, and
+what your choice comes to in each kind of game.
 
-Above the number of threads your computer has, the slider turns red: that is
-more threads than the computer has, so they take turns on the processor.
+**Auto** is one thread for each performance core, or for each core on a
+processor that has only one kind. The slider shows the number, for example
+**Auto (8)**.
+
+The slider is coloured by the processor threads a number reaches, in the order
+the game uses them: **blue** up to the number of performance cores, **green**
+through the efficiency cores, **yellow** through the second threads of
+hyperthreaded cores, and **red** above the number of threads your computer has.
+Red is more threads than the computer has, so they take turns on the processor.
+A processor without efficiency cores has no green part, and one without
+hyperthreading no yellow part.
+
+With **Pin threads to cores** on, each simulation thread is pinned to its own
+core, so the system does not move it around: performance cores are used first,
+then efficiency cores, then hyperthreads. Threads beyond the number your computer
+has are not pinned. With it off, and always on macOS, the system places every
+thread. The line under the switch says which applies.
 
 The setting changes only how the work is shared out. It never changes what
 happens in a game: every value plays the same game, tick for tick, so players
@@ -1984,7 +2003,9 @@ with different values play together and replays play back the same.
 A single-player game runs two simulations, the game itself and the local server
 that referees it and runs the computer players. They share the setting: half
 goes to the game and half to its local server. With an odd number the game gets
-the extra thread, and each always gets at least one. The same goes for a
+the extra thread, and each always gets at least one. Pinned threads are dealt
+out in turn, the game first, so the game and its server each get an equal share
+of the performance cores, the efficiency cores and the hyperthreads. The same goes for a
 [Local server](#local-server) you host and for the [Benchmark](#benchmark). A
 game on someone else's server, like a replay, runs one simulation on your
 computer, and it uses all of them.
@@ -1994,7 +2015,8 @@ small game runs the same at any value. More is not always faster: a battle has
 only so much work to share out, and the same processor threads are wanted by
 the drawing of the game and, in single player, by the second simulation. The
 [Benchmark](#benchmark) is a good way to try a value: run the same Benchmark
-with each value and compare the results. A new value applies from the next game
+with each value and compare the results. A new value, and a change to **Pin
+threads to cores**, applies from the next game
 you open (a game, a replay or a Benchmark), not to one already open. If your
 settings file comes from a computer with more threads than this one has, the
 slider shows this computer's highest value.

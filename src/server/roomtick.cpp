@@ -2,6 +2,7 @@
 #include "server/rosterdump.h"
 #include "ai/ai.h"
 #include "sim/matchsetup.h"
+#include "sim/simcpus.h"
 #include "util/devenv.h"
 #include <algorithm>
 #include <chrono>
@@ -15,6 +16,14 @@ TickResult simulateRoomTick(sim::World& world,const sim::TypeRegistry& registry,
     // Between ticks, on the thread that ticks this World: its pool is rebuilt at
     // the next pooled pass if the width changed.
     if(input.simThreads)world.setSimWorkers(int(input.simThreads)-1);
+    if(input.simPin) {
+        // This thread is the game's own worker (slot 0): placed anew when its CPU
+        // changes, as games start and end. The pool's workers follow (setSimCpus).
+        static thread_local int placed=-2;
+        const int cpu=input.simCpus.empty()?-1:input.simCpus.front();
+        if(cpu!=placed) {sim::placeThisThread(cpu);placed=cpu;}
+        world.setSimCpus(std::move(input.simCpus));
+    }
     const auto start=std::chrono::steady_clock::now();
     for(auto& controller:controllers)
         controller.tick(world,input.tick,[&](const Command& command) {input.commands.push_back(command);});

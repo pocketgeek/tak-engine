@@ -152,6 +152,7 @@ add_library(tak-formats
   src/cob/vm.cpp
   src/sim/sim.cpp
   src/sim/simpool.cpp
+  src/sim/simcpus.cpp
   src/sim/pathsearch.cpp
   src/sim/legion.cpp
   src/sim/convoy.cpp
@@ -1603,6 +1604,12 @@ add_test(NAME gaf_rle COMMAND gaf_rle_test)
 add_executable(jpeg_encode_test tools/jpeg_encode_test.cpp)
 target_link_libraries(jpeg_encode_test PRIVATE tak-formats)
 add_test(NAME jpeg_encode COMMAND jpeg_encode_test)
+# The CPU detection behind SIMULATION THREADS (sim/simcpus.h) on the machine it runs on:
+# prints what it found and pins the calling thread to the first CPU (macOS: checks that
+# it reports it cannot). CI runs it on Linux, macOS and Windows.
+add_executable(cpu_topology_test tools/cpu_topology_test.cpp)
+target_link_libraries(cpu_topology_test PRIVATE tak-formats)
+add_test(NAME cpu_topology COMMAND cpu_topology_test)
 add_executable(effect_inventory tools/effect_inventory.cpp)
 target_link_libraries(effect_inventory PRIVATE tak-formats)
 add_executable(retail_construction_test tools/retail_construction_test.cpp)
@@ -3840,6 +3847,8 @@ if(Python3_Interpreter_FOUND)
   # usage error; with game data, each game start logs the threads its referee sim runs on (its
   # share of the total: every usable thread for auto, the machine's most for a bigger count)
   # and several running games share the total, never fewer than 2 threads each.
+  # --sim-cpus <list|auto|none>: junk is a usage error, and with a list each running game's
+  # line names the CPUs of its turn.
   if(TAK_TEST_DATA)
     add_test(NAME server_sim_threads COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_sim_threads_test.py" --server "$<TARGET_FILE:takserver>"
@@ -4210,8 +4219,11 @@ function(tak_isolate_test_profiles)
       continue()
     endif()
     set(tak_profile "${TAK_TEST_PROFILES}/${tak_test}")
+    # TAK_SIM_PIN=0: a debug client pins no simulation thread (PIN THREADS TO CORES is ON by
+    # default): the clients of a parallel run would all pin to the same first cores. A
+    # test of the pinning sets it to 1 itself.
     set(tak_defaults "XDG_DATA_HOME=${tak_profile}/data" "XDG_CONFIG_HOME=${tak_profile}/config"
-                     "XDG_CACHE_HOME=${TAK_TEST_PROFILES}/cache")
+                     "XDG_CACHE_HOME=${TAK_TEST_PROFILES}/cache" "TAK_SIM_PIN=0")
     if(UNIX AND NOT APPLE)
       list(APPEND tak_defaults "HOME=${tak_profile}/home")
       if(tak_python_userbase)

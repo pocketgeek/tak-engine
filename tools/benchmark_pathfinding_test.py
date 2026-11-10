@@ -10,7 +10,9 @@ still forces Legion. The run's stats panel and results must name the mode the si
 and DONE must fit the window: TAK_BENCH_STOP_TICK ends each run with a full run's results,
 and TAK_BENCH_REPORT prints what those two screens drew. The results also name the
 SIMULATION THREADS the run was opened with, as the client logged them: the game's half and
-its local server's, then AUTO or the saved count. The profile is scratch and the
+its local server's, then AUTO or the saved count. The AUTO run pins its threads
+(TAK_SIM_PIN=1; ctest runs every other client with pinning off): the game and its server
+each log the CPUs they were handed, and no CPU is in both. The profile is scratch and the
 settings file is named outright: SDL_GetPrefPath ignores XDG_* on macOS and Windows.
 
 usage: benchmark_pathfinding_test.py <takclient> <retail-install>
@@ -59,9 +61,13 @@ def named(log, name, mode, size):
         fail("%s: DONE at %s must be inside a %s window" % (name, done[0], size), log)
 
 
-def threads(log, name, saved):
+PINNED = r"( pinned to cpus ([\d,]+)(?:; \d+ threads? not pinned)?)?"
+
+
+def threads(log, name, saved, pinned=False):
     """The results' SIM THREADS row is what the client logged for this run: its own simulation's half
-    and its local server's, of `saved` threads or of AUTO (every thread this computer has)."""
+    and its local server's, of `saved` threads or of AUTO (one for each performance core). With
+    `pinned`, both processes also log the CPUs their threads are pinned to, and share none."""
     row = re.search(r"^BENCHRESULT SIM THREADS (.*)$", log, re.M)
     if not row:
         fail("%s: the results must list SIM THREADS" % name, log)
@@ -77,16 +83,27 @@ def threads(log, name, saved):
         fail("%s: the two halves must be equal or the game's one more, got '%s'" % (name, row[1]), log)
     # Both processes logged it: the client its half and the server's, the server what it runs.
     if saved:
-        logged = "sim threads: %d (of %d, half; local server %d)\n" % (game, saved, server)
+        logged = r"sim threads: %d \(of %d, half; local server %d\)" % (game, saved, server)
     elif "TAK_SIM_WORKERS" in os.environ:   # a debug build's override of AUTO
-        logged = "sim threads: %d (auto: TAK_SIM_WORKERS; local server %d)\n" % (game, server)
-    else:
-        logged = "sim threads: %d (auto: %d, half; local server %d)\n" % (game, game + server, server)
-    if logged not in log:
-        fail("%s: SIM THREADS reads '%s'; want the log line '%s'" % (name, row[1], logged.strip()), log)
-    served = re.search(r"^sim threads: (\d+) \((?:auto: TAK_SIM_WORKERS|\d+ over 1 game)\)$", log, re.M)
+        logged = r"sim threads: %d \(auto: TAK_SIM_WORKERS; local server %d\)" % (game, server)
+    else:   # AUTO is T threads, halved: the game's half is the bigger, and each is at least 1
+        logged = r"sim threads: %d \(auto: (?:%d|%d), half; local server %d\)" % (game, game + server, 2 * game - 1, server)
+    mine = re.search("^" + logged + PINNED + "$", log, re.M)
+    if not mine:
+        fail("%s: SIM THREADS reads '%s'; want the log line '%s'" % (name, row[1], logged), log)
+    served = re.search(r"^sim threads: (\d+) \((?:auto: TAK_SIM_WORKERS|\d+ over 1 game)\)" + PINNED + "$", log, re.M)
     if not served or int(served[1]) != server:
         fail("%s: the local server must log the %d threads the row names" % (name, server), log)
+    # Pinned (not on macOS, which pins no thread): the game has the first CPU of the hand-out,
+    # its server the others' turn, and no CPU is in both.
+    if pinned and sys.platform != "darwin":
+        game_cpus = set((mine[2] or "").split(",")) - {""}
+        server_cpus = set((served[3] or "").split(",")) - {""}
+        if not game_cpus or game_cpus & server_cpus or (game + server > 2 and not server_cpus):
+            fail("%s: pinned, the game and its server must each log their own CPUs (got '%s' and '%s')"
+                 % (name, mine[0], served[0]), log)
+    elif mine[1] or served[2]:
+        fail("%s: nothing is pinned here, got '%s' and '%s'" % (name, mine[0], served[0]), log)
 
 
 def probes(root, name, saved, size, extra=None):
@@ -106,11 +123,11 @@ with tempfile.TemporaryDirectory(prefix="tak-bench-path-") as root:
     if "PASS: Benchmark pathfinding row picks and saves" not in log:
         fail("the Benchmark screen's row", log)
 
-    ticks, log = probes(root, "legion", "benchmarkPathfinding = 4\n", (1024, 768))
+    ticks, log = probes(root, "legion", "benchmarkPathfinding = 4\n", (1024, 768), {"TAK_SIM_PIN": "1"})
     if ticks.get(30, 0) < 2:
         fail("a saved Legion pick must run Legion on the client and the referee (got %s)" % ticks, log)
     named(log, "legion", "LEGION", (1024, 768))
-    threads(log, "legion", 0)
+    threads(log, "legion", 0, pinned=True)
 
     ticks, log = probes(root, "retail", "benchmarkPathfinding = 0\nsimThreads = 1\n", (1280, 800))
     if ticks:

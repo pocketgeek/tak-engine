@@ -310,6 +310,7 @@ clients.
 | `--replay-memory-mib` | 256 | Estimated replay history memory per game |
 | `--replay-storage-mib` | 4,096 | Each replay archive directory |
 | `--sim-threads` | `auto` | CPU threads the running games' simulations share |
+| `--sim-cpus` | `none` | CPUs those threads are pinned to: `none`, `auto` or a list |
 
 A player who meets a game limit stays connected. At `--max-games` the **CREATE** window
 says *CANNOT OPEN A GAME: server game capacity reached*; at `--max-running-games` the
@@ -339,6 +340,23 @@ for example `sim threads: 24 (auto: 24 over 1 game)` or
 `sim threads: 6 (24 over 4 games)`. A player's own single-player server and
 **Local server** are started with half of the game's **Simulation threads**
 option this way; the game's own simulation uses the other half.
+
+`--sim-cpus <list|auto|none>` pins those simulation threads to CPUs, so the
+system does not move them. `none`, the default, pins nothing. A list is the CPU
+numbers to use, in order, with ranges allowed: `1,3,5-7`. `auto` is every CPU
+the server process may use, in the order the game itself uses them: one thread
+of each performance core first, then one of each efficiency core, then the
+second threads of hyperthreaded cores. Anything else is refused at startup.
+Each running game takes the next CPUs of the list in turn, one for each of its
+threads (the first for its room thread), and games are moved up the list as
+earlier ones end. A thread past the end of the list is not pinned, and neither
+is one whose CPU number the server may not use. With pinning, the log line
+names each running game's CPUs, for example
+`sim threads: 2 (4 over 2 games) pinned to cpus 1,3 / 5,7`. Like
+`--sim-threads`, it never changes a game's outcome. macOS does not let a program
+pin threads: there the option is ignored. A player's own single-player server
+and **Local server** are given the CPUs the game left them (every other one of
+the hand-out), or `none` when **Pin threads to cores** is off.
 
 Map uploads reserve their advertised size before receiving data and expire
 after 30 seconds without progress or five minutes total. Each package remains

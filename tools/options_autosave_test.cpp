@@ -11,9 +11,13 @@
 //   - the Options DEFAULTS puts the sound device back to the system default and re-opens
 //     audio on it at once, only when the device in use changes;
 //   - SIMULATION THREADS (GAME page) is a whole-step slider from AUTO at its left end to
-//     twice the CPU threads this process may use, red above that count, with lines under
-//     it that say the count and what the choice comes to; saved when let go, and the GAME
-//     page's DEFAULTS is live only while it is off AUTO;
+//     twice the CPU threads this process may use, coloured by the kind of CPU a count
+//     reaches (red above the computer's threads), with lines under it that say what the
+//     computer has and what the choice comes to; saved when let go, and the GAME page's
+//     DEFAULTS is live only while it is off AUTO;
+//   - PIN THREADS TO CORES under it is ON by default and saved at once; the line under it
+//     follows it, OFF hands no CPU to any thread, DEFAULTS turns it back ON, and where the
+//     system cannot pin (macOS) the row is greyed, reads OFF and keeps the stored choice;
 //   - the Controls hint line has a band of its own: at every window size it lies below the
 //     rows' viewport (never over a row, scrolled or not) and above the footer buttons.
 //     TAK_LAYOUT_SHOT_DIR=<dir> also writes each case as a BMP, and the GAME page with
@@ -23,7 +27,7 @@
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
 #include "client/settings.h"
-#include "sim/simpool.h"
+#include "sim/simcpus.h"
 
 #include <SDL.h>
 
@@ -214,17 +218,86 @@ static void testOptions(SDL_Renderer* ren) {
     }
 }
 
+[[maybe_unused]] static void putEnv(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+// A row's wrapped lines as one text, continuation indents dropped.
+static std::string joined(const std::vector<std::string>& lines) {
+    std::string all;
+    for (const std::string& l : lines) all += l.substr(std::min(l.size(), l.find_first_not_of(' '))) + " ";
+    return all;
+}
+
+// The screen as drawn, for TAK_LAYOUT_SHOT_DIR.
+static void shoot(SDL_Renderer* ren, OptionsScreen& o, const std::string& path) {
+    SDL_SetRenderDrawColor(ren, 12, 12, 16, 255); SDL_RenderClear(ren);   // the panel is translucent
+    o.render(W, H);
+    if (SDL_Surface* shot = SDL_CreateRGBSurfaceWithFormat(0, W, H, 32, SDL_PIXELFORMAT_ARGB8888)) {
+        if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_ARGB8888, shot->pixels, shot->pitch) == 0)
+            SDL_SaveBMP(shot, path.c_str());
+        SDL_FreeSurface(shot);
+    }
+}
+
+// PIN THREADS TO CORES, on the GAME page `o` at its defaults: ON, under the slider's
+// lines; a click turns it OFF and saves at once, the line under it follows, OFF hands no
+// CPU to any thread (sim::SimPool::handOut), and DEFAULTS turns it back ON.
+static void testPinToggle(OptionsScreen& o, Settings& s, int& saves, const sim::CpuTopology& topology) {
+    const SDL_FRect* r = bring(o, "PIN THREADS TO CORES");
+    const SDL_FRect* info = o.rowRect("SIMULATION THREADS INFO");
+    const SDL_FRect* line = o.rowRect("PIN THREADS TO CORES INFO");
+    if (!r || !info || !line) { check(false, "the PIN THREADS TO CORES row and its line are there"); return; }
+    check(r->y >= info->y + info->h && line->y >= r->y + r->h, "the toggle is under the slider's lines, its own line under it");
+    if (!topology.canPin) return;   // macOS: greyed (the debug-build case below)
+    const int before = saves;
+    check(s.simPin && o.rowEnabled("PIN THREADS TO CORES") && o.rowOn("PIN THREADS TO CORES"), "it is ON by default");
+    const std::string pinned = joined(o.rowLines("PIN THREADS TO CORES INFO"));
+    check(pinned.find("EACH THREAD IS PINNED TO ITS OWN CORE: ") != std::string::npos &&
+          pinned.find(topology.eff ? "PERFORMANCE CORES FIRST, THEN EFFICIENCY CORES, THEN HYPERTHREADS." : "CORES FIRST, THEN HYPERTHREADS.") !=
+              std::string::npos &&
+          pinned.find("THREADS BEYOND THE COMPUTER'S " + std::to_string(topology.threads()) + " ARE NOT PINNED.") != std::string::npos,
+          "ON: the line says each thread is pinned, in which order, and that threads beyond the computer's are not");
+    bool fits = true;
+    for (const std::string& l : o.rowLines("PIN THREADS TO CORES INFO")) fits = fits && uiTextWidth(l, 1.3f) <= line->w;
+    check(fits, "its line fits the row");
+    check(joined(o.rowHelp("PIN THREADS TO CORES")).find("APPLIES FROM THE NEXT GAME YOU OPEN.") != std::string::npos,
+          "its help says it applies from the next game opened");
+    const auto session = sim::SimPool::sessionThreads(s.simThreads, topology, true);
+    check(!sim::SimPool::handOut(topology.order, session, true, s.simPin).game.empty(), "ON hands the game its CPUs");
+    click(o, *r);
+    check(!s.simPin && !o.rowOn("PIN THREADS TO CORES") && saves == before + 1 && !loadSettings().simPin, "a click turns it OFF, saved at once");
+    check(joined(o.rowLines("PIN THREADS TO CORES INFO")).find("THREADS ARE NOT PINNED: THE SYSTEM PLACES THEM.") != std::string::npos,
+          "OFF: the line says threads are not pinned");
+    const auto off = sim::SimPool::handOut(topology.order, session, true, s.simPin);
+    check(off.game.empty() && off.server.empty(), "OFF reaches the hand-out as nothing pinned");
+    check(o.rowBand("SIMULATION THREADS") == 0, "the slider keeps its colours");
+    click(o, o.defaultsRect());
+    check(o.defaultsYesRect().w > 0, "OFF, DEFAULTS is live");
+    click(o, o.defaultsYesRect());
+    check(s.simPin && s.simThreads == 0 && saves == before + 2 && loadSettings().simPin && o.rowOn("PIN THREADS TO CORES"),
+          "DEFAULTS turns it back ON");
+}
+
 // SIMULATION THREADS: the GAME page's slider (PERFORMANCE, after PLAYER and GAME DATA).
 // Position 0 is AUTO, then 1 (serial) .. 2N in whole steps, N being every CPU thread this
-// process may use (sim::SimPool::usableCpus: 1 on a one-CPU test machine, where the
-// slider has AUTO, 1 and 2). Above N it is red; the lines under it say N and what the
-// choice comes to with a local server (half each) and without (all of it).
+// process may use (sim::detectCpus: 1 on a one-CPU test machine, where the slider has
+// AUTO, 1 and 2). Its colour is the kind of CPU the count reaches (sim::SimPool::band),
+// red above N; the lines under it say what the computer has and what the choice comes
+// to with a local server (half each) and without (all of it). PIN THREADS TO CORES is
+// the toggle under those.
 static void testSimThreads(SDL_Renderer* ren) {
     std::printf("SIMULATION THREADS\n");
-    const int cpus = int(sim::SimPool::usableCpus());
+    const sim::CpuTopology topology = sim::detectCpus();
+    const int cpus = int(topology.threads());
     const int most = int(sim::SimPool::maxChoice(unsigned(cpus)));
     Settings s = loadSettings();
     s.simThreads = 0;
+    s.simPin = true;
     check(saveSettings(s), "the profile starts at AUTO");
     const std::string name = s.playerName;
     int saves = 0, changes = 0;
@@ -255,22 +328,35 @@ static void testSimThreads(SDL_Renderer* ren) {
         bool fits = info != nullptr;
         for (const std::string& l : o.rowLines("SIMULATION THREADS INFO")) fits = fits && uiTextWidth(l, 1.3f) <= info->w;
         check(fits && o.rowLines("SIMULATION THREADS INFO").size() >= 3, "each line fits the row");
-        check(says("THIS COMPUTER HAS " + std::to_string(cpus) + (cpus == 1 ? " THREAD." : " THREADS.")),
-              "they say how many threads this computer has");
+        // What this computer has: its cores by kind, hyperthreading or not, the threads.
+        auto count = [](unsigned n, const char* one, const char* many) { return std::to_string(n) + (n == 1 ? one : many); };
+        check(says("THIS COMPUTER HAS " + (topology.eff ? count(topology.perf, " PERFORMANCE CORE", " PERFORMANCE CORES") + " AND " +
+                                                              count(topology.eff, " EFFICIENCY CORE", " EFFICIENCY CORES")
+                                                        : count(topology.perf, " CORE", " CORES")) +
+                   (topology.smt ? " WITH HYPERTHREADING: " : ", NO HYPERTHREADING: ") + count(unsigned(cpus), " THREAD.", " THREADS.")),
+              "they say what this computer has: cores by kind, hyperthreading, threads");
         // The counts are sim::SimPool::sessionThreads' (tools/simpool_test.cpp pins it): on a
         // machine with more threads than one simulation runs (kMaxThreads) they stop there.
         auto halves = [&](int choice) {
-            const auto t = sim::SimPool::sessionThreads(choice, unsigned(cpus), true);
+            const auto t = sim::SimPool::sessionThreads(choice, topology, true);
             return "THE GAME (" + std::to_string(t.game) + "), HALF TO ITS LOCAL SERVER (" + std::to_string(t.server) + ").";
         };
         auto whole = [&](int choice) {
-            return "ALL OF THEM (" + std::to_string(sim::SimPool::sessionThreads(choice, unsigned(cpus), false).game) + ").";
+            return "ALL OF THEM (" + std::to_string(sim::SimPool::sessionThreads(choice, topology, false).game) + ").";
         };
         check(says("SINGLE PLAYER, A LOCAL SERVER YOU HOST AND THE BENCHMARK: HALF") && says(halves(0)),
               "they say a game with a local server gives half to each");
         check(says("A GAME ON SOMEONE ELSE'S SERVER: THE GAME USES " + whole(0)),
               "they say a game on someone else's server uses them all");
-        check(!o.rowWarn("SIMULATION THREADS"), "AUTO is not red");
+        check(o.rowBand("SIMULATION THREADS") == 0, "AUTO is blue");
+        {
+            const std::string text = joined(o.rowHelp("SIMULATION THREADS"));
+            check(text.find(topology.eff ? "AUTO IS ONE FOR EACH PERFORMANCE CORE." : "AUTO IS ONE FOR EACH CORE.") != std::string::npos &&
+                  text.find("BLUE") != std::string::npos && text.find("RED IS MORE THREADS THAN THIS COMPUTER HAS.") != std::string::npos &&
+                  (text.find("GREEN") != std::string::npos) == (topology.eff > 0) &&
+                  (text.find("YELLOW") != std::string::npos) == (topology.smt > 0),
+                  "the hover help says what AUTO is and names the colours this computer shows");
+        }
         // The right end is 2N (two simulations of kMaxThreads at most); held, it is live
         // but not in the file yet.
         send(o, SDL_MOUSEBUTTONDOWN, at(float(most)), y);
@@ -278,15 +364,18 @@ static void testSimThreads(SDL_Renderer* ren) {
               "the right end is twice this machine's threads");
         check(saves == 0 && loadSettings().simThreads == 0, "the slider is not saved while it is held");
         check(says(halves(most)) && says(whole(most)), "the info lines follow the slider");
-        // Every whole step down to the left end, which is AUTO; red above N only.
-        bool steps = true, red = true;
+        // Every whole step down to the left end, which is AUTO; each in the colour of the
+        // CPUs it reaches: blue to the performance cores, green to the efficiency cores,
+        // yellow to the hyperthreads, red above N only.
+        bool steps = true, bands = true;
         for (int n = most; n >= 0; --n) {
             send(o, SDL_MOUSEMOTION, at(float(n)), y, SDL_BUTTON_LMASK);
             steps = steps && s.simThreads == n;
-            red = red && o.rowWarn("SIMULATION THREADS") == (n > cpus);
+            const int band = int(topology.perf) >= n ? 0 : int(topology.perf + topology.eff) >= n ? 1 : n <= cpus ? 2 : 3;
+            bands = bands && o.rowBand("SIMULATION THREADS") == band;
         }
         check(steps && s.simThreads == 0, "it moves in whole steps, 1 to 2N, with AUTO at the left end");
-        check(red, "it is red above this machine's threads, and only there");
+        check(bands, "its colour is the kind of CPU the count reaches, red above this machine's threads only");
         if (most >= 2) {   // between two steps: the nearer one
             send(o, SDL_MOUSEMOTION, at(1.3f), y, SDL_BUTTON_LMASK);
             check(s.simThreads == 1, "a place between two steps is the nearer step");
@@ -316,7 +405,29 @@ static void testSimThreads(SDL_Renderer* ren) {
         check(s.simThreads == 0 && s.playerName == name && saves == 2 && loadSettings().simThreads == 0,
               "YES puts SIMULATION THREADS back to AUTO, keeps the player name, and saves");
         check(click(o, o.defaultsRect()) == false && o.defaultsYesRect().w == 0, "back at AUTO, DEFAULTS does nothing again");
+        testPinToggle(o, s, saves, topology);
     }
+#ifndef NDEBUG
+    {
+        // A system that cannot pin (macOS; here a debug build's TAK_CPU_NOPIN): the row is
+        // greyed, reads OFF, takes no click and keeps the stored choice, and says why.
+        putEnv("TAK_CPU_NOPIN", "1");
+        OptionsScreen o(ren, s, [&] { ++changes; }, save, 2, {}, {}, {}, OptionsPage::Game);
+        o.render(W, H);
+        const int savesBefore = saves;
+        if (const SDL_FRect* r = bring(o, "PIN THREADS TO CORES")) {
+            check(s.simPin && !o.rowEnabled("PIN THREADS TO CORES") && !o.rowOn("PIN THREADS TO CORES"),
+                  "where the system cannot pin, the row is greyed and reads OFF");
+            click(o, *r);
+            check(s.simPin && saves == savesBefore && loadSettings().simPin, "a click there changes nothing");
+            check(joined(o.rowHelp("PIN THREADS TO CORES")).find("MACOS DOES NOT LET A GAME PIN THREADS") != std::string::npos &&
+                  joined(o.rowLines("PIN THREADS TO CORES INFO")).find("MACOS DOES NOT LET A GAME PIN THREADS, SO THE SYSTEM PLACES THEM.") !=
+                      std::string::npos, "its help and the line under it say macOS does not let a game pin threads");
+            if (const char* dir = std::getenv("TAK_LAYOUT_SHOT_DIR")) shoot(ren, o, std::string(dir) + "/game-pin-cannot.bmp");
+        } else check(false, "the PIN THREADS TO CORES row is there");
+        putEnv("TAK_CPU_NOPIN", "0");
+    }
+#endif
     // A profile from a bigger machine: a saved count above this machine's 2N is shown (and
     // run) as 2N, and stays in the file until the player moves the slider.
     if (most < int(sim::SimPool::kMaxChoice)) {
@@ -329,7 +440,7 @@ static void testSimThreads(SDL_Renderer* ren) {
             send(o, SDL_MOUSEMOTION, r->x + r->w / 2, r->y + r->h / 2);   // hover: the help box, nothing else
             check(s.simThreads == int(sim::SimPool::kMaxChoice) && saves == savesBefore &&
                   loadSettings().simThreads == int(sim::SimPool::kMaxChoice), "showing the page does not rewrite it");
-            check(int(sim::SimPool::configured(s.simThreads, unsigned(cpus))) == most, "it runs as this machine's most");
+            check(int(sim::SimPool::configured(s.simThreads, topology)) == most, "it runs as this machine's most");
             // Pressing the right end is the same place the handle already shows: 2N.
             send(o, SDL_MOUSEBUTTONDOWN, r->x + r->w, r->y + r->h / 2);
             send(o, SDL_MOUSEBUTTONUP, r->x + r->w, r->y + r->h / 2);

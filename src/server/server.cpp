@@ -77,6 +77,7 @@
 #include "net/replayhdr.h"
 #include "sim/matchsetup.h"
 #include "sim/sim.h"
+#include "sim/simcpus.h"
 #include "version.h"
 #ifndef _WIN32
 #include <fcntl.h>
@@ -471,6 +472,11 @@ public:
         simTotal_ = simAuto_ ? SimPool::usableCpus() : std::min(unsigned(choice), SimPool::usableCpus());
         simDebug_ = simAuto_ ? SimPool::debugWorkers() + 1 : 0;
     }
+    // --sim-cpus: the CPUs the games' simulation threads are pinned to, in order
+    // (empty, the default: nothing is pinned). Each running game takes the next
+    // `share` of them in turn (gameCpus): its worker thread, then its pool's
+    // workers; a thread past the end of the list is not pinned. Scheduling only.
+    void setSimCpus(std::vector<int> cpus) { simCpus_ = std::move(cpus); }
     void setNoAuth() { requireAuth_ = false; }
 #ifndef NDEBUG
     void allowBenchmarks() {testWork_=true;}
@@ -535,9 +541,12 @@ private:
     bool lan_ = false;
     // --sim-threads (setSimThreads): S and whether it was auto; simDebug_ is the fixed
     // per-game count of a debug build's TAK_SIM_WORKERS (0: none). simShare is what
-    // each of `running` games runs on, simShareLogged_ the share last logged.
+    // each of `running` games runs on, simShareLogged_ the share last logged (and
+    // simRunningLogged_ the games then running: with --sim-cpus, who has which CPUs).
     bool simAuto_ = true;
     unsigned simTotal_ = tak::sim::SimPool::usableCpus(), simDebug_ = 0, simShareLogged_ = 0;
+    size_t simRunningLogged_ = 0;
+    std::vector<int> simCpus_;   // --sim-cpus (setSimCpus)
     size_t runningGames() const {
         size_t running = 0;
         for (const auto& [id, room] : rooms_) { (void)id; running += room.running; }
@@ -546,11 +555,26 @@ private:
     unsigned simShare(size_t running) const {
         return simDebug_ ? simDebug_ : tak::sim::SimPool::serverShare(simTotal_, running);
     }
+    // The `game`-th running game's part of --sim-cpus when each has `share` threads.
+    std::vector<int> gameCpus(size_t game, unsigned share) const {
+        const size_t from = std::min(game * share, simCpus_.size()), to = std::min(from + share, simCpus_.size());
+        return std::vector<int>(simCpus_.begin() + std::ptrdiff_t(from), simCpus_.begin() + std::ptrdiff_t(to));
+    }
     void logSimThreads(size_t running) {
         simShareLogged_ = simShare(running);
-        if (simDebug_) std::fprintf(stderr, "sim threads: %u (auto: TAK_SIM_WORKERS)\n", simShareLogged_);
-        else std::fprintf(stderr, "sim threads: %u (%s%u over %zu game%s)\n", simShareLogged_, simAuto_ ? "auto: " : "",
-                          simTotal_, running, running == 1 ? "" : "s");
+        simRunningLogged_ = running;
+        // ... pinned to cpus 1,3 / 5,7: each running game's CPUs, in the games' order.
+        std::string cpus;
+        unsigned unpinned = 0;
+        for (size_t game = 0; game < running && !simCpus_.empty(); ++game) {
+            const std::vector<int> own = gameCpus(game, simShareLogged_);
+            cpus += (game ? " / " : "") + (own.empty() ? std::string("none") : tak::sim::cpuListText(own));
+            unpinned += simShareLogged_ - unsigned(own.size());
+        }
+        const std::string pinned = tak::sim::pinnedText(cpus, unpinned);
+        if (simDebug_) std::fprintf(stderr, "sim threads: %u (auto: TAK_SIM_WORKERS)%s\n", simShareLogged_, pinned.c_str());
+        else std::fprintf(stderr, "sim threads: %u (%s%u over %zu game%s)%s\n", simShareLogged_, simAuto_ ? "auto: " : "",
+                          simTotal_, running, running == 1 ? "" : "s", pinned.c_str());
     }
     tak::net::LanBeacon beacon_;
     uint64_t beaconAtMs_ = 0, lanNonce_ = 0;
@@ -704,7 +728,7 @@ private:
     void refuseStart(Client& c, const Room& r, const std::string& why);
     void modMsg(Client& c,const Frame& f);
     DataSet& roomData(Room& r) {return r.modData ? *r.modData : retail_;}
-    void closeTick(Room& r, unsigned simThreads);
+    void closeTick(Room& r, unsigned simThreads, size_t game);
     void finishTick(Room& r);
     bool canAdvance(const Room& r) const;   // false = wait for a lagging player (flow control)
     void checkHashes(Room& r, uint32_t tick);
@@ -3086,7 +3110,7 @@ bool Server::canAdvance(const Room& r) const {
     return true;   // no live consumers at all
 }
 
-void Server::closeTick(Room& r, unsigned simThreads) {
+void Server::closeTick(Room& r, unsigned simThreads, size_t game) {
     if(r.tickJob.valid())return;
     // All humans must have loaded before the first tick.
     if (r.tick == 0) {
@@ -3165,6 +3189,8 @@ void Server::closeTick(Room& r, unsigned simThreads) {
     }
     tak::srv::TickInput input;
     input.tick=r.tick;input.roomId=r.id;input.simThreads=simThreads;
+    // --sim-cpus: the CPUs of this game's turn among the running ones (`game`).
+    if(!simCpus_.empty()) {input.simPin=true;input.simCpus=gameCpus(game,simThreads);}
     // The referee's hash is read only by checkHashes, against the reports of
     // HUMAN slots (a spectator's is a progress ack), and by the replay trail. A
     // slot becomes human only before the start (joins, seat moves and slot edits
@@ -3831,9 +3857,12 @@ int Server::run() {
         // end; a tick takes the share of the moment it is submitted.
         const size_t running=runningGames();
         const unsigned simThreads=simShare(running);
-        if(running && simThreads!=simShareLogged_)logSimThreads(running);
+        // With --sim-cpus, also when another game's end or start moves the CPUs.
+        if(running && (simThreads!=simShareLogged_ || (!simCpus_.empty() && running!=simRunningLogged_)))logSimThreads(running);
+        size_t games=0;
         for(auto& [id,room]:rooms_) {
             (void)id;
+            const size_t game=room.running?games++:0;   // its turn among the running games
             // A pause or a wait is not a seat's hold: suspend those running (trackHolds).
             if(room.running && room.held())for(auto& seen:room.holdSeen)seen=0;
             if(!room.running || room.held() || room.tickJob.valid() ||
@@ -3841,7 +3870,7 @@ int Server::run() {
                !roomOccupied(room) || !roomActive(room) || room.nextTickUs()>nowTickUs)continue;
             trackHolds(room,now);
             if(!canAdvance(room)) {room.rebasePace(nowTickUs+kFlowRetryMs*1000);continue;}
-            try {closeTick(room,simThreads);}
+            try {closeTick(room,simThreads,game);}
             catch(const std::exception& e) {
                 room.simulationError=e.what();
                 std::fprintf(stderr,"game %u tick submission failed: %s\n",id,e.what());
@@ -3968,6 +3997,7 @@ static int serverMain(int argc, char** argv) {
     bool fixedSeedGiven = false;   // --seed 0 is a pinned seed, not "unset"
     tak::srv::Limits limits;
     int simThreads = 0;   // --sim-threads: 0 = auto, else the count asked for
+    std::vector<int> simCpus;   // --sim-cpus: the CPUs to pin to (none: empty)
     bool noAuth = false, loopbackOnly = false, closedRegistration=false, lan=false;
     for (int i = 1; i < argc; ++i) {
         try {if(limits.set(argv[i],i+1<argc?argv[i+1]:"")) {++i;continue;}}
@@ -4007,6 +4037,22 @@ static int serverMain(int argc, char** argv) {
                 return 1;
             }
         }
+        else if (!std::strcmp(argv[i], "--sim-cpus") && i + 1 < argc) {
+            // none (the default), auto (this process's CPUs in the order threads take
+            // them: performance cores, efficiency cores, hyperthreads; none where the
+            // system cannot pin), or the CPU numbers themselves, in order.
+            const std::string_view value(argv[++i]);
+            simCpus.clear();
+            if (value == "auto") {
+                if (auto cpus = tak::sim::detectCpus(); cpus.canPin) simCpus = std::move(cpus.order);
+            } else if (value != "none" && !tak::sim::parseCpuList(value, simCpus)) {
+                std::fprintf(stderr, "takserver: --sim-cpus must be auto, none or a list of CPU numbers such as 1,3,5-7\n");
+                return 1;
+            } else if (!simCpus.empty() && !tak::sim::detectCpus().canPin) {
+                std::fprintf(stderr, "takserver: this system does not let a program pin threads; --sim-cpus is ignored\n");
+                simCpus.clear();
+            }
+        }
         else if (!std::strcmp(argv[i], "--no-auth")) noAuth = true;
         else if (!std::strcmp(argv[i], "--closed-registration")) closedRegistration=true;
         else if (!std::strcmp(argv[i], "--tls-cert") && i+1<argc) tlsCert=argv[++i];
@@ -4032,7 +4078,7 @@ static int serverMain(int argc, char** argv) {
                         "                 [--acme-email address] [--acme-state directory] [--acme-staging]\n"
                         "                 [--allow-plaintext] (trusted LAN/test networks only)\n"
                         "                 [--map-cache-dir <writable directory>]\n"
-                        "                 [--sim-threads <auto|N>]\n"
+                        "                 [--sim-threads <auto|N>] [--sim-cpus <list|auto|none>]\n"
                         "                 [--max-games N] [--max-running-games N] [--max-accounts N]\n"
                         "                 [--map-memory-mib N] [--map-storage-mib N]\n"
                         "                 [--replay-memory-mib N] [--replay-storage-mib N]\n"
@@ -4052,6 +4098,12 @@ static int serverMain(int argc, char** argv) {
                         "  Each running game gets that total divided by the number of running\n"
                         "  games, rounded down, but at least 2 threads (1 when the total is 1).\n"
                         "  It never changes a game's outcome.\n"
+                        "  --sim-cpus pins those simulation threads to CPUs: none (the default)\n"
+                        "  pins nothing; a list such as 1,3,5-7 is the CPU numbers to use, in\n"
+                        "  order; auto is every CPU the server may use, performance cores first,\n"
+                        "  then efficiency cores, then hyperthreads. Each running game takes the\n"
+                        "  next CPUs of the list, one per thread; threads beyond the end of the\n"
+                        "  list are not pinned.\n"
                         "  --seed N (0 included) pins every game's RNG seed, so a headless run is\n"
                         "  repeatable. Games are otherwise seeded randomly (which is what\n"
                         "  makes Random Start Locations differ game to game).\n"
@@ -4119,6 +4171,7 @@ static int serverMain(int argc, char** argv) {
     if (!replayDir.empty()) s.setReplayDir(replayDir);
     if (fixedSeedGiven) s.setFixedSeed(fixedSeed);
     s.setSimThreads(simThreads);
+    s.setSimCpus(std::move(simCpus));
     s.setLimits(limits);
     if(acmeOption)s.setAcme(std::make_shared<tak::srv::AcmeCertificates>(acme));
     if(!tlsCert.empty())s.setTls(tak::net::TlsContext::server(tlsCert,tlsKey));

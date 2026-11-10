@@ -12,7 +12,7 @@
 #include "client/hotkeys.h"
 #include "client/renderdriver.h"
 #include "client/waylandchoice.h"
-#include "sim/simpool.h"
+#include "sim/simcpus.h"
 
 #include <algorithm>
 #include <cctype>
@@ -512,40 +512,76 @@ void OptionsScreen::build(int channels) {
     };
 
     // PERFORMANCE. SIMULATION THREADS: the threads the game's simulations may use: AUTO at
-    // the left (every thread this computer has, shown beside it), then 1 up to twice
-    // that (sim::SimPool::maxChoice). Above the computer's own count the slider is red:
-    // more threads than it has. A saved count above the top shows and runs as the top.
-    // The lines under it say what that comes to: a game with its own local server gives
-    // half to each, any other game uses it all (sim::SimPool::sessionThreads). It never
-    // changes a game's outcome; a session latches it as it opens (GameView, and the
-    // local server it starts).
+    // the left (one for each performance core, shown beside it), then 1 up to twice the
+    // computer's threads (sim::SimPool::maxChoice). The track is coloured by the CPUs a
+    // count reaches, in the order threads take them (sim::SimPool::band): blue the
+    // performance cores, green the efficiency cores, yellow the hyperthreads, red more
+    // threads than the computer has. A saved count above the top shows and runs as the
+    // top. The lines under it say what the computer has and what the choice comes to: a
+    // game with its own local server gives half to each, any other game uses it all
+    // (sim::SimPool::sessionThreads). PIN THREADS TO CORES pins each of those threads to a
+    // CPU of its own (sim::SimPool::handOut); greyed, and read as OFF, where the system
+    // pins no thread (macOS). Neither changes a game's outcome; a session latches both as
+    // it opens (GameView, and the local server it starts).
     section("PERFORMANCE");
     {
-        const int cpus = int(sim::SimPool::usableCpus());
-        const int most = int(sim::SimPool::maxChoice(unsigned(cpus)));
+        const sim::CpuTopology cpus = sim::detectCpus();
+        const int threads = int(cpus.threads());
+        const int most = int(sim::SimPool::maxChoice(cpus.threads()));
+        const bool split = cpus.eff > 0;
+        const auto count = [](unsigned n, const char* one, const char* many) { return std::to_string(n) + (n == 1 ? one : many); };
         slider("SIMULATION THREADS", 0, float(most),
                [this, most] { return float(std::clamp(s_.simThreads, 0, most)); },
                [this, most](float v) { s_.simThreads = std::clamp(int(v + 0.5f), 0, most); },
                [cpus](float v) {
-                   return v < 0.5f ? "AUTO (" + std::to_string(sim::SimPool::configured(0, unsigned(cpus))) + ")"
+                   return v < 0.5f ? "AUTO (" + std::to_string(sim::SimPool::configured(0, cpus)) + ")"
                                    : std::to_string(int(v + 0.5f));
                });
-        ctls_.back().warn = [this, cpus] { return s_.simThreads > cpus; };
-        ctls_.back().help = [] {
+        ctls_.back().band = [cpus](float v) {   // AUTO is the performance cores: blue
+            return v < 0.5f ? 0 : int(sim::SimPool::band(unsigned(v + 0.5f), cpus));
+        };
+        ctls_.back().help = [cpus, split] {
+            std::string colours = split ? "BLUE REACHES THE PERFORMANCE CORES" : "BLUE REACHES THE CORES";
+            if (split) colours += ", GREEN THE EFFICIENCY CORES";
+            if (cpus.smt) colours += ", YELLOW THE HYPERTHREADS";
             return std::vector<std::string>{
-                "HOW MANY CPU THREADS THE GAME'S SIMULATIONS MAY USE. AUTO IS EVERY THREAD THIS COMPUTER HAS.",
+                std::string("HOW MANY CPU THREADS THE GAME'S SIMULATIONS MAY USE. AUTO IS ONE FOR EACH ") +
+                    (split ? "PERFORMANCE CORE." : "CORE."),
                 "A GAME WITH ITS OWN LOCAL SERVER GIVES HALF TO EACH. A GAME ON SOMEONE ELSE'S SERVER USES THEM ALL.",
-                "RED IS MORE THREADS THAN THIS COMPUTER HAS.",
+                colours + ". RED IS MORE THREADS THAN THIS COMPUTER HAS.",
                 "IT NEVER CHANGES A GAME'S OUTCOME. APPLIES FROM THE NEXT GAME YOU OPEN."};
         };
-        ctls_.push_back({Control::Info, "SIMULATION THREADS INFO", 0, 0, {}, {}, {}, {}, [this, cpus] {
-            const auto local = sim::SimPool::sessionThreads(s_.simThreads, unsigned(cpus), true);
+        ctls_.push_back({Control::Info, "SIMULATION THREADS INFO", 0, 0, {}, {}, {}, {}, [this, cpus, threads, split, count] {
+            const auto local = sim::SimPool::sessionThreads(s_.simThreads, cpus, true);
             return std::vector<std::string>{
-                "THIS COMPUTER HAS " + std::to_string(cpus) + (cpus == 1 ? " THREAD." : " THREADS."),
+                "THIS COMPUTER HAS " +
+                    (split ? count(cpus.perf, " PERFORMANCE CORE", " PERFORMANCE CORES") + " AND " +
+                                 count(cpus.eff, " EFFICIENCY CORE", " EFFICIENCY CORES")
+                           : count(cpus.perf, " CORE", " CORES")) +
+                    (cpus.smt ? " WITH HYPERTHREADING: " : ", NO HYPERTHREADING: ") + count(unsigned(threads), " THREAD.", " THREADS."),
                 "SINGLE PLAYER, A LOCAL SERVER YOU HOST AND THE BENCHMARK: HALF OF THE THREADS SET HERE GO TO THE GAME (" +
                     std::to_string(local.game) + "), HALF TO ITS LOCAL SERVER (" + std::to_string(local.server) + ").",
                 "A GAME ON SOMEONE ELSE'S SERVER: THE GAME USES ALL OF THEM (" +
-                    std::to_string(sim::SimPool::sessionThreads(s_.simThreads, unsigned(cpus), false).game) + ")."};
+                    std::to_string(sim::SimPool::sessionThreads(s_.simThreads, cpus, false).game) + ")."};
+        }});
+        const bool canPin = cpus.canPin;
+        toggle("PIN THREADS TO CORES", [this, canPin] { return s_.simPin && canPin ? 1.0f : 0.0f; },
+               [this](float v) { s_.simPin = v > 0.5f; });
+        ctls_.back().enabled = [canPin] { return canPin; };
+        ctls_.back().help = [canPin] {
+            if (!canPin) return std::vector<std::string>{"OFF: MACOS DOES NOT LET A GAME PIN THREADS."};
+            return std::vector<std::string>{
+                "KEEPS EACH SIMULATION THREAD ON A CPU CORE OF ITS OWN. OFF LETS THE SYSTEM MOVE THEM.",
+                "IT NEVER CHANGES A GAME'S OUTCOME. APPLIES FROM THE NEXT GAME YOU OPEN."};
+        };
+        ctls_.push_back({Control::Info, "PIN THREADS TO CORES INFO", 0, 0, {}, {}, {}, {}, [this, canPin, threads, split] {
+            if (!canPin) return std::vector<std::string>{"MACOS DOES NOT LET A GAME PIN THREADS, SO THE SYSTEM PLACES THEM."};
+            if (!s_.simPin) return std::vector<std::string>{"THREADS ARE NOT PINNED: THE SYSTEM PLACES THEM."};
+            return std::vector<std::string>{
+                std::string("EACH THREAD IS PINNED TO ITS OWN CORE: ") +
+                    (split ? "PERFORMANCE CORES FIRST, THEN EFFICIENCY CORES, THEN HYPERTHREADS."
+                           : "CORES FIRST, THEN HYPERTHREADS.") +
+                    " THREADS BEYOND THE COMPUTER'S " + std::to_string(threads) + " ARE NOT PINNED."};
         }});
     }
 
@@ -1339,14 +1375,17 @@ void OptionsScreen::render(int winW, int winH) {
             // y + 2: the caps end 2u above the handle's top (y + 18), descenders short of it.
             uiText(ren_, c.label, c.row.x, c.row.y + 2 * u_, fpx,
                           on ? SDL_Color{225, 230, 240, 255} : SDL_Color{105, 110, 122, 255});
-            // Red (SIMULATION THREADS above the computer's own count): the value text,
-            // the filled track and the handle.
-            const bool red = on && c.warn && c.warn();
+            // A banded slider (SIMULATION THREADS) is coloured by the band its value is in:
+            // the value text, the handle, and the track itself, zone by zone.
+            static constexpr SDL_Color kBandFill[4] = {{80, 140, 225, 255}, {70, 180, 110, 255}, {225, 185, 60, 255}, {215, 75, 65, 255}};
+            static constexpr SDL_Color kBandText[4] = {{150, 195, 235, 255}, {140, 220, 165, 255}, {240, 210, 120, 255}, {240, 130, 120, 255}};
+            static constexpr SDL_Color kBandHandle[4] = {{205, 215, 240, 255}, {195, 235, 205, 255}, {245, 228, 160, 255}, {245, 150, 140, 255}};
+            const int band = on && c.band ? std::clamp(c.band(val), 0, 3) : -1;
             if (c.fmt) {
                 std::string vs = c.fmt(val);
                 uiText(ren_, vs, c.row.x + c.row.w - uiTextWidth(vs, fpx),
                               c.row.y + 2 * u_, fpx,
-                              red ? SDL_Color{240, 130, 120, 255}
+                              band >= 0 ? kBandText[band]
                               : on ? SDL_Color{150, 195, 235, 255} : SDL_Color{90, 100, 115, 255});
             }
             // track + fill + handle
@@ -1355,12 +1394,33 @@ void OptionsScreen::render(int winW, int winH) {
             SDL_SetRenderDrawColor(ren_, 48, 52, 66, 255); SDL_RenderFillRectF(ren_, &track);
             float frac = std::clamp((val - c.lo) / std::max(0.0001f, c.hi - c.lo), 0.0f, 1.0f);
             SDL_FRect fill{c.row.x, ty, c.row.w * frac, th};
-            if (red) SDL_SetRenderDrawColor(ren_, 215, 75, 65, 255);
-            else if (on) SDL_SetRenderDrawColor(ren_, 80, 140, 225, 255);
-            else SDL_SetRenderDrawColor(ren_, 70, 76, 92, 255);
-            SDL_RenderFillRectF(ren_, &fill);
+            if (band >= 0) {
+                // The zones, one run of whole steps each: dim along the whole track so
+                // they can be seen, bright under the filled part.
+                const int steps = std::max(1, int(c.hi - c.lo + 0.5f));
+                for (int from = 0; from < steps;) {
+                    const int zone = std::clamp(c.band(c.lo + float(from + 1)), 0, 3);
+                    int to = from + 1;
+                    while (to < steps && std::clamp(c.band(c.lo + float(to + 1)), 0, 3) == zone) ++to;
+                    const float x0 = c.row.w * float(from) / float(steps), x1 = c.row.w * float(to) / float(steps);
+                    const SDL_Color z = kBandFill[zone];
+                    SDL_FRect dim{c.row.x + x0, ty, x1 - x0, th};
+                    SDL_SetRenderDrawColor(ren_, Uint8((z.r + 2 * 48) / 3), Uint8((z.g + 2 * 52) / 3), Uint8((z.b + 2 * 66) / 3), 255);
+                    SDL_RenderFillRectF(ren_, &dim);
+                    if (const float lit = std::min(x1, fill.w); lit > x0) {
+                        SDL_FRect bright{c.row.x + x0, ty, lit - x0, th};
+                        SDL_SetRenderDrawColor(ren_, z.r, z.g, z.b, 255);
+                        SDL_RenderFillRectF(ren_, &bright);
+                    }
+                    from = to;
+                }
+            } else {
+                if (on) SDL_SetRenderDrawColor(ren_, 80, 140, 225, 255);
+                else SDL_SetRenderDrawColor(ren_, 70, 76, 92, 255);
+                SDL_RenderFillRectF(ren_, &fill);
+            }
             SDL_FRect handle{c.row.x + c.row.w * frac - 4 * u_, ty - 4 * u_, 8 * u_, th + 8 * u_};
-            if (red) SDL_SetRenderDrawColor(ren_, 245, 150, 140, 255);
+            if (band >= 0) SDL_SetRenderDrawColor(ren_, kBandHandle[band].r, kBandHandle[band].g, kBandHandle[band].b, 255);
             else if (on) SDL_SetRenderDrawColor(ren_, 205, 215, 240, 255);
             else SDL_SetRenderDrawColor(ren_, 95, 100, 115, 255);
             SDL_RenderFillRectF(ren_, &handle);

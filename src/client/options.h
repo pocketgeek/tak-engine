@@ -149,10 +149,19 @@ public:
         const float w = dropWidth(c);
         return {c.row.x + c.row.w - w, y0 + float(index) * itemH - dropScroll_, w, itemH};
     }
-    // A slider drawn red (Control::warn), and an Info row's lines as wrapped and drawn.
-    bool rowWarn(const std::string& label) const {
-        for (auto& c : ctls_) if (c.label == label && c.kind == Control::Slider) return c.warn && c.warn();
+    // A banded slider's band at its value (Control::band; -1 without bands), a toggle as
+    // it reads (ON = true), a row's hover help, and an Info row's lines as wrapped and drawn.
+    int rowBand(const std::string& label) const {
+        for (auto& c : ctls_) if (c.label == label && c.kind == Control::Slider) return c.band ? c.band(c.get()) : -1;
+        return -1;
+    }
+    bool rowOn(const std::string& label) const {
+        for (auto& c : ctls_) if (c.label == label && c.kind == Control::Toggle) return c.get() > 0.5f;
         return false;
+    }
+    std::vector<std::string> rowHelp(const std::string& label) const {
+        for (auto& c : ctls_) if (c.label == label && c.help) return c.help();
+        return {};
     }
     std::vector<std::string> rowLines(const std::string& label) const {
         for (auto& c : ctls_) if (c.label == label && c.kind == Control::Info) return infoLines(c, c.row.w);
@@ -181,7 +190,8 @@ private:
         std::function<bool()> enabled;           // unset = always; false = greyed, ignores input
         std::function<std::vector<std::string>()> help;   // optional lines shown while hovered
         std::function<float()> mark;             // Meter: a threshold tick, 0..1 (unset or < 0 = none)
-        std::function<bool()> warn;              // Slider: true draws its fill, handle and value red
+        std::function<int(float)> band;          // Slider: a value's colour band, 0 blue, 1 green, 2 yellow, 3 red;
+                                                 // set, the track shows every band and the value's colours the handle and text
         SDL_FRect row{};                          // filled by layout()
         int track = 0;                            // MusicFile: the original track it replaces
     };

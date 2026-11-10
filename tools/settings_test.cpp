@@ -18,7 +18,7 @@
 
 #include "client/settings.h"
 #include "client/waylandchoice.h"
-#include "sim/simpool.h"
+#include "sim/simcpus.h"
 
 #include <cstdio>
 #include <string>
@@ -113,6 +113,7 @@ int main() {
     flips("hardwareCursor",  [](Settings& s) { s.hardwareCursor = !s.hardwareCursor; });
     flips("smoothMotion",    [](Settings& s) { s.smoothMotion = !s.smoothMotion; });
     flips("simThreads",      [](Settings& s) { s.simThreads = 6; });
+    flips("simPin",          [](Settings& s) { s.simPin = !s.simPin; });
 
     // identity / session
     flips("playerName",      [](Settings& s) { s.playerName = "someone"; });
@@ -237,6 +238,7 @@ int main() {
         cur.gpuMemoryLimit = 768;
         cur.uiFont = 1;
         cur.simThreads = 6;
+        cur.simPin = false;
 
         const Settings d = tak::preferenceDefaults(cur);
         auto keep = [&](const char* what, bool ok) {
@@ -304,6 +306,7 @@ int main() {
         reset("gpuMemoryLimit",   d.gpuMemoryLimit == fresh.gpuMemoryLimit && d.gpuMemoryLimit == 1280);
         reset("uiFont",           d.uiFont == fresh.uiFont && d.uiFont == 0);
         reset("simThreads",       d.simThreads == fresh.simThreads && d.simThreads == 0);   // AUTO
+        reset("simPin",           d.simPin == fresh.simPin && d.simPin);                    // ON
 
         // The GRAPHICS, UI and GAME pages' DEFAULTS together reset exactly what the old
         // single Options DEFAULTS did: a field on no page would make this differ.
@@ -322,10 +325,13 @@ int main() {
             const bool own = tak::graphicsDefaults(all).uiScale == all.uiScale && tak::uiDefaults(all).unitShadows == all.unitShadows &&
                              tak::gameDefaults(all).uiScale == all.uiScale && tak::gameDefaults(all).playerName == all.playerName &&
                              tak::gameDefaults(all).mouseZoom == all.mouseZoom && tak::uiDefaults(all).mouseZoom != all.mouseZoom &&
-                             // SIMULATION THREADS is the GAME page's: its DEFAULTS alone puts it back to AUTO.
+                             // SIMULATION THREADS is the GAME page's: its DEFAULTS alone puts it back to AUTO,
+                             // and PIN THREADS TO CORES back ON.
                              all.simThreads == 6 && tak::gameDefaults(all).simThreads == 0 &&
                              tak::graphicsDefaults(all).simThreads == 6 && tak::uiDefaults(all).simThreads == 6 &&
-                             tak::audioDefaults(all).simThreads == 6 && tak::voiceDefaults(all).simThreads == 6;
+                             tak::audioDefaults(all).simThreads == 6 && tak::voiceDefaults(all).simThreads == 6 &&
+                             !all.simPin && tak::gameDefaults(all).simPin && !tak::graphicsDefaults(all).simPin &&
+                             !tak::uiDefaults(all).simPin && !tak::audioDefaults(all).simPin && !tak::voiceDefaults(all).simPin;
             std::printf("  %-23s %s\n", "each page its own", own ? "ok" : "FAIL");
             if (!own) ++g_fail;
         }
@@ -890,13 +896,32 @@ int main() {
             ts.simThreads = 500;   // never written out of range
             check("sim threads: written clamped", tak::serializeSettings(ts).find("\nsimThreads = 128\n") != std::string::npos);
         }
-        // As used on this machine of N threads: AUTO is N, a count runs as itself up to
-        // 2N, and one above that as 2N (a profile moved from a bigger machine).
-        const unsigned cpus = SimPool::usableCpus(), top = SimPool::maxChoice(cpus);
-        check("sim threads: auto as used", SimPool::configured(loadFrom("simThreads = 0\n").simThreads, cpus) == std::min(cpus, top));
+        // As used on this machine of N threads: AUTO is its performance cores (its cores,
+        // without that split), a count runs as itself up to 2N, and one above that as 2N
+        // (a profile moved from a bigger machine).
+        const tak::sim::CpuTopology cpus = tak::sim::detectCpus();
+        const unsigned top = SimPool::maxChoice(cpus.threads());
+        check("sim threads: auto as used", SimPool::configured(loadFrom("simThreads = 0\n").simThreads, cpus) == cpus.perf &&
+                                           cpus.perf >= 1 && cpus.perf <= cpus.threads());
         check("sim threads: 1 as used", SimPool::configured(loadFrom("simThreads = 1\n").simThreads, cpus) == 1);
         check("sim threads: 128 as used", SimPool::configured(loadFrom("simThreads = 128\n").simThreads, cpus) == top &&
-                                          top == 2 * std::min(cpus, SimPool::kMaxThreads));
+                                          top == 2 * std::min(cpus.threads(), SimPool::kMaxThreads));
+        // PIN THREADS TO CORES: ON unless the file says 0, saved as 1 / 0; OFF reaches the
+        // hand-out (SimPool::handOut) as no CPU for any thread, the game's or its server's.
+        check("sim pin: default on", Settings{}.simPin && loadFrom("masterVol = 7\n").simPin);
+        check("sim pin: read", !loadFrom("simPin = 0\n").simPin && loadFrom("simPin = 1\n").simPin);
+        {
+            Settings ts{};
+            check("sim pin: saved on", tak::serializeSettings(ts).find("\nsimPin = 1\n") != std::string::npos);
+            ts.simPin = false;
+            check("sim pin: saved off", tak::serializeSettings(ts).find("\nsimPin = 0\n") != std::string::npos &&
+                                        !loadFrom(tak::serializeSettings(ts)).simPin);
+        }
+        const SimPool::Session local = SimPool::sessionThreads(0, cpus, true);
+        const auto on = SimPool::handOut(cpus.order, local, true, loadFrom("simPin = 1\n").simPin);
+        const auto off = SimPool::handOut(cpus.order, local, true, loadFrom("simPin = 0\n").simPin);
+        check("sim pin: on hands out CPUs", !on.game.empty() && on.game.front() == cpus.order.front());
+        check("sim pin: off pins nothing", off.game.empty() && off.server.empty());
     }
     // The remembered room sets: single player (spRoom.<field>) and multiplayer
     // (mpRoom.<field>), one key per field, each set saved and read on its own. The keys

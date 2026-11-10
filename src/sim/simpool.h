@@ -42,19 +42,39 @@ public:
     // The CPU threads this process may use, at least 1: its affinity mask on
     // Linux (taskset, containers), the machine's thread count elsewhere.
     static unsigned usableCpus();
-    // How many threads a simulation gets. Scheduling only; pure, so
-    // tools/simpool_test.cpp pins both rules.
+    // How many threads a simulation gets, and which CPUs they are pinned to.
+    // Scheduling only; pure, so tools/simpool_test.cpp pins every rule.
     //
+    // The CPUs the counts are measured against (sim/simcpus.h detects them): P
+    // performance cores, E efficiency cores and H further hyperthreads on those
+    // cores. A CPU with no performance / efficiency split has P = its physical
+    // cores and E = 0. N = threads() is every logical CPU the process may use.
+    // (H is `smt`: <windows.h> defines `hyper`.)
+    struct Cpus {
+        unsigned perf=1,eff=0,smt=0;
+        constexpr unsigned threads() const { return perf+eff+smt; }
+    };
+    // AUTO: one thread for each performance core (each core, on a CPU without the
+    // split). The rule lives here and nowhere else.
+    static constexpr unsigned autoThreads(const Cpus& cpus) { return std::max(cpus.perf,1u); }
     // The game: a SIMULATION THREADS choice (Options > GAME, Settings::simThreads)
-    // is 0 = AUTO, every CPU thread, or a count from 1 up to twice the CPU threads
-    // (above them is more threads than the computer has; Options draws that red).
-    // kMaxChoice is the most any machine offers: two simulations of kMaxThreads.
+    // is 0 = AUTO, or a count from 1 up to twice the CPU threads (above them is
+    // more threads than the computer has). kMaxChoice is the most any machine
+    // offers: two simulations of kMaxThreads.
     static constexpr unsigned kMaxChoice=2*kMaxThreads;
     static constexpr unsigned maxChoice(unsigned cpus) { return 2*std::min(std::max(cpus,1u),kMaxThreads); }
-    // T, the threads a choice configures on a machine of `cpus` threads: a count
-    // above maxChoice(cpus) (a profile from a bigger machine) is used as that.
-    static constexpr unsigned configured(int choice,unsigned cpus) {
-        return std::min(choice<=0 ? std::max(cpus,1u) : unsigned(choice),maxChoice(cpus));
+    // T, the threads a choice configures on a machine: a count above
+    // maxChoice (a profile from a bigger machine) is used as that.
+    static constexpr unsigned configured(int choice,const Cpus& cpus) {
+        return std::min(choice<=0 ? autoThreads(cpus) : unsigned(choice),maxChoice(cpus.threads()));
+    }
+    // Which CPUs a count of threads reaches, in the order they are handed out
+    // (CpuTopology::order): Options colours the slider by it, blue, green,
+    // yellow and red.
+    enum class Band { Performance,Efficiency,Hyperthread,Over };
+    static constexpr Band band(unsigned threads,const Cpus& cpus) {
+        return threads<=cpus.perf ? Band::Performance : threads<=cpus.perf+cpus.eff ? Band::Efficiency
+             : threads<=cpus.threads() ? Band::Hyperthread : Band::Over;
     }
     // What a game session's simulations get of T. A game with its own local server
     // (single player, a LOCAL SERVER the player hosts, the Benchmark, --play-map)
@@ -63,11 +83,24 @@ public:
     // session (a game on someone else's server, a replay) has the one simulation,
     // which gets T; `server` is then 0. No simulation gets more than kMaxThreads.
     struct Session { unsigned total,game,server; };
-    static constexpr Session sessionThreads(int choice,unsigned cpus,bool localServer) {
+    static constexpr Session sessionThreads(int choice,const Cpus& cpus,bool localServer) {
         const unsigned t=configured(choice,cpus);
         if (!localServer) return {t,std::min(t,kMaxThreads),0};
         return {t,std::min(std::max((t+1)/2,1u),kMaxThreads),std::min(std::max(t/2,1u),kMaxThreads)};
     }
+    // sessionThreads as the game applies it: a debug build's TAK_SIM_WORKERS
+    // decides AUTO, and only AUTO (debugWorkers; *debugAuto says it did): each
+    // simulation then runs that many workers, and `total` is their sum.
+    static Session session(int choice,const Cpus& cpus,bool localServer,bool* debugAuto=nullptr);
+    // The CPUs a session's simulation threads are pinned to, by slot (a
+    // simulation's own thread, then its pool workers): the first min(T, N)
+    // entries of `order` (CpuTopology::order), dealt alternately to the game and
+    // its local server, game first, so each gets as equal a share of every kind
+    // of CPU as there is; with no local server the game takes them all. A thread
+    // past the end of its list is not pinned. `pin` false (PIN THREADS TO CORES
+    // off, a system that cannot pin): nothing is.
+    struct HandOut { std::vector<int> game,server; };
+    static HandOut handOut(const std::vector<int>& order,const Session& session,bool localServer,bool pin=true);
     // takserver: each running game's share of the server's total S (--sim-threads;
     // auto is usableCpus()): floor(S / running games), but never fewer than 2 --
     // than 1 when S is 1, so whoever asked for one thread gets one -- and never
@@ -90,12 +123,17 @@ public:
     // AUTO, wherever a width is decided: here, the game's latch and takserver.
     static int debugWorkers();
 
-    explicit SimPool(unsigned workers);
+    // cpus: pin worker k (slot k) to (*cpus)[k], a worker past the end to none
+    // (sim::placeThisThread); slot 0 is the caller's, which its owner places.
+    // nullptr: no thread's CPUs are touched.
+    explicit SimPool(unsigned workers,const std::vector<int>* cpus=nullptr);
     ~SimPool();
     SimPool(const SimPool&)=delete;
     SimPool& operator=(const SimPool&)=delete;
 
     unsigned workers() const { return unsigned(threads_.size()); }
+    // Whether this pool's workers are placed as `cpus` asks (the constructor's).
+    bool placedAs(const std::vector<int>* cpus) const { return cpus ? pin_ && cpus_==*cpus : !pin_; }
 
     // Calls fn(chunkIndex, begin, end, slot) once for every chunk
     // [k*chunk, min(count,(k+1)*chunk)) of [0,count). slot identifies the
@@ -141,6 +179,8 @@ private:
     void work(unsigned slot);
     void drain(unsigned slot);
 
+    const bool pin_;
+    const std::vector<int> cpus_;       // by slot, when pin_
     std::vector<std::thread> threads_;
     // The current job; written by the caller while gen_ is even (closed), read
     // by a worker only after it has registered in inflight_ and seen gen_ odd.

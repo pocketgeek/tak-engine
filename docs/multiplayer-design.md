@@ -875,7 +875,14 @@ game's simulation gets an equal share of the server's `--sim-threads` total
 total divided by the running games, rounded down, never fewer than 2 (1 only
 when the total is 1) and never more than 64. The share is recomputed as games
 start and end and applied between ticks, on the game's own worker. The floor of
-2 means a busy server can run more simulation threads than it has CPUs. A slow
+2 means a busy server can run more simulation threads than it has CPUs. With
+`--sim-cpus` (a list, or `auto`; the default `none` pins nothing) each running
+game's threads are also pinned, one to a CPU: the game takes the next `share`
+CPUs of the list in turn, its worker thread the first and its pool's workers the
+rest, re-pinned the same way, between ticks, whenever the turn or the share
+changes; a thread past the end of the list is not pinned. A client that starts a
+local server passes it the CPUs of its own hand-out that it did not take
+(`SimPool::handOut`). A slow
 tick no longer holds up the network loop or another
 room's ticks, although games still compete for CPU and memory bandwidth. Map
 startup and replay file writes remain synchronous work on the main thread.

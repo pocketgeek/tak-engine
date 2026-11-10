@@ -16744,7 +16744,10 @@ SimPool& World::simPool() {
     // Never replace a pool with a batch open (Legion's tile prefetch starts one and
     // joins it through later calls here): its jobs would go with it and their
     // waiter would spin for good. A new width waits for the join.
-    if (!pool_ || (pool_->workers()!=want && !pool_->busy())) pool_=std::make_unique<SimPool>(want);
+    // Its workers pin as they start, so new CPUs are a new pool too (setSimCpus).
+    const std::vector<int>* cpus=simPin_ ? &simCpus_ : nullptr;
+    if (!pool_ || ((pool_->workers()!=want || !pool_->placedAs(cpus)) && !pool_->busy()))
+        pool_=std::make_unique<SimPool>(want,cpus);
     return *pool_;
 }
 

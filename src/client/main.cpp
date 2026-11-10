@@ -40,6 +40,7 @@
 #include "ai/ai.h"          // Difficulty <-> aiLevel + incomeMultFor (header-only helpers)
 #include "sim/matchsetup.h"
 #include "sim/sim.h"
+#include "sim/simcpus.h"
 #include "sim/legion.h"
 #include "tdf/tdf.h"
 #include "tdo/tdo.h"
@@ -169,13 +170,17 @@ int pickFreePort() {
 // without accounts on every interface, so players on the network can join it.
 // simThreads: the server's half of the player's SIMULATION THREADS, for its referee sim
 // (0 = auto: only when a debug build's TAK_SIM_WORKERS decides AUTO, there as here).
+// simCpus: the CPUs that half is pinned to, as takserver --sim-cpus takes them (a list,
+// or "none" when this game pins nothing).
 bool spawnLocalServer(tak::LocalServer& server, const std::string& serverBin,
-                      const std::string& dataRoot, int port, bool lan = false, int simThreads = 0) {
+                      const std::string& dataRoot, int port, bool lan = false, int simThreads = 0,
+                      const std::string& simCpus = "none") {
     // It shares this player's per-user map folder (hpi::userMapRoot): a map the client
     // verified (a download, a --play-map copy) is there for the referee too, and
     // nothing is written into the game data folder.
     std::vector<std::string> args{"--port", std::to_string(port), "--data", dataRoot,
-                                  "--sim-threads", simThreads > 0 ? std::to_string(simThreads) : "auto"};
+                                  "--sim-threads", simThreads > 0 ? std::to_string(simThreads) : "auto",
+                                  "--sim-cpus", simCpus};
     if (lan) args.push_back("--lan");
     else args.insert(args.end(), {"--no-auth", "--local"});
     if (const auto cache = tak::hpi::userMapRoot(); !cache.empty()) {
@@ -409,7 +414,7 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
     auto view = std::make_unique<GameView>(ren, std::move(rvfs), mapPath, dataRoot,
         tak::hpi::ModUse{}, false, false, true, "ara", "tar", rf.crusades);
     view->applySettings(settings); view->setSettings(&settings);
-    view->latchSimThreads(settings.simThreads, false);   // one simulation: it gets them all
+    view->latchSimThreads(settings.simThreads, false, settings.simPin && tak::devFlag("TAK_SIM_PIN", true));   // one simulation: it gets them all
     if (canReturn) view->setCanReturnToMenu();
     std::fprintf(stderr, "replay: %s -- map '%s', %zu ticks%s (format %u, recorded by %s, %zu hash checkpoints)\n",
                  path.c_str(), rf.mapId.c_str(), rf.bundles.size(), rf.crusades ? " (Crusades)" : "",
@@ -1452,6 +1457,11 @@ int main(int argc, char** argv) {
         lobbyLoading->step(menuMultiplayer ? "Connecting..." : "Starting...",5);
     }
 
+    // PIN THREADS TO CORES (Options > GAME), for this session and its local server. The
+    // headless debug harness pins nothing unless TAK_SIM_PIN=1 (a suite runs many of them
+    // at once, and they would share the same cores); TAK_SIM_PIN=0 stops a debug build
+    // pinning at all, which is how ctest runs every test.
+    const bool simPin = settings.simPin && tak::devFlag("TAK_SIM_PIN", mpHeadless == 0);
     std::string serverBin;
     if (mode == "game" && serverHost.empty() && !mpHeadless && !localHarness) {
         // Single-player: auto-launch a private local server and play a 1-v-AI game
@@ -1464,12 +1474,17 @@ int main(int argc, char** argv) {
         // exercises the launch-failure path; see the menu_launch_failure test).
         if (const char* bin = tak::devEnv("TAK_LOCAL_SERVER_BIN"); bin && *bin) serverBin = bin;
 #endif
-        // SIMULATION THREADS: this game and its local server get half each (latchSimThreads
-        // below takes the game's). A debug build's TAK_SIM_WORKERS overrides AUTO in both.
+        // SIMULATION THREADS: this game and its local server get half each, and every
+        // other CPU of the hand-out when threads are pinned (latchSimThreads below takes
+        // the game's). A debug build's TAK_SIM_WORKERS overrides AUTO in both.
         using tak::sim::SimPool;
-        const int serverThreads = settings.simThreads <= 0 && SimPool::debugWorkers() >= 0 ? 0
-            : int(SimPool::sessionThreads(settings.simThreads, SimPool::usableCpus(), true).server);
-        if (p <= 0 || !spawnLocalServer(localServer, serverBin, dataRoot, p, lanHosting, serverThreads)) {
+        const tak::sim::CpuTopology cpus = tak::sim::detectCpus();
+        bool debugAuto = false;
+        const SimPool::Session session = SimPool::session(settings.simThreads, cpus, true, &debugAuto);
+        const std::string serverCpus = tak::sim::cpuListText(
+            SimPool::handOut(cpus.order, session, true, simPin && cpus.canPin).server);
+        if (p <= 0 || !spawnLocalServer(localServer, serverBin, dataRoot, p, lanHosting, debugAuto ? 0 : int(session.server),
+                                        serverCpus.empty() ? "none" : serverCpus)) {
             std::fprintf(stderr, "single-player: could not launch a local server (%s)\n",
                          serverBin.c_str());
             if (failLaunch("could not start the local server (" + serverBin + ")")) continue;
@@ -1723,7 +1738,7 @@ int main(int argc, char** argv) {
             gameView->applySettings(settings);   // audio / camera / UI-scale prefs
             gameView->setSettings(&settings);     // in-game Options edits + persists these
             // SIMULATION THREADS: half with a local server of its own (which got the other), else all.
-            gameView->latchSimThreads(settings.simThreads, localServer.started());
+            gameView->latchSimThreads(settings.simThreads, localServer.started(), simPin);
             gameView->setVoice(voiceOwner.get()); // voice chat in multiplayer rooms (none for replays/benchmarks)
             if (std::string n = tak::renderdriver::pendingNotice(); !n.empty()) {
                 gameView->showNotice(n, 10);   // launched straight into a game: say it here

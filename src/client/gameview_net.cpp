@@ -218,7 +218,7 @@
             loadScreen_->setPlayers(names, room.mySlot);
         }
         loadScreen_->step("MOUNTING GAME DATA", 5);
-        logSimThreads();   // what this game's simulation runs on (latchSimThreads)
+        logSimThreads(simThreadMode_);   // what this game's simulation runs on (latchSimThreads)
         // Build the world through the SHARED setup so the server's referee sim and
         // every client produce a bit-identical world (and hash). Client-only bits
         // (colours, camera, local player, panel) stay here.

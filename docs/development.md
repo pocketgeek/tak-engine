@@ -365,14 +365,31 @@ headless harness game the same way.
 
 The simulation's worker pool (`src/sim/simpool.h`) is as wide as the player's
 **Simulation threads** option says (`simThreads` in the settings file: 0 = Auto,
-every CPU thread; else that many threads, up to twice the CPU threads). A game
+one thread for each performance core, `SimPool::autoThreads`; else that many
+threads, up to twice the CPU threads). A game
 with its own local server gives its simulation half and starts the server with
 the other half (`--sim-threads`); any other game gives its one simulation all of
 them (`SimPool::sessionThreads`). A `takserver` shares its `--sim-threads
 <auto|N>` total among its running games (`SimPool::serverShare`). Each process
 logs what its simulation runs on when a game starts, for example
-`sim threads: 12 (auto: 24, half; local server 12)` in the client and
-`sim threads: 12 (12 over 1 game)` in its server. `TAK_SIM_WORKERS=<n>` (debug
+`sim threads: 4 (auto: 8, half; local server 4) pinned to cpus 0,2,4,6` in the
+client and `sim threads: 4 (4 over 1 game) pinned to cpus 1,3,5,7` in its server.
+
+The CPUs come from `sim::detectCpus()` (`src/sim/simcpus.h`): the performance
+cores, efficiency cores and hyperthreads the process may use, and the order
+threads take them in. With **Pin threads to cores** on (`simPin` in the settings
+file, 1 by default) every simulation thread is pinned to a CPU of its own
+(`SimPool::handOut`): the client's sim worker thread and its pool's workers, and,
+through `takserver --sim-cpus <list>`, the local server's per-game worker and its
+pool. A thread without a CPU is not pinned, and neither is a main thread that
+ticks the simulation itself (replay playback, the headless harness). macOS pins
+nothing. The headless debug harness (`--mpai` and the other `--mp...` modes) does
+not pin unless `TAK_SIM_PIN=1`, so that many clients run at once do not all pin
+to the same cores; `TAK_SIM_PIN=0` stops a debug client pinning in any session,
+and ctest sets it for every test (`tak_isolate_test_profiles`). Two more debug
+hooks fake the detection: `TAK_CPU_SYSFS=<root>` reads a Linux sysfs fixture tree
+in place of this machine, and `TAK_CPU_NOPIN=1` reports a system that cannot pin
+(the macOS form of the Options row). `TAK_SIM_WORKERS=<n>` (debug
 builds, 0 to 63 workers beside the ticking thread) overrides Auto, and only Auto:
 a chosen count wins over it, in the client and in the server. Tests and tools
 that set it leave the option at Auto. `SimPool::defaultWorkers()` (at most 3

@@ -157,8 +157,9 @@ struct Settings {
 
     // ---- performance ----
     // SIMULATION THREADS (Options > GAME): how many CPU threads the game's simulations
-    // may use. 0 = AUTO (the default: every thread this computer has), else a count from
-    // 1 up to twice the computer's threads, stored up to sim::SimPool::kMaxChoice. A
+    // may use. 0 = AUTO (the default: one for each performance core, or each core of a
+    // CPU without that split; sim::SimPool::autoThreads), else a count from 1 up to
+    // twice the computer's threads, stored up to sim::SimPool::kMaxChoice. A
     // value above this machine's top (a profile from a bigger machine) stays in the file
     // and is used as that top. A game with its own local server (single player, a LOCAL
     // SERVER the player hosts, the Benchmark) gives half to the game's simulation and
@@ -166,6 +167,13 @@ struct Settings {
     // uses them all (sim::SimPool::sessionThreads). Scheduling only: it never changes a
     // state hash or a replay. Latched when a game session opens. Persisted as simThreads.
     int   simThreads = 0;
+    // PIN THREADS TO CORES (Options > GAME): each simulation thread is pinned to a CPU
+    // of its own, performance cores first, then efficiency cores, then hyperthreads,
+    // dealt alternately to the game and its local server (sim::SimPool::handOut;
+    // takserver --sim-cpus); threads beyond the computer's are not pinned. Off: the
+    // system places every thread. macOS pins nothing either way (the row is greyed and
+    // this is kept). Scheduling only; latched with simThreads. Persisted as simPin.
+    bool  simPin = true;
 
     // ---- misc ----
     std::string playerName;        // default name for new local / unauthenticated multiplayer games
@@ -286,7 +294,7 @@ struct Settings {
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
             && a.edgeScroll == b.edgeScroll && a.mouseZoom == b.mouseZoom && a.cursorScale == b.cursorScale
             && a.hardwareCursor == b.hardwareCursor && a.smoothMotion == b.smoothMotion
-            && a.simThreads == b.simThreads
+            && a.simThreads == b.simThreads && a.simPin == b.simPin
             && a.playerName == b.playerName && a.accountName == b.accountName
             && a.streamRememberKey == b.streamRememberKey && a.streamLocalCopy == b.streamLocalCopy
             && a.streamBitrate == b.streamBitrate
@@ -452,9 +460,10 @@ inline Settings uiDefaults(const Settings& cur) {   // UI: interface, camera (+ 
     d.screenShake = f.screenShake;
     return d;
 }
-inline Settings gameDefaults(const Settings& cur) {   // GAME: simulation threads; player name and data folder are kept
+inline Settings gameDefaults(const Settings& cur) {   // GAME: simulation threads and their pinning; player name and data folder are kept
     Settings d = cur;
     d.simThreads = Settings{}.simThreads;
+    d.simPin = Settings{}.simPin;
     return d;
 }
 
