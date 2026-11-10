@@ -1294,7 +1294,9 @@ float createOptionPx(float maxW) {
         // The room's map, with its starts numbered and coloured by who opens there,
         // heads the right column; the mod packs and the chat sit below it.
         const bool roomMap = room.mission.empty();
-        const float kRoomMap = 140, mapDrop = roomMap ? kRoomMap + 5 : 0;
+        // Single player has no chat under the mods, so its map takes the column's whole
+        // width; a multiplayer room keeps the space for its chat.
+        const float kRoomMap = singlePlayer_ ? 280 : 140, mapDrop = roomMap ? kRoomMap + 5 : 0;
         float modBottom=112+mapDrop;
         {
             // MODS, in the right column under the map. ALWAYS ON: the always-enabled
