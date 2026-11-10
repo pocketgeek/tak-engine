@@ -116,6 +116,11 @@
         settings.push_back(std::string("PATHFINDING ") + tak::benchmarkPathLabel(worldTables().pathfindingMode()));
         // The room's game speed, as the run was paced.
         if (mp_) settings.push_back(std::string("SPEED       ") + tak::speedLevelText(int(mp_->gameSpeed()) - 10));
+        // SIMULATION THREADS as this run latched it (latchSimThreads; its local server got
+        // the same), not the Options value now: a change in the Esc menu is for the next game.
+        if (simThreads_ > 0) std::snprintf(b, sizeof b, "SIM THREADS %u", simThreadsRun_);
+        else std::snprintf(b, sizeof b, "SIM THREADS AUTO (%u)", simThreadsRun_);
+        settings.push_back(b);
         std::snprintf(b, sizeof b, "RESOLUTION  %d X %d", winW, winH); settings.push_back(b);
         if (!benchGpuName_.empty()) settings.push_back(std::string("GPU         ") + benchGpuName_);
         {   // the backend that produced these numbers, and whether it was AUTO's pick

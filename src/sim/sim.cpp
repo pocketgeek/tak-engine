@@ -16734,8 +16734,17 @@ void World::rebuildVisibleLists(int player) {
 }
 
 SimPool& World::simPool() {
-    const unsigned want=serialThreads_ ? 0u : simWorkers_>=0 ? unsigned(simWorkers_) : SimPool::defaultWorkers();
-    if (!pool_ || pool_->workers()!=want) pool_=std::make_unique<SimPool>(want);
+    unsigned want=0;
+    if (!serialThreads_) {
+        // AUTO is read once and kept. Read on every call it followed the process's
+        // CPU mask (taskset -p, a container's cpuset) into the middle of a tick.
+        if (simWorkers_<0 && autoWorkers_<0) autoWorkers_=int(SimPool::defaultWorkers());
+        want=unsigned(simWorkers_>=0 ? simWorkers_ : autoWorkers_);
+    }
+    // Never replace a pool with a batch open (Legion's tile prefetch starts one and
+    // joins it through later calls here): its jobs would go with it and their
+    // waiter would spin for good. A new width waits for the join.
+    if (!pool_ || (pool_->workers()!=want && !pool_->busy())) pool_=std::make_unique<SimPool>(want);
     return *pool_;
 }
 
@@ -21391,8 +21400,8 @@ uint64_t World::stateHash() const {
         mix(uint8_t(d.player));mix(d.expiry);mix(d.planes);
     }
     checkpoint("vision");
-    // Each script folds on its own and the digests in id order, so up to four
-    // threads read the scripts' megabytes.
+    // Each script folds on its own and the digests in id order, so every thread
+    // of the pool reads the scripts' megabytes.
     std::vector<const decltype(unitScripts_)::value_type*> scripts;
     scripts.reserve(unitScripts_.size());
     for (const auto& entry:unitScripts_) scripts.push_back(&entry);
@@ -22186,8 +22195,10 @@ std::unique_ptr<World> World::clone() const {
 }
 void World::restoreFrom(const World& from) {
     auto pool=std::move(pool_);
+    const int autoWorkers=autoWorkers_;   // the pool's AUTO width stays with the pool
     *this=from;
     pool_=std::move(pool);
+    autoWorkers_=autoWorkers;
     adoptCopy(from);
 }
 void World::setPathfindingMode(PathfindingMode mode) {

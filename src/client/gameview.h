@@ -2452,6 +2452,7 @@ private:
     float uiScale_ = 1.0f;
     tak::Settings* settings_ = nullptr;               // main()'s settings (for the in-game Options)
     int simThreads_ = 0;                              // latchSimThreads: this session's SIMULATION THREADS (0 = AUTO)
+    unsigned simThreadsRun_ = tak::sim::SimPool::threadsFor(0);   // ... as the threads it runs on (the log, the Benchmark results)
     std::unique_ptr<tak::OptionsScreen> options_;     // in-game Options overlay
     std::unique_ptr<tak::HotkeysScreen> hotkeysScreen_;   // opened from Options -> CONTROLS
     tak::Hotkeys hotkeys_;                             // effective bindings (from settings)

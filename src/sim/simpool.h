@@ -56,7 +56,8 @@ public:
     // 0, 3). A single-player game runs two sims (client + local referee), so the
     // cap keeps both within 8 cores. A chosen width is World::setSimWorkers.
     // Debug builds honour TAK_SIM_WORKERS (0..kMaxWorkers) here, so it overrides
-    // AUTO and only AUTO.
+    // AUTO and only AUTO. A World asks once and keeps the answer (World::simPool):
+    // this reads the CPU mask anew on every call.
     static unsigned defaultWorkers();
 
     explicit SimPool(unsigned workers);

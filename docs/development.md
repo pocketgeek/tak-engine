@@ -354,7 +354,9 @@ the local server it starts. Each process logs `sim threads: N` (with `(auto)`
 for Auto) when a game starts. `TAK_SIM_WORKERS=<n>` (debug builds, 0 to 63
 workers beside the ticking thread) overrides Auto, and only Auto: a chosen count
 wins over it, in the client and in the server. Tests and tools that set it leave
-the option at Auto. No width changes a result: `simpool`, `simpool_passes`,
+the option at Auto. A world reads Auto once, for its first pool, and keeps it: a
+CPU mask that changes during a game (`taskset -p`, a container's cpuset) does not
+change a running game's width. No width changes a result: `simpool`, `simpool_passes`,
 `exploration_parallel`, `state_hash`, `aura_recipient` and `legion_parallel`
 compare widths from 0 to 63 workers against the serial run.
 

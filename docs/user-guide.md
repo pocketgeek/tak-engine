@@ -1968,7 +1968,7 @@ is the one both use next time.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| **Simulation threads** | Auto | How many of your processor's threads the game simulation may use. The slider starts at **Auto** on the left, then goes from 1 up to every thread your computer has. |
+| **Simulation threads** | Auto | How many of your processor's threads the game simulation may use. The slider starts at **Auto** on the left, then goes from 1 up to every thread your computer has (at most 64). |
 
 **Auto** chooses from the number of threads your processor has: 1 with fewer
 than 8, 2 from 8, 3 from 16 and 4 from 24. The slider shows what Auto comes to
@@ -3216,7 +3216,9 @@ computer's capacity, 0–100%, and GPU use is measured as in the
 Unit limits still apply, so the highest intensities may not reach their
 requested unit counts. A computer that cannot keep up runs slower than the
 chosen speed and takes longer. The results list the **Speed** the run used;
-compare only runs at the same speed.
+compare only runs at the same speed. They also list **Sim threads**, the
+[Simulation threads](#performance) value the run was opened with (**Auto** with
+the number it came to), so runs that differ only in that can be told apart.
 
 The Benchmark always plays the original game with **no mods**: it leaves out
 every cosmetic and game mod pack, ticked or in `always_enabled`, so results
