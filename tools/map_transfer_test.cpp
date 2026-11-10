@@ -238,8 +238,15 @@ static void clientRoomEdits(const std::filesystem::path& root, const net::maps::
     { net::Writer w; w.u32(5); w.str("edit-host"); w.u8(0); server.exchange(client, {{net::Msg::Welcome, w}}); }
     check(client.state() == net::MpClient::State::Lobby, "fake server: in the lobby");
     net::GameOptions opts; opts.gameMods = 0;
-    client.createGame("edit", "", "test", opts, 2);
-    check(findFrame(server.exchange(client), net::Msg::CreateGame) != nullptr, "create request");
+    // A name the server would refuse (not printable ASCII, past kRoomNameMax) is sent as
+    // the part it takes.
+    client.createGame("edit f\xc3\xbcr alle " + std::string(40, 'x'), "", "test", opts, 2);
+    const auto created = server.exchange(client);
+    const auto* create = findFrame(created, net::Msg::CreateGame);
+    check(create != nullptr, "create request");
+    net::Reader cr(create->payload.data(), create->payload.size());
+    const auto sentName = cr.str();
+    check(sentName == "edit fr alle " + std::string(net::kRoomNameMax - 13, 'x'), "the room name is printable ASCII, 32 bytes");
     auto lobby = [&](const std::string& mapId, uint32_t rev, uint32_t serial) {
         net::RoomState r; r.id = 9; r.name = "edit"; r.mapId = mapId; r.hostId = 5; r.capacity = 2;
         r.roomRev = rev; r.mapSerial = serial; r.slots[0].type = 1; r.slots[0].name = "edit-host";
@@ -505,13 +512,14 @@ static int roomEdit(uint16_t port, const std::filesystem::path& hostRoot, const 
     {   // refused mid-upload: three seated humans refuse a 2-start map while the host uploads.
         auto host = client(hostRoot, "refused-host"), guest = client(peerRoot, "refused-guest"), third = client(thirdRoot, "refused-third");
         auto all = open(*host, {guest.get(), third.get()}, C, 4);
-        const bool uploading = !host->room().mapsReady;
+        pump(all, 30, [&] { return host->mapStatus() == "UPLOADING MAP TO SERVER"; }, "refused mid-upload: the upload starts");
+        check(!host->room().mapsReady, "refused mid-upload: the map verified before the change");
         change(all, INNER, 2, false, Answer::Refused, "refused mid-upload");
         check(host->roomMapAnswer().why.find("3 players are seated") != std::string::npos, "refused mid-upload: the reason");
         pump(all, 60, [&] { return host->room().mapId == C && std::all_of(all.begin(), all.end(), [](auto* c) {
                                 return c->room().mapsReady; }); }, "refused mid-upload: the map still verifies");
         noMapError(all, "refused mid-upload");
-        std::cout << "refused mid-upload: refused" << (uploading ? " while the host uploaded" : "") << "; the map still verifies\n";
+        std::cout << "refused mid-upload: refused while the host uploaded; the map still verifies\n";
     }
     {   // MAP SCENARIO on and off, then START.
         auto host = client(hostRoot, "scenario-host"), guest = client(peerRoot, "scenario-guest");

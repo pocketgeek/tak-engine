@@ -839,7 +839,13 @@ void MpClient::createGame(const std::string& name, const std::string& password,
             createError_ = mapStatus_ = e.what(); return;
         }
     }
-    Writer w; w.str(name); w.str(password); w.str(mapId); w.str(mission);
+    // The server refuses a name that is not 1..kRoomNameMax printable-ASCII bytes. A name
+    // can come from a remembered setting, a field that took any UTF-8 or a map id, so send
+    // what it takes: printable ASCII only, cut to the limit (empty: the server's default).
+    std::string sent;
+    for (unsigned char ch : name)
+        if (ch >= 0x20 && ch <= 0x7e && sent.size() < kRoomNameMax) sent += char(ch);
+    Writer w; w.str(sent); w.str(password); w.str(mapId); w.str(mission);
     put(w, o);
     w.u8(capacity);   // map's start-position count (the server has no map data)
     w.u8(spectate ? 1 : 0);   // host watches, taking no slot

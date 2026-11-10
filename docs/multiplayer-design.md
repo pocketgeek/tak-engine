@@ -987,7 +987,9 @@ unready nobody.
 - **Name and password** (`SetRoomInfo`): only the flagged fields apply (a lobby
   successor never knew the password, and a rename must not clear it); a name is
   1-32 printable-ASCII bytes after trimming, a password 0-128. The browser and
-  the LAN announcement read the room live, so they follow.
+  the LAN announcement read the room live, so they follow. `MpClient::createGame`
+  sends only the printable ASCII of a name, cut to 32 bytes, so a remembered or
+  typed name the server would refuse still creates the room.
 - **Watching.** The seated host may leave its seat to watch (`MoveSeat` 0xFF,
   answered `JoinResult` 0xFF; ALLOW SPECTATORS does not apply) and take an OPEN
   seat again; a room started with its host watching gives it slot 0xFF.

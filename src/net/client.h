@@ -185,6 +185,8 @@ public:
     // mission: a campaign mission stem (e.g. "takmission01_mt"). When set, the server
     // builds the world from the mission (placements + in-sim god script) instead of a
     // skirmish, and reports MissionOutcome; see docs/campaign-design.md.
+    // name: sent as printable ASCII only, cut to kRoomNameMax bytes; an empty result asks
+    // for the server's "<player>'s Game". A bad password is the server's to refuse.
     void createGame(const std::string& name, const std::string& password,
                     const std::string& mapId, const GameOptions& opts, uint8_t capacity,
                     bool spectate = false, bool priv = false, const std::string& mission = "");

@@ -565,8 +565,8 @@ struct Reader {
 // and LobbyState/GameStarting. Each used to be written out
 // field by field at every site, and fixes landed in some copies only. get() is RAW:
 // it checks nothing but the pathfinder byte (an unknown mode clears r.ok; the byte is
-// still stored so the server can reject with a reason). The server's clamps and
-// creation-only rules stay explicit at its two readers.
+// still stored so the server can reject with a reason). The server's clamps, and which
+// fields a running lobby adopts (SetGameOptions' table), stay explicit at its two readers.
 void put(Writer& w, const GameOptions& o);
 void get(Reader& r, GameOptions& o);
 void put(Writer& w, const SlotInfo& s);   // type faction color team ready aiLevel, name

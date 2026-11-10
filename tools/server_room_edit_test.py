@@ -33,6 +33,8 @@ Each case runs on its own and every failure is reported:
               the host watching gives it 0xFF; a running room ignores SetRoomMap
   mods+map    a game-mod offer, a map change and the new map's offer back to back: the
               room still reaches maps ready (the mod validation survives the map change)
+  budget      lobby work is charged by kind: 100 ListGames back to back keep the connection
+              (cost 1 each); 40 SetRoomMaps (cost 4 each) pass the 128 a second and drop it
   clients     map_transfer_test --room-edit: map changes between real MpClients (downloads,
               flips, changes during an upload, START races); no upload deadline in the log
 """
@@ -565,6 +567,27 @@ def case_mods_map(env):
         assert not host.pending[auth.MSG['MapError']] and not host.pending[auth.MSG['ModError']], 'a transfer error'
 
 
+def case_budget(env):
+    time.sleep(1.1)   # a fresh second of the address's budget, whatever the cases before used
+    with contextlib.closing(local_peer(env.local_port, env.local_h, 'Cheap')) as p:
+        for _ in range(100):
+            p.send('ListGames')
+        p.send('Ping')
+        p.receive('Pong')
+        assert len(p.pending[auth.MSG['GameList']]) == 100, 'a ListGames went unanswered'
+    with contextlib.closing(local_peer(env.local_port, env.local_h, 'Costly')) as p:
+        for serial in range(1, 41):
+            set_room_map(p, serial, recipe(2), 2)
+        try:
+            p.send('Ping')
+            p.receive('Pong')
+            dropped = False
+        except (RuntimeError, OSError):
+            dropped = True
+        assert dropped, '40 SetRoomMaps in a second did not pass the per-connection budget'
+        assert log_says(env.local_root, 'request rate exceeded'), 'the drop line'
+
+
 def case_clients(env):
     root = env.root.parent / 'clients'
     root.mkdir()
@@ -582,7 +605,7 @@ def case_clients(env):
 
 
 CASES = [case_options, case_stale, case_join_rev, case_slots, case_join_ready, case_info, case_create, case_shrink,
-         case_grow, case_scenario, case_refusals, case_watch, case_mods_map, case_clients]
+         case_grow, case_scenario, case_refusals, case_watch, case_mods_map, case_budget, case_clients]
 
 
 class Env:
@@ -608,7 +631,7 @@ def main():
         with server(env.binary, env.data, tmp / 'public') as (port, h, process), \
              server(env.binary, env.data, tmp / 'local', '--no-auth') as (local_port, local_h, local_process):
             env.port, env.h, env.local_port, env.local_h = port, h, local_port, local_h
-            env.root = tmp / 'public'
+            env.root, env.local_root = tmp / 'public', tmp / 'local'
             for case in CASES:
                 name = case.__name__[len('case_'):]
                 try:
@@ -625,7 +648,7 @@ def main():
         raise SystemExit('FAIL: ' + ', '.join(failed))
     print('PASS: room editing -- rules, stale READY, join revision, seat edits, join READY, name and password, '
           'create names, capacity down and up, scenario start mode, refusals, watching, mods with a map change, '
-          'real clients')
+          'lobby budget, real clients')
 
 
 if __name__ == '__main__':

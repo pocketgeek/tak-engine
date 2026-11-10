@@ -3397,10 +3397,10 @@ bool Server::allowLobbyWork(Client& c,const Frame& f) {
     switch(f.kind) {
         case Msg::ModChunk: case Msg::MapChunk:return true; // upload reads are paced before recv(), not discarded
         case Msg::CreateGame: case Msg::StartGame: case Msg::ModOffer: case Msg::MapOffer: cost=16;break;
+        case Msg::SetRoomMap: cost=4;break;   // its expensive part, a MapOffer, is charged on its own
         case Msg::ListGames: case Msg::JoinGame: case Msg::Spectate:
         case Msg::ModRequest: case Msg::ModReady: case Msg::ModError:
         case Msg::Chat: case Msg::MapRequest: case Msg::MapReady: case Msg::MapError:
-        case Msg::SetRoomMap: cost=4;break;   // its expensive part, a MapOffer, is charged on its own
         case Msg::Ping: case Msg::Pong: case Msg::SlotUpdate: case Msg::MoveSeat: case Msg::SetGameOptions:
         case Msg::LeaveGame: case Msg::Rejoin: case Msg::Kick: case Msg::SetPause:
         case Msg::VoiceListen: case Msg::SetRoomInfo: break;
