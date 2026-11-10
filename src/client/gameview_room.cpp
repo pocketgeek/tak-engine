@@ -71,6 +71,12 @@ float roomRulePx(float maxW) {
     return std::floor(px * 20) / 20;   // a 0.05 step, so rounding never re-overflows
 }
 
+// A multiplayer host's name (field 9) and password (10) boxes, from the slot table's left
+// edge: drawRoom draws them there, and roomInput keeps a click inside the one being typed in.
+SDL_FRect roomFieldBox(int field, float x) {
+    return field == 9 ? SDL_FRect{x, 54, 250, 24} : SDL_FRect{x + 260, 54, 180, 24};
+}
+
 // The pulsing amber fill behind a line a change lights (alpha 40..120 at 2 Hz) until `until`.
 void drawPulse(SDL_Renderer* ren, const SDL_FRect& rect, uint64_t until) {
     const uint64_t now = SDL_GetTicks64();
@@ -193,13 +199,19 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
             if (!host) roomChosenSet_ = false;
             else seedChosen(roomChosen_, roomChosenSet_, room, singlePlayer_ && mp_->isSpectator(), settings_);
             // A refused map change or rename, while the CHANGE MAP panel is closed: red on the
-            // note line for 6 s (the panel shows its own refusals in its footer).
+            // note line for 6 s (the panel shows its own refusals in its footer). A map change
+            // on its way makes room for its own answer, even one worded as the last (the
+            // room's own requests clear it as they send).
             if (const std::string& err = mp_->roomError(); err.empty()) {
-                if (now >= roomRefusalUntil_) roomRefusal_.clear();
+                if (now >= roomRefusalUntil_ || mp_->roomMapPending()) { roomRefusal_.clear(); roomRefusalUntil_ = 0; }
             } else {
-                const std::string text = (mp_->roomErrorFor() == tak::net::RoomRequest::Info ? "CANNOT RENAME THE GAME: "
-                                                                                              : "CANNOT CHANGE THE MAP: ") + err;
-                if (text != roomRefusal_) { roomRefusal_ = text; roomRefusalUntil_ = picker_.open ? 0 : now + 6000; }
+                const bool rename = mp_->roomErrorFor() == tak::net::RoomRequest::Info;
+                const std::string text = (rename ? "CANNOT RENAME THE GAME: " : "CANNOT CHANGE THE MAP: ") + err;
+                if (text != roomRefusal_) {
+                    roomRefusal_ = text; roomRefusalUntil_ = picker_.open ? 0 : now + 6000;
+                    // The name field shows the room's name again (unless it is being typed in).
+                    if (rename && lbField_ != 9 && !roomNameEdited_) roomNameDraft_ = room.name;
+                }
             }
             // The block shows a click at once; the server's answer (or 1.5 s) replaces it.
             if (roomOptsDraft_) {
@@ -217,6 +229,9 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
             const bool newState = mp_->lobbySeq() != roomSeenSeq_;
             if (newState) {
                 changes = tak::roomChanges(roomSeen_, room);
+                // The name field's draft follows a rename as it arrives (not while the field is
+                // typed in), so a click on the field goes on from the name last sent or seen.
+                if (changes.name && lbField_ != 9 && !roomNameEdited_) roomNameDraft_ = room.name;
                 // The host's own changes light nothing; a guest sees each one.
                 if (!host && (changes.bits || changes.name || changes.password)) {
                     const uint64_t until = now + 3000;
@@ -312,17 +327,16 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
                     lobbyHots_.push_back({r, std::move(activate)});
                 };
                 // The name: its end while typing (where the typing is), else the room's own,
-                // shrunk before it is cut.
-                const SDL_FRect nameBox{x, 54, 250, 24};
+                // shrunk before it is cut. The draft follows the room's name (roomStep) except
+                // while typed in or just sent, so a click on it goes on from the last text.
+                const SDL_FRect nameBox = roomFieldBox(9, x);
                 const float namePx = lbField_ == 9 ? 1.8f : tak::uiTextFitPx(room.name, 1.8f, (nameBox.w - 12) * 0.97f, 1.4f);
                 field(nameBox, 9, namePx,
                       lbField_ == 9 ? tak::uiTextFitStart(roomNameDraft_ + "_", namePx, nameBox.w - 12)
                                     : tak::uiTextFit(room.name, namePx, nameBox.w - 12),
-                      false, [this] {
-                          if (!roomNameEdited_) roomNameDraft_ = mpRoom().name;
-                          lbField_ = 9; SDL_StartTextInput(); });
+                      false, [this] { lbField_ = 9; SDL_StartTextInput(); });
                 // The password, as typed; a successor host never learns it: PASSWORD SET.
-                const SDL_FRect passBox{x + 260, 54, 180, 24};
+                const SDL_FRect passBox = roomFieldBox(10, x);
                 const bool empty = roomPassDraft_.empty() && lbField_ != 10;
                 field(passBox, 10, 1.5f,
                       lbField_ == 10 ? tak::uiTextFitStart(roomPassDraft_ + "_", 1.5f, passBox.w - 12)
@@ -356,6 +370,9 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
         lbBtn(bx + 142, y, 120, 30, roomForcedMap_.empty() ? "LEAVE" : "QUIT", true, [this] {
             // A LOCAL SERVER's host leaving closes the game for everyone: ask first.
             if (lanHost_ && lanOthersInRoom() > 0) { lanLeavePrompt_ = true; return; }
+            // Whatever room comes next (this one again too) is seen afresh: nothing it shows
+            // first is a change.
+            roomSeenSeq_ = 0;
             leaveRoom();
         });
         // Room readiness also includes game mods and other players. A
@@ -641,7 +658,10 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
     // Two columns of cells in reading order (an empty label keeps its place blank): framed
     // buttons for the host, plain text for guests, a forced value dimmer either way.
     void GameView::drawRoomRules(const std::vector<RoomRule>& rules, float x, float y, float colW, float pitch) {
-        const bool host = mpRoom().hostId == mp_->myClientId();
+        // The host's cells are buttons (grey while one cannot be clicked); a campaign mission
+        // or a Benchmark is never the host's to edit, so its host reads the rules as a guest.
+        const auto& room = mpRoom();
+        const bool host = room.hostId == mp_->myClientId() && room.mission.empty() && !room.opts.benchmark;
         constexpr float kCellH = 17;
         const float cellW = colW - 4;
         const float px = roomRulePx(cellW - 12);
@@ -806,8 +826,13 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
         const auto plan = tak::net::planCapacity(room.slots, cap);
         // (More players than the seats it leaves: the server refuses it, and says why.)
         const uint64_t now = SDL_GetTicks64();
-        if ((!plan.removedAi.empty() || !plan.moves.empty()) && scenarioArmUntil_ <= now) { scenarioArmUntil_ = now + 3000; return; }
+        if ((!plan.removedAi.empty() || !plan.moves.empty()) && scenarioArmUntil_ <= now) {
+            scenarioArmUntil_ = now + 3000;   // the note line says what the next click does
+            std::fprintf(stderr, "room note: CLICK AGAIN: TURNING MAP SCENARIO %s %s\n", on ? "OFF" : "ON", seatPlanText(plan).c_str());
+            return;
+        }
         scenarioArmUntil_ = 0;
+        roomRefusal_.clear(); roomRefusalUntil_ = 0;   // room for this one's answer
         if (!mp_->setRoomMap(room.mapId, cap, !on, roomChosen_.randomStarts)) roomActError_ = mp_->roomError();
     }
 
@@ -848,10 +873,14 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
             name.erase(0, name.find_first_not_of(' '));
             name.erase(name.find_last_not_of(' ') + 1);
             if (name.empty()) { roomNameDraft_ = room.name; roomActError_ = "a game needs a name"; return; }
-            if (name != room.name) mp_->setRoomInfo(name, std::nullopt);
+            roomNameDraft_ = name;
+            if (name == room.name) return;
+            roomRefusal_.clear(); roomRefusalUntil_ = 0;   // room for this one's answer
+            mp_->setRoomInfo(name, std::nullopt);
         } else if (field == 10) {
             if (!roomPassEdited_) return;
             roomPassEdited_ = false;
+            roomRefusal_.clear(); roomRefusalUntil_ = 0;
             mp_->setRoomInfo(std::nullopt, roomPassDraft_);
         }
     }
@@ -862,9 +891,16 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
     }
 
     // Enter sends the name or password being typed; Esc puts it back (the room's name; a
-    // password the field never showed reads PASSWORD SET again). Esc also lets go of an
-    // armed MAP SCENARIO click.
+    // password the field never showed reads PASSWORD SET again). A click inside the field
+    // being typed in leaves it be (anywhere else sends it: lobbyInput). Esc also lets go of
+    // an armed MAP SCENARIO click.
     bool GameView::roomInput(const SDL_Event& e) {
+        if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT && (lbField_ == 9 || lbField_ == 10) &&
+            !singlePlayer_ && !modsScreen_ && !picker_.open && !lanLeavePrompt_) {
+            mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
+            float mx, my; lobbyMouse(mx, my);
+            return ptIn(roomFieldBox(lbField_, RoomFrame{}.x), mx, my);
+        }
         if (e.type != SDL_KEYDOWN) return false;
         const auto key = e.key.keysym.sym;
         if (lbField_ == 9 || lbField_ == 10) {

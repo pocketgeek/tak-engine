@@ -13,6 +13,9 @@ cannot finish prints why and ends the client. TAK_QUIT_TICK ends a game that sta
      the game as a spectator.
   4  multiplayer unready: a guest READY, the host changes FOG OF WAR, the server clears the
      guest's READY (the guest is told so), the guest readies again and the host STARTs.
+  10 single player MAP SCENARIO confirm: on a map whose scenario seats more players than it
+     has starts, turning the scenario off would remove AIs, so the first click only arms the
+     cell (the note says what the next does); the second removes them, and the room says so.
 
 Debug builds only (TAK_ROOM_SCRIPT, TAK_QUIT_TICK and the CLI game are debug hooks).
 
@@ -103,6 +106,63 @@ def case_watch(args, root):
         raise AssertionError('%s\n%s' % (e, log[-4000:]))
 
 
+def hpi_read(hpitool, data, path):
+    """One file of the install, from the archive that wins it."""
+    where = subprocess.run([hpitool, 'where', str(data), path], capture_output=True, text=True, check=True).stdout
+    archive, entry = re.search(r'-> (.+?)!(.+)$', where.strip()).groups()
+    return subprocess.run([hpitool, 'cat', str(Path(data) / archive), entry], capture_output=True, check=True).stdout
+
+
+def seats_install(root, data, hpitool):
+    """The retail install plus "Scenario Seats": King of the Hill with only its first two
+    start positions, so its scenario (placements for players 1-4) needs four seats and the
+    map alone gives two."""
+    install = Path(root) / 'seats-install'
+    install.mkdir()
+    for entry in Path(data).iterdir():
+        if entry.name.lower() != 'maps':
+            os.symlink(entry.resolve(), install / entry.name)
+    maps = install / 'Maps'
+    maps.mkdir()
+    for entry in (Path(data) / 'Maps').iterdir():
+        os.symlink(entry.resolve(), maps / entry.name)
+    src = Path(root) / 'seats-src'
+    (src / 'kmap').mkdir(parents=True)
+    for ext in ('tnt', 'crt', 'tdf'):
+        (src / 'kmap' / ('Scenario Seats.' + ext)).write_bytes(hpi_read(hpitool, data, 'maps/King of the Hill.' + ext))
+    ota = hpi_read(hpitool, data, 'maps/King of the Hill.ota').decode('latin-1')
+    ota, dropped = re.subn(r'\[special[23]\]\s*\{[^{}]*\}\s*', '', ota)
+    assert dropped == 2, 'King of the Hill no longer has the start positions this case drops'
+    ota = ota.replace('King of the Hill', 'Scenario Seats').replace('numplayers=4', 'numplayers=2')
+    (src / 'kmap' / 'Scenario Seats.ota').write_bytes(ota.encode('latin-1'))
+    subprocess.run([hpitool, 'pack', str(src), str(maps / 'Scenario Seats.kmp')], check=True, stdout=subprocess.DEVNULL)
+    return str(install)
+
+
+def case_scenario_confirm(args, root):
+    """Single player MAP SCENARIO off with AIs in the scenario's extra seats: arm, confirm."""
+    data = seats_install(root, args.data, args.hpitool)
+    # The room opens with the scenario on (four seats); three AIs fill them.
+    home, env = profile(root, 'case10', 'ai:1;ai:2;ai:3;scenario:0;start', {'TAK_MAP_SCENARIO': '1'})
+    code, log = run_client(args.client, ['game', 'Scenario Seats', '--data', data], env, home)
+    try:
+        script_ran(log, ['ai:1', 'ai:2', 'ai:3', 'scenario:0', 'start'])
+        assert re.search(r"client \d+ created game \d+ 'Single Player' on 'Scenario Seats' .*scenario=1", log), \
+            'the room did not open on Scenario Seats with its scenario on'
+        armed = log.find('room note: CLICK AGAIN: TURNING MAP SCENARIO OFF REMOVES 2 AI PLAYERS')
+        assert armed >= 0, 'the first click did not arm the cell'
+        turned = [m.start() for m in re.finditer(r'host turned MAP SCENARIO off \(capacity 2, scenario 0, 2 AI removed', log)]
+        assert len(turned) == 1 and turned[0] > armed, 'the change was not sent once, after the confirm'
+        # (The server sends the new room before it logs the change: the note may come first.)
+        assert 'room note: 2 AI PLAYERS LEFT: THE MAP HAS 2 STARTS' in log[armed:], 'the room did not tell the removal'
+        assert re.search(r'game \d+ starting with 2 players', log), 'the game did not start with the one AI left'
+        assert code == 0, 'the client exited %d' % code
+        played = re.search(r'replay: wrote .*\((\d+) ticks\)', log)
+        assert played and int(played[1]) >= QUIT_TICK, 'the game did not play to the quit tick'
+    except AssertionError as e:
+        raise AssertionError('%s\n%s' % (e, log[-4000:]))
+
+
 def free_port():
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
@@ -170,7 +230,7 @@ def case_unready(args, root):
         slog.close()
 
 
-CASES = {1: case_single_player, 2: case_watch, 4: case_unready}
+CASES = {1: case_single_player, 2: case_watch, 4: case_unready, 10: case_scenario_confirm}
 
 
 def main():
