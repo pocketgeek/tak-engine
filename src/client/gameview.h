@@ -230,6 +230,10 @@ public:
     // the Create screen (the browser is empty by design) and mark it single-player
     // (labels change, no password / no game browser).
     void setSinglePlayer() { lobbyScreen_ = LobbyScreen::Create; singlePlayer_ = true; }
+    // A private single-player room that opens straight into the room (Cartographer's
+    // --play-map, the debug CLI game): single player -- no READY, no two-human START rule
+    // -- without the create screen.
+    void setSinglePlayerFlag() { singlePlayer_ = true; }
     // LOCAL SERVER from the CONNECT screen: the host opens on the create screen with the
     // game already named; BACK there leaves for the menu (the server is this session's).
     void setLanHost(const std::string& gameName, const std::string& password) {

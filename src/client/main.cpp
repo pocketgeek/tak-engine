@@ -1722,6 +1722,7 @@ int main(int argc, char** argv) {
                                 gameView->setCanReturnToMenu(); }   // in-game menu can return to it
                 if (!campaignStem.empty()) gameView->setMissionStem(campaignStem);   // autoMode 8 hosts this mission
                 else if (menuInteractive) gameView->setSinglePlayer();  // menu SP: SP-flavoured lobby, Create-first
+                else if (mpAutoMode == 7) gameView->setSinglePlayerFlag();   // --play-map / CLI game: a private room
                 // LOCAL SERVER: its host, the game "<name>'s Game" -- the one game name
                 // allowed past 16 characters (a 16-character name keeps its 's Game).
                 else if (lanHosting) gameView->setLanHost(playerName + "'s Game", lanGamePass);
