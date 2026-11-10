@@ -1,12 +1,20 @@
 // SimPool: every chunk runs exactly once with the fixed boundaries at any
 // width, per-chunk results merged in chunk order equal the serial run, and the
-// pool survives many back-to-back jobs (the per-tick pattern) at 0/1/3/7 workers; asynchronous jobs
-// (start/help/finish) run every chunk exactly once.
+// pool survives many back-to-back jobs (the per-tick pattern) at every width a
+// player or a server operator can choose (SIMULATION THREADS, --sim-threads): 0
+// workers, each count the default rule gives (1, 2, 3), a 24-thread machine's
+// most (23) and the code's most (SimPool::kMaxWorkers, 63), with 5, 7, 15 and
+// 31 between; asynchronous jobs (start/help/finish) run every chunk exactly
+// once. At each width every slot of the pool runs, one thread to a slot (what
+// per-slot scratch relies on). And a chosen thread count maps to a worker count
+// as documented.
 #include "sim/simpool.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdint>
+#include <thread>
 #include <vector>
 
 using tak::sim::SimPool;
@@ -19,8 +27,21 @@ static void check(bool ok,const char* what,unsigned workers) {
 static uint64_t mix(uint64_t h,uint64_t v) { return (h^v)*0x100000001b3ull; }
 
 int main() {
+    // A choice of threads (0 = AUTO) as the threads it runs on and the workers
+    // a World is given: 1 is serial, a count above this machine's is its most.
+    const unsigned most=SimPool::maxThreads();
+    check(SimPool::usableCpus()>=1 && most>=1 && most<=SimPool::kMaxThreads && most<=SimPool::usableCpus(),
+          "usable CPUs and the most threads",0);
+    check(SimPool::kMaxWorkers==63 && SimPool::defaultWorkers()<=SimPool::kMaxWorkers,"the widest pool",0);
+    check(SimPool::threadsFor(0)==1+SimPool::defaultWorkers() && SimPool::workersFor(0)==-1,"AUTO",0);
+    check(SimPool::threadsFor(-3)==SimPool::threadsFor(0) && SimPool::workersFor(-3)==-1,"below AUTO reads as AUTO",0);
+    check(SimPool::threadsFor(1)==1 && SimPool::workersFor(1)==0,"one thread is the serial simulation",0);
+    for (unsigned n=1;n<=most;++n)
+        check(SimPool::threadsFor(int(n))==n && SimPool::workersFor(int(n))==int(n)-1,"n threads: n - 1 workers",n);
+    check(SimPool::threadsFor(int(most)+1)==most && SimPool::threadsFor(100000)==most &&
+          SimPool::workersFor(100000)==int(most)-1,"more threads than this machine has: its most",0);
     uint64_t reference=0;
-    for (unsigned workers:{0u,1u,3u,7u}) {
+    for (unsigned workers:{0u,1u,2u,3u,5u,7u,15u,23u,31u,SimPool::kMaxWorkers}) {
         SimPool pool(workers);
         check(pool.workers()==workers,"worker count",workers);
         for (size_t count:{size_t(0),size_t(1),size_t(255),size_t(256),size_t(257),size_t(5000),size_t(20011)}) {
@@ -59,6 +80,29 @@ int main() {
             order.push_back(k);check(slot==0,"inline below minParallel",workers);
         });
         check(order==std::vector<size_t>{0,1,2,3},"inline chunk order",workers);
+        // slot identifies the executing thread: scratch kept per slot (World's
+        // aura masks and exploration lists, sized workers()+1) is one thread's
+        // at a time. A job of workers+1 chunks, each of which waits until all
+        // of them have started, ends only with every thread of the pool inside
+        // it at once -- so every slot 0..workers is in use, and none twice.
+        for (int rep=0;rep<8 && workers;++rep) {
+            const size_t n=size_t(workers)+1;
+            std::vector<std::atomic<uint32_t>> inSlot(n);
+            std::atomic<size_t> started{0};
+            std::atomic<bool> shared{false},stuck{false};
+            const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(60);
+            pool.forChunks(n,1,0,[&](size_t,size_t,size_t,unsigned slot) {
+                if (slot>=n || inSlot[slot].fetch_add(1)!=0) shared=true;
+                started.fetch_add(1);
+                while (started.load()<n && !stuck.load()) {
+                    if (std::chrono::steady_clock::now()>until) stuck=true;
+                    std::this_thread::yield();
+                }
+                if (slot<n) inSlot[slot].fetch_sub(1);
+            });
+            check(!stuck,"every slot of the pool runs",workers);
+            check(!shared,"one thread to a slot",workers);
+        }
         // Asynchronous jobs (Legion stage 9): the caller keeps working while the workers run the chunks, may help,
         // waits for one chunk by helping, and finish() leaves every chunk run exactly once; while a job is open
         // forChunks runs inline on the caller; and many start/finish rounds back to back.

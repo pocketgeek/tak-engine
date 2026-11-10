@@ -24,18 +24,22 @@ inline void cpuRelax() {
 constexpr auto kSpin=std::chrono::microseconds(20);
 } // namespace
 
-unsigned SimPool::defaultWorkers() {
-#ifndef NDEBUG
-    if (const char* e=std::getenv("TAK_SIM_WORKERS"))
-        return unsigned(std::clamp(std::atoi(e),0,15));
-#endif
+unsigned SimPool::usableCpus() {
     unsigned cpus=std::thread::hardware_concurrency();
 #if defined(__linux__)
     // The CPUs this process may run on (taskset, containers), not the machine's.
     cpu_set_t set;
     if (sched_getaffinity(0,sizeof(set),&set)==0) cpus=unsigned(CPU_COUNT(&set));
 #endif
-    return std::min(3u,cpus/8);
+    return std::max(1u,cpus);
+}
+
+unsigned SimPool::defaultWorkers() {
+#ifndef NDEBUG
+    if (const char* e=std::getenv("TAK_SIM_WORKERS"))
+        return unsigned(std::clamp(std::atoi(e),0,int(kMaxWorkers)));
+#endif
+    return std::min(3u,usableCpus()/8);
 }
 
 SimPool::SimPool(unsigned workers) {

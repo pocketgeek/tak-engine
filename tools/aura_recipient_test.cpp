@@ -6,7 +6,8 @@
 // order, and folds a max (buff) or a min (debuff) into every unit the aura's
 // forEachNear square reaches. The order matters: a unit under a buff and a debuff
 // of the same stat ends on whichever comes last. Checked here, with no workers
-// and with 1, 3 and 7:
+// and with 1, 2, 3, 7, 23 and 63 (the tiles are the one pass whose chunk size
+// follows the width, so the widths here give it several: World::applyAuraTiles):
 //   * order: one unit under a buff and a debuff of the same stat, from emitters
 //     in both unit orders -- the result follows the emitter order exactly;
 //   * eligibility: dead, embarked, unbuilt, frozen and stoned emitters emit
@@ -163,8 +164,9 @@ struct Types {
     }
 };
 
-// Serial (the emitter-order pass), then 1, 3 and 7 workers (the recipient pass).
-constexpr int kWidths[] = {-1, 1, 3, 7};
+// Serial (the emitter-order pass), then 1, 2, 3, 7, 23 and 63 (SimPool::kMaxWorkers)
+// workers (the recipient pass).
+constexpr int kWidths[] = {-1, 1, 2, 3, 7, 23, 63};
 
 std::unique_ptr<World> makeWorld(int width, int cells) {
     auto w = std::make_unique<World>();
@@ -180,7 +182,7 @@ std::unique_ptr<World> makeWorld(int width, int cells) {
 // Two armies with emitters of every kind march into each other; two priests raise a
 // shaman's body on the way.
 void crowd(const Types& t) {
-    std::printf("crowd: serial vs 1/3/7 workers, every tick of a fight with a revive:\n");
+    std::printf("crowd: serial vs 1/2/3/7/23/63 workers, every tick of a fight with a revive:\n");
     std::vector<std::unique_ptr<World>> worlds;
     std::vector<int> bodies, priests;
     for (int width : kWidths) {

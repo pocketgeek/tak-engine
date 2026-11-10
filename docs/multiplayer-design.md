@@ -859,7 +859,8 @@ metadata. Command ordering and the wire protocol are unchanged.
 
 The running-room limit bounds the number of simulation workers. When multiple
 games run, each simulation uses serial internal jobs to avoid nested worker
-oversubscription. A slow tick no longer holds up the network loop or another
+oversubscription; a lone game's internal jobs use the threads `--sim-threads`
+allows (`auto` by default). A slow tick no longer holds up the network loop or another
 room's ticks, although games still compete for CPU and memory bandwidth. Map
 startup and replay file writes remain synchronous work on the main thread.
 

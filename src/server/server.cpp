@@ -459,6 +459,10 @@ public:
     // harness run unrepeatable, and the headless --mpai check exists precisely to
     // produce the same state hash twice. Not for a real server.
     void setFixedSeed(uint32_t v) { fixedSeed_ = v; fixedSeedSet_ = true; }
+    // --sim-threads: the threads each game's referee sim may use, its room worker
+    // included (0 = AUTO, else a count; sim::SimPool::threadsFor). Scheduling only.
+    // More than one running game still ticks each of them serially (closeTick).
+    void setSimThreads(int choice) { simThreads_ = choice; }
     void setNoAuth() { requireAuth_ = false; }
 #ifndef NDEBUG
     void allowBenchmarks() {testWork_=true;}
@@ -521,6 +525,7 @@ private:
     std::shared_ptr<tak::srv::AcmeCertificates> acme_;
     bool loopbackOnly_ = false;
     bool lan_ = false;
+    int simThreads_ = 0;   // --sim-threads (0 = AUTO)
     tak::net::LanBeacon beacon_;
     uint64_t beaconAtMs_ = 0, lanNonce_ = 0;
     std::map<std::string, std::string> lanMapTitles_;   // map id -> its shown title, for the announcement
@@ -2290,6 +2295,7 @@ void Server::tryStart(Client& c) {
     {
         r->reg = r->opts.crusades && dataSet.haveCb ? &dataSet.regCb : &dataSet.reg;
         r->ref = std::make_unique<tak::sim::World>();
+        r->ref->setSimWorkers(tak::sim::SimPool::workersFor(simThreads_));   // --sim-threads; AUTO leaves the default
         if (isMission) {
             // The client builds the SAME world (setupMission is deterministic), so the
             // referee and every peer stay in lockstep.
@@ -2462,6 +2468,13 @@ void Server::tryStart(Client& c) {
     }
     for(int i=0;i<std::min(kMaxSlots,r->ref->numPlayers());++i)r->defeated[size_t(i)]=r->ref->player(i).defeated;
     std::fprintf(stderr, "game %u starting with %d players\n", r->id, r->usedSlots());
+    // What its referee sim runs on (--sim-threads). Several running games each tick
+    // serially (closeTick), whatever was asked, for as long as more than one runs.
+    size_t running = 0;
+    for (const auto& [id, room] : rooms_) { (void)id; running += room.running; }
+    if (running > 1) std::fprintf(stderr, "sim threads: 1 (%zu games running)\n", running);
+    else std::fprintf(stderr, "sim threads: %u%s\n", tak::sim::SimPool::threadsFor(simThreads_),
+                      simThreads_ > 0 ? "" : " (auto)");
 }
 
 // The host changes the room's map, MAP SCENARIO or start mode (Msg::SetRoomMap). Every
@@ -3923,6 +3936,7 @@ static int serverMain(int argc, char** argv) {
     uint32_t fixedSeed = 0;
     bool fixedSeedGiven = false;   // --seed 0 is a pinned seed, not "unset"
     tak::srv::Limits limits;
+    int simThreads = 0;   // --sim-threads: 0 = auto
     bool noAuth = false, loopbackOnly = false, closedRegistration=false, lan=false;
     for (int i = 1; i < argc; ++i) {
         try {if(limits.set(argv[i],i+1<argc?argv[i+1]:"")) {++i;continue;}}
@@ -3947,6 +3961,21 @@ static int serverMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--accounts") && i + 1 < argc) accountsPath = argv[++i];
         else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc)
             { fixedSeed = uint32_t(std::strtoul(argv[++i], nullptr, 0)); fixedSeedGiven = true; }
+        else if (!std::strcmp(argv[i], "--sim-threads") && i + 1 < argc) {
+            // auto, or a count from 1; one above the CPU threads this process may use
+            // runs as that many (sim::SimPool::threadsFor).
+            const std::string_view value(argv[++i]);
+            unsigned parsed = 0;
+            const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+            const bool number = error != std::errc::invalid_argument && end == value.data() + value.size();
+            if (value == "auto") simThreads = 0;
+            else if (number && error == std::errc::result_out_of_range) simThreads = int(tak::sim::SimPool::kMaxThreads);
+            else if (number && parsed >= 1) simThreads = int(std::min(parsed, tak::sim::SimPool::kMaxThreads));
+            else {
+                std::fprintf(stderr, "takserver: --sim-threads must be auto or a number of threads, 1 or more\n");
+                return 1;
+            }
+        }
         else if (!std::strcmp(argv[i], "--no-auth")) noAuth = true;
         else if (!std::strcmp(argv[i], "--closed-registration")) closedRegistration=true;
         else if (!std::strcmp(argv[i], "--tls-cert") && i+1<argc) tlsCert=argv[++i];
@@ -3972,6 +4001,7 @@ static int serverMain(int argc, char** argv) {
                         "                 [--acme-email address] [--acme-state directory] [--acme-staging]\n"
                         "                 [--allow-plaintext] (trusted LAN/test networks only)\n"
                         "                 [--map-cache-dir <writable directory>]\n"
+                        "                 [--sim-threads <auto|N>]\n"
                         "                 [--max-games N] [--max-running-games N] [--max-accounts N]\n"
                         "                 [--map-memory-mib N] [--map-storage-mib N]\n"
                         "                 [--replay-memory-mib N] [--replay-storage-mib N]\n"
@@ -3985,6 +4015,11 @@ static int serverMain(int argc, char** argv) {
                         "  --map-cache-dir holds uploaded maps and game mods and saved generated\n"
                         "  maps (default: TAKengine/takserver in the per-user data folder, e.g.\n"
                         "  ~/.local/share). The --data folder is never written.\n"
+                        "  --sim-threads is how many CPU threads one game's simulation may use:\n"
+                        "  auto (the default: 1 to 4, from the CPU threads the server may use) or\n"
+                        "  a number from 1 (a number above those CPU threads means all of them).\n"
+                        "  It never changes a game's outcome. While more than one game is running,\n"
+                        "  each game uses one thread, whatever is set here.\n"
                         "  --seed N (0 included) pins every game's RNG seed, so a headless run is\n"
                         "  repeatable. Games are otherwise seeded randomly (which is what\n"
                         "  makes Random Start Locations differ game to game).\n"
@@ -4051,6 +4086,7 @@ static int serverMain(int argc, char** argv) {
 #endif
     if (!replayDir.empty()) s.setReplayDir(replayDir);
     if (fixedSeedGiven) s.setFixedSeed(fixedSeed);
+    s.setSimThreads(simThreads);
     s.setLimits(limits);
     if(acmeOption)s.setAcme(std::make_shared<tak::srv::AcmeCertificates>(acme));
     if(!tlsCert.empty())s.setTls(tak::net::TlsContext::server(tlsCert,tlsKey));

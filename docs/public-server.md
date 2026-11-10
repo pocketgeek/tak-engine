@@ -309,6 +309,7 @@ clients.
 | `--map-storage-mib` | 4,096 | Download cache and saved generated maps together |
 | `--replay-memory-mib` | 256 | Estimated replay history memory per game |
 | `--replay-storage-mib` | 4,096 | Each replay archive directory |
+| `--sim-threads` | `auto` | CPU threads one game's simulation may use |
 
 A player who meets a game limit stays connected. At `--max-games` the **CREATE** window
 says *CANNOT OPEN A GAME: server game capacity reached*; at `--max-running-games` the
@@ -320,6 +321,21 @@ raised to 64, accounts to 100,000, and memory/storage limits to 65,536 MiB.
 Choose limits appropriate to the host. These are application budgets, not a
 replacement for a process memory limit or filesystem quota: simulation state,
 transient decoding/serialization, TLS and allocator overhead also use memory.
+
+`--sim-threads <auto|N>` sets how many CPU threads one game's referee simulation
+may use, its own room thread included. `auto`, the default, picks from the CPU
+threads the server process may use (its affinity mask on Linux): 1 thread with
+fewer than 8, 2 from 8, 3 from 16 and 4 from 24. `N` is a number from 1 (fully
+serial); a number above the usable CPU threads means all of them, at most 64.
+`0`, a negative number or anything else is refused at startup. It applies only
+while one game is running: with two or more running games each game uses one
+thread, whatever is set, because the games already run side by side. The extra
+threads matter mostly in large battles (from about 2,000 units). The option never
+changes a game's outcome, its state hashes or its replay. Each game start logs
+what it runs on, for example `sim threads: 4 (auto)`, `sim threads: 6` or
+`sim threads: 1 (2 games running)`. A player's own single-player server and
+**Local server** get the value of the game's **Simulation threads** option
+this way.
 
 Map uploads reserve their advertised size before receiving data and expire
 after 30 seconds without progress or five minutes total. Each package remains

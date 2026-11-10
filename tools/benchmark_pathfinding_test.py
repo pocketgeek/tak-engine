@@ -8,7 +8,9 @@ Retail one by the sims themselves: only a world running Legion prints LPROBE lin
 (TAK_LPROBE), and the client and its local server (the referee) both must. TAK_LEGION
 still forces Legion. The run's stats panel and results must name the mode the sims ran,
 and DONE must fit the window: TAK_BENCH_STOP_TICK ends each run with a full run's results,
-and TAK_BENCH_REPORT prints what those two screens drew. The profile is scratch and the
+and TAK_BENCH_REPORT prints what those two screens drew. The results also name the
+SIMULATION THREADS the run was opened with, as the client logged them: AUTO with what it
+comes to, or the saved count. The profile is scratch and the
 settings file is named outright: SDL_GetPrefPath ignores XDG_* on macOS and Windows.
 
 usage: benchmark_pathfinding_test.py <takclient> <retail-install>
@@ -57,6 +59,22 @@ def named(log, name, mode, size):
         fail("%s: DONE at %s must be inside a %s window" % (name, done[0], size), log)
 
 
+def threads(log, name, saved):
+    """The results' SIM THREADS row is what the client logged for this run: `saved` threads, or AUTO's count."""
+    row = re.search(r"^BENCHRESULT SIM THREADS (.*)$", log, re.M)
+    if not row:
+        fail("%s: the results must list SIM THREADS" % name, log)
+    if saved:
+        want, logged = str(saved), "sim threads: %d\n" % saved
+    else:
+        auto = re.fullmatch(r"AUTO \((\d+)\)", row[1])
+        if not auto:
+            fail("%s: SIM THREADS must read AUTO (n), got '%s'" % (name, row[1]), log)
+        want, logged = row[1], "sim threads: %s (auto)\n" % auto[1]
+    if row[1] != want or logged not in log:
+        fail("%s: SIM THREADS reads '%s'; want '%s' and the log line '%s'" % (name, row[1], want, logged.strip()), log)
+
+
 def probes(root, name, saved, size, extra=None):
     """A menu Benchmark in a `size` window, up to its results; {tick: LPROBE lines printed} over both sims."""
     log = run(root, name, saved + "fullscreen = 0\n", dict({"TAK_MENU_PICK": "benchmark", "TAK_LPROBE": "30", "TAK_SPEED": "80",
@@ -78,13 +96,15 @@ with tempfile.TemporaryDirectory(prefix="tak-bench-path-") as root:
     if ticks.get(30, 0) < 2:
         fail("a saved Legion pick must run Legion on the client and the referee (got %s)" % ticks, log)
     named(log, "legion", "LEGION", (1024, 768))
+    threads(log, "legion", 0)
 
-    ticks, log = probes(root, "retail", "benchmarkPathfinding = 0\n", (1280, 800))
+    ticks, log = probes(root, "retail", "benchmarkPathfinding = 0\nsimThreads = 1\n", (1280, 800))
     if ticks:
         fail("a saved Retail pick must run Retail (got %s)" % ticks, log)
     if "connected to 127.0.0.1" not in log:
         fail("the Retail benchmark never reached its server", log)
     named(log, "retail", "RETAIL", (1280, 800))
+    threads(log, "retail", 1)
 
     ticks, log = probes(root, "flag", "benchmarkPathfinding = 0\n", (640, 480), {"TAK_LEGION": "1"})
     if ticks.get(30, 0) < 2:

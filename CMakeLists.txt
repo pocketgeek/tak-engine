@@ -1145,8 +1145,8 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(legion_route_paused PROPERTIES TIMEOUT 3600)
   endif()
   # Legion 10,000 stage 9: the parallel planning jobs (chain tiles built beside the serial pass, plane rows in
-  # chunks) decide nothing: the state hash and every observer key equal the serial run at 1, 3 and 7 workers, with
-  # the jobs' completion order perturbed, and forced inline under TAK_LEGION_VERIFY (tools/legion_parallel_test.py).
+  # chunks) decide nothing: the state hash and every observer key equal the serial run at 1, 2, 3, 7 and 63 workers,
+  # with the jobs' completion order perturbed, and forced inline under TAK_LEGION_VERIFY (tools/legion_parallel_test.py).
   add_test(NAME legion_parallel
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_parallel_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
@@ -1599,6 +1599,10 @@ add_test(NAME nimbus COMMAND nimbus_test)
 add_executable(gaf_rle_test tools/gaf_rle_test.cpp)
 target_link_libraries(gaf_rle_test PRIVATE tak-formats)
 add_test(NAME gaf_rle COMMAND gaf_rle_test)
+# The JPEG writer (util/jpeg.h, the Benchmark results' SAVE AS JPG) on synthetic pictures.
+add_executable(jpeg_encode_test tools/jpeg_encode_test.cpp)
+target_link_libraries(jpeg_encode_test PRIVATE tak-formats)
+add_test(NAME jpeg_encode COMMAND jpeg_encode_test)
 add_executable(effect_inventory tools/effect_inventory.cpp)
 target_link_libraries(effect_inventory PRIVATE tak-formats)
 add_executable(retail_construction_test tools/retail_construction_test.cpp)
@@ -3223,6 +3227,13 @@ if(TAK_BUILD_CLIENT)
         add_test(NAME benchmark_pathfinding COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tools/benchmark_pathfinding_test.py" "$<TARGET_FILE:takclient>" "${TAK_TEST_DATA}")
         set_tests_properties(benchmark_pathfinding PROPERTIES TIMEOUT 300)
+        # The Benchmark results' SAVE AS JPG, clicked where it is drawn: one JPEG of the
+        # window's size in the profile's benchmarks folder and a greyed SAVED button; a
+        # folder that cannot be written says so, leaves no file and keeps the button live;
+        # a name that is taken, and its -2, are left as they were (the picture is the -3).
+        add_test(NAME benchmark_save COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tools/benchmark_save_test.py" "$<TARGET_FILE:takclient>" "${TAK_TEST_DATA}")
+        set_tests_properties(benchmark_save PROPERTIES TIMEOUT 300)
       endif()
       # A menu single-player launch whose local server cannot run must come back to
       # the title screen with the reason (not the multiplayer sign-in dialog, not a
@@ -3825,6 +3836,19 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME server_status_cli COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tools/server_status_test.py" --server "$<TARGET_FILE:takserver>")
   set_tests_properties(server_status_cli PROPERTIES TIMEOUT 30)
+  # takserver --sim-threads <auto|N>: auto and a count are accepted, 0, negatives and junk are a
+  # usage error; with game data, each game start logs the threads its referee sim runs on (the
+  # count, the CPU rule for auto, the machine's most for a bigger count) and several running
+  # games each tick on one.
+  if(TAK_TEST_DATA)
+    add_test(NAME server_sim_threads COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_sim_threads_test.py" --server "$<TARGET_FILE:takserver>"
+      --data "${TAK_TEST_DATA}")
+  else()
+    add_test(NAME server_sim_threads COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_sim_threads_test.py" --server "$<TARGET_FILE:takserver>")
+  endif()
+  set_tests_properties(server_sim_threads PROPERTIES TIMEOUT 240)
 endif()
 if(TAK_TEST_DATA)
   find_package(Python3 COMPONENTS Interpreter QUIET)

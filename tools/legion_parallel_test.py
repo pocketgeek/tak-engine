@@ -11,7 +11,11 @@ waiting for a job still running -- so the state hash and every observer key must
 whatever the worker count and whatever order the jobs finish in. Per fixture this runs:
 
   * the reference: --serial (no SimPool workers: nothing is built ahead, every tile is built in the serial pass);
-  * --workers with TAK_SIM_WORKERS = 1, 3 and 7;
+  * --workers with TAK_SIM_WORKERS = 1, 2, 3, 7 and 63: every count the default rule picks (1, 2, 3), and the
+    widest pool there is (SimPool::kMaxWorkers, the top of the SIMULATION THREADS setting and of takserver
+    --sim-threads on a 64-thread machine), so far more workers than this machine has CPUs. Plain runs are the
+    cheap arms (2 to 17 s a fixture; the perturbed and verifying arms below cost several times that), which is
+    why the widths added for that setting, 2 and 63, are plain ones;
   * --workers with 3 and 7 workers and --par-perturb SEED (the jobs run in a shuffled order with random delays,
     so they complete in a different order on every run);
   * --serial --par-force --par-perturb SEED under TAK_LEGION_VERIFY (the jobs inline, shuffled; every staged tile
@@ -69,8 +73,10 @@ def main(argv):
     exe, scale = args
     arms = (
         ("w1", 1, ["--workers"], {}),
+        ("w2", 2, ["--workers"], {}),
         ("w3", 3, ["--workers"], {}),
         ("w7", 7, ["--workers"], {}),
+        ("w63", 63, ["--workers"], {}),
         ("w3-perturb", 3, ["--workers", "--par-perturb", "11"], {}),
         ("w7-perturb", 7, ["--workers", "--par-perturb", "4242"], {}),
         ("serial-forced-perturb-verify", 0, ["--serial", "--par-force", "--par-perturb", "7"], {"TAK_LEGION_VERIFY": "1"}),

@@ -359,6 +359,20 @@ as the single-player local server) accepts those speeds, and every other server
 clamps them to 2×. `TAK_SPEED=<tenths>` (up to 80) sets the starting speed of a
 headless harness game the same way.
 
+The simulation's worker pool (`src/sim/simpool.h`) is as wide as the player's
+**Simulation threads** option says (`simThreads` in the settings file: 0 = Auto,
+else that many threads, the one that ticks the world included), and a
+`takserver`'s as wide as `--sim-threads <auto|N>`; the client passes its value to
+the local server it starts. Each process logs `sim threads: N` (with `(auto)`
+for Auto) when a game starts. `TAK_SIM_WORKERS=<n>` (debug builds, 0 to 63
+workers beside the ticking thread) overrides Auto, and only Auto: a chosen count
+wins over it, in the client and in the server. Tests and tools that set it leave
+the option at Auto. A world reads Auto once, for its first pool, and keeps it: a
+CPU mask that changes during a game (`taskset -p`, a container's cpuset) does not
+change a running game's width. No width changes a result: `simpool`, `simpool_passes`,
+`exploration_parallel`, `state_hash`, `aura_recipient` and `legion_parallel`
+compare widths from 0 to 63 workers against the serial run.
+
 A headless harness game ends with an `mp-headless done: tick=… hash=… end=… result=…`
 line. `end=timelimit` stops at exactly the `--time` tick; `end=concluded` stops at
 exactly the tick the result landed (`result=`, 0 when there was none), however far

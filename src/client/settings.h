@@ -155,6 +155,17 @@ struct Settings {
     bool  hardwareCursor  = true; // OS-tracked cursor: stays smooth when the game hitches
     bool  smoothMotion    = true;  // interpolate unit motion between 30Hz sim ticks (glide, not step)
 
+    // ---- performance ----
+    // SIMULATION THREADS (Options > GAME): how many CPU threads one game simulation may
+    // use, the thread that ticks it included. 0 = AUTO (the default: 1 +
+    // sim::SimPool::defaultWorkers()), else 1 (fully serial) .. sim::SimPool::kMaxThreads.
+    // A value above this machine's thread count (a profile from a bigger machine) stays
+    // in the file and runs as that count (sim::SimPool::threadsFor). Scheduling only: it
+    // never changes a state hash or a replay. Latched when a game session opens, for the
+    // client's own simulation and for the local server it starts (takserver
+    // --sim-threads). Persisted as simThreads.
+    int   simThreads = 0;
+
     // ---- misc ----
     std::string playerName;        // default name for new local / unauthenticated multiplayer games
     std::string accountName;       // last multiplayer account signed in with. The
@@ -274,6 +285,7 @@ struct Settings {
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
             && a.edgeScroll == b.edgeScroll && a.mouseZoom == b.mouseZoom && a.cursorScale == b.cursorScale
             && a.hardwareCursor == b.hardwareCursor && a.smoothMotion == b.smoothMotion
+            && a.simThreads == b.simThreads
             && a.playerName == b.playerName && a.accountName == b.accountName
             && a.streamRememberKey == b.streamRememberKey && a.streamLocalCopy == b.streamLocalCopy
             && a.streamBitrate == b.streamBitrate
@@ -439,8 +451,10 @@ inline Settings uiDefaults(const Settings& cur) {   // UI: interface, camera (+ 
     d.screenShake = f.screenShake;
     return d;
 }
-inline Settings gameDefaults(const Settings& cur) {   // GAME: player name and data folder, both kept
-    return cur;
+inline Settings gameDefaults(const Settings& cur) {   // GAME: simulation threads; player name and data folder are kept
+    Settings d = cur;
+    d.simThreads = Settings{}.simThreads;
+    return d;
 }
 
 // What the AUDIO screen's DEFAULTS means: the current settings with the sound fields

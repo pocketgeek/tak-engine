@@ -246,6 +246,17 @@
         hotkeys_.load(s.hotkeys);                         // Options: rebindable hotkeys
     }
 
+    void GameView::latchSimThreads(int choice) {
+        // k threads: the thread that ticks the World (the sim worker, or this one for a
+        // replay and the headless harness) plus k - 1 SimPool workers. AUTO leaves the
+        // World on SimPool::defaultWorkers(), which it reads once, for its first pool.
+        // Nothing has ticked yet, and the World builds its pool at its first pooled
+        // pass, on the thread that ticks it.
+        simThreads_ = std::max(0, choice);
+        simThreadsRun_ = tak::sim::SimPool::threadsFor(simThreads_);
+        writableWorld().setSimWorkers(tak::sim::SimPool::workersFor(simThreads_));
+    }
+
     // The AUDIO page (Esc menu > AUDIO): sound device, volumes, speakers, CUSTOM MUSIC.
     void GameView::openAudioOptions() {
         if (!settings_) return;
@@ -423,6 +434,8 @@
         } else {
             spots = tak::sim::setupMatch(writableWorld(), registry_, cfg);
         }
+        std::fprintf(stderr, "sim threads: %u%s\n", simThreadsRun_,
+                     simThreads_ > 0 ? "" : " (auto)");   // what this playback's simulation runs on
         replayBundles_ = std::move(bundles);
         replayMode_ = true;
         replayKeyBudget_ = tak::replaybar::keyframeBudget(uint64_t(SDL_GetSystemRAM()) << 20);

@@ -2980,9 +2980,15 @@ public:
     // fixed chunks inline.
     // Never affects results -- purely scheduling.
     void setSerialThreads(bool s) { serialThreads_ = s; }
-    // The SimPool's worker count, for tests (-1: SimPool::defaultWorkers()).
+    // The SimPool's worker count (-1: SimPool::defaultWorkers(), AUTO), at most
+    // SimPool::kMaxWorkers: the client's SIMULATION THREADS setting and
+    // takserver --sim-threads (SimPool::workersFor), and tests.
     // setSerialThreads(true) still means 0. Scheduling only, like the above.
-    void setSimWorkers(int n) { simWorkers_ = n; }
+    // AUTO is read once, at the first simPool() call after this, and kept as a
+    // chosen count is: the width never follows a CPU mask that changes mid-game.
+    // Call it between ticks, on the thread that ticks this World (or before
+    // that thread starts): the pool is rebuilt at the next simPool() call.
+    void setSimWorkers(int n) { simWorkers_ = std::min(n, int(SimPool::kMaxWorkers)); autoWorkers_ = -1; }
     // Deterministic digest of sim state, for lockstep sync checking.
     struct WeaponAimSolution {
         uint16_t heading=0,pitch=0;
@@ -4521,6 +4527,10 @@ private:
     std::vector<uint8_t> explorationTouchedFlags_;
     bool serialThreads_ = false;
     int simWorkers_ = -1;
+    // What AUTO came to (SimPool::defaultWorkers()) when simPool() first needed it
+    // since setSimWorkers; -1 until then. Kept, and this World's own over
+    // restoreFrom, so a session's width is fixed whatever the CPU mask does later.
+    int autoWorkers_ = -1;
     // The intra-tick worker pool (0 workers when serialThreads_), created on
     // first use; see simPool().
     LeftEmptyOnCopy<std::unique_ptr<SimPool>> pool_;

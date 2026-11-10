@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 // Compare the permanent-reveal shortcut against the full retail traversal,
@@ -102,8 +103,9 @@ static bool checkKeptBlocks(int workers,std::vector<uint64_t>& hashes) {
     for (auto* world:{&kept,&rebuilt}) {
         if (workers<0) world->setSerialThreads(true); else world->setSimWorkers(workers);
     }
+    const std::string width=workers<0 ? "serial" : std::to_string(workers)+" workers";
     auto fail=[&](const char* what,int step) {
-        std::fprintf(stderr,"kept exploration blocks (%s): %s at step %d\n",workers<0?"serial":"workers",what,step);
+        std::fprintf(stderr,"kept exploration blocks (%s): %s at step %d\n",width.c_str(),what,step);
         return false;
     };
     // Planes of 45x37 cells (partial edge blocks); new terrain of the same
@@ -166,7 +168,7 @@ static bool checkKeptBlocks(int workers,std::vector<uint64_t>& hashes) {
     }
     // The fixture must keep exploring partly explored planes, or it shows little.
     std::printf("kept exploration blocks (%s): %d of %d passes revealed part of a partly explored plane\n",
-                workers<0?"serial":"workers",growing,step);
+                width.c_str(),growing,step);
     if (growing<20) return fail("too few passes revealed part of a partly explored plane",step);
     return true;
 }
@@ -178,11 +180,18 @@ int main() {
     if (!checkBlockExploration()) {
         std::fputs("block exploration differs from full traversal\n",stderr);return 1;
     }
+    // The pooled pass keeps a list of touched blocks per pool slot
+    // (explorationTouched_): 3 workers, and the widest pool there is (63, the
+    // top of SIMULATION THREADS and --sim-threads), whose every slot may run.
     {
-        std::vector<uint64_t> serialHashes,workerHashes;
-        if (!checkKeptBlocks(-1,serialHashes) || !checkKeptBlocks(3,workerHashes)) return 1;
-        if (serialHashes!=workerHashes) {
-            std::fputs("kept exploration blocks: workers differ from serial\n",stderr);return 1;
+        std::vector<uint64_t> serialHashes;
+        if (!checkKeptBlocks(-1,serialHashes)) return 1;
+        for (const int workers:{3,int(tak::sim::SimPool::kMaxWorkers)}) {
+            std::vector<uint64_t> workerHashes;
+            if (!checkKeptBlocks(workers,workerHashes)) return 1;
+            if (serialHashes!=workerHashes) {
+                std::fprintf(stderr,"kept exploration blocks: %d workers differ from serial\n",workers);return 1;
+            }
         }
     }
     using namespace tak::sim;
@@ -190,17 +199,17 @@ int main() {
     type.name=type.id="sight-probe";type.maxHp=100;
     type.maxVel=Fixed::fromInt(1);type.canMove=true;
     type.footX=type.footZ=1;type.sight=160;type.sightHeight=24;
-    World serial,parallel;
-    serial.setSerialThreads(true);
+    World serial,parallel,wide;
+    serial.setSerialThreads(true);parallel.setSimWorkers(3);wide.setSimWorkers(int(SimPool::kMaxWorkers));
     std::vector<uint8_t> terrain(128*128);
     for (int z=0;z<128;++z) for (int x=0;x<128;++x)
         terrain[size_t(z)*128+x]=uint8_t((x*7+z*3)%180);
-    for (auto* world:{&serial,&parallel}) {
+    for (auto* world:{&serial,&parallel,&wide}) {
         world->setTerrain(terrain,128,128,30);
         for (int i=0;i<4096;++i) world->spawn(&type,float((i%64)*16),float((i/64)*16),0,i%4);
     }
     for (int step=0;step<16;++step) {
-        for (auto* world:{&serial,&parallel}) {
+        for (auto* world:{&serial,&parallel,&wide}) {
             world->setDoubleSight(step>=8);
             world->setTeam(1,step<8 ? 0 : 1);
             for (size_t i=0;i<world->units().size();++i) {
@@ -214,12 +223,14 @@ int main() {
             }
             world->tick(1.f/30);
         }
-        if (serial.navigationExploration()!=parallel.navigationExploration() ||
-            serial.stateHash()!=parallel.stateHash()) {
-            std::fprintf(stderr,"parallel exploration differs at step %d\n",step);return 1;
-        }
+        for (const auto* pooled:{&parallel,&wide})
+            if (serial.navigationExploration()!=pooled->navigationExploration() ||
+                serial.stateHash()!=pooled->stateHash()) {
+                std::fprintf(stderr,"parallel exploration (%s workers) differs at step %d\n",
+                             pooled==&parallel ? "3" : "63",step);return 1;
+            }
     }
     if (std::none_of(parallel.navigationExploration().begin(),parallel.navigationExploration().end(),
                      [](uint16_t value){return value!=0;})) return 1;
-    std::puts("parallel exploration matches serial masks and world hashes");
+    std::puts("parallel exploration (3 and 63 workers) matches serial masks and world hashes");
 }

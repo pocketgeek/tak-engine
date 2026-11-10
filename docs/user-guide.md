@@ -246,7 +246,7 @@ The **Settings** button opens:
 
 | Entry | What it does |
 | --- | --- |
-| **Game** | Player name and game data folder. See [Options](#options). |
+| **Game** | Player name, game data folder and simulation threads. See [Options](#options). |
 | **Graphics** | Display and graphics settings. See [Options](#options). |
 | **User Interface** | Interface, camera (with tactical dots and screen shake) and cursor settings. See [Options](#options). |
 | **Audio** | Sound device, volumes, speakers and custom music. See [Audio](#audio). |
@@ -1916,8 +1916,8 @@ in a formation with ground units keep station over them.
 The options are on three pages: **Graphics** ([Display](#display) and
 [Graphics](#graphics)), **User Interface** ([Interface](#interface), [Camera](#camera)
 with **Tactical Dots**, **Tactical Dots Zoom** and **Screen Shake** at its end, plus
-**Hardware Cursor** and **Cursor Size** under *Cursor*) and **Game** ([Player](#player)
-and [Game data folder](#game-data-folder)).
+**Hardware Cursor** and **Cursor Size** under *Cursor*) and **Game** ([Player](#player),
+[Game data folder](#game-data-folder) and [Performance](#performance)).
 Open them from **Settings** on the main menu, or from the game menu (**Esc**) in a
 game; sound has its own [Audio](#audio) page. Changes apply and are saved
 immediately; there is no Save button (**Defaults** is at the bottom left, **Back**
@@ -1925,7 +1925,8 @@ at the bottom right). A
 slider is saved when you let go of it, a dropdown when you pick a choice, and your player name when you press
 Enter or click elsewhere. **Defaults** asks first (**Reset to defaults?**
 **Yes** / **No**), then puts that page's options back to their defaults; the
-**Game** page's leaves your player name and data folder alone, and no page touches
+**Game** page's puts **Simulation threads** back to Auto and leaves your player name
+and data folder alone, and no page touches
 key bindings, audio or voice chat. It also sets UI Scale and Cursor Size
 back to 100% and 1×, not to the display scale the
 [first start](#interface-size-on-the-first-start) chose, so raise them again on a
@@ -1962,6 +1963,36 @@ out when the game was started with `--data` or from inside an install folder,
 because those always win over the setting. **Defaults** never changes the data
 folder. The map editor shares this setting: a folder chosen in either program
 is the one both use next time.
+
+### Performance
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| **Simulation threads** | Auto | How many of your processor's threads the game simulation may use. The slider starts at **Auto** on the left, then goes from 1 up to every thread your computer has (at most 64). |
+
+**Auto** chooses from the number of threads your processor has: 1 with fewer
+than 8, 2 from 8, 3 from 16 and 4 from 24. The slider shows what Auto comes to
+on your computer, for example **Auto (4)**. **1** runs the whole simulation on
+one thread.
+
+The setting changes only how the work is shared out. It never changes what
+happens in a game: every value plays the same game, tick for tick, so players
+with different values play together and replays play back the same.
+
+A single-player game runs two simulations, the game itself and the local server
+that referees it and runs the computer players, and each uses this many threads.
+So does a [Local server](#local-server) you host. A game on someone else's
+server uses your setting for your own simulation only.
+
+The extra threads matter mostly in large battles, from about 2,000 units; a
+small game runs the same at any value. More is not always faster: a battle has
+only so much work to share out, and the same processor threads are wanted by
+the drawing of the game and, in single player, by the second simulation. The
+[Benchmark](#benchmark) is a good way to try a value: run the same Benchmark
+with each value and compare the results. A new value applies from the next game
+you open (a game, a replay or a Benchmark), not to one already open. If your
+settings file comes from a computer with more threads than this one has, the
+slider shows this computer's highest value.
 
 ### Audio
 
@@ -3199,7 +3230,19 @@ computer's capacity, 0–100%, and GPU use is measured as in the
 Unit limits still apply, so the highest intensities may not reach their
 requested unit counts. A computer that cannot keep up runs slower than the
 chosen speed and takes longer. The results list the **Speed** the run used;
-compare only runs at the same speed.
+compare only runs at the same speed. They also list **Sim threads**, the
+[Simulation threads](#performance) value the run was opened with (**Auto** with
+the number it came to), so runs that differ only in that can be told apart.
+
+**Save as JPG**, beside **Done**, saves the results screen as a picture: the
+whole window as shown, without the pointer. It goes in a `benchmarks` folder in
+your per-user folder (see [Where files are kept](#where-files-are-kept)), named
+for the date and time, like `benchmark-2026-11-10-143059.jpg`, and a line under
+the buttons shows where it went (the start of a long path is cut, so the file's
+name stays readable). A results screen is saved once: the button then
+reads **Saved** and is greyed until you leave the screen. If the picture could
+not be saved, the line says why and the button stays ready to try again.
+**Done**, **Esc** or a click outside the panel returns to the menu.
 
 The Benchmark always plays the original game with **no mods**: it leaves out
 every cosmetic and game mod pack, ticked or in `always_enabled`, so results
@@ -3250,7 +3293,8 @@ files) in your install folder. See [Creon](#creon).
 - Very large armies are expensive at high game speeds.
 - In Legion mode, armies of several thousand units cost more processor time than
   in Retail.
-- The **Benchmark** gives comparable numbers if you want to measure a change.
+- The **Benchmark** gives comparable numbers if you want to measure a change,
+  such as another **Simulation threads** value (see [Performance](#performance)).
 
 ### The game looks blurry on Linux
 
@@ -3371,7 +3415,8 @@ Settings, saved replays and downloaded content live in a per-user folder:
 The settings file is `settings.ini`. Replays (`.takrep` files) are saved beside
 it; a game still being recorded is a `.takrep.part` file, with a small
 `.takrep.part.chk` beside it, until it ends. Local copies of YouTube streams go in its
-`videos` folder. Maps downloaded in multiplayer and Cartographer's Test Map copies go in
+`videos` folder, and pictures of [Benchmark](#benchmark) results in its `benchmarks`
+folder. Maps downloaded in multiplayer and Cartographer's Test Map copies go in
 its `MapCache` folder, downloaded game mods in `ModCache`, and random maps you have
 played in `Maps`. The game never writes into your game data folder, which may be
 read-only, and reads no `MapCache` folder there.

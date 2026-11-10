@@ -12,6 +12,7 @@
 #include "client/hotkeys.h"
 #include "client/renderdriver.h"
 #include "client/waylandchoice.h"
+#include "sim/simpool.h"
 
 #include <algorithm>
 #include <cctype>
@@ -510,6 +511,30 @@ void OptionsScreen::build(int channels) {
         return out;
     };
 
+    // PERFORMANCE. SIMULATION THREADS: the threads one game simulation may use, the one
+    // that ticks it included: AUTO at the left (the count the CPU rule picks, shown
+    // beside it), then 1 (serial) up to every thread this process may use
+    // (sim::SimPool::maxThreads). A saved count above that shows and runs as the top.
+    // It never changes a game's outcome; a session latches it as it opens (GameView,
+    // and the local server it starts).
+    section("PERFORMANCE");
+    {
+        const int most = int(sim::SimPool::maxThreads());
+        slider("SIMULATION THREADS", 0, float(most),
+               [this, most] { return float(std::clamp(s_.simThreads, 0, most)); },
+               [this, most](float v) { s_.simThreads = std::clamp(int(v + 0.5f), 0, most); },
+               [](float v) {
+                   return v < 0.5f ? "AUTO (" + std::to_string(sim::SimPool::threadsFor(0)) + ")"
+                                   : std::to_string(int(v + 0.5f));
+               });
+        ctls_.back().help = [] {
+            return std::vector<std::string>{
+                "HOW MANY CPU THREADS THE GAME SIMULATION MAY USE. AUTO CHOOSES FROM YOUR CPU COUNT.",
+                "SINGLE PLAYER RUNS TWO SIMULATIONS, THE GAME AND ITS LOCAL SERVER, AND EACH USES THIS MANY.",
+                "IT NEVER CHANGES A GAME'S OUTCOME. APPLIES FROM THE NEXT GAME YOU OPEN."};
+        };
+    }
+
     // DISPLAY: the window / output device itself.
     section("DISPLAY");
     toggle("FULLSCREEN", [&] { return s_.fullscreen ? 1.0f : 0.0f; },
@@ -803,7 +828,7 @@ void OptionsScreen::build(int channels) {
     auto pageOf = [](const std::string& section) {
         if (section == "DISPLAY" || section == "GRAPHICS") return OptionsPage::Graphics;
         if (section == "INTERFACE" || section == "CAMERA") return OptionsPage::Interface;
-        return OptionsPage::Game;   // PLAYER, GAME DATA
+        return OptionsPage::Game;   // PLAYER, GAME DATA, PERFORMANCE
     };
     auto cursorRow = [](const Control& c) { return c.label == "HARDWARE CURSOR" || c.label == "CURSOR SIZE"; };
     auto dotsRow = [](const Control& c) {
@@ -835,8 +860,13 @@ void OptionsScreen::layout(int winW, int winH) {
     float panelW = page_ == OptionsPage::Audio ? std::min(1000 * u_, winW * 0.92f) : std::min(660 * u_, winW * 0.72f);
     float titleH = 3.4f * 7 * u_ + 26 * u_;
     float footerH = 52 * u_;    // DEFAULTS / BACK buttons, fixed at the panel bottom
+    // A slider's label is at the top of its row, over its track: straight under a
+    // section's divider (SIMULATION THREADS) the row starts a little lower, clear of it.
+    auto lead = [&](size_t i) {
+        return i > 0 && ctls_[i].kind == Control::Slider && ctls_[i - 1].kind == Control::Section ? 6 * u_ : 0.0f;
+    };
     contentH_ = 0;
-    for (auto& c : ctls_) contentH_ += rowH(c.kind);
+    for (size_t i = 0; i < ctls_.size(); ++i) contentH_ += lead(i) + rowH(ctls_[i].kind);
     float viewH = std::min(contentH_, winH * 0.92f - titleH - footerH);
     float panelH = titleH + viewH + footerH;
     panel_ = {(winW - panelW) / 2, (winH - panelH) / 2, panelW, panelH};
@@ -846,8 +876,10 @@ void OptionsScreen::layout(int winW, int winH) {
 
     float vy = panel_.y + titleH;    // viewport top
     float y = vy - scroll_;
-    for (auto& c : ctls_) {
+    for (size_t i = 0; i < ctls_.size(); ++i) {
+        Control& c = ctls_[i];
         float h = rowH(c.kind);
+        y += lead(i);
         c.row = {panel_.x + 26 * u_, y, panelW - 52 * u_, h};
         y += h;
     }
@@ -1387,7 +1419,8 @@ void OptionsScreen::drawDefaultsPrompt(int winW, int winH) {
         ? std::vector<std::string>{"EVERY SOUND SETTING GOES BACK TO ITS DEFAULT,",
                                    "AND EVERY TRACK TO ITS ORIGINAL MUSIC."}
         : page_ == OptionsPage::Game
-        ? std::vector<std::string>{"YOUR PLAYER NAME AND GAME DATA FOLDER ARE KEPT."}
+        ? std::vector<std::string>{"SIMULATION THREADS GOES BACK TO AUTO.",
+                                   "YOUR PLAYER NAME AND GAME DATA FOLDER ARE KEPT."}
         : std::vector<std::string>{"EVERY SETTING ON THIS PAGE GOES BACK TO ITS DEFAULT."};
     defaultsPrompt_.render(ren_, panel_, u_, winW, winH, "RESET TO DEFAULTS?", lines, "YES", "NO");
 }
