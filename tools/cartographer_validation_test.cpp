@@ -6,6 +6,7 @@
 #include "cartographer/ruleedit.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
+#include "tnt/ota.h"
 #include <iostream>
 #include <fstream>
 #include <chrono>
@@ -66,10 +67,17 @@ int main() {
         check(tak::mapgen::encodeMapId(params)==tak::mapgen::encodeMapId(parsed),"all generator options roundtrip exactly");
         const auto original=tak::mapgen::encodeMapId(parsed);
         tak::mapgen::Params restored;
-        check(cart::restoreGeneratorRecipe(original,"A description edited by the author",restored,generatorError) && tak::mapgen::encodeMapId(restored)==original,"saved generator recipe restores independently of description");
-        check(cart::restoreGeneratorRecipe("","Generator recipe: "+original+"\nAuthor notes",restored,generatorError),"legacy description recipe restores");
-        check(!cart::restoreGeneratorRecipe(original+"garbage","Generator recipe: "+original,restored,generatorError) && tak::mapgen::encodeMapId(restored)==original,"invalid recipe does not fall back to defaults or a different description recipe");
-        check(!cart::restoreGeneratorRecipe("","No recipe",restored,generatorError),"missing recipe gives a visible error");
+        check(cart::restoreGeneratorRecipe(original,restored,generatorError) && tak::mapgen::encodeMapId(restored)==original,"saved generator recipe restores");
+        check(!cart::restoreGeneratorRecipe(original+"garbage",restored,generatorError) && tak::mapgen::encodeMapId(restored)==original,"invalid recipe does not fall back to defaults");
+        check(!cart::restoreGeneratorRecipe("",restored,generatorError) && generatorError.find("no saved generator recipe")!=std::string::npos,"missing recipe gives a visible error");
+        {
+            // The recipe is the .ota's takgeneratorrecipe only: a description line that
+            // looks like one is the author's text, never read as the map's recipe.
+            const auto ota=tak::tnt::Scenario::parse("[GlobalHeader]\n{\n\tmissionname=Described;\n\tmissiondescription=Generator recipe: "+original+";\n}\n");
+            check(ota.generatorRecipe.empty() && ota.missionDescription=="Generator recipe: "+original,"fixture description parses");
+            check(!cart::restoreGeneratorRecipe(ota.generatorRecipe,restored,generatorError) && generatorError.find("no saved generator recipe")!=std::string::npos,
+                  "a recipe in the description is not read as the map's recipe");
+        }
         fields[0]="18446744073709551616";
         check(!cart::parseGeneratorFields(fields,parsed,generatorError) && tak::mapgen::encodeMapId(parsed)==original,"seed overflow leaves settings unchanged");
         for(int layout=tak::mapgen::Maze;layout<tak::mapgen::kLayouts;++layout) {
@@ -88,9 +96,9 @@ int main() {
             check(decoded.plateauDensity==0 && decoded.mountainDensity==200 && decoded.townDensity==255,"kit amounts ride in the recipe");
             kitFields[8]="Lots";check(!cart::parseGeneratorFields(kitFields,kits,generatorError),"unknown scattered mana level accepted");
             kitFields[8]="None";kitFields[10]="256";check(!cart::parseGeneratorFields(kitFields,kits,generatorError),"kit amount range checked");
-            // A recipe from an older generator cannot be regenerated: say so.
-            check(!cart::restoreGeneratorRecipe("~gen1~080001000000000000000100030003020000ff608003","",restored,generatorError) &&
-                  generatorError.find("older random-map generator")!=std::string::npos,"older recipe gets a clear error");
+            // Only the current recipe version restores; any other is malformed.
+            check(!cart::restoreGeneratorRecipe("~gen1~080001000000000000000100030003020000ff608003",restored,generatorError) &&
+                  generatorError.find("malformed or cannot be restored exactly")!=std::string::npos,"another recipe version is refused as malformed");
         }
         fields=cart::generatorFields(params);fields[3]="256";
         check(!cart::parseGeneratorFields(fields,parsed,generatorError),"density range checked");

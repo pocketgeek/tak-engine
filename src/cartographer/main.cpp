@@ -461,7 +461,7 @@ int cart::Editor::run() {
             }
             // An AI mod without a map keeps the menu bar (its map commands disabled) while
             // the window has no dialog of its own up.
-            const bool workspaceMenus=aiModOnly && aiOpen && !aiStartOpen && !aiMergeOpen && !aiModSaveOpen && !aiModOpenOpen && aiWordPick==-2;
+            const bool workspaceMenus=aiModOnly && aiOpen && !aiStartOpen && !aiModSaveOpen && !aiModOpenOpen && aiWordPick==-2;
             if(modal==M_NONE && !scriptOpen && (!aiOpen || workspaceMenus) && !useOnlyOpen && !regionsOpen && handleMenuInput(e))continue;
             if(modal==M_NONE && !scriptOpen && !aiOpen && !useOnlyOpen && !regionsOpen && !noMap() && (handleMinimapInput(e) || handlePaletteScrollbar(e) || handlePaletteFocus(e)))continue;
             if(regionsOpen && modal==M_NONE) {handleRegionsList(e);continue;}
