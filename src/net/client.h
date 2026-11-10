@@ -191,6 +191,12 @@ public:
                     const std::string& mapId, const GameOptions& opts, uint8_t capacity,
                     bool spectate = false, bool priv = false, const std::string& mission = "");
     void joinGame(uint32_t id, const std::string& password);
+    // Leave the room; or, in the game list, take back the CreateGame, JoinGame or Spectate
+    // still on its way (LeaveGame follows it to the server, so a room it opens there is left
+    // at once). Either way this client is in no room from here: what the server sent it as
+    // a member of that room, or in answer to that request, is dropped as it arrives -- the
+    // room's tables and transfers, a late yes or no, a watched game's start (see takes()).
+    // The next request may go out at once; its answer is told apart from those.
     void leaveGame();
     void setSlot(int slot, uint8_t type, uint8_t faction, uint8_t color,
                  uint8_t team, uint8_t ready, uint8_t aiLevel = 2);
@@ -250,9 +256,10 @@ public:
 
     const std::vector<GameInfo>& games() const { return games_; }
     const RoomView& room() const { return room_; }
-    // Why the server refused the last join / watch / reconnect ("wrong password",
-    // "spectators are not allowed in this game", ...); empty once a later request is
-    // sent or one succeeds. The connection stays in the lobby, so the browser shows it.
+    // Why the server refused the last create / join / watch / reconnect ("wrong password",
+    // "spectators are not allowed in this game", "server game capacity reached", ...);
+    // empty once a later request is sent or one succeeds. The connection stays in the
+    // lobby, so the browser shows it. A request taken back (leaveGame) leaves none.
     const std::string& joinError() const { return joinError_; }
     // Why the last createGame() could not even be requested (the map failed to build locally);
     // cleared by the next createGame(). The connection stays up in the lobby.
@@ -412,6 +419,19 @@ public:
 
 private:
     void onFrame(const Frame& f);
+    // Is this frame this client's to act on? A room's messages count only while the server
+    // has this client in that room: from its own JoinResult(ok) (CreateGame, JoinGame),
+    // GameStarting (Spectate) or Reseated (Rejoin) until it leaves. Anything else of a room
+    // was sent before the server took this client's leave, or is not this client's at all,
+    // and is dropped unread: it changes no state, room, transfer or pending request.
+    bool takes(Msg kind) const;
+    bool inRoom() const { return state_ == State::InRoom || state_ == State::Starting || state_ == State::InGame; }
+    // leaveGame's mark in the stream. The server answers a connection's messages in order,
+    // and LeaveGame has no answer of its own, so a Ping goes out right behind it: everything
+    // of a room that arrives before that Ping's Pong was sent before the server took the
+    // leave (the left room's, or the answer to a request taken back), and what follows the
+    // Pong answers what was sent after it. Counts the Pongs still to come before that one.
+    size_t leavePongs_ = 0;
     void sendAuthBegin();            // Hello answered with AuthRequired -> start SCRAM
     void sendAuthToken();            // ... or spend the sign-in token instead
     void onAuthChallenge(Reader& r);

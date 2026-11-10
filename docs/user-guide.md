@@ -2361,9 +2361,8 @@ fields and **Esc** closes a window, as **CANCEL** does. If the server refuses (a
 wrong password, a full game), the window says why and keeps what you typed, so you
 can correct it and try again; it also says when the server does not answer, and
 when the game has closed or started in the meantime. **CANCEL** while the server
-has not yet answered a **JOIN** or a **CREATE** takes the request back: you stay
-in the game list. (A **WATCH** already sent cannot be taken back; if the server
-lets you in, the game opens.)
+has not yet answered a **JOIN**, a **WATCH** or a **CREATE** takes the request
+back: you stay in the game list, and can ask again at once.
 
 In the room, the game's name stands above the slots for everyone. When the game
 has a password, the players who typed it (the host who created the game, and
@@ -3340,9 +3339,12 @@ until the room is ready. If it cannot be made, the screen says *CANNOT OPEN A GA
 and why, and **Back to menu** (**Back** for a local server game) returns. A
 remembered map that is missing does not stop it: the room opens on another map and
 says why. In a game browser, the **CREATE** window says why a game could not be
-opened and keeps what you typed. A server that has no room for another game ends
-the connection instead: the *DISCONNECTED* screen says why (*server game capacity
-reached*), and **Back to menu** returns.
+opened and keeps what you typed. A server that has no room for another game says
+so there too (*CANNOT OPEN A GAME: server game capacity reached*): you stay
+connected, in the game list, and **CREATE** works again once a game has ended. A
+server that is running as many games as it allows refuses **Start** the same way:
+the room stays open and says *CANNOT START: server running-game capacity reached;
+retry later*, and the host presses **Start** again a little later.
 
 ### I cannot join a multiplayer game
 

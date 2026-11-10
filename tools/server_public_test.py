@@ -65,7 +65,11 @@ def main():
                     create(p,stress,bench,mission)
                     assert b'public servers' in p.receive('Reject').field()
                 create(p);rid=room(p)
-                create(q);assert b'capacity' in q.receive('Reject').field()
+                # The game limit refuses the request and keeps the connection (JoinResult, not Reject).
+                create(q);q.send('Ping');q.receive('Pong')
+                assert not q.pending[auth.MSG['Reject']],'the game limit was answered with a Reject, which ends the connection'
+                r=q.receive('JoinResult');assert r.num('<B')==0;r.num('<B');assert r.field()==b'server game capacity reached'
+                q.send('ListGames');assert q.receive('GameList').num('<I')==1
                 p.send('SetGameOptions',options(benchmark=1))
                 assert b'disabled' in p.receive('Reject').field()
                 p.send('MapOffer',struct.pack('<I',rid)+auth.field('missing-test-map')+auth.field('0'*64)+struct.pack('<I',1<<20))
@@ -186,5 +190,5 @@ def main():
         for value in ['0','-1','not-a-number','18446744073709551616']:
             denied=subprocess.run([str(a.server.resolve()),'--max-games',value,'--local','--data',str(a.data.resolve())],capture_output=True,timeout=10)
             assert denied.returncode!=0 and b'invalid server resource limit' in denied.stderr
-    print('PASS: public game modes, room admission, upload reservation, registration, request floods and ordinary lobby traffic, TLS login and secure startup defaults, game mods host-only and never in campaigns')
+    print('PASS: public game modes, room admission (the game limit refuses with JoinResult and keeps the connection), upload reservation, registration, request floods and ordinary lobby traffic, TLS login and secure startup defaults, game mods host-only and never in campaigns')
 if __name__=='__main__':main()

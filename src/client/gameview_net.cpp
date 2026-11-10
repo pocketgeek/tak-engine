@@ -1458,7 +1458,6 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
         if (st == S::InRoom || st == S::Done) roomAutoCreate_ = roomCreateSent_ = false;
         else if (roomCreateSent_ && !mp_->joinError().empty()) roomAutoCreate_ = roomCreateSent_ = false;
         browserStep();   // the game browser's own request, and the window that waits on it
-        st = mp_->state();   // (it leaves a room this client is not to be in)
         roomPasswordStep();   // the password typed for a room: its own while in it, then wiped
         if (st == S::Done) {
             if (beginReconnect()) return true;
@@ -1476,6 +1475,13 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
         // modes (menu Benchmark, CLI single-player) ignore the result and keep the banner.
         if (autoMode && st == S::Lobby && !mp_->createError().empty()) {
             if (netError_.empty()) netError_ = "create game failed: " + mp_->createError();
+            return false;
+        }
+        // So does a CreateGame the server refused (its game limit): the connection stays up in
+        // the lobby, where a hosting mode would ask again every frame.
+        if ((autoMode == 1 || autoMode == 4 || autoMode == 7 || autoMode == 8) && st == S::Lobby &&
+            !mp_->joinError().empty()) {
+            if (netError_.empty()) netError_ = "create game refused: " + mp_->joinError();
             return false;
         }
         // TAK_ROOM_SCRIPT (debug builds): room actions, after this mode's own seating step.
@@ -1863,14 +1869,14 @@ int roomRuleValue(const tak::net::GameOptions& o, tak::RoomField field) {
             return false;
         };
         // create, join and window act in the browser; every other step in the room, once this
-        // mode has seated its player (showpass and shot: there, or in the browser). The step's
-        // limit runs from when it can act.
+        // mode has seated its player (showpass, shot and browser: there, or in the browser).
+        // The step's limit runs from when it can act.
         const bool browserVerb = step.verb == "create" || step.verb == "create!" || step.verb == "join" ||
                                  step.verb == "join!" || step.verb == "window";
         if (!roomScriptActed_) {
             const bool inRoom = st == S::InRoom && (autoMode == 0 || mpReadied_);
             const bool inBrowser = st == S::Lobby && !singlePlayer_ && !lanHost_ && !mp_->lanServer();
-            const bool either = step.verb == "shot" || step.verb == "showpass";
+            const bool either = step.verb == "shot" || step.verb == "showpass" || step.verb == "browser";
             const bool due = browserVerb ? inBrowser : inRoom || (either && inBrowser);
             if (!due) { roomScriptDueMs_ = 0; return true; }
         }
@@ -2047,14 +2053,27 @@ int roomRuleValue(const tak::net::GameOptions& o, tak::RoomField field) {
             // once: a single-player or LOCAL SERVER session ends with this frame.
             if (!roomScriptActed_) refused = act([&] { roomLeave(); });
             done = mp_->state() != S::InRoom;
-        } else if (step.verb == "start") {
-            // START once it is enabled, as a player would press it.
+        } else if (step.verb == "browser") {
+            // browser:<ms>: the game list, and nothing else, for that long. After a leave: a
+            // room that opens again fails the script (it is due in a room for that).
+            if (st != S::Lobby) return fail("in a room (game " + std::to_string(room.id) + ")");
+            roomScriptActed_ = true;
+            done = now - roomScriptDueMs_ >= uint64_t(std::max(0, std::atoi(step.arg.c_str())));
+        } else if (step.verb == "start" || step.verb == "start!") {
+            // START once it is enabled, as a player would press it. start!: the server must
+            // refuse it, and the step ends on the reason the room shows (printed).
+            const bool wantRefusal = step.verb == "start!";
             if (!roomScriptActed_ && roomCanStart(roomFrame(int(kLobbyW)))) {
                 refused = act([&] { roomStart(); });
-                mpStarted_ = true;   // a refusal ends the run (above), as for the auto-start modes
+                if (!wantRefusal) mpStarted_ = true;   // a refusal ends the run (above), as for the auto-start modes
             }
-            if (roomScriptActed_ && !mp_->startError().empty()) return fail("start refused: " + mp_->startError());
-            done = roomScriptActed_ && (st == S::Starting || st == S::InGame);
+            const bool started = st == S::Starting || st == S::InGame;
+            if (roomScriptActed_ && wantRefusal && started) return fail("the server started the game");
+            if (roomScriptActed_ && !mp_->startError().empty()) {
+                if (!wantRefusal) return fail("start refused: " + mp_->startError());
+                std::fprintf(stderr, "room script: %s: refused: CANNOT START: %s\n", step.text.c_str(), mp_->startError().c_str());
+                done = true;
+            } else done = roomScriptActed_ && !wantRefusal && started;
         } else if (step.verb == "shot") {
             if (!roomScriptActed_) { roomShotPath_ = step.arg; roomScriptActed_ = true; }
             std::error_code ec;

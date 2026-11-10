@@ -310,6 +310,11 @@ clients.
 | `--replay-memory-mib` | 256 | Estimated replay history memory per game |
 | `--replay-storage-mib` | 4,096 | Each replay archive directory |
 
+A player who meets a game limit stays connected. At `--max-games` the **CREATE** window
+says *CANNOT OPEN A GAME: server game capacity reached*; at `--max-running-games` the
+room stays open and says *CANNOT START: server running-game capacity reached; retry
+later*. Both work again once a game has ended.
+
 Limits must be positive; invalid values fail startup. Game count limits may be
 raised to 64, accounts to 100,000, and memory/storage limits to 65,536 MiB.
 Choose limits appropriate to the host. These are application budgets, not a

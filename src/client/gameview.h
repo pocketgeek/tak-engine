@@ -4236,8 +4236,8 @@ private:
     // (JOIN, or WATCH on a live game): modal over the game list, one at a time. The request
     // a window sends is answered in it: the room or the watched game opens and the window
     // goes, or its line says why not and the text stays to be changed and sent again.
-    // CANCEL (and Esc) while that answer is still on its way takes a JoinGame or CreateGame
-    // back (browserRecalled_).
+    // CANCEL (and Esc) while that answer is still on its way takes the request back
+    // (browserTakeBack).
     struct BrowserWindow {
         enum class Kind : uint8_t { None, Create, Join, Watch };
         Kind kind = Kind::None;
@@ -4252,13 +4252,10 @@ private:
         std::string error;          // the red line: the server's refusal, or no answer
         bool fresh = true;          // no press has reached it yet (browserWindowInput: a double click on a row)
     } browserWin_;
-    bool browserLineQuiet_ = false;   // a window showed the last refusal (or took the request back): not on the browser's line too
-    // CANCEL or Esc took back the JoinGame or CreateGame its window was waiting on (or NO
-    // ANSWER gave one up): until the next request has gone this client wants no room, and
-    // one the server opens (the yes was already on its way; a table of that room after it)
-    // is left at once (browserStep). A WATCH cannot be taken back: its yes is the game
-    // itself (GameStarting, with its history behind it), which opens.
-    bool browserRecalled_ = false;
+    bool browserLineQuiet_ = false;   // a window showed the last refusal: not on the browser's line too
+    // The request the browser waits on is let go of (CANCEL in its window, or NO ANSWER):
+    // MpClient::leaveGame takes it back at the server and drops its answer.
+    void browserTakeBack();
     std::string browserLine() const;  // the browser's red line: the last refusal, or no answer
     void openCreateWindow();          // CREATE
     void openPasswordWindow(const tak::net::GameInfo& game, bool watch);
@@ -4269,9 +4266,7 @@ private:
     // Why a password window's game can no longer be asked into (it closed, or started under
     // a JOIN), or null.
     const char* browserWindowGone() const;
-    // mpAutoStep: the answer to the browser's request, or none in time; and out of a room
-    // that is not this client's to be in (taken back, or let go of by a retry then refused).
-    void browserStep();
+    void browserStep();               // mpAutoStep: the answer to the browser's request, or none in time
     void drawBrowserWindow(int winW, int winH);
     // lobbyInput's keys and clicks while a window is open: true when it used the event.
     bool browserWindowInput(const SDL_Event& e);
@@ -4500,9 +4495,10 @@ private:
     // refusal), window:create[:<name>[:<password>]] and window:join:<game name>[:<password>]
     // (that window opened and filled in, nothing pressed: for a picture). In the room:
     // ai:<slot>, map:<id> (map!:<id> expects a refusal), opt:<rule>=<value>, scenario:<0|1>,
-    // watch, sit:<slot>, wait:humans=<n>, wait:ready=<n>, ready, leave, start. In either:
-    // showpass:<0|1> (the SHOW / HIDE of the room's password, or of an open window's),
-    // shot:<png>. Each calls the member its button calls and ends on its own test, within
+    // watch, sit:<slot>, wait:humans=<n>, wait:ready=<n>, ready, leave, start (start!
+    // expects a refusal). In either: showpass:<0|1> (the SHOW / HIDE of the room's password,
+    // or of an open window's), shot:<png>, browser:<ms> (the game list for that long: it
+    // fails in a room). Each calls the member its button calls and ends on its own test, within
     // 10 s (a wait 30 s; create! and join! 20 s, past the window's own wait for an answer)
     // or the run fails.
     struct RoomScriptStep { std::string text, verb, arg; };

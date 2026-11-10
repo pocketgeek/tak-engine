@@ -3766,6 +3766,13 @@ target_link_libraries(voice_uplink_test PRIVATE tak-formats)
 add_test(NAME voice_uplink COMMAND voice_uplink_test)
 set_tests_properties(voice_uplink PROPERTIES TIMEOUT 150)
 set_tests_properties(spectator_client PROPERTIES TIMEOUT 60)
+# A room's messages count only while the server has the client in that room (MpClient
+# against a scripted loopback server, no data): a table that arrives after LEAVE opens no
+# room, a request taken back opens none, and each real way in still takes its first table.
+add_executable(room_scope_test tools/room_scope_test.cpp)
+target_link_libraries(room_scope_test PRIVATE tak-formats)
+add_test(NAME room_scope COMMAND room_scope_test)
+set_tests_properties(room_scope PROPERTIES TIMEOUT 60)
 # TAK_PACELOG's summary (src/client/pacelog.h, header-only).
 add_executable(pacelog_test tools/pacelog_test.cpp)
 target_include_directories(pacelog_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -3889,6 +3896,12 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_public_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --tls-tool "$<TARGET_FILE:tls_test>" --map-tool "$<TARGET_FILE:map_transfer_test>")
     set_tests_properties(server_public PROPERTIES TIMEOUT 120)
+    # The server's game limits refuse a request and keep the connection: CreateGame at
+    # --max-games is JoinResult(0), START at --max-running-games a start refusal.
+    add_test(NAME server_limits COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_limits_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(server_limits PROPERTIES TIMEOUT 120)
     add_test(NAME server_spectators COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_spectators_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")

@@ -344,7 +344,10 @@ only open and fill in that window, for a picture. In the room: `ai:<slot>`, `map
 `ready`, `leave` and `start`. In either: `showpass:<0|1>` (the SHOW / HIDE beside the
 room's password, or beside the password field of an open window; the room prints
 `room: password shown` or `room: password hidden` when it changes, never the
-password) and `shot:<png>`. Each step waits for its own result and ends the run with
+password), `shot:<png>` and `browser:<ms>` (the game list, and nothing else, for that
+long: after `leave` it fails if a room opens again). `start!` expects the server to
+refuse the START and ends on the reason the room shows, which it prints. Each step
+waits for its own result and ends the run with
 the reason if it does not come within 10 s (30 s for `wait`, 20 s for `create!` and
 `join!`). With `TAK_MENU_PICK=singleplayer` it drives the room the PLAY THE MACHINE
 door opens; `tools/room_flow_test.py` uses both.

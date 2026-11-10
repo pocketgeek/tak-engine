@@ -37,6 +37,17 @@ cannot finish prints why and ends the client. TAK_QUIT_TICK ends a game that sta
      hidden for the host and for the guest, SHOW shows it, and it is hidden again in the
      room entered next (the guest leaves and joins again). No log has either password: the
      clients say only which way SHOW / HIDE went, and the server nothing.
+  12 create, SHOW, LEAVE in quick succession, many times: the tables the server sent before
+     it took each LEAVE arrive after it, and the client never ends in a room again (it used
+     to reopen the room the server had just dissolved). Each round ends with the game list
+     held for a moment (browser:<ms>, which fails in a room).
+  13 CREATE on a server at its game limit (--max-games 1, one game open): the CREATE window
+     says CANNOT OPEN A GAME: server game capacity reached and stays open, and the
+     connection is kept: the same client then joins the game that is there.
+  14 START on a server at its running-game limit (--max-running-games 1, another player's
+     game running; the room's guest is a scripted peer): the room says CANNOT START: server
+     running-game capacity reached; retry later, stays open and still takes its host's
+     changes.
 
 Debug builds only (TAK_ROOM_SCRIPT, TAK_QUIT_TICK and the CLI game are debug hooks).
 
@@ -94,7 +105,7 @@ def script_ran(log, steps):
     """Every step finished, in order, and nothing failed."""
     for line in log.splitlines():
         if line.startswith('room script: ') and not re.search(
-                r': done$|^room script: (finished|wrote |map!:.*: refused here: |(join|create)!:.*: refused: )', line):
+                r': done$|^room script: (finished|wrote |map!:.*: refused here: |(join|create|start)!.*: refused: )', line):
             raise AssertionError('the room script failed: %s' % line)
     at = 0
     for step in steps:
@@ -300,15 +311,15 @@ def case_lan_host(args, root):
         raise AssertionError('%s\n%s' % (e, log[-4000:]))
 
 
-def account_server(args, root, name):
+def account_server(args, root, name, options=()):
     """A loopback server that signs players in (each client has an account): its process,
     port and log path."""
     port = free_port()
     shome, senv = profile(root, name, '')
     slog_path = shome / 'server.log'
     with open(slog_path, 'w') as slog:
-        server = subprocess.Popen([args.server, '--port', str(port), '--data', args.data, '--local', '--seed', '1'],
-                                  stdout=slog, stderr=subprocess.STDOUT, env=senv, cwd=shome)
+        server = subprocess.Popen([args.server, '--port', str(port), '--data', args.data, '--local', '--seed', '1',
+                                   *options], stdout=slog, stderr=subprocess.STDOUT, env=senv, cwd=shome)
     try:
         deadline = time.monotonic() + 90
         while 'listening' not in slog_path.read_text(errors='replace'):
@@ -407,6 +418,188 @@ def case_windows(args, root):
                 host.wait(20)
             except subprocess.TimeoutExpired:
                 host.kill(); host.wait()
+        if server.poll() is None:
+            server.kill(); server.wait()
+
+
+RACE_ROUNDS = 20
+
+
+def case_leave_race(args, root):
+    """create, SHOW, LEAVE in quick succession, many times: never in a room after LEAVE."""
+    server, port, slog_path = account_server(args, root, 'case12-server')
+    try:
+        # Each round leaves two frames after its room's first table, while the server is
+        # still verifying the room's packages (a table follows each step of that); then the
+        # game list must hold. (The pause also keeps the rounds inside the server's request
+        # budget: a CREATE and its two offers are 48 of the 128 a second.)
+        steps = []
+        for n in range(RACE_ROUNDS):
+            steps += ['create:Race %d:pw' % n, 'showpass:1', 'leave', 'browser:700']
+        home, env = profile(root, 'case12', ';'.join(steps),
+                            {'TAK_MENU_PICK': 'connect:alice:alicepass1@tcp://127.0.0.1:%d' % port})
+        log = ''
+        try:
+            log = run_until(args.client, ['menu', '--data', args.data], env, home, 'room script: finished', timeout=120)
+            slog_text = slog_path.read_text(errors='replace')
+            script_ran(log, steps)
+            # Every room was seen once: one that opens again after its LEAVE is told again.
+            rooms = re.findall(r"room: game (\d+) 'Race \d+' \(password set\)", log)
+            assert len(rooms) == RACE_ROUNDS and len(set(rooms)) == RACE_ROUNDS, \
+                'the rooms the client was in: %r' % rooms
+            assert len(re.findall(r'game \d+ dissolved', slog_text)) == RACE_ROUNDS, 'the server did not dissolve every room'
+            assert 'reject client' not in slog_text, 'the server ended the connection'
+        except AssertionError as e:
+            raise AssertionError('%s\nclient:\n%s\nserver:\n%s' % (
+                e, log[-3000:], slog_path.read_text(errors='replace')[-2000:]))
+    finally:
+        if server.poll() is None:
+            server.kill(); server.wait()
+
+
+def case_game_limit(args, root):
+    """CREATE at the server's game limit: refused in the CREATE window, the connection kept."""
+    server, port, slog_path = account_server(args, root, 'case13-server', ['--max-games', '1'])
+    host = None
+    try:
+        # The host's game is the one the server has room for.
+        hsteps = ['create:First', 'wait:humans=2']
+        hhome, henv = profile(root, 'case13-host', ';'.join(hsteps),
+                              {'TAK_MENU_PICK': 'connect:alice:alicepass1@tcp://127.0.0.1:%d' % port})
+        hlog_path = hhome / 'client.log'
+        with open(hlog_path, 'w') as out:
+            host = subprocess.Popen([args.client, 'menu', '--data', args.data, '--winsize', '960', '540'], cwd=hhome,
+                                    env=henv, stdout=out, stderr=subprocess.STDOUT)
+        wait_for(hlog_path, 'room script: create:First: done', host)
+        # The second player's CREATE is refused in its window, which stays open (its SHOW
+        # is pressed there: no window, and the step fails); then the same connection joins
+        # the game that is there.
+        refused = 'create!:Second:pw'
+        gsteps = [refused, 'showpass:1', 'join:First']
+        ghome, genv = profile(root, 'case13-guest', ';'.join(gsteps),
+                              {'TAK_MENU_PICK': 'connect:bob:bobpass12@tcp://127.0.0.1:%d' % port})
+        glog = ''
+        try:
+            glog = run_until(args.client, ['menu', '--data', args.data], genv, ghome, 'room script: finished', timeout=90)
+            wait_for(hlog_path, 'room script: finished', host, 30)
+            slog_text = slog_path.read_text(errors='replace')
+            script_ran(glog, gsteps)
+            script_ran(hlog_path.read_text(errors='replace'), hsteps)
+            assert 'room script: %s: refused: CANNOT OPEN A GAME: server game capacity reached' % refused in glog, \
+                'the CREATE window did not say why'
+            turned = re.search(r'client (\d+): create refused -- server game capacity reached', slog_text)
+            assert turned, 'the server did not refuse the CREATE at its limit'
+            assert re.search(r'client %s joined game \d+ at slot 1' % turned[1], slog_text), \
+                'the refused connection did not go on to join'
+            assert 'reject client' not in slog_text, 'the server ended a connection'
+            assert re.search(r"room: game \d+ 'First'", glog), "the second player is not in the first one's room"
+        except AssertionError as e:
+            raise AssertionError('%s\nhost:\n%s\nguest:\n%s\nserver:\n%s' % (
+                e, hlog_path.read_text(errors='replace')[-2000:], glog[-2500:],
+                slog_path.read_text(errors='replace')[-2000:]))
+    finally:
+        if host is not None and host.poll() is None:
+            host.terminate()
+            try:
+                host.wait(20)
+            except subprocess.TimeoutExpired:
+                host.kill(); host.wait()
+        if server.poll() is None:
+            server.kill(); server.wait()
+
+
+def case_running_limit(args, root):
+    """START at the server's running-game limit: refused in the room, which stays open."""
+    import server_net as auth
+    from server_host_test import Seat, create as seat_create, ready_and_start, started
+    port = free_port()
+    shome, senv = profile(root, 'case14-server', '')
+    slog_path = shome / 'server.log'
+    with open(slog_path, 'w') as slog:
+        server = subprocess.Popen([args.server, '--port', str(port), '--data', args.data, '--local', '--seed', '1',
+                                   '--no-auth', '--max-running-games', '1'],
+                                  stdout=slog, stderr=subprocess.STDOUT, env=senv, cwd=shome)
+    other = guest = proc = None
+    try:
+        deadline = time.monotonic() + 90
+        while 'listening' not in slog_path.read_text(errors='replace'):
+            assert time.monotonic() < deadline and server.poll() is None, \
+                'the server never listened:\n' + slog_path.read_text(errors='replace')[-3000:]
+            time.sleep(0.1)
+        h = int(re.search(r'retail gameplay hash ([0-9a-f]+)', slog_path.read_text(errors='replace'))[1], 16)
+        # Another player's game (a scripted peer and an AI) runs: the server is at its limit.
+        other = Seat(port, h, 'Other')
+        seat_create(other, 'running')
+        other.slot = 0
+        ready_and_start(other, (other,), ai=(1,))
+        started(other, h)
+        assert other.pump(20, lambda p: p.last_tick() >= 15), "the other player's game never ticked"
+        # The host (harness mode 1, which never starts by itself here) presses START once
+        # its guest is ready; then changes a rule in the room the refusal left open.
+        steps = ['wait:ready=2', 'start!', 'opt:crusades=1']
+        home, env = profile(root, 'case14', ';'.join(steps), {'TAK_MPAUTO': '1', 'TAK_MP_WAIT': '9'})
+        path = home / 'client.log'
+        with open(path, 'w') as out:
+            proc = subprocess.Popen([args.client, 'game', 'Athri Cay', '--data', args.data, '--server', '127.0.0.1',
+                                     '--serverport', str(port), '--winsize', '960', '540'], cwd=home, env=env,
+                                    stdout=out, stderr=subprocess.STDOUT)
+        try:
+            # The guest: a scripted peer that joins the host's room, says the room's
+            # packages are verified (it holds none: only the server's START needs to hear
+            # it) and readies on the room as it then is.
+            guest = Seat(port, h, 'Guest')
+            deadline = time.monotonic() + 90
+            room = verified = readied = None
+            while 'room script: finished' not in path.read_text(errors='replace'):
+                assert proc.poll() is None, 'the client ended (exit %s)' % proc.returncode
+                assert time.monotonic() < deadline, 'the script did not finish'
+                other.pump(0.05)   # the other game keeps running: its player keeps up
+                if room is None:
+                    waiting = [gid for gid, running in guest.games().items() if not running]
+                    if waiting:
+                        room = waiting[0]
+                        guest.send('JoinGame', struct.pack('<I', room) + auth.field(''))
+                        ok, guest.slot, why = guest.answer()
+                        assert ok, 'the guest was not let in: %r' % why
+                    continue
+                guest.pump(0.05)
+                for offer, ready in (('MapOffer', 'MapReady'), ('ModOffer', 'ModReady')):
+                    for body in guest.other.pop(auth.MSG[offer], []):
+                        r = auth.Reader(body)
+                        r.num('<I'), r.field()
+                        guest.send(ready, struct.pack('<I', room) + auth.field(r.field()))
+                        verified = time.monotonic()
+                # READY once the room has been quiet for a moment (both packages offered), and
+                # again whenever a later table shows the seat not ready.
+                tables = guest.other.get(auth.MSG['LobbyState'], [])
+                seat = auth.lobby(auth.Reader(tables[-1]))[3][guest.slot][0] if tables else None
+                if verified and time.monotonic() - verified > 0.5 and seat and not seat[4] and readied != guest.rev:
+                    readied = guest.rev
+                    auth.slot_update(guest, guest.slot, 1, seat[1], seat[2], seat[3], 1, 2)
+            other.pump(0.5)
+            log, slog_text = path.read_text(errors='replace'), slog_path.read_text(errors='replace')
+            script_ran(log, steps)
+            assert 'room script: start!: refused: CANNOT START: server running-game capacity reached; retry later' in log, \
+                'the room did not say why START was refused'
+            refusal = re.search(r'game \d+: start refused -- server running-game capacity reached; retry later', slog_text)
+            assert refusal, 'the server did not refuse the START at its limit'
+            assert re.search(r'game \d+: host changed the rules \(crusades', slog_text[refusal.end():]), \
+                'the room did not take its host\'s change after the refusal'
+            assert 'reject client' not in slog_text, 'the server ended a connection'
+            assert proc.poll() is None, 'the client did not stay in its room'
+        except AssertionError as e:
+            raise AssertionError('%s\nclient:\n%s\nserver:\n%s' % (
+                e, path.read_text(errors='replace')[-3000:], slog_path.read_text(errors='replace')[-2000:]))
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(20)
+            except subprocess.TimeoutExpired:
+                proc.kill(); proc.wait()
+        for peer in (other, guest):
+            if peer is not None:
+                peer.close()
         if server.poll() is None:
             server.kill(); server.wait()
 
@@ -536,7 +729,8 @@ def case_unready(args, root):
 
 
 CASES = {1: case_single_player, 2: case_watch, 3: case_capacity, 4: case_unready, 5: case_door, 6: case_play_map,
-         7: case_fallback, 8: case_lan_host, 9: case_online_create, 10: case_scenario_confirm, 11: case_windows}
+         7: case_fallback, 8: case_lan_host, 9: case_online_create, 10: case_scenario_confirm, 11: case_windows,
+         12: case_leave_race, 13: case_game_limit, 14: case_running_limit}
 
 
 def main():

@@ -39,10 +39,10 @@ bool MpClient::connect(const std::string& host, uint16_t port, const std::string
     deriveDone_.store(false, std::memory_order_relaxed);
     conn_ = Conn{}; err_.clear();
     resetModTransfer();resetMapTransfer();
-    room_=RoomView{};roomRequestPending_=false;
+    room_=RoomView{};roomRequestPending_=false;expectingSpectate_=false;
     xferSeq_ = 0; roomError_.clear();
     voice_.clear(); voiceListenSent_ = 0;   // a new connection starts unheard: the server default is off
-    pingsOut_.clear(); voiceBaseRtt_ = UINT32_MAX;
+    pingsOut_.clear(); leavePongs_ = 0; voiceBaseRtt_ = UINT32_MAX;
     voiceHeld_ = voiceOpen_ = voiceRestart_ = voiceSlowRtt_ = false;
     name_ = name;
     if (!conn_.connect(host, port)) { err_ = conn_.error(); state_ = State::Done; return false; }
@@ -93,7 +93,7 @@ bool MpClient::reconnect() {
     deriveDone_.store(false, std::memory_order_relaxed);
     conn_ = Conn{}; err_.clear();
     voice_.clear(); voiceListenSent_ = 0;
-    pingsOut_.clear(); voiceBaseRtt_ = UINT32_MAX;
+    pingsOut_.clear(); leavePongs_ = 0; voiceBaseRtt_ = UINT32_MAX;
     voiceHeld_ = voiceOpen_ = voiceRestart_ = voiceSlowRtt_ = false;
     // The server re-tells a reseated client the room as it is now: the wait, the host's
     // pause, and (LobbyState) the speed and the host.
@@ -484,8 +484,48 @@ void MpClient::onAuthResult(Reader& r) {
 
 static void readSlots(Reader& r, RoomView& v) { get(r, static_cast<RoomState&>(v)); }
 
+// The server sends a room's messages only to the clients it has in that room, and it puts
+// a client there with a message of that client's own before any other:
+//   CreateGame, JoinGame  JoinResult(ok), then the room's first LobbyState
+//   Spectate              (MapOffer, ModOffer,) GameStarting, (Waiting,) then the bundle log
+//   Rejoin                Reseated, then LobbyState, (Pause,) Waiting, the missed bundles
+//   MoveSeat, a seat the map's capacity moved: JoinResult(ok) then LobbyState, in the room
+// (a host succession is a LobbyState to the room; no room outlives its game). So nothing
+// of a room is this client's before one of those, nor once it has left: a table the server
+// sent before it took the LeaveGame used to put the client back in the room it had left.
+bool MpClient::takes(Msg kind) const {
+    switch (kind) {
+        // The connection's own, whatever room this client is or is not in.
+        case Msg::Welcome: case Msg::AuthRequired: case Msg::AuthChallenge: case Msg::AuthResult:
+        case Msg::Reject: case Msg::Ping: case Msg::Pong: case Msg::Bye: case Msg::GameList:
+            return true;
+        default: break;
+    }
+    // Sent before the server took this client's leave (see leavePongs_): the left room's,
+    // or the answer to a request taken back.
+    if (leavePongs_) return false;
+    switch (kind) {
+        // The answer to a CreateGame, JoinGame, Spectate (a refusal) or Rejoin (a refusal)
+        // that is waiting for one; in a room, this client's new seat.
+        case Msg::JoinResult:
+            return state_ == State::InRoom || (state_ == State::Lobby && (roomRequestPending_ || rejoinSent_));
+        // This room's game starts; or the answer to a Spectate.
+        case Msg::GameStarting:
+            return state_ == State::InRoom || (state_ == State::Lobby && expectingSpectate_);
+        case Msg::Reseated: return rejoinSent_;
+        // The room's table (in its game too: the speed, the host). Never the way into one.
+        case Msg::LobbyState: return inRoom();
+        case Msg::RoomError: return state_ == State::InRoom;
+        // A room's transfers, chat and voice, and its game's stream. A watched game's
+        // packages are offered before its GameStarting, which may wait for them
+        // (pendingMapStart_) while the rest arrives.
+        default: return inRoom() || expectingSpectate_;
+    }
+}
+
 void MpClient::onFrame(const Frame& f) {
     lastRecvMs_ = nowMs();
+    if (!takes(f.kind)) return;
     Reader r(f.payload.data(), f.payload.size());
     switch (f.kind) {
         case Msg::Welcome:
@@ -538,6 +578,7 @@ void MpClient::onFrame(const Frame& f) {
                 // machine can be a 250 ms one, and that is the client's own delay, not queueing.
                 const uint64_t atLeast = readAt_ > sent ? readAt_ - sent : 0;
                 pingsOut_.pop_front();
+                if (leavePongs_) --leavePongs_;   // at 0 the server has taken the leave: see takes()
                 if (measureRtt_) {
                     // Add the modelled return-path delay so RTT reflects the test link.
                     float sample = float(rtt) + float(receiveDelayMs());
@@ -567,6 +608,9 @@ void MpClient::onFrame(const Frame& f) {
             uint8_t ok = r.u8(); uint8_t slot = r.u8(); std::string why = r.str();
             // The room's revision, so a READY sent before the first LobbyState counts.
             const uint32_t rev = r.avail(4) ? r.u32() : 0;
+            // A refusal answers a request that is waiting for its answer, and nothing else;
+            // in the game list so does a yes (a Rejoin's yes is Reseated).
+            if (!roomRequestPending_ && (ok ? state_ == State::Lobby : !rejoinSent_)) break;
             if(!ok) {
                 roomRequestPending_=false;
                 // Keep the reason for the browser, and drop the pending kind: left
@@ -607,12 +651,14 @@ void MpClient::onFrame(const Frame& f) {
         case Msg::MapOffer: case Msg::MapRequest: case Msg::MapChunk: case Msg::MapError:
             mapFrame(f); break;
         case Msg::LobbyState: {
-            roomRequestPending_=false;
+            // Only in a room (takes()): the table never opens one. Its JoinResult did.
             const auto oldGameMods=room_.opts.gameMods;
             int keep = room_.mySlot;
             RoomView incoming;
             readSlots(r, incoming);
             if (!r.ok) break;
+            if (room_.id && incoming.id != room_.id) break;   // not this room's
+            roomRequestPending_=false;
             ++lobbySeq_;
             // The answer to this host's SetRoomMap carries its serial: a map the server took
             // becomes the room's package now (and not before, so a refused or crossed change
@@ -644,7 +690,6 @@ void MpClient::onFrame(const Frame& f) {
             if(!room_.opts.gameMods)resetModTransfer();
             else if(hosting && modOfferedRoom_!=room_.id)offerMods();
             gameSpeed_ = room_.opts.speed;
-            if (state_ == State::Lobby) state_ = State::InRoom;
             if (!room_.mission.empty() || mapgen::isGeneratedMapId(room_.mapId)) {
                 mapReadyRoom_ = room_.id; mapStatus_ = "MAP READY";
             } else offerRoomMap();
@@ -686,8 +731,9 @@ void MpClient::onFrame(const Frame& f) {
             break;
         }
         case Msg::GameStarting: {
-            roomRequestPending_=false;
             RoomView check; Reader header(f.payload.data(), f.payload.size()); readSlots(header, check);
+            if (header.ok && state_ == State::InRoom && room_.id && check.id != room_.id) break;   // not this room's
+            roomRequestPending_=false;
             if (header.ok && ((check.opts.gameMods && modReadyRoom_!=check.id) || (check.mission.empty() && !mapgen::isGeneratedMapId(check.mapId) && mapReadyRoom_ != check.id))) {
                 pendingMapStart_ = f; return;
             }
@@ -863,8 +909,12 @@ void MpClient::joinGame(uint32_t id, const std::string& password) {
 }
 
 void MpClient::leaveGame() {
-    roomRequestPending_=false;
+    // A request still on its way is taken back with it: the server takes this LeaveGame
+    // after it, so a room it opens there is left, and its answer is dropped here.
+    roomRequestPending_=false; expectingSpectate_ = false;
     send(Msg::LeaveGame);
+    sendPing(nowMs());                 // its Pong: the server has taken the leave (takes())
+    leavePongs_ = pingsOut_.size();
     resetModTransfer();resetMapTransfer();
     room_ = RoomView{};
     state_ = State::Lobby;

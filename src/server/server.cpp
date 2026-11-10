@@ -842,10 +842,16 @@ void Server::writeReplay(Room& r) {
                  r.id, path.c_str(), r.log.size(), w.b.size());
 }
 
+// Msg::Reject ENDS the connection: the client shows DISCONNECTED with the reason, whether or
+// not the caller also fail()s the socket. It is for what is fatal by design -- a protocol
+// violation, a failed or refused sign-in, a version or data mismatch, an abuse limit, a
+// game or room the server closes. A request a player may ordinarily make is refused with
+// its own message and the connection kept: sendJoin (CreateGame, JoinGame, Spectate,
+// Rejoin), refuseStart (START), roomRefuse (the host's room edits).
 void Server::sendReject(Client& c, const std::string& why) {
     Writer w; w.str(why);
     c.conn.send(Msg::Reject, w);
-    // Every caller fail()s/closes the connection right after: push the reason out
+    // Most callers fail()/close the connection right after: push the reason out
     // NOW, or the queued Reject dies with the socket and the client can only
     // report "peer closed" instead of WHY it was turned away.
     c.conn.flushWrite();
@@ -1457,7 +1463,13 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
     switch (f.kind) {
         case Msg::ListGames: sendGameList(c); break;
         case Msg::CreateGame: {
-            if(rooms_.size()>=limits_.rooms) {sendReject(c,"server game capacity reached");return;}
+            // The server's game limit refuses the request as any other refusal does: the
+            // player stays connected, in the game list, and is told why (JoinResult).
+            if(rooms_.size()>=limits_.rooms) {
+                sendJoin(c,false,0,"server game capacity reached",nullptr);
+                std::fprintf(stderr,"client %u: create refused -- server game capacity reached\n",c.id);
+                return;
+            }
             Reader r(f.payload.data(), f.payload.size());
             std::string name = r.str(), pass = r.str(), mapId = r.str(), mission = r.str();
             GameOptions o; get(r, o);
@@ -2170,8 +2182,10 @@ void Server::tryStart(Client& c) {
     const uint64_t blockedFrom = nowMs();   // see the clock shift before GameStarting
     Room* r = roomOf(c);
     if (!r || r->hostId != c.id || r->running) return;
+    // The server's limit on running games refuses this START and nothing more: the room
+    // stays as it is, and its host may press START again later.
     if(uint64_t(std::count_if(rooms_.begin(),rooms_.end(),[](const auto& entry){return entry.second.running;}))>=limits_.running) {
-        sendReject(c,"server running-game capacity reached; retry later");return;
+        refuseStart(c,*r,"server running-game capacity reached; retry later");return;
     }
     if (!mapsReady(*r)) {
         Writer w; w.u32(r->id); w.str("waiting for every player and the server to verify the map");
@@ -2221,7 +2235,7 @@ void Server::tryStart(Client& c) {
     // it holds the canonical hash and, for a mission, the strategic AI. A game that
     // cannot be refereed does not start; the host is told why.
     if(r->opts.gameMods && !r->modData) {
-        if(!r->modPackage){sendReject(c,"waiting for game mods");return;}
+        if(!r->modPackage){refuseStart(c,*r,"waiting for game mods");return;}
         try {
             auto ds=std::make_unique<DataSet>();ds->vfs=tak::hpi::Vfs(&retail_.vfs);
             ds->vfs.setModFiles(r->modPackage->files);
@@ -2230,7 +2244,7 @@ void Server::tryStart(Client& c) {
             ds->hash=tak::hpi::gameplayHash(ds->vfs);
             ds->built=true;r->modData=std::move(ds);
             if(r->mapPackage){r->mapVfs=std::make_unique<tak::hpi::Vfs>(&r->modData->vfs);r->mapVfs->setMapFiles(r->mapPackage->files);}
-        }catch(const std::exception& e){sendReject(c,std::string("cannot load game mods: ")+e.what());return;}
+        }catch(const std::exception& e){refuseStart(c,*r,std::string("cannot load game mods: ")+e.what());return;}
     }
     DataSet& dataSet = roomData(*r);
     const bool wantMission = !r->mission.empty();

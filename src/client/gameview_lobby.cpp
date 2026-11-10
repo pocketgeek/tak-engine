@@ -283,22 +283,28 @@ std::string defaultGameName(const std::string& player) {
     // allowed...), in its own case (as the CONNECT dialog shows server text) -- until the
     // next request clears it. A refusal a window showed (a wrong password) is not repeated
     // here. A request that got no answer says so too, unless a window is there to say it.
-    // One that CANCEL took back has nothing to say either way.
+    // One that CANCEL took back has nothing to say: its answer is dropped (browserTakeBack).
     std::string GameView::browserLine() const {
         if (!mp_->joinError().empty() && !browserLineQuiet_) return "CANNOT JOIN: " + mp_->joinError();
         const bool window = browserWin_.kind != BrowserWindow::Kind::None;
-        return roomRequestOut() && !browserBusy() && !window && !browserRecalled_ ? "NO ANSWER FROM THE SERVER" : "";
+        return roomRequestOut() && !browserBusy() && !window ? "NO ANSWER FROM THE SERVER" : "";
+    }
+
+    // The request the browser waits on is let go of: CANCEL took it back, or no answer came.
+    // MpClient::leaveGame sends LeaveGame behind it (a room or watched game the server opens
+    // for it is left there at once) and drops its answer, yes or no, when it arrives. The
+    // password that went with it is wiped, and the next request may go out straight away.
+    void GameView::browserTakeBack() {
+        mp_->leaveGame();
+        roomCreateSent_ = roomJoinSent_ = false;
+        roomOpenNote_.clear();   // (CREATE's note for a room nobody saw is not the next room's)
+        tak::crypto::wipe(roomPassAsked_);
     }
 
     bool GameView::browserRequestFree() {
         if (!roomRequestOut()) return true;
         if (browserBusy()) return false;
-        // No answer is coming: LeaveGame lets go of whatever the server granted it meanwhile,
-        // and a yes that still arrives opens no room unless the next request has gone.
-        mp_->leaveGame();
-        roomCreateSent_ = roomJoinSent_ = false;
-        browserRecalled_ = true;
-        tak::crypto::wipe(roomPassAsked_);
+        browserTakeBack();   // no answer is coming
         return true;
     }
 
@@ -307,7 +313,6 @@ std::string defaultGameName(const std::string& player) {
         roomKind_ = RoomKind::Multiplayer; rememberRoom_ = lobbyAutoMode_ == 0;
         if (watch) mp_->spectate(id, password);
         else mp_->joinGame(id, password);
-        browserRecalled_ = false;   // a room is wanted again
         // A game joined shows its password in the room (roomPasswordStep); one watched has no room.
         tak::crypto::wipe(roomPassAsked_);
         if (!watch) roomPassAsked_ = password;
@@ -353,16 +358,11 @@ std::string defaultGameName(const std::string& player) {
         w = {};
     }
 
-    // CANCEL and Esc. While the window's own JoinGame or CreateGame is still unanswered they
-    // take it back: the password that went with it is wiped, a yes on its way opens no room
-    // (browserStep leaves it) and a no is not news. The request stays the one the browser
-    // waits on, so its answer is never taken for the next one's. A WATCH stays as it is.
+    // CANCEL and Esc. While the window's own request (CREATE, JOIN or WATCH) is still
+    // unanswered they take it back: a yes on its way opens no room and no game, and a no is
+    // not news (browserTakeBack).
     void GameView::cancelBrowserWindow() {
-        const auto& w = browserWin_;
-        if (w.asked && roomRequestOut() && w.kind != BrowserWindow::Kind::Watch) {
-            browserRecalled_ = browserLineQuiet_ = true;
-            tak::crypto::wipe(roomPassAsked_);
-        }
+        if (browserWin_.asked && roomRequestOut()) browserTakeBack();
         closeBrowserWindow();
     }
 
@@ -405,7 +405,6 @@ std::string defaultGameName(const std::string& player) {
             w.asked = roomCreateSent_;
             // Nothing went out: no map could be built here.
             if (!w.asked) w.error = "CANNOT OPEN A GAME: " + roomActError_;
-            else browserRecalled_ = false;   // a room is wanted again
             browserLineQuiet_ = false;
         } else {
             w.asked = browserJoin(w.gameId, w.password, w.kind == BrowserWindow::Kind::Watch);
@@ -414,24 +413,10 @@ std::string defaultGameName(const std::string& player) {
     }
 
     void GameView::browserStep() {
-        using S = tak::net::MpClient::State;
         auto& w = browserWin_;
-        // A room the game list's player is not in: one opened for a request that was taken
-        // back or given up (its yes was already on its way), or one a refusal arrives in --
-        // the first of two requests opened it late, the second let go of it (LeaveGame, after
-        // NO ANSWER) and was then turned away. A JoinResult refusal answers only this
-        // client's own CreateGame, JoinGame or Spectate, and a yes clears it, so the test is
-        // exact. Left at once: the list is back, and its line says the refusal.
-        if (mp_->state() == S::InRoom && !singlePlayer_ && !lanHost_ && !mp_->lanServer() &&
-            (browserRecalled_ || !mp_->joinError().empty())) {
-            roomCreateSent_ = roomJoinSent_ = false;
-            roomOpenNote_.clear();   // (CREATE's note for a room nobody saw is not the next room's)
-            leaveRoom();
-        }
-        if (mp_->state() != S::Lobby) {
+        if (mp_->state() != tak::net::MpClient::State::Lobby) {
             // In the room or the watched game, or the connection is over: the window goes.
             roomJoinSent_ = false;
-            browserRecalled_ = false;
             closeBrowserWindow();
             return;
         }
@@ -489,8 +474,8 @@ std::string defaultGameName(const std::string& player) {
             y += 48;
         }
         // One line under the fields: the wait, why the game can no longer be asked into, an
-        // earlier request the server has yet to answer (one CANCEL took back, a game's row:
-        // why the button is grey), or the last answer (a refusal in the server's own words; a
+        // earlier request the server has yet to answer (a game's row clicked just before: why
+        // the button is grey), or the last answer (a refusal in the server's own words; a
         // long one takes two rows).
         constexpr SDL_Color kWait{200, 200, 210, 255}, kWarn{255, 130, 110, 255};
         if (waiting)

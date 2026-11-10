@@ -430,8 +430,8 @@ silently skipped.)
 | `SetName` | display name | no accounts in v1 *(superseded: players sign in to an account by default, `--no-auth` serves without one)* |
 | `AuthToken` / `AuthRevoke` | username, sign-in token | TLS only (`src/net/auth.h`). In place of `AuthBegin`: a password login's `AuthResult` carries a token, which **Game Select** spends to sign in with no password (the `AuthResult` carries the next one) and quitting revokes. The server holds per-account hashes in memory, and a login's line of tokens ends 12 hours after the password however often it rotates. A token used twice ends its line, except a resend within 30 seconds after a lost reply; a bad token counts in the login throttle and sends the player to the normal password prompt |
 | `ListGames` / `GameList` | — / entries: id, name, map, players/capacity, state (lobby/running), passworded, uptime | running games listed but unjoinable |
-| `CreateGame` | name, password, map id, mission, options, capacity, spectate, private | creator becomes host; an empty name is the server's `"<name>'s Game"`; a name past 32 printable-ASCII bytes or a password past 128 is answered with `JoinResult(0, why)`; a random map's capacity is its player count, read by the server (protocol 323) |
-| `JoinGame` / `JoinResult` | game id, password? / ok, slot (0xFF = watching), why, room revision | error: full, bad password, running; every JoinResult carries the room's revision, so a READY sent before the first `LobbyState` counts |
+| `CreateGame` | name, password, map id, mission, options, capacity, spectate, private | creator becomes host; an empty name is the server's `"<name>'s Game"`; a name past 32 printable-ASCII bytes or a password past 128 is answered with `JoinResult(0, why)`, and so is a server at its game limit (`--max-games`: "server game capacity reached"); a random map's capacity is its player count, read by the server (protocol 323) |
+| `JoinGame` / `JoinResult` | game id, password? / ok, slot (0xFF = watching), why, room revision | error: full, bad password, running; every JoinResult carries the room's revision, so a READY sent before the first `LobbyState` counts. A refusal keeps the connection: the client stays in the game list with the reason. `JoinResult(ok)` is what puts a client in a room, always before that room's first `LobbyState` (see [Room scope](#room-scope-what-a-client-takes-and-when)) |
 | `SlotUpdate` | slot #, {human/AI/closed}, faction, color, team, ready, AI level, room revision | players set their own; host sets any (host resolves conflicts, assigns AIs); only the server seats a human, so the host can neither change a seated slot's type nor make an empty one human -- such an edit (e.g. one sent before a seat move landed) is dropped. Only a seat's own player changes its READY, and a guest's READY on an older revision than the room's is stored as not ready (protocol 323) |
 | `LobbyState` | `RoomState`: id, name, map, mission, options, host, maps ready, capacity, passworded, revision, change bits, map serial, the 8 slots | broadcast on every change |
 | `SetGameOptions` | full `GameOptions` | host only; in the lobby the server adopts them (see [Room editing](#room-editing-protocol-323)) and rebroadcasts `LobbyState`; in-game only `speed` takes effect (if `speedUnlock`), pushed via `SpeedUpdate` |
@@ -441,8 +441,58 @@ silently skipped.)
 | `Chat` | text | lobby and in-game |
 | `Kick` | slot # | host only |
 | `MoveSeat` | slot # (0xFF = watch) | a seated player (the host too) takes an OPEN seat inside the map capacity, lobby only; not in a campaign mission room; side, colour, team and ready move with the player, the old seat opens with the target's colour and team; the server answers the mover with `JoinResult` (its new slot), then broadcasts `LobbyState`; the host may leave its seat to watch (0xFF) and sit down again (protocol 323); anything else is ignored (protocol 284) |
-| `StartGame` | — | host only; server validates: every human ready, colors unique, players ≤ map start positions |
+| `StartGame` | — | host only; server validates: every human ready, colors unique, players ≤ map start positions. A START the server will not run is answered to the host with `MapError` (room, reason), which the room shows as CANNOT START: the map has no scenario, a seat the scenario needs is empty, the match cannot be set up, the game mods cannot be loaded, or the server is at its running-game limit (`--max-running-games`: "server running-game capacity reached; retry later"). The room stays as it is and the host may press START again |
 | `GameStarting` | final slot table, map id, options, per-AI RNG seeds, resume token | clients load and report `Loaded`; server starts when all humans are loaded; a `Loaded` timeout kicks that player back to the lobby and re-opens the slot (host decides: re-fill or start without) |
+
+### Refusals and `Reject`
+
+`Reject` ends the connection: the client shows DISCONNECTED with the reason, whether
+or not the server also closes the socket. It is kept for what is fatal by design: a
+protocol violation (a malformed handshake or login, an invalid pathfinder byte, a
+random-map id this build cannot read), a refused sign-in step or a login rate limit,
+a version or data mismatch (protocol, retail data at `Hello`, game data at `Loaded`,
+a map or mission the server's data cannot referee), a benchmark, stress or campaign
+request on a public server, a game the server stops (replay memory, a failed
+simulation), and a LOCAL SERVER's game closing with its host.
+
+A request a player may ordinarily make is refused with its own message and the
+connection kept: `JoinResult(0, why)` for `CreateGame`, `JoinGame`, `Spectate` and
+`Rejoin` (the server's game limit included), `MapError` to the host for a `StartGame`
+(the running-game limit included), `RoomError` for the host's room edits.
+
+### Room scope: what a client takes, and when
+
+The server sends a room's messages only to the clients it has in that room, and it
+puts a client there with a message of that client's own before any other:
+
+| The client asked | The server sends, in order |
+|---|---|
+| `CreateGame`, `JoinGame` | `JoinResult(ok)`, then the room's first `LobbyState` (then the package offers) |
+| `Spectate` | the room's `MapOffer` / `ModOffer`, `GameStarting` (slot 0xFF), `Waiting` while a countdown runs, then the bundle log |
+| `Rejoin` | `Reseated`, then `LobbyState`, `Pause` while the host has the game paused, `Waiting`, then the missed bundles |
+| `MoveSeat`, or the host's map moved its seat | `JoinResult(ok)` with the new seat, then `LobbyState` (already in the room) |
+
+A host succession is a `LobbyState` to the clients already in the room, and no room
+outlives its game, so nothing enters a room by `LobbyState` alone. `MpClient::takes`
+holds the client to that: a room's messages (the table, `RoomError`, the map and
+game-mod transfer, chat, voice, `GameStarting` and everything of a running game) are
+acted on only from that first message until the client leaves, and are otherwise
+dropped unread. A `LobbyState` never opens a room, and one for another room than the
+client's is not its room's.
+
+What the server sent before it took a client's `LeaveGame` still arrives after the
+client has left: a table sent as a package verified, a seat the map just moved. It
+used to put the client back in the room (one the server might already have
+dissolved). `LeaveGame` has no answer, so `MpClient::leaveGame` sends a `Ping` right
+behind it: the server answers a connection's messages in order, so every room
+message before that `Ping`'s `Pong` was sent before the leave and is dropped, and
+what follows the `Pong` answers what the client sent after it. The same call takes
+back a request still on its way (CANCEL in the browser's windows, or NO ANSWER):
+`LeaveGame` follows the request to the server, which leaves the room or watched game
+it opened for it, and the request's answer -- a yes with its table, a no, a watched
+game's `GameStarting` and bundles -- arrives before the `Pong` and is dropped, so it
+is never taken for the answer to the next request. No wire format changed: old and
+new builds of protocol 323 play together.
 
 ### Game messages
 
@@ -1005,18 +1055,19 @@ unready nobody.
   server's refusal (`CANNOT JOIN: wrong password`) with the text kept, NO ANSWER
   FROM THE SERVER after 10 s (the next request first gives the stale one up with
   `LeaveGame`), THE GAME HAS CLOSED / STARTED when the list no longer offers
-  it. CANCEL or Esc while a window's own `JoinGame` or `CreateGame` is still
-  unanswered takes it back (`browserRecalled_`): the password that went with it
-  is wiped, the request stays the one the browser waits on (so its answer is
-  never taken for the next one's; a window opened meanwhile says WAITING FOR THE
-  SERVER... beside its greyed button), a refusal is not shown, and a room the
-  server opens for it is left at once with `LeaveGame`. So is a room a given-up
-  request opens before the next one has gone, and a room a refusal arrives in:
-  the first of two requests opened it late, the retry let go of it and was then
-  turned away, so the server no longer has the client there (`browserStep`; a
-  `JoinResult` refusal answers only the client's own `CreateGame`, `JoinGame`
-  or `Spectate`, and a yes clears it). A `Spectate` cannot be taken back: its
-  yes is `GameStarting` with the game's history behind it, so the game opens.
+  it. CANCEL or Esc while a window's own `JoinGame`, `Spectate` or `CreateGame`
+  is still unanswered takes it back (`browserTakeBack`, which NO ANSWER's retry
+  uses too): the password that went with it is wiped and `MpClient::leaveGame`
+  does the rest -- `LeaveGame` follows the request, so a room or watched game the
+  server opens for it is left there at once, and its answer, yes or no, is
+  dropped when it arrives (see
+  [Room scope](#room-scope-what-a-client-takes-and-when)). The browser is free
+  again straight away: the next request's answer cannot be taken for the old
+  one's. (A window opened while a game's row, clicked just before, is still
+  unanswered says WAITING FOR THE SERVER... beside its greyed button.) A server
+  at its game limit refuses CREATE in the window like any other refusal
+  (CANNOT OPEN A GAME: server game capacity reached), with the typed name and
+  password kept.
   The second press of a double click on a locked game's row is not a click in
   the window it opened (CANCEL lies over the list's rows). An unlocked
   game is joined at once and its refusal stays on the browser's CANNOT JOIN
