@@ -16150,7 +16150,11 @@ void World::applyAuraTiles(bool pooled) {
         return;
     }
     // About eight chunks a thread: enough to even out heavy tiles, few enough that a
-    // wide field of light ones is not all chunk overhead. No result depends on it.
+    // wide field of light ones is not all chunk overhead. No result depends on it,
+    // though it is the one chunk size that follows the pool's width: a tile's fold
+    // reads the sources (fixed for the pass), rebuilds its masks from nothing and
+    // writes only the units linked in its own cells, so the tiles fold alike in
+    // any grouping (simpool_passes_test and aura_recipient_test run several).
     pool.forChunks(auraTiles_.size(), std::max<size_t>(1, auraTiles_.size() / (threads * 8)), 0,
                    [&](size_t k, size_t begin, size_t end, unsigned slot) { fold(k, begin, end, slot); });
 }

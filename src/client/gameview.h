@@ -269,6 +269,10 @@ public:
 
     // main()'s live settings, so the in-game Options screen can edit + persist them.
     void setSettings(tak::Settings* s) { settings_ = s; }
+    // SIMULATION THREADS (Settings::simThreads, 0 = AUTO), latched as the session opens,
+    // before this view's World ticks: a change in Options is for the next game opened.
+    // The local server was started with the same value. Scheduling only, never a hash.
+    void latchSimThreads(int choice);
 
     // Open the in-game Options overlay (from the Esc menu). onChange applies audio,
     // camera, UI scale and window state live; the host saves on close.
@@ -2447,6 +2451,7 @@ private:
     bool  edgeScrollOn_ = true;
     float uiScale_ = 1.0f;
     tak::Settings* settings_ = nullptr;               // main()'s settings (for the in-game Options)
+    int simThreads_ = 0;                              // latchSimThreads: this session's SIMULATION THREADS (0 = AUTO)
     std::unique_ptr<tak::OptionsScreen> options_;     // in-game Options overlay
     std::unique_ptr<tak::HotkeysScreen> hotkeysScreen_;   // opened from Options -> CONTROLS
     tak::Hotkeys hotkeys_;                             // effective bindings (from settings)

@@ -10,14 +10,19 @@
 //     and saves -- in Options and in Controls;
 //   - the Options DEFAULTS puts the sound device back to the system default and re-opens
 //     audio on it at once, only when the device in use changes;
+//   - SIMULATION THREADS (GAME page) is a whole-step slider from AUTO at its left end to
+//     every CPU thread this process may use, saved when let go, and the GAME page's
+//     DEFAULTS is live only while it is off AUTO;
 //   - the Controls hint line has a band of its own: at every window size it lies below the
 //     rows' viewport (never over a row, scrolled or not) and above the footer buttons.
-//     TAK_LAYOUT_SHOT_DIR=<dir> also writes each case as a BMP.
+//     TAK_LAYOUT_SHOT_DIR=<dir> also writes each case as a BMP, and the GAME page with
+//     its RESET TO DEFAULTS? prompt open.
 
 #include "client/hotkeys.h"
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
 #include "client/settings.h"
+#include "sim/simpool.h"
 
 #include <SDL.h>
 
@@ -207,6 +212,97 @@ static void testOptions(SDL_Renderer* ren) {
     }
 }
 
+// SIMULATION THREADS: the GAME page's slider (PERFORMANCE, after PLAYER and GAME DATA).
+// Position 0 is AUTO, then 1 (serial) .. N in whole steps, N being every CPU thread this
+// process may use (sim::SimPool::maxThreads: 1 on a one-CPU test machine, where the
+// slider has just AUTO and 1).
+static void testSimThreads(SDL_Renderer* ren) {
+    std::printf("SIMULATION THREADS\n");
+    const int most = int(sim::SimPool::maxThreads());
+    Settings s = loadSettings();
+    s.simThreads = 0;
+    check(saveSettings(s), "the profile starts at AUTO");
+    const std::string name = s.playerName;
+    int saves = 0, changes = 0;
+    auto save = [&] { ++saves; check(saveSettings(s), "the host's save writes the file"); };
+    {
+        OptionsScreen o(ren, s, [&] { ++changes; }, save, 2, {}, {}, {}, OptionsPage::Game);
+        o.render(W, H);
+        const SDL_FRect* r = bring(o, "SIMULATION THREADS");
+        if (!r) return;
+        const SDL_FRect* folder = o.rowRect("DATA FOLDER");
+        check(o.rowRect("PLAYER NAME") && folder && r->y > folder->y && o.rowEnabled("SIMULATION THREADS"),
+              "the slider is on the GAME page, below PLAYER and GAME DATA");
+        // At AUTO the page has nothing to reset: DEFAULTS is greyed and does nothing.
+        check(s == gameDefaults(s), "AUTO is the GAME page's default");
+        check(click(o, o.defaultsRect()) == false && o.defaultsYesRect().w == 0, "at AUTO, DEFAULTS does nothing");
+        r = o.rowRect("SIMULATION THREADS");
+        const float y = r->y + r->h / 2, x0 = r->x, w = r->w;
+        auto at = [&](float step) { return x0 + w * step / float(most) + 0.5f; };   // a step's place on the track
+        // The right end is N; held, it is live but not in the file yet.
+        send(o, SDL_MOUSEBUTTONDOWN, at(float(most)), y);
+        check(s.simThreads == most && changes == 1, "the right end is every thread this machine may use");
+        check(saves == 0 && loadSettings().simThreads == 0, "the slider is not saved while it is held");
+        // Every whole step down to the left end, which is AUTO.
+        bool steps = true;
+        for (int n = most; n >= 0; --n) {
+            send(o, SDL_MOUSEMOTION, at(float(n)), y, SDL_BUTTON_LMASK);
+            steps = steps && s.simThreads == n;
+        }
+        check(steps && s.simThreads == 0, "it moves in whole steps, 1 to N, with AUTO at the left end");
+        if (most >= 2) {   // between two steps: the nearer one
+            send(o, SDL_MOUSEMOTION, at(1.3f), y, SDL_BUTTON_LMASK);
+            check(s.simThreads == 1, "a place between two steps is the nearer step");
+            send(o, SDL_MOUSEMOTION, at(1.7f), y, SDL_BUTTON_LMASK);
+            check(s.simThreads == 2, "a place between two steps is the nearer step (upper)");
+        }
+        send(o, SDL_MOUSEMOTION, at(1), y, SDL_BUTTON_LMASK);
+        check(saves == 0, "no save during the drag");
+        send(o, SDL_MOUSEBUTTONUP, at(1), y);
+        check(s.simThreads == 1 && saves == 1 && loadSettings().simThreads == 1, "let go on 1 (serial): saved once");
+        // Off AUTO, the GAME page's DEFAULTS is live: it asks, and YES puts AUTO back.
+        click(o, o.defaultsRect());
+        check(o.defaultsYesRect().w > 0 && s.simThreads == 1 && saves == 1, "off AUTO, DEFAULTS asks first");
+        if (const char* dir = std::getenv("TAK_LAYOUT_SHOT_DIR")) {   // the prompt, to look at
+            SDL_SetRenderDrawColor(ren, 12, 12, 16, 255); SDL_RenderClear(ren);   // the panel is translucent
+            o.render(W, H);
+            if (SDL_Surface* shot = SDL_CreateRGBSurfaceWithFormat(0, W, H, 32, SDL_PIXELFORMAT_ARGB8888)) {
+                if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_ARGB8888, shot->pixels, shot->pitch) == 0)
+                    SDL_SaveBMP(shot, (std::string(dir) + "/game-defaults-prompt.bmp").c_str());
+                SDL_FreeSurface(shot);
+            }
+        }
+        click(o, o.defaultsNoRect());
+        check(s.simThreads == 1 && saves == 1, "NO keeps the choice");
+        click(o, o.defaultsRect());
+        click(o, o.defaultsYesRect());
+        check(s.simThreads == 0 && s.playerName == name && saves == 2 && loadSettings().simThreads == 0,
+              "YES puts SIMULATION THREADS back to AUTO, keeps the player name, and saves");
+        check(click(o, o.defaultsRect()) == false && o.defaultsYesRect().w == 0, "back at AUTO, DEFAULTS does nothing again");
+    }
+    // A profile from a bigger machine: a saved count above this machine's N is shown (and
+    // run) as N, and stays in the file until the player moves the slider.
+    if (most < int(sim::SimPool::kMaxThreads)) {
+        s.simThreads = int(sim::SimPool::kMaxThreads);
+        check(saveSettings(s), "a bigger machine's choice is in the file");
+        OptionsScreen o(ren, s, [&] { ++changes; }, save, 2, {}, {}, {}, OptionsPage::Game);
+        o.render(W, H);
+        const int savesBefore = saves;
+        if (const SDL_FRect* r = bring(o, "SIMULATION THREADS")) {
+            send(o, SDL_MOUSEMOTION, r->x + r->w / 2, r->y + r->h / 2);   // hover: the help box, nothing else
+            check(s.simThreads == int(sim::SimPool::kMaxThreads) && saves == savesBefore &&
+                  loadSettings().simThreads == int(sim::SimPool::kMaxThreads), "showing the page does not rewrite it");
+            check(int(sim::SimPool::threadsFor(s.simThreads)) == most, "it runs as this machine's most");
+            // Pressing the right end is the same place the handle already shows: N.
+            send(o, SDL_MOUSEBUTTONDOWN, r->x + r->w, r->y + r->h / 2);
+            send(o, SDL_MOUSEBUTTONUP, r->x + r->w, r->y + r->h / 2);
+            check(s.simThreads == most, "moving the slider stores this machine's own count");
+        }
+        s.simThreads = 0;
+        check(saveSettings(s), "the profile is back at AUTO");
+    }
+}
+
 static void testVoice(SDL_Renderer* ren) {
     std::printf("VOICE CHAT\n");
     Settings s = loadSettings();
@@ -351,6 +447,7 @@ int main() {
     SDL_Renderer* ren = win ? SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE) : nullptr;
     if (!ren) { std::printf("renderer: %s\n", SDL_GetError()); return 1; }
     testOptions(ren);
+    testSimThreads(ren);
     testVoice(ren);
     testControls(ren);
     for (auto [w, h] : {std::pair{1280, 720}, {1600, 1100}, {1920, 1080}, {3840, 2160}, {800, 600}, {640, 360}, {400, 300}})

@@ -2980,9 +2980,13 @@ public:
     // fixed chunks inline.
     // Never affects results -- purely scheduling.
     void setSerialThreads(bool s) { serialThreads_ = s; }
-    // The SimPool's worker count, for tests (-1: SimPool::defaultWorkers()).
+    // The SimPool's worker count (-1: SimPool::defaultWorkers(), AUTO), at most
+    // SimPool::kMaxWorkers: the client's SIMULATION THREADS setting and
+    // takserver --sim-threads (SimPool::workersFor), and tests.
     // setSerialThreads(true) still means 0. Scheduling only, like the above.
-    void setSimWorkers(int n) { simWorkers_ = n; }
+    // Call it between ticks, on the thread that ticks this World (or before
+    // that thread starts): the pool is rebuilt at the next simPool() call.
+    void setSimWorkers(int n) { simWorkers_ = std::min(n, int(SimPool::kMaxWorkers)); }
     // Deterministic digest of sim state, for lockstep sync checking.
     struct WeaponAimSolution {
         uint16_t heading=0,pitch=0;

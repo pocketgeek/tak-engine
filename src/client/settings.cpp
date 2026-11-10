@@ -4,6 +4,7 @@
 #include "client/hiddenunits.h"
 #include "client/renderdriver.h"
 #include "client/waylandchoice.h"
+#include "sim/simpool.h"
 #include "util/prefpath.h"
 #include "video/youtubebitrate.h"
 
@@ -241,6 +242,9 @@ Settings loadSettings(bool* fileFound) {
         else if (key == "cursorScale")     s.cursorScale = asInt(1, 8);
         else if (key == "hardwareCursor")  s.hardwareCursor = asBool();
         else if (key == "smoothMotion")    s.smoothMotion = asBool();
+        // 0 (or anything that is not a count) = AUTO; this machine's own limit applies
+        // where the value is used, so a profile keeps a bigger machine's choice.
+        else if (key == "simThreads")      s.simThreads = asInt(0, int(sim::SimPool::kMaxThreads));
         else if (key == "playerName")      s.playerName = val;
         else if (key == "accountName")     s.accountName = val;
         else if (key == "streamRememberKey") s.streamRememberKey = asBool();
@@ -349,6 +353,7 @@ std::string serializeSettings(const Settings& s) {
     o << "cursorScale = " << s.cursorScale << "\n";
     o << "hardwareCursor = " << (s.hardwareCursor ? 1 : 0) << "\n";
     o << "smoothMotion = " << (s.smoothMotion ? 1 : 0) << "\n";
+    o << "simThreads = " << std::clamp(s.simThreads, 0, int(sim::SimPool::kMaxThreads)) << "\n";
     o << "playerName = " << s.playerName << "\n";
     o << "accountName = " << s.accountName << "\n";
     o << "streamRememberKey = " << (s.streamRememberKey ? 1 : 0) << "\n";

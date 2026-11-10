@@ -3,12 +3,18 @@
 // relax and gathers, the turn-delta walk) give the serial result. One world
 // above every pool threshold (kSpatialMinParallel, kPrologueMinParallel,
 // kPostMinParallel: 2048 units; more than 8 aura emitters) is ticked serially
-// and at 1, 3 and 7 workers; the state hashes must agree every tick. A debug
+// and at every kind of width a player or a server operator can choose
+// (SIMULATION THREADS, --sim-threads): 0, 1, 2, 3, 5, 7, 15, 23, 31 and 63
+// (SimPool::kMaxWorkers) workers; the state hashes must agree every tick. The
+// aura tiles are the one pass whose chunk size follows the width (tiles /
+// (threads * 8), World::applyAuraTiles): this world's 96 tiles fold in chunks
+// of 6, 4, 3, 2 and 1 tiles across those widths. A debug
 // build also sets TAK_VERIFY_POOL, which redoes each pooled pass serially and
 // aborts on any difference in its lists, sums, chains or stamps.
 #include "sim/sim.h"
 #include <cstdio>
 #include <cstdlib>
+#include <iterator>
 #include <memory>
 
 int main() {
@@ -38,9 +44,10 @@ int main() {
     const UnitType* types[] = {&soldier, &soldier, &soldier, &big, &shaman, &reclaimer, &flyer, &lode};
     std::vector<uint8_t> terrain(160 * 160);
     for (int z = 0; z < 160; ++z) for (int x = 0; x < 160; ++x) terrain[size_t(z) * 160 + x] = uint8_t((x * 5 + z * 3) % 40);
-    const int widths[] = {-1, 1, 3, 7};   // -1: serial (setSerialThreads)
-    std::unique_ptr<World> worlds[4];
-    for (int w = 0; w < 4; ++w) {
+    const int widths[] = {-1, 0, 1, 2, 3, 5, 7, 15, 23, 31, int(SimPool::kMaxWorkers)};   // -1: serial (setSerialThreads)
+    constexpr int kWorlds = int(std::size(widths));
+    std::unique_ptr<World> worlds[kWorlds];
+    for (int w = 0; w < kWorlds; ++w) {
         auto& world = worlds[w];
         world = std::make_unique<World>();
         world->setPlayerCount(4); world->setTerrain(terrain, 160, 160, 30);
@@ -54,7 +61,7 @@ int main() {
     }
     for (int step = 0; step < 120; ++step) {
         uint64_t first = 0;
-        for (int w = 0; w < 4; ++w) {
+        for (int w = 0; w < kWorlds; ++w) {
             World& world = *worlds[w];
             if (step % 20 == 0)
                 for (size_t i = 0; i < world.units().size(); i += 3) {
@@ -72,6 +79,6 @@ int main() {
             }
         }
     }
-    std::printf("pooled passes match serial at 1/3/7 workers (hash %016llx)\n",
+    std::printf("pooled passes match serial at 0/1/2/3/5/7/15/23/31/63 workers (hash %016llx)\n",
                 (unsigned long long)worlds[0]->stateHash());
 }

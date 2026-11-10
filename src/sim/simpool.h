@@ -34,10 +34,29 @@ namespace tak::sim {
 class SimPool {
 public:
     static constexpr size_t kUnitChunk=256;
-    // Workers per sim: clamp(usable CPUs / 8, 0, 3), the CPUs being the process's
-    // affinity mask on Linux (taskset, containers). A single-player game runs
-    // two sims (client + local referee), so the cap keeps both within 8 cores.
-    // Debug builds honour TAK_SIM_WORKERS (0..15) to test other widths.
+    // The widest simulation: the calling thread plus kMaxWorkers workers. Nothing
+    // in the pool or its users is sized by a constant (per-slot scratch is sized
+    // from workers(), see forChunks); 64 is the widest the determinism tests run
+    // (tools/simpool_test.cpp, simpool_passes_test.cpp), so nothing wider is offered.
+    static constexpr unsigned kMaxThreads=64,kMaxWorkers=kMaxThreads-1;
+    // The CPU threads this process may use, at least 1: its affinity mask on
+    // Linux (taskset, containers), the machine's thread count elsewhere.
+    static unsigned usableCpus();
+    // The most simulation threads a setting may ask for here (SIMULATION THREADS
+    // in Options, takserver --sim-threads): min(usableCpus(), kMaxThreads).
+    static unsigned maxThreads() { return std::min(usableCpus(),kMaxThreads); }
+    // Such a choice -- 0 = AUTO, else that many threads, the one that ticks the
+    // World included -- as the threads it runs on here (a count above
+    // maxThreads() runs as maxThreads()), and as World::setSimWorkers's argument.
+    static unsigned threadsFor(int choice) {
+        return choice<=0 ? 1+defaultWorkers() : std::min(unsigned(choice),maxThreads());
+    }
+    static int workersFor(int choice) { return choice<=0 ? -1 : int(threadsFor(choice))-1; }
+    // Workers per sim when nothing chooses a width (AUTO): clamp(usableCpus() / 8,
+    // 0, 3). A single-player game runs two sims (client + local referee), so the
+    // cap keeps both within 8 cores. A chosen width is World::setSimWorkers.
+    // Debug builds honour TAK_SIM_WORKERS (0..kMaxWorkers) here, so it overrides
+    // AUTO and only AUTO.
     static unsigned defaultWorkers();
 
     explicit SimPool(unsigned workers);

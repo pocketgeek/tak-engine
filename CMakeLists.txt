@@ -1145,8 +1145,8 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(legion_route_paused PROPERTIES TIMEOUT 3600)
   endif()
   # Legion 10,000 stage 9: the parallel planning jobs (chain tiles built beside the serial pass, plane rows in
-  # chunks) decide nothing: the state hash and every observer key equal the serial run at 1, 3 and 7 workers, with
-  # the jobs' completion order perturbed, and forced inline under TAK_LEGION_VERIFY (tools/legion_parallel_test.py).
+  # chunks) decide nothing: the state hash and every observer key equal the serial run at 1, 2, 3, 7 and 63 workers,
+  # with the jobs' completion order perturbed, and forced inline under TAK_LEGION_VERIFY (tools/legion_parallel_test.py).
   add_test(NAME legion_parallel
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_parallel_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
@@ -3818,6 +3818,19 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME server_status_cli COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tools/server_status_test.py" --server "$<TARGET_FILE:takserver>")
   set_tests_properties(server_status_cli PROPERTIES TIMEOUT 30)
+  # takserver --sim-threads <auto|N>: auto and a count are accepted, 0, negatives and junk are a
+  # usage error; with game data, each game start logs the threads its referee sim runs on (the
+  # count, the CPU rule for auto, the machine's most for a bigger count) and several running
+  # games each tick on one.
+  if(TAK_TEST_DATA)
+    add_test(NAME server_sim_threads COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_sim_threads_test.py" --server "$<TARGET_FILE:takserver>"
+      --data "${TAK_TEST_DATA}")
+  else()
+    add_test(NAME server_sim_threads COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_sim_threads_test.py" --server "$<TARGET_FILE:takserver>")
+  endif()
+  set_tests_properties(server_sim_threads PROPERTIES TIMEOUT 240)
 endif()
 if(TAK_TEST_DATA)
   find_package(Python3 COMPONENTS Interpreter QUIET)

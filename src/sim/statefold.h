@@ -70,7 +70,7 @@ uint64_t foldCells16(size_t n,CellAt cellAt) {
 // A plane folds in fixed chunks of 64Ki cells, chunk(begin,end) digesting one
 // (foldCells16 over it, say), and the digests are combined in chunk order: the
 // same value on any number of workers (pool = nullptr runs them inline), while
-// up to four threads read the plane.
+// every thread of the pool reads the plane.
 template<class Chunk>
 uint64_t foldPlane(SimPool* pool,size_t n,Chunk chunk) {
     constexpr size_t kCells=size_t(1)<<16;

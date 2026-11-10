@@ -18,6 +18,7 @@
 
 #include "client/settings.h"
 #include "client/waylandchoice.h"
+#include "sim/simpool.h"
 
 #include <cstdio>
 #include <string>
@@ -111,6 +112,7 @@ int main() {
     flips("cursorScale",     [](Settings& s) { s.cursorScale += 1; });
     flips("hardwareCursor",  [](Settings& s) { s.hardwareCursor = !s.hardwareCursor; });
     flips("smoothMotion",    [](Settings& s) { s.smoothMotion = !s.smoothMotion; });
+    flips("simThreads",      [](Settings& s) { s.simThreads = 6; });
 
     // identity / session
     flips("playerName",      [](Settings& s) { s.playerName = "someone"; });
@@ -234,6 +236,7 @@ int main() {
         cur.renderer = "opengles2";
         cur.gpuMemoryLimit = 768;
         cur.uiFont = 1;
+        cur.simThreads = 6;
 
         const Settings d = tak::preferenceDefaults(cur);
         auto keep = [&](const char* what, bool ok) {
@@ -300,6 +303,7 @@ int main() {
         reset("renderer",         d.renderer == fresh.renderer && d.renderer.empty());
         reset("gpuMemoryLimit",   d.gpuMemoryLimit == fresh.gpuMemoryLimit && d.gpuMemoryLimit == 1280);
         reset("uiFont",           d.uiFont == fresh.uiFont && d.uiFont == 0);
+        reset("simThreads",       d.simThreads == fresh.simThreads && d.simThreads == 0);   // AUTO
 
         // The GRAPHICS, UI and GAME pages' DEFAULTS together reset exactly what the old
         // single Options DEFAULTS did: a field on no page would make this differ.
@@ -317,7 +321,11 @@ int main() {
             if (!same) ++g_fail;
             const bool own = tak::graphicsDefaults(all).uiScale == all.uiScale && tak::uiDefaults(all).unitShadows == all.unitShadows &&
                              tak::gameDefaults(all).uiScale == all.uiScale && tak::gameDefaults(all).playerName == all.playerName &&
-                             tak::gameDefaults(all).mouseZoom == all.mouseZoom && tak::uiDefaults(all).mouseZoom != all.mouseZoom;
+                             tak::gameDefaults(all).mouseZoom == all.mouseZoom && tak::uiDefaults(all).mouseZoom != all.mouseZoom &&
+                             // SIMULATION THREADS is the GAME page's: its DEFAULTS alone puts it back to AUTO.
+                             all.simThreads == 6 && tak::gameDefaults(all).simThreads == 0 &&
+                             tak::graphicsDefaults(all).simThreads == 6 && tak::uiDefaults(all).simThreads == 6 &&
+                             tak::audioDefaults(all).simThreads == 6 && tak::voiceDefaults(all).simThreads == 6;
             std::printf("  %-23s %s\n", "each page its own", own ? "ok" : "FAIL");
             if (!own) ++g_fail;
         }
@@ -852,6 +860,45 @@ int main() {
         check("fps: 30 ok", loadFrom("streamFps = 30\n").streamFps == 30);
         check("fps: 45 snaps", loadFrom("streamFps = 45\n").streamFps == 60);
         check("fps: junk snaps", loadFrom("streamFps = x\n").streamFps == 60);
+        // SIMULATION THREADS: 0 = AUTO, the default and what anything that is not a count
+        // reads as; 1..64 (sim::SimPool::kMaxThreads) is stored and read back as written,
+        // more is clamped to 64. The machine's own limit applies where the value is used
+        // (SimPool::threadsFor), so the file keeps a bigger machine's choice.
+        using tak::sim::SimPool;
+        check("sim threads: default auto", Settings{}.simThreads == 0);
+        check("sim threads: absent", loadFrom("masterVol = 7\n").simThreads == 0);
+        check("sim threads: read", loadFrom("simThreads = 8\n").simThreads == 8);
+        check("sim threads: 1 (serial)", loadFrom("simThreads = 1\n").simThreads == 1);
+        check("sim threads: 64 kept", loadFrom("simThreads = 64\n").simThreads == 64 && SimPool::kMaxThreads == 64);
+        check("sim threads: clamped high", loadFrom("simThreads = 65\n").simThreads == 64 &&
+                                           loadFrom("simThreads = 100000\n").simThreads == 64);
+        check("sim threads: negative", loadFrom("simThreads = -4\n").simThreads == 0);
+        check("sim threads: junk is auto", loadFrom("simThreads = many\n").simThreads == 0 &&
+                                           loadFrom("simThreads = auto\n").simThreads == 0 &&
+                                           loadFrom("simThreads =\n").simThreads == 0);
+        for (int n : {0, 1, 2, 8, 24, 63, 64}) {
+            Settings ts{};
+            ts.simThreads = n;
+            check("sim threads: round trip", loadFrom(tak::serializeSettings(ts)).simThreads == n);
+        }
+        {
+            Settings ts{};
+            ts.simThreads = 8;
+            check("sim threads: saved as a number", tak::serializeSettings(ts).find("\nsimThreads = 8\n") != std::string::npos &&
+                                                    tak::serializeSettings(Settings{}).find("\nsimThreads = 0\n") != std::string::npos);
+            ts.simThreads = 500;   // never written out of range
+            check("sim threads: written clamped", tak::serializeSettings(ts).find("\nsimThreads = 64\n") != std::string::npos);
+        }
+        // As used: AUTO is the CPU rule (1 thread + SimPool::defaultWorkers()), a count runs
+        // as itself up to this machine's usable threads, and one above them as all of them
+        // (a profile moved from a bigger machine).
+        const int most = int(SimPool::maxThreads());
+        check("sim threads: auto as used", SimPool::threadsFor(loadFrom("simThreads = 0\n").simThreads) == 1 + SimPool::defaultWorkers() &&
+                                           SimPool::workersFor(loadFrom("simThreads = 0\n").simThreads) == -1);
+        check("sim threads: 1 as used", SimPool::threadsFor(loadFrom("simThreads = 1\n").simThreads) == 1 &&
+                                        SimPool::workersFor(loadFrom("simThreads = 1\n").simThreads) == 0);
+        check("sim threads: 64 as used", int(SimPool::threadsFor(loadFrom("simThreads = 64\n").simThreads)) == most &&
+                                         SimPool::workersFor(loadFrom("simThreads = 64\n").simThreads) == most - 1);
     }
     // The remembered room sets: single player (spRoom.<field>) and multiplayer
     // (mpRoom.<field>), one key per field, each set saved and read on its own. The keys
