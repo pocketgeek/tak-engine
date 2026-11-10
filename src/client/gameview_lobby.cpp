@@ -714,8 +714,11 @@ float createOptionPx(float maxW) {
         option(createSpeedUnlock_ ? "ALLOW SPEED CHANGE: ON" : "ALLOW SPEED CHANGE: OFF", true,
                [this](int) { createSpeedUnlock_ = !createSpeedUnlock_; });
         // POWER CODES (retail's battle-room box): the +codes typed in the chat box work
-        // for every player of this game. Off by default, as in retail.
-        option(createPowerCodes_ ? "POWER CODES: ON" : "POWER CODES: OFF", true,
+        // for every player of this game. Off by default, as in retail. A single-player
+        // spectator plays no army: OFF, greyed, like FOG OF WAR below -- the saved choice
+        // (createPowerCodes_) is left alone and comes back when SPECTATE is turned off.
+        const bool spectating = singlePlayer_ && spSpectate_;
+        option(createPowerCodes_ && !spectating ? "POWER CODES: ON" : "POWER CODES: OFF", !spectating,
                [this](int) { createPowerCodes_ = !createPowerCodes_; });
         // SP only: spectate mode -- you take no slot and just watch the AIs fight.
         // Seat AIs in the slots below, then START.
@@ -733,8 +736,7 @@ float createOptionPx(float maxW) {
         // rule, so it stays fair. The room displays this choice as information.
         // A single-player spectator sees everything: FULL VISION, greyed. The saved
         // choice (createFog_) is left alone and comes back when SPECTATE is turned off.
-        const bool spectateFog = singlePlayer_ && spSpectate_;
-        option(std::string("FOG OF WAR: ") + kFogName[spectateFog ? 2 : std::min<int>(createFog_, 2)], !spectateFog,
+        option(std::string("FOG OF WAR: ") + kFogName[spectating ? 2 : std::min<int>(createFog_, 2)], !spectating,
                [this](int direction) { createFog_ = uint8_t((createFog_ + direction + 3) % 3); });
         // Start Locations: also a room rule, picked here like fog so it is set before
         // the room exists. FIXED = the seated slots take the map's starts in order and
@@ -760,7 +762,7 @@ float createOptionPx(float maxW) {
             o.speedUnlock = createSpeedUnlock_ ? 1 : 0;
             o.unitCap = createUnitCap_;
             o.monarchExpendable = createMonarchExp_ ? 1 : 0;
-            o.powerCodes = createPowerCodes_ ? 1 : 0;
+            o.powerCodes = createPowerCodes_ && !(singlePlayer_ && spSpectate_) ? 1 : 0;
             o.fogExplored = singlePlayer_ && spSpectate_ ? 2 : std::min<uint8_t>(createFog_, 2);
             // MAP SCENARIO: an offerable map's own scenario, when chosen. A Test Map copy
             // plays its scenario through its opt-in and sends 0 (the server checks the
