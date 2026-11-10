@@ -122,7 +122,7 @@ def main():
         pack = data / 'mods' / 'game' / 'my_ai' / 'ai'
         pack.mkdir(parents=True)
         (pack / 'default.txt').write_bytes(profile)
-        modded, _, log = play(a, data, root / 'mod', settings='mods.gamePack = ' + 'my_ai'.encode().hex() + '\n')
+        modded, _, log = play(a, data, root / 'mod', settings='mpRoom.gamePack = ' + 'my_ai'.encode().hex() + '\n')
         assert re.search(r'DEFAULT AI profile ai/default\.txt from the game mods', log, re.I), log
         banned = [u for u in watched if u in modded]
         assert not banned, 'the Classic AI built %s despite the game mod\'s ai/default.txt' % banned
@@ -145,7 +145,7 @@ def main():
         both_pack = data / 'mods' / 'game' / 'my_ai' / 'ai'
         both_pack.mkdir(parents=True)
         (both_pack / 'default.txt').write_bytes(base_profile)
-        both, _, log = play(a, data, root / 'both', settings='mods.gamePack = ' + 'my_ai'.encode().hex() + '\n')
+        both, _, log = play(a, data, root / 'both', settings='mpRoom.gamePack = ' + 'my_ai'.encode().hex() + '\n')
         assert re.search(r'DEFAULT AI profile ai/default\.txt from the game mods', log, re.I), log
         assert any(u in both for u in watched), \
             'the Classic AI built none of %s: the map\'s ai/default.txt won over the game mod\'s (built: %s)' % (

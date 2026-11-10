@@ -115,7 +115,7 @@ def play(a, root, name, mod_n, map_n):
     try:
         with server(a.server.resolve(), data, work, '--no-auth', '--seed', '1') as (port, _, process):
             settings = work / 'settings.ini'
-            settings.write_text('mods.gamePack = ' + 'my_ai'.encode().hex() + '\n' +
+            settings.write_text('mpRoom.gamePack = ' + 'my_ai'.encode().hex() + '\n' +
                                 'mods.cosmeticPack = ' + 'skin'.encode().hex() + '\n')
             env = dict(os.environ, HOME=str(work), XDG_DATA_HOME=str(work), XDG_CONFIG_HOME=str(work),
                        TAK_SETTINGS_FILE=str(settings), TAK_HEADLESS='1', TAK_SPEED='80',

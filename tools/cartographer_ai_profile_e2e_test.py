@@ -197,7 +197,7 @@ def main():
             expect_limits(limits, units, str(limit), name)
 
         _, limits, log = play(a, data, root / 'mod', 'E2E Alpha',
-                              settings='mods.gamePack = ' + PACK.encode().hex() + '\n')
+                              settings='mpRoom.gamePack = ' + PACK.encode().hex() + '\n')
         assert re.search(r'DEFAULT AI profile ai/%s\.txt from the game mods' % PROFILE, log, re.I), log
         assert re.search(r"our AI levels play their built-in profiles adjusted by the game mods' ai/takengine\.txt",
                          log, re.I), log
