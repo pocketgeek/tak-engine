@@ -2186,7 +2186,7 @@
     }
 
     void GameView::animFrame(float realDt) {
-        if (paused_) return;
+        if (paused_) { animRateCounter_ = 0; return; }
         // A game can also stop dead without anyone touching the pause key: when bundles
         // stop arriving a net game simply produces no ticks. Everything ELSE already
         // holds still when that happens -- unit positions clamp to the newest pose
@@ -2216,8 +2216,27 @@
         // slowed game as a permanent stall. The floor keeps ordinary jitter from
         // flickering the animation off and on.
         const float stallMs = std::max(250.0f, front().tickDurMs * 6.0f);
-        if (float(nowMs - animAdvanceMs_) > stallMs) return;
-        float dt = realDt * animSpeed();
+        if (float(nowMs - animAdvanceMs_) > stallMs) { animRateCounter_ = 0; return; }
+        // Short of a stall, a world can still run SLOWER than its speed asks: the Benchmark
+        // overloads it on purpose, a big battle outruns a slow machine, a slow player holds
+        // the room back. Its units then move slower than asked, and the walk cycles, wheels
+        // and rotors must slow with them, or legs run ahead of the bodies they carry. So the
+        // animation follows the ticks actually advanced per second (smoothed over ~0.5 s),
+        // never faster than the speed. Before the game runs (tick 0: loading, tools) it plays
+        // at the speed. Display only: the units' own scripts run in the World.
+        const double nominalRate = 30.0 * double(std::max(0.1f, animSpeed()));
+        const uint32_t tickNow = front().gameTick;
+        const uint64_t counter = SDL_GetPerformanceCounter();
+        if (tickNow == 0 || !animRateCounter_ || tickNow < animRateTick_) {
+            animRate_ = nominalRate;
+        } else {
+            const double dts = double(counter - animRateCounter_) / double(SDL_GetPerformanceFrequency());
+            if (dts > 0) animRate_ += (double(tickNow - animRateTick_) / dts - animRate_) * std::min(1.0, dts / 0.5);
+        }
+        animRateTick_ = tickNow;
+        animRateCounter_ = counter;
+        const float pace = tickNow == 0 ? 1.0f : float(std::clamp(animRate_ / nominalRate, 0.02, 1.0));
+        float dt = realDt * animSpeed() * pace;
         vmTick_.clear();explosionVmTick_.clear();
         for (auto& [id, a] : anims_) {
             if(a.vm && tak::retailOwnerVmMayAdvance(a.ownerVmStopRequested)) {
