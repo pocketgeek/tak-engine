@@ -654,7 +654,7 @@ A large feature's footprint covers several cells, so two features can overlap
 even though each stands in a cell of its own. When the game loads the map it
 sets features down row by row from the top, left to right, and one whose
 footprint overlaps a feature set down before it removes that earlier one, as
-in the original game (since 0.9.0). Cartographer still draws both, so leave
+in the original game. Cartographer still draws both, so leave
 room between large features you want to keep.
 
 ### Selecting and moving features
@@ -1124,7 +1124,7 @@ uses for its random maps.
 | **WIDTH**, **HEIGHT** | 1 to 64 units. |
 | **WORLD** | The world to use. |
 | **SCATTERED MANA (BY MAP AREA)** | None, Minimum, Medium, High or Max neutral mana spots spread over open ground, by area. Max is as dense as a home with six spots; each lower level halves it. |
-| **PLATEAUS**, **MOUNTAINS**, **TOWNS** | 0 to 255: cliff-edged plateaus with ramps, mountain ranges and walled towns (Zhon: villages), built from the world's own retail sections. Ignored where a world has no such kit (Veruna has no mountains) and, for plateaus, by Taros Maze and Creon Highlands, which make their own high ground. All three at 0 give the same terrain as generator version 9. |
+| **PLATEAUS**, **MOUNTAINS**, **TOWNS** | 0 to 255: cliff-edged plateaus with ramps, mountain ranges and walled towns (Zhon: villages), built from the world's own retail sections. Ignored where a world has no such kit (Veruna has no mountains) and, for plateaus, by Taros Maze and Creon Highlands, which make their own high ground. All three at 0 build none of them. |
 
 The fields are in two columns.
 

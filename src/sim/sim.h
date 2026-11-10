@@ -813,7 +813,7 @@ struct alignas(64) Order {
     // leg's value. kNone outside Legion and on orders no click made (formation
     // anchors, rallies, waypoints spliced in by a route). Retail never sets
     // it; hashed with a tag when set.
-    // Since protocol 267 the value is the order's ARRIVAL AREA key
+    // The value is the order's ARRIVAL AREA key
     // (ConvoyTable::Convoy::key): an explicit selection order (Cmd::Order)
     // joins the table once for all its members, and an area it opens is keyed
     // kExplicitArea | its serial, unique per area; per-unit commands (the AI,
@@ -944,8 +944,8 @@ struct alignas(64) Order {
     // MobileBuild placement at the site (405824..405911): failures while only
     // mobile units stand on it, and the tick of the next 10-tick retry. Zero
     // until the first such failure. Hashed with a tag when set.
-    // Legion only: the serial of the explicit selection order (Cmd::Order,
-    // protocol 267) whose member got this leg, 0 for every other order (and
+    // Legion only: the serial of the explicit selection order (Cmd::Order)
+    // whose member got this leg, 0 for every other order (and
     // always in Retail). Stamped and copied with convoyTick; the pair is the
     // leg's OrderIdentity. Hashed with a tag when set.
     uint32_t orderSerial = 0;   // cold: read once per Legion registration and by the hash
@@ -3114,7 +3114,7 @@ public:
     // (beginOrder) the order's area and serial are stamped instead.
     void order(int unitId, float x, float z, bool queue, ConvoyClass cls = ConvoyClass::Move,
                std::optional<OrderIdentity> identityCopy = std::nullopt);
-    // Explicit selection orders (Cmd::Order, protocol 267; applySelectionOrder in
+    // Explicit selection orders (Cmd::Order; applySelectionOrder in
     // sim/matchsetup.cpp): between beginOrder and endOrder the members of ONE order
     // are applied, each named by orderMember before its command, and under Legion
     // every leg the member gets for itself carries the order's identity: its
@@ -3151,7 +3151,7 @@ public:
         return o.wait > 0 || o.waitAttack || o.scripted;
     }
     // Index of the last waypoint of the leg being worked on right now. Falls back
-    // to the whole queue for unmarked orders (mission scripts, older saves).
+    // to the whole queue for unmarked orders (mission scripts).
     static size_t currentLeg(const std::vector<Order>& o) {
         for (size_t i = 0; i < o.size(); ++i) if (o[i].goal) return i;
         return o.empty() ? 0 : o.size() - 1;

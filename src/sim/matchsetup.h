@@ -53,8 +53,8 @@ struct MatchConfig {
     bool loadCrt = true;             // opt-in Test Map placements/rules; campaign OTA setup opts out
     // The room's MAP SCENARIO option (GameOptions::mapScenario): run the map's own .crt
     // placements/rules and Use Only list when its .ota declares hasscenario. A Test Map
-    // copy's [TAKPlaytest] opt-in runs them regardless (unchanged). Off by default, so
-    // fixtures and every pre-259 game keep plain skirmish setup.
+    // copy's [TAKPlaytest] opt-in runs them regardless. Off by default, so fixtures and
+    // rooms that leave it off keep plain skirmish setup.
     bool mapScenario = false;
     // The room's POWER CODES option (GameOptions::powerCodes): World::applyPowerCode
     // honours Cmd::PowerCode only when it is on. Never on for a campaign mission.
@@ -86,7 +86,7 @@ struct MatchConfig {
     // order are the same; only when each body appears changes. Fixtures that inspect or
     // order the whole army right after setupMatch (simperf, patrol perf, placement and
     // retail-gap checks) set this to spawn it immediately instead, and so do games whose
-    // room option is net::kStressImmediate (stress replays recorded before staging).
+    // room option is net::kStressImmediate.
     bool stressImmediate = false;
     // Start Locations: which start each seated slot takes (StartMode). Random shuffles
     // the map's spawns so they can't be memorised. Deterministic (seeded below), so

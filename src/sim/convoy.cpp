@@ -136,7 +136,7 @@ uint64_t ConvoyTable::checksum() const {
         if(c.anchored) {mix(uint32_t(c.ax));mix(uint32_t(c.az));}
         mix(uint32_t(c.fx));mix(uint32_t(c.fz));
         mix(uint32_t(c.minX));mix(uint32_t(c.maxX));mix(uint32_t(c.minZ));mix(uint32_t(c.maxZ));
-        if(c.key!=c.first) {mix(0x41524541ull);mix(c.key);}   // an explicit area's key (absent before 267)
+        if(c.key!=c.first) {mix(0x41524541ull);mix(c.key);}   // an explicit area's key
     }
     mix(nextId_);
     return h;

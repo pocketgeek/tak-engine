@@ -404,7 +404,7 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
     // All three are assembled from whole retail sections by marching squares on the
     // section-corner grid, exactly like the coast. Each draws from its own random
     // stream and runs only when its amount is non-zero, so a recipe with all three
-    // at zero is the v9 map. Plateau corners keep clear of homes, water and the
+    // at zero is the map without kits. Plateau corners keep clear of homes, water and the
     // reserved army routes; the final walking-distance validation still decides.
     const auto& spec=kKitSpec[p.mapType];
     const int corners=(sw+1)*(sh+1);
@@ -785,7 +785,7 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         }
     }
     // Scenery may dress open plateau tops the kits built (Maze and Highlands keep
-    // their v9 look); mana stays on the low ground, where every player can reach it.
+    // their own look); mana stays on the low ground, where every player can reach it.
     for(int z=0;z<sh;++z)for(int x=0;x<sw;++x) {
         if(maskCase(kitHigh,x,z)!=15||kitCell[size_t(z*32)*w+x*32]!=1)continue;
         bool open=true;   // not a range section, nor (on snow) beside one
@@ -1144,7 +1144,7 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         homeDistances=distancesFrom(ground,r.starts,6);
     }
     const size_t roundDeposits=deposits.size();
-    // v9 scattered neutral mana: a jittered grid at the level's pitch (one
+    // Scattered neutral mana: a jittered grid at the level's pitch (one
     // candidate per pitch^2 cells, so the count follows map area), on flat open
     // ground away from every home economy and other deposits. Its own RNG
     // stream: the scenery draws after it are unchanged. Each site's approach is
@@ -1331,7 +1331,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
     // Kit terrain can leave too little room for a fair map: a plateau where an
     // expansion round needed space, or a range across the only way to a deposit.
     // Retry with half the kit amounts, then none. Still deterministic, and the
-    // last attempt is exactly the v9 terrain.
+    // last attempt is exactly the terrain without kits.
     Params attempt=p;
     for(int tries=0;;++tries) {
         try {Result r=generateOnce(attempt,vfs);r.kitFallback=tries;return r;}

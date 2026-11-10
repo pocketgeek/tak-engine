@@ -114,7 +114,7 @@ they contain CRT companions. Cached Test Map snapshots retain the opt-in. It doe
 any standalone/debug simulation. The editing session stays open. Temporary source
 files are removed when the editor observes game exit; closing the editor first
 leaves the running game and its temporary source undisturbed. Verified MapCache
-copies (kept in the per-user data folder since 0.9.5, not the install) remain
+copies (kept in the per-user data folder, not the install) remain
 selectable, as with downloaded maps.
 
 Cartographer's optional **Log Test Map triggers** setting adds a local diagnostic

@@ -34,7 +34,7 @@
 // candidate tested count in Stats::tests: a shared order costs 6 probes, a
 // non-shared one 14, plus the convoys near it.
 //
-// Explicit orders (protocol 267, Legion 10,000 stage 3). A selection order
+// Explicit orders (Legion 10,000 stage 3). A selection order
 // (net::Cmd::Order) knows its exact membership, so it joins the table ONCE, at
 // its own click point as a shared order, for all its members (World::
 // stampIdentity), instead of once per unit. The table is then the ARRIVAL AREA

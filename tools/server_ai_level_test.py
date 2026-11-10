@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""AI levels through a real server's lobby (protocol 290).
+"""AI levels through a real server's lobby.
 
   classic     the host seats an AI at level 6 (RETAIL, internally Classic): the room's table shows 6
   every level each of 0..7 round-trips through SlotUpdate -> LobbyState
-  unknown     level 8 or more is stored as Normal (2), as an older peer's clamp did
+  unknown     level 8 or more is stored as Normal (2)
 """
 import argparse
 import contextlib

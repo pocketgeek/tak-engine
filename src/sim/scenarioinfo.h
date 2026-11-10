@@ -1,6 +1,6 @@
 #pragma once
 
-// MAP SCENARIO (protocol 259): what a map's own scenario would do if a room turned it
+// MAP SCENARIO: what a map's own scenario would do if a room turned it
 // on -- read from the map's .ota, .crt and Use Only .tdf alone, without building a world.
 //
 // One inspector serves the create screens (the map list's marker and the selected map's

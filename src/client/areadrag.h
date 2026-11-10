@@ -53,7 +53,7 @@ inline ScreenPoint toScreen(const Anchor& a, float offX, float offY, float zoom)
 }
 
 // The output-pixel size of a UI pixel: the HUD's own scale, which already carries the
-// one-time OS display-scale migration (Windows DPI, macOS Retina backing scale).
+// first-run OS display scale (Windows DPI, macOS Retina backing scale).
 inline float threshold(float minPx, float uiScale) {
     return minPx * std::max(uiScale, 0.25f);
 }

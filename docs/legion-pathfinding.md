@@ -1,9 +1,9 @@
 # Legion pathfinding (mode 4)
 
-> **Note (2026-10-06):** Retail+, Flowfield and Cooperative were removed by user
-> decision; they remain in git history. Retail (mode 0, the default) and Legion
-> (mode 4) are the only pathfinding modes. Comparisons below that mention the
-> removed modes are kept as history.
+> **Note:** Retail (mode 0, the default) and Legion (mode 4) are the only
+> pathfinding modes. Measurements below that mention other modes (Retail+,
+> Flowfield, Cooperative) are dated records of experiments the engine does not
+> ship.
 
 Legion is a ground-navigation mode, the alternative to Retail, built for how Total Annihilation:
 Kingdoms actually moves armies: a flat tile mosaic whose relief is baked into
@@ -5869,16 +5869,14 @@ Rules that came out of using them:
   (`aware-unseen:pair.contacts.permille_x100` against
   `aware-seen:pair.contacts.permille_x100`).
 
-## Compatibility
+## Network, lobby and checksum
 
-* Network protocol: `kNetVersion` 228 introduced Legion. The mode travels as
-  the pathfinding-mode byte, value 4 (`PathfindingMode::Legion`); a peer that
-  does not know it is rejected by the version check. Since protocol 231 the
-  bytes 1-3 (the removed modes) are invalid.
+* Network protocol: the mode travels as the pathfinding-mode byte, value 4
+  (`PathfindingMode::Legion`); the bytes 1-3 name no mode and are invalid.
 * Lobby: the pathfinding button switches between Retail and Legion. Campaign
   missions always run Retail movement, whatever the lobby says.
-* Retail hashes and goldens are unchanged by Legion (as were those of the
-  since-removed modes). Legion state enters `World::stateHash` only in mode 4.
+* Retail hashes and goldens are unchanged by Legion. Legion state enters
+  `World::stateHash` only in mode 4.
 * Headless runs: the DEBUG client flag `TAK_LEGION=1` selects Legion for the
   `--mpai` harness and other headless games (release builds read no `TAK_*`
   variables).

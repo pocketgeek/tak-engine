@@ -151,7 +151,7 @@ run_one() {
   # guaranteed desync manufactured by the harness, which would then be reported as a
   # finding. Every other option here still travels as a room setting; this is the one
   # that does not, so it is forwarded explicitly.
-  # The server keeps its map cache under XDG_DATA_HOME (0.9.5), so it gets a per-run
+  # The server keeps its map cache under XDG_DATA_HOME, so it gets a per-run
   # folder too, never the real per-user one.
   local srv_env=""
   case "$envs" in *TAK_GODS=1*) srv_env="TAK_GODS=1";; esac

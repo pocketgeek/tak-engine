@@ -38,7 +38,7 @@ enum class Cmd : uint8_t {
     GiveUnit,      // unitId = owned eligible unit, targetId = allied recipient player
     ShareMana,     // targetId = allied recipient, queue = enabled; no unit required
     BuildManaArea, // mobile builder: lodestones in x/z through x2/z2, exploring as needed
-    // An explicit selection order (protocol 267, Legion 10,000 stage 3): one
+    // An explicit selection order (Legion 10,000 stage 3): one
     // player intent over a whole selection, `order` holds it. Never sent in a
     // PlayerCommands message: the uplink carries it as an OrderBegin /
     // OrderMembers / OrderCommit transaction (net/protocol.h) and the server

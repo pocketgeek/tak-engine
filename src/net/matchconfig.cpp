@@ -12,10 +12,10 @@ sim::MatchConfig matchConfigFor(const GameOptions& o, const SlotInfo* slots, uin
     cfg.doubleSight = !mission && o.doubleSight != 0;
     cfg.pathfindingMode = mission ? sim::PathfindingMode::Retail : o.pathfindingMode;
     cfg.stressTest = o.stressTest != 0;
-    cfg.stressImmediate = o.stressTest == kStressImmediate;   // recorded before staging
+    cfg.stressImmediate = o.stressTest == kStressImmediate;
     cfg.benchmark = o.benchmark;
     cfg.startMode = sim::StartMode(normalizeStartMode(o.randomStarts));
-    cfg.mapScenario = !mission && o.mapScenario != 0;   // 259: the map's own scenario
+    cfg.mapScenario = !mission && o.mapScenario != 0;   // the map's own scenario
     cfg.powerCodes = !mission && o.powerCodes != 0;     // never in a campaign (retail 0x499610)
     cfg.powerMapRevealed = cfg.powerCodes && o.fogExplored >= 1;   // +Mapping's start (Map Revealed)
     cfg.roomMapRevealed = !mission && o.fogExplored >= 1;   // a mission's own .ota decides (setupMission)
@@ -84,8 +84,8 @@ void matchInputsFrom(const ReplayHeader& h, GameOptions& o, SlotInfo* slots) {
     o.powerCodes = h.powerCodes & 1;
     o.fogExplored = h.fogExplored;
     for (int i = 0; i < kMaxSlots; ++i) {
-        // Every field explicitly: a header without AI levels (format < 6) reads 0,
-        // as the loader always did, not SlotInfo's default of 2.
+        // Every field explicitly from the header, never SlotInfo's defaults
+        // (aiLevel 2).
         slots[i] = SlotInfo{};
         slots[i].type = h.slotType[i];
         slots[i].faction = h.slotFaction[i];

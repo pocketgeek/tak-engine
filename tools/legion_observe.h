@@ -49,8 +49,7 @@
 //   orders keeps its walk (speed > 0, not legionStill) after 16 or more ticks
 //   without headway (a step under baseSpeed/4 and no turn): two of Legion's
 //   8-tick headway windows (World::updateLegionStill), within which such a
-//   body always stands (6 ticks before protocol 257's net-headway window, and
-//   still 6 in Retail, whose count is a comparison). In Retail it counts the
+//   body always stands (6 in Retail, whose count is a comparison). In Retail it counts the
 //   internal speed a refused mover keeps, not its gait: GET 29 reads 0 after
 //   two refusals, so the gait stands (walk_net reads the gait).
 //   walk_net /

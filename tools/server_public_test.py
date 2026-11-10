@@ -42,7 +42,7 @@ def login(port, fingerprint, name, context=None):
     p.hello(fingerprint);p.login(name,[]);return p
 
 def options(stress=0,benchmark=0,spectators=1,scenario=0,random_starts=0,power_codes=0):
-    # GameOptions wire bytes: ... pathMode, then allowSpectators (protocol 258), mapScenario (259), powerCodes
+    # GameOptions wire bytes: ... pathMode, then allowSpectators, mapScenario, powerCodes
     return bytes([0,1,0,10,0])+struct.pack('<I',2000)+bytes([0,stress,0,benchmark,random_starts,0,0,spectators,scenario,power_codes])
 
 def create(p,stress=0,benchmark=0,mission='',map_id='missing-test-map'):
@@ -101,8 +101,8 @@ def main():
                 p.send('LeaveGame');p.send('Ping');p.receive('Pong')
                 create(p);rid=room(p)
                 offer=lambda c,size=1000:c.send('ModOffer',struct.pack('<I',rid)+auth.field('mods')+auth.field('1'*64)+struct.pack('<I',size))
-                # Game mods off (a 0.8.12 or 0.8.13 host's GAME MODS: OFF; current hosts always
-                # send on): even the host's game packs are refused.
+                # Game mods off (only a debug --mods launch sends it; the lobby always
+                # sends on): even the host's game packs are refused.
                 offer(p);error=p.receive('ModError');assert error.num('<I')==rid;assert b'off' in error.field()
                 mods=bytearray(options());mods[2]=1
                 p.send('SetGameOptions',mods)

@@ -26,7 +26,7 @@ int main() try {
     check(area(still, 368, 268), "dragging up-left counts the same");
     check(!area(still, 600, 310), "a long thin sliver is a click, however long");
     check(!area(still, 405, 700), "so is a tall thin one");
-    // The threshold is in UI pixels: a 200% UI (or a migrated Retina / high-DPI scale)
+    // The threshold is in UI pixels: a 200% UI (or a first-run Retina / high-DPI scale)
     // needs twice the output pixels, a 50% UI half.
     check(!area(still, 440, 340, 2), "40 px is under the 64 px area at 200%");
     check(area(still, 464, 364, 2), "64 px is the area at 200%");

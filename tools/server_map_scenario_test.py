@@ -35,7 +35,7 @@ import server_net as auth
 from server_net import OPTIONS_BYTES, BufferedPeer as Peer, lobby
 from server_public_test import login, options, server
 
-SCENARIO = OPTIONS_BYTES - 2   # mapScenario (protocol 259), before powerCodes
+SCENARIO = OPTIONS_BYTES - 2   # mapScenario, before powerCodes
 RANDOM = 13                    # randomStarts
 SEAT_TWO = b'Seat player 2 in the lobby to play this scenario'
 

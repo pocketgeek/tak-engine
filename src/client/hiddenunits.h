@@ -34,9 +34,8 @@ enum Mode : int { kOff = 0, kDots = 1, kFade = 2 };
 inline constexpr int kDefault = kFade;
 inline constexpr int kModeCount = 3;
 
-// Persisted as hiddenUnits = off | dots | fade. A file from before the option (no
-// key), one from a mode since removed ("outline", "shadow"), a number other than
-// 0 or 1, or an unknown value reads as the default.
+// Persisted as hiddenUnits = off | dots | fade. No key, a number other than 0 or 1,
+// or any other value reads as the default.
 inline const char* name(int mode) {
     return mode == kOff ? "off" : mode == kDots ? "dots" : "fade";
 }

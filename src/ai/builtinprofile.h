@@ -17,13 +17,12 @@
 // building that unit). A game mod's file wins over the map's (the map's is read only
 // when no game mod supplies one). A file of that name anywhere else (a pack's root,
 // another folder) is not read, and the base install and cosmetic packs can never
-// supply one. The old per-level files (ai/d.txt, ai/e.txt, ai/n.txt, ai/h.txt,
-// ai/a.txt, ai/ad.txt) are no longer read.
+// supply one.
 // Classic (retail's own AI, shown to players as RETAIL) is not built in and never
 // reads ai/takengine.txt: it reads ai/<aiprofile>.txt, else the game's
 // ai/default.txt (ai/classicprofile.h).
 //
-// Line format (the one loadProfile has always read): `weight <unit> <n>` or
+// Line format: `weight <unit> <n>` or
 // `limit <unit> <n>`, whitespace-separated, unit names case-insensitive; a line
 // starting with '/' and anything that is not one of the two keywords is skipped,
 // and a later line for the same unit and keyword wins.

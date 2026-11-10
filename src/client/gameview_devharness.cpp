@@ -2813,7 +2813,7 @@
             check(fanned(cmds,tak::net::Cmd::Reclaim) && cmds[1].targetId==fid,
                   "an armed CLEAR click gives each reclaimer one Reclaim, the soldier none");
             check(soldierKept(),"armed CLEAR leaves the soldier's order alone");
-            // A body (0.9.12): retail's resolver runs per unit (4de530 mode 1
+            // A body: retail's resolver runs per unit (4de530 mode 1
             // for the click, 12 for armed CLEAR) -- a caster that can raise it
             // gets RESURRECT, a reclaimer that cannot gets RECLAIM, the soldier
             // nothing -- and the cursor is Revive, the order the click gives.

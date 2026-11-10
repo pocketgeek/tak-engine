@@ -10,10 +10,10 @@
 //    order p99 <= 16, max <= 64), and a linear scan of the open convoys --
 //    the fault this bound exists to catch -- trips it.
 // 3. Selections in a Legion world, each requiring every unit to carry one
-//    convoyTick, twice: as the client sends them since protocol 267 (one
+//    convoyTick, twice: as the client sends them (one
 //    explicit order per click, issueSelection: the order joins the table once
 //    and keys its area kExplicitArea | serial) and as per-unit commands (the
-//    AI's and scripts' path, the client's before 267: hudCommands through the
+//    AI's and scripts' path: hudCommands through the
 //    uplink, inferred per unit): flyers listed first with saturated offsets,
 //    flyers at opposite corners, an all-air selection over 64, 974 units
 //    through the 512-command window (explicit: one tick at every round trip;

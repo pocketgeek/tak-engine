@@ -1,4 +1,4 @@
-// revive_order_test -- raising the dead is an order (0.9.12).
+// revive_order_test -- raising the dead is an order.
 //
 // Retail creates a Resurrect, Reclaim or ReclaimArea task only from an order:
 // the resolver 0x4de530 (mode 1, a right-click; mode 12, an area reclaim's

@@ -454,7 +454,7 @@ int main(int argc, char** argv) {
             "      (seat AIs, READY, START by hand; TAK_SP_AIS=N seats N AIs and starts at once).\n"
             "    game multiplayer:   add --server host [--serverport N] [--name X].\n"
             "    game --campaign <stem>: play a campaign mission (e.g. takmission01_mt).\n"
-            "    game <stem> --mission: legacy alias for the same campaign launch.\n"
+            "    game <stem> --mission: alias for the same campaign launch.\n"
             "  common: [--side X --aiside Y] [--mods none|cosmetic|game|all] [--shot out.png]\n"
             "  (debug build: all dev/test flags below are available.)\n"
             "  <retail-install-dir> holds the shipped *.hpi plus Maps/ Music/ mods/.\n");
@@ -487,7 +487,7 @@ int main(int argc, char** argv) {
             argStart = 2;
         }
     }
-    std::string shot, cobPath, anim, joinAddr, side = "ara", aiSide = "tar";
+    std::string shot, cobPath, anim, side = "ara", aiSide = "tar";
     // model mode: --statics <bitmask> seeds the VM's static slots (bit i -> static i).
     // Walk/attack scripts gate on an "am I moving" static whose SLOT differs per unit.
     uint32_t staticMask = 1;
@@ -499,7 +499,7 @@ int main(int argc, char** argv) {
     int serverPort = 7677, mpHeadless = 0;
     std::string missionStem;   // --mpmission <stem>: headless campaign-mission host
     std::string cliCampaign;   // --campaign <stem>: launch straight into a mission (interactive)
-    int hostPort = 0, joinPort = 0, winW = kWinW, winH = kWinH, maxFps = 60;
+    int winW = kWinW, winH = kWinH, maxFps = 60;
     bool winSizeExplicit = false;
     int playerColor = -1, aiColor = -1;   // --color / --aicolor slot overrides
     float startTime = 0, followZoom = 0;
@@ -592,8 +592,7 @@ int main(int argc, char** argv) {
         }
         else args.push_back(a);
     }
-    // Retain --mission as an alias, but retire the standalone runner that
-    // guessed numeric MAP_COMMAND meanings. All campaign launches now share
+    // --mission is an alias for --campaign <stem>. Every campaign launch shares
     // the menu's authoritative server setup and in-sim mission interpreter.
     if (missionFlag) {
         if (cliCampaign.empty()) {
@@ -608,7 +607,6 @@ int main(int argc, char** argv) {
         mode="game";
     }
     if (!shot.empty() || mpHeadless) SDL_SetHint(SDL_HINT_VIDEODRIVER, "dummy");
-    (void)hostPort; (void)joinPort; (void)joinAddr;   // --host/--join retired (see --server)
 
     // The runtime data set: a retail install directory (root *.hpi + Maps/ +
     // Music/ + mods/). This is the ONLY way the engine reads game files. It

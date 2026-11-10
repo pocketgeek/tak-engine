@@ -124,12 +124,12 @@ inline bool honoured(const std::string& hint, const char* createdName) {
 // first one that creates and is a real hardware driver; if none does, SDL's own pick.
 // OpenGL comes first because every native fast path (client/nativepass.h,
 // geometrysubmit.h, paletteindexed.h) is OpenGL-only; SDL's own Windows order starts
-// at Direct3D 9, which is what AUTO ran before 0.9.1. Windows ships a software OpenGL
+// at Direct3D 9. Windows ships a software OpenGL
 // ("GDI Generic", vendor Microsoft) for a machine with no GPU driver, and Microsoft's
 // OpenGL compatibility pack layers OpenGL over Direct3D 12 (also vendor Microsoft);
 // either is slower than Direct3D 11 on the same machine, so AUTO moves on.
 // On macOS AUTO tries OpenGL, then Metal, for the same fast paths (SDL's own macOS
-// pick is Metal, which AUTO ran up to 0.9.9; in a 2026-10-25 test on a MacBook Neo
+// pick is Metal; in a 2026-10-25 test on a MacBook Neo
 // OpenGL drew a 2,000-unit view 2.6x faster than Metal). Apple's software OpenGL ("Apple Software
 // Renderer") is passed over like Windows' one.
 // On Linux AUTO is unchanged: no hint, SDL's own pick (OpenGL), and an empty order.

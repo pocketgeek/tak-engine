@@ -139,8 +139,8 @@ crypto::Digest tokenHash(const Credential& c, std::string_view user,
 [[nodiscard]] bool validUsername(std::string_view u, std::string* why = nullptr);
 
 // Rejects new passwords that are too short, too long, or contain control
-// characters. LOGIN does not apply this -- an account created under older rules
-// must still be able to sign in.
+// characters. LOGIN does not apply this -- it checks only the stored proof, so a
+// rule change never locks out an existing account.
 [[nodiscard]] bool validPassword(std::string_view p, std::string* why = nullptr);
 
 // Lookup key: usernames are unique case-insensitively, so "Curtis" cannot be

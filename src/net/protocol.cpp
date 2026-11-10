@@ -146,9 +146,9 @@ void put(Writer& w, const GameOptions& o) {
     w.u8(o.speed); w.u8(o.speedUnlock); w.u32(o.unitCap); w.u8(o.monarchExpendable);
     w.u8(o.stressTest); w.u8(o.fogExplored); w.u8(o.benchmark); w.u8(o.randomStarts);
     w.u8(o.doubleSight); w.u8(uint8_t(o.pathfindingMode));
-    w.u8(o.allowSpectators);   // 258: room admission
-    w.u8(o.mapScenario);       // 259: map scenario
-    w.u8(o.powerCodes);        // 288: power codes
+    w.u8(o.allowSpectators);   // room admission
+    w.u8(o.mapScenario);       // map scenario
+    w.u8(o.powerCodes);        // power codes
 }
 
 void get(Reader& r, GameOptions& o) {

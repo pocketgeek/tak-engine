@@ -20,7 +20,7 @@ def game_seed(port,h,name):
         recipe='~gen1~'+(struct.pack('<HQBHH',10,1234,0,128,128)+bytes([2,0,0,1,0,0,0,0,0,0,0])).hex()
         p.send('CreateGame',auth.field('seed')+auth.field('')+auth.field(recipe)+auth.field('')+options()+bytes([2,0,0]))
         p.receive('JoinResult')
-        r=p.receive('LobbyState');r.num('<I');r.field();r.field();r.field();r.pos+=18  # GameOptions (18 bytes from protocol 259)
+        r=p.receive('LobbyState');r.num('<I');r.field();r.field();r.field();r.pos+=18  # GameOptions (NOTE: 19 bytes on the wire since powerCodes; this skips 18)
         r.num('<I');r.num('<B')
         values=tuple(r.num('<B') for _ in range(6))
         p.send('SlotUpdate',bytes([0,1,values[1],values[2],values[3],1,values[5]]))

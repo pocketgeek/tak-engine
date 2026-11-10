@@ -13,7 +13,7 @@ driver (`capdrv`) in a worktree (not committed); scripts in
 - `cartographer/random-generator.jpg`: the generator dialog with its plateau, mountain
   and town fields (seed 2026, 4 players, Aramon Riverlands, 16 x 16, defaults otherwise)
   and its preview, composited as before (1103 x 508).
-- `generated.jpg`: the version-9 recipe no longer generates, so a new Silverford: Aramon
+- `generated.jpg`: a new Silverford: Aramon
   Riverlands, seed 13, 512 x 512 cells (the generator raised the old 256), four players,
   Scattered Mana Medium, Plateaus 96, Mountains 48, Towns 64:
   `~gen1~0a000d00000000000000000002000204aa6e808296050260304053696c766572666f7264`. A local
@@ -370,8 +370,7 @@ the files they replace, because nothing in those scenes changed. Each picture's
 row below says how it was made; the sections that follow still describe the
 earlier rounds.
 
-Refreshed on 2026-10-24 for **0.8.14**. The always-on cosmetic mods moved
-from `.hpi` archives directly in `mods/cosmetic/` (no longer loaded) to pack
+Refreshed on 2026-10-24 for **0.8.14**. The always-on cosmetic mods became pack
 folders in `mods/cosmetic/always_enabled/<pack>/`, `mods/game/always_enabled/<pack>/`
 was added, and the multiplayer create screen lost its GAME MODS: ON/OFF option.
 The 0.8.14 build (version set to 0.8.14 locally, ahead of the release commit; no
@@ -810,8 +809,7 @@ single-player door, with `TAK_NODOORVID=1` skipping the door video), the profile
 boxes, the MAP SCENARIO button) and `TAK_SHOT_SIZES` captures the live window. The
 data folder is a scratch copy of the retail install (links to its archives and
 `Maps`, an empty `MapCache`) whose `mods/` holds the always-enabled cosmetic
-pack *click* (`mods/cosmetic/always_enabled/click/click.hpi`; up to 0.8.13 the
-archive sat directly in `mods/cosmetic/`), the cosmetic packs *Alternate
+pack *click* (`mods/cosmetic/always_enabled/click/click.hpi`), the cosmetic packs *Alternate
 Cursors* and *Classic Sounds* and the game pack *Big Battles* (placeholder
 folders), for the pack lists; for `guide/room-mods-power-codes.jpg` also the
 always-enabled game pack *House Rules* (`mods/game/always_enabled/House Rules/`).

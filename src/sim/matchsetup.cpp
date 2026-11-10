@@ -33,7 +33,7 @@ namespace tak::sim {
 
 const char* const kMonarchs[5] = {"araking", "tarnecro", "vermage", "zonhunt", "cresage"};
 
-// One explicit selection order (Cmd::Order, protocol 267): every member gets
+// One explicit selection order (Cmd::Order): every member gets
 // the template command, in increasing id order, inside one World::beginOrder
 // scope, so under Legion all their legs carry the order's identity and the order
 // joins its arrival area once. Ownership and existence are checked per member by
@@ -741,8 +741,8 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
             if(const auto* test=root.child("takplaytest"))authoredPlaytest=test->numberOr("authoredscenario",0)!=0;
             const auto* gh = root.child("globalheader");
             const bool declared = gh && gh->numberOr("hasscenario", 0) != 0;
-            // Scenario content runs for a Test Map copy (its opt-in, as since protocol 197) or
-            // when the room turned MAP SCENARIO on for a map that declares a scenario (259).
+            // Scenario content runs for a Test Map copy (its opt-in) or when the room
+            // turned MAP SCENARIO on for a map that declares a scenario.
             scenarioOn = cfg.loadCrt && !cfg.stressTest && !cfg.benchmark &&
                          (authoredPlaytest || (cfg.mapScenario && declared));
             if (gh) {

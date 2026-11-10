@@ -328,7 +328,7 @@ int main() {
         c.ota.hasScenario = false; info = inspect(c);
         check(info.marker && !info.runnable() && !info.active(false), "a Test Map copy without a declared scenario plays none");
         c = good; c.name = "empty Test Map copy"; c.marker = true; c.scenario = emptyScenario(); info = inspect(c);
-        check(info.status == ScenarioStatus::Empty && info.active(false), "an empty Test Map copy still runs, as before 259");
+        check(info.status == ScenarioStatus::Empty && info.active(false), "an empty Test Map copy still runs");
     }
     {
         Case c = good; c.name = "unparseable .ota";

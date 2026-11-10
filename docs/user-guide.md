@@ -145,9 +145,7 @@ Install the new version over the old one, in the same way. Everything of yours
 carries over: your settings, your data folder choice, key bindings, the maps in
 your install's `Maps` folder, the downloaded and generated maps in your
 per-user folder (see [Where files are kept](#where-files-are-kept)), and your
-mod packs and their ticks. Maps that a version before 0.9.5 downloaded into the
-game folder's `MapCache` are not read; each is downloaded again the first time
-a room uses it.
+mod packs and their ticks.
 
 - **Multiplayer:** you can play only with the versions that share your network
   protocol, and a server turns away any other. When a release changes the
@@ -156,10 +154,9 @@ a room uses it.
 - **Replays** play only on a version with the protocol that recorded them. Keep
   an old copy of the engine if you want to keep watching old replays.
 - **Anything you must do by hand** when updating is listed under *Upgrading* in
-  that release's [CHANGELOG](../CHANGELOG.md) entry. Releases from 0.9.0 on
-  stay on the GitHub releases page; older versions are not offered for
-  download, but can be built from source from their tags (see the
-  [development guide](development.md)).
+  that release's [CHANGELOG](../CHANGELOG.md) entry. Released versions stay on
+  the GitHub releases page, and any version can be built from source from its
+  tag (see the [development guide](development.md)).
 
 ---
 
@@ -1030,8 +1027,6 @@ Submersible, catapults, mortars and the like) is in range only where its arc
 can reach the target, as in the original game. A unit ordered to attack
 something just past that reach closes in until it can hit; one that cannot get
 nearer (a boat whose target stands inland past the shore) holds without firing.
-Before 0.9.2 such units fired at targets out of reach of their arc, and the shot
-landed just in front of them.
 
 **Builders defend themselves.** An armed builder fires at enemies it passes on
 the way to a building site. While it is placing, building, repairing,
@@ -1590,9 +1585,8 @@ With **Fog of war: Full Vision** you already see the whole map and every unit,
 so **+LOS**, **+Mapping** and **+NowISee** change nothing on your screen. They
 still change which units your units can see and attack.
 
-The poster key used to be Print Screen, which many desktops take for their own
-screenshot tool and Mac keyboards lack. If you bound **MAKE POSTER** yourself
-in **CONTROLS**, your key is kept.
+The poster key is **Shift+P** rather than Print Screen, which many desktops
+take for their own screenshot tool and Mac keyboards lack.
 
 **+ATM**, **+ManaMe**, **+LOS**, **+Mapping** and **+NowISee** affect only the
 player who types them. **+DoubleShot** and **+HalfShot** affect the whole game.
@@ -2054,9 +2048,7 @@ pixel is one or two screen pixels, so smoothing would only blur the picture.
 It switches back off below 140%, so a wheel notch either side of the line does
 not flicker. Units are smoothed at every zoom, as with Units. None of the
 levels costs any measurable speed or video memory. The interface, cursor and
-movies have their own settings (Smooth GUI Art, Smooth Movies). Saved settings
-from an older version keep their look: Bilinear Filtering off becomes Off, on
-becomes Units.
+movies have their own settings (Smooth GUI Art, Smooth Movies).
 
 **Shadows** follow each unit's animation, swaying trees included; the shading
 painted into the terrain art is there either way. Boats cast animated shadows
@@ -2141,13 +2133,12 @@ units, as in the original game, so it never hides anyone.
   ("GDI Generic", what Windows offers when no graphics driver is installed),
   and Microsoft's OpenGL compatibility layer, because Direct3D 11 is faster
   than either. OpenGL comes first because some of the game's drawing
-  shortcuts work only with it. Versions before 0.9.1 used Direct3D 9 here.
+  shortcuts work only with it.
 - **macOS:** OpenGL, if it is a real hardware one; otherwise Metal. Auto
   passes over Apple's software OpenGL ("Apple Software Renderer"). OpenGL
   comes first for the same reason as on Windows: the game's fast drawing paths
   work only with it. In a quick test on a MacBook Neo, OpenGL drew a
-  2,000-unit view 2.6 times as fast as Metal. Versions up to 0.9.9 used Metal
-  here.
+  2,000-unit view 2.6 times as fast as Metal.
 - **Linux:** OpenGL.
 
 While Auto is in use the row names what it picked, for example
@@ -2164,12 +2155,11 @@ your system appear.
   than Direct3D 11 and 17% faster than Direct3D 9, but a 10,000-unit view
   about 10% slower than Direct3D 11 (and as fast as Direct3D 9).
 - **If OpenGL misbehaves on Windows** (wrong colours, flicker, a crash, a black
-  window, or worse speed than before 0.9.1), choose **Direct3D 11**, or
-  **Direct3D 9** for exactly what earlier versions used, then restart the game.
+  window, or poor speed), choose **Direct3D 11** or **Direct3D 9**, then
+  restart the game.
   If the game does not get as far as the menu, see
   [The game will not start, or shows a black screen](#the-game-will-not-start-or-shows-a-black-screen).
-- **If OpenGL misbehaves on a Mac**, choose **Metal**, what versions up to
-  0.9.9 used, then restart the game.
+- **If OpenGL misbehaves on a Mac**, choose **Metal**, then restart the game.
 - A backend you choose yourself is used as it is, even a slow one: Auto's
   checks apply only to Auto.
 - **Software** draws everything on the processor without the graphics card. It
@@ -2535,18 +2525,15 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-TAK Engine 0.9.24 uses network protocol **320** and replay format **15**. No earlier
-release uses protocol 320 (0.9.23 used 316), so:
+TAK Engine 0.9.24 uses network protocol **320** and replay format **15**.
 
-- **Multiplayer:** 0.9.24 plays only with 0.9.24. A server turns away a client whose
-  protocol differs from its own, so a 0.9.23 or older player cannot join a 0.9.24
-  server, nor a 0.9.24 player an older one; the connection fails with a *protocol
-  version mismatch* message. When a release changes the protocol, a server and all of
-  its players update together.
-- **Replays:** 0.9.24 plays replays recorded by 0.9.24. A replay recorded by 0.9.23
-  or earlier needs a version with that replay's protocol; keep an old copy of the
-  engine (built from its tag, see the [development guide](development.md)) if you want
-  to keep watching old replays.
+- **Multiplayer:** a server turns away a client whose protocol differs from its
+  own; the connection fails with a *protocol version mismatch* message. When a
+  release changes the protocol, a server and all of its players update together.
+- **Replays:** a replay plays only on a version with the protocol and replay format
+  that recorded it. Keep a copy of the version that recorded a replay (or build it
+  from its tag, see the [development guide](development.md)) if you want to keep
+  watching it.
 
 Every release's protocol and replay format are listed in the
 [CHANGELOG](../CHANGELOG.md).
@@ -2939,8 +2926,7 @@ win when they change the same file. Game packs load first, then cosmetic packs.
   Transfers are limited to 256 MB, and downloaded packs are kept in a
   `ModCache` folder in your per-user folder (see
   [Where files are kept](#where-files-are-kept)), never over your installed
-  files. Rooms hosted by older
-  versions: see [Versions](#versions).
+  files.
 - **Campaigns** use the original game data plus your
   always-enabled cosmetic packs only: no game packs (always-enabled ones
   included) and no ticked cosmetic packs.
@@ -3268,17 +3254,16 @@ renderer = auto
 backend cannot start at all; editing the file is only needed when the backend
 starts but then misbehaves.
 
-On Windows, if the problem began with 0.9.1 and you never changed the
-Renderer, Auto's OpenGL is the likely cause: set the same line to
+On Windows, if you never changed the Renderer, Auto's OpenGL is the likely
+cause: set the same line to
 
 ```
 renderer = direct3d11
 ```
 
-or `renderer = direct3d` for Direct3D 9, what earlier versions used.
+or `renderer = direct3d` for Direct3D 9.
 
-On macOS, if the problem began with 0.9.10 and you never changed the Renderer,
-set the line to `renderer = metal`, what 0.9.9 and earlier used.
+On macOS, if you never changed the Renderer, set the line to `renderer = metal`.
 
 ### There is no sound, or sound comes from the wrong device
 
@@ -3319,7 +3304,7 @@ it; a game still being recorded is a `.takrep.part` file, with a small
 `videos` folder. Maps downloaded in multiplayer and Cartographer's Test Map copies go in
 its `MapCache` folder, downloaded game mods in `ModCache`, and random maps you have
 played in `Maps`. The game never writes into your game data folder, which may be
-read-only; a `MapCache` an older version left there is ignored.
+read-only, and reads no `MapCache` folder there.
 Cartographer keeps its preferences in a sibling `Cartographer` folder.
 
 The game prints diagnostic messages to the terminal it was started from. On
