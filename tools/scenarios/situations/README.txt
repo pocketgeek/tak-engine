@@ -55,7 +55,7 @@ two definitions differ, see docs/legion-scenario-keys.md):
   r10 104540    242     (counter bar: fieldWork per window, no reference measured; head
                        work.field_work.total 51.4M over 3000 ticks, p99 132k per tick)
 
-To re-cut a moment: build the recording's tree, copy src/client/{situation,postrail}.h and
+To re-cut a moment: build the recording's tree, copy src/client/situation.h and
 tools/{legion_scn.h,legion_issue_selection.h,scn_truth.cpp} into it, add the three World
 accessors of this commit (gameRngState, resumeClocks, setNextUnitId) and the arming block of
 src/client/main.cpp, then

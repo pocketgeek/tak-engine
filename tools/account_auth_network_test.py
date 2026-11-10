@@ -122,29 +122,20 @@ def run(binary, data, tls_tool, client_tool):
         stored = (root / 'accounts.conf').read_bytes()
         password = secrets[0]
         assert password not in stored, 'the password reached the accounts file'
-        # The Darien Crusades service was removed in 0.9.4: a 0.9.3 service line that still
-        # passes its options starts anyway (warned, ignored, the old database left alone)
-        # and the accounts still log in.
-        (root / 'campaign.sqlite').write_bytes(b'SQLite format 3\x00old 0.9.3 store')
-        (root / 'crusades-replays').mkdir()
-        extra = ('--crusades-db', str(root / 'campaign.sqlite'),
-                 '--crusades-definition', str(root / 'darien.campaign'))
-        with net.server(binary, data, root, extra) as (port, fingerprint):
-            with contextlib.closing(net.Peer(port)) as alice:
-                alice.hello(fingerprint)
-                alice.login('Alice', secrets)
-        log = (root / 'server.log').read_text(errors='replace')
+        # An option the server does not know (here a Crusades campaign-service flag) stops
+        # it before it binds or reads anything, like any unknown option.
         for flag in ('--crusades-db', '--crusades-definition'):
-            assert flag + ' was removed in 0.9.4' in log and 'is ignored' in log, log
-        assert (root / 'campaign.sqlite').read_bytes() == b'SQLite format 3\x00old 0.9.3 store'
-        assert not (root / 'darien.campaign').exists()
+            refused = subprocess.run([str(binary), flag, str(root / 'campaign.sqlite')], capture_output=True, timeout=30)
+            assert refused.returncode == 1 and b'unknown option or missing value: ' + flag.encode() in refused.stderr, \
+                refused.stderr
+        assert not (root / 'campaign.sqlite').exists()
         usage = subprocess.run([str(binary), '--help'], capture_output=True, timeout=30)
         assert usage.returncode == 0 and b'crusades' not in usage.stdout.lower(), 'takserver --help lists Crusades options'
         subprocess.run([str(tls_tool), '--fixtures', str(root)], check=True, timeout=10)
         token_checks(binary, data, root, client_tool, secrets)
     subprocess.run([str(client_tool)], check=True, timeout=60)   # the hostile-server scenarios
-    print('PASS: live SCRAM register, login, wrong proof, pending registration and restart; Crusades options '
-          'warned and ignored; sign-in tokens over TLS')
+    print('PASS: live SCRAM register, login, wrong proof, pending registration and restart; unknown options '
+          'refused; sign-in tokens over TLS')
 
 
 def main():

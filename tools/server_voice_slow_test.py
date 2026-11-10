@@ -84,7 +84,7 @@ class Slow:
                     elif body[0] == auth.MSG['TickBundle']:
                         self.lastTick = struct.unpack_from('<I', body, 1)[0]
                         if self.lastTick % 4 == 0:
-                            self.peer.send('Progress', struct.pack('<II', self.lastTick, 20))
+                            self.peer.send('Progress', struct.pack('<III', self.lastTick, 20, self.lastTick))
                     elif body[0] == auth.MSG['VoiceDown']:
                         self.voiceFrames += 1
                 dt = t0 + got / RATE - time.monotonic()

@@ -5,9 +5,7 @@
 #include <stdexcept>
 namespace tak::net::mods {
 namespace {
-// "TOV2": every file is a u32-length blob. Version 1 framed file contents with
-// the login-field writer, which silently cut each file to 4096 bytes (a 68 KB
-// 3DO became "3DO index out of range"); its packages are rejected, not misread.
+// "TOV2": every file is a u32-length blob. Any other magic is rejected.
 constexpr uint32_t kPackageMagic = 0x32564f54;
 std::string hash(const std::vector<uint8_t>& b){return crypto::toHex(crypto::sha256(b.data(),b.size()));}
 bool safe(const std::string& p) {

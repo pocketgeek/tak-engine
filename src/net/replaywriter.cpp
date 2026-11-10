@@ -27,7 +27,6 @@ namespace {
 
 constexpr const char* kPartSuffix = ".part";       // <name>.takrep.part
 constexpr const char* kChecksSuffix = ".chk";      // <name>.takrep.part.chk
-constexpr size_t kCheckRecord = 20;                // u32 tick, u64 hash, u64 posDigest
 
 bool endsWith(const std::string& s, const std::string& tail) {
     return s.size() >= tail.size() && s.compare(s.size() - tail.size(), tail.size(), tail) == 0;
@@ -253,15 +252,12 @@ std::string publish(intptr_t& f, const std::string& part) {
     return final;
 }
 
-bool validBundle(const uint8_t* p, uint32_t len, uint32_t index, uint32_t proto) {
+bool validBundle(const uint8_t* p, uint32_t len, uint32_t index) {
     if (len < 4 || getU32(p) != index) return false;
-    // A file from another protocol cannot be parsed by this build, and could not be
-    // played by it either; keep its framing intact for the build that can.
-    if (proto != kNetVersion) return true;
     Reader r(p, len);
     uint32_t tick = 0;
     Bundle bd;
-    return getBundle(r, tick, bd, /*strict=*/true, proto) && tick == index;
+    return getBundle(r, tick, bd, /*strict=*/true) && tick == index;
 }
 
 void recoverOne(const std::string& part, std::vector<RecoveredReplay>& out) {
@@ -278,8 +274,8 @@ void recoverOne(const std::string& part, std::vector<RecoveredReplay>& out) {
     };
     if (d.size() < 12 || d[0] != 'T' || d[1] != 'A' || d[2] != 'K' || d[3] != 'R')
         return discard("no complete header");
-    // A newer build's recording: its header is not ours to judge.
-    if (getU32(d.data() + 4) > kReplayFormat) { closeFile(f); return; }
+    // Another build's recording (other format or protocol): not ours to judge or finish.
+    if (getU32(d.data() + 4) != kReplayFormat || getU32(d.data() + 8) != kNetVersion) { closeFile(f); return; }
     Reader r(d.data() + 4, d.size() - 4);
     ReplayHeader h;
     uint32_t fmt = 0, proto = 0;
@@ -293,7 +289,7 @@ void recoverOne(const std::string& part, std::vector<RecoveredReplay>& out) {
     uint32_t n = 0;
     while (d.size() - at >= 4) {
         const uint32_t len = getU32(d.data() + at);
-        if (d.size() - at - 4 < len || !validBundle(d.data() + at + 4, len, n, proto)) break;
+        if (d.size() - at - 4 < len || !validBundle(d.data() + at + 4, len, n)) break;
         at += 4 + size_t(len);
         ++n;
     }
@@ -303,7 +299,7 @@ void recoverOne(const std::string& part, std::vector<RecoveredReplay>& out) {
     bool complete = false;
     if (count == n && d.size() - at >= 4) {
         const uint64_t nchecks = getU32(d.data() + at);
-        complete = d.size() - at - 4 == nchecks * replayCheckBytes(fmt);
+        complete = d.size() - at - 4 == nchecks * kReplayCheckBytes;
     }
     bool ok = true;
     if (!complete) {
@@ -317,11 +313,11 @@ void recoverOne(const std::string& part, std::vector<RecoveredReplay>& out) {
             t.u32(0);
             uint32_t kept = 0;
             int64_t last = -1;
-            for (size_t i = 0; i + kCheckRecord <= raw.size(); i += kCheckRecord) {
+            for (size_t i = 0; i + kReplayCheckBytes <= raw.size(); i += kReplayCheckBytes) {
                 const uint32_t tick = getU32(raw.data() + i);
                 if (tick >= n || int64_t(tick) <= last) continue;
                 last = tick;
-                t.b.insert(t.b.end(), raw.begin() + ptrdiff_t(i), raw.begin() + ptrdiff_t(i + kCheckRecord));
+                t.b.insert(t.b.end(), raw.begin() + ptrdiff_t(i), raw.begin() + ptrdiff_t(i + kReplayCheckBytes));
                 ++kept;
             }
             putU32(t.b.data(), kept);

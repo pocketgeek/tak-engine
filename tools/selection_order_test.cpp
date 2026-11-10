@@ -1,10 +1,10 @@
-// selection_order_test -- explicit selection orders (Cmd::Order, protocol 267) from
+// selection_order_test -- explicit selection orders (Cmd::Order) from
 // the wire to the sim (Legion 10,000 stage 3).
 //
 //  1. Codec: varints and member deltas round-trip and refuse overlong, zero or
 //     out-of-range encodings; orderRecordBytes is the record Writer::cmd writes; a
 //     bundle mixing commands and orders round-trips, a strict read validates every
-//     order whole and refuses one under protocol 266.
+//     order whole.
 //  2. packClick: a verb run becomes one order (members sorted, serials consecutive);
 //     runs split on another verb or target, a repeated unit, kOrderMaxMembers;
 //     other verbs pass through; the right-click move is OrderShape::Offsets.
@@ -129,10 +129,6 @@ void codec() {
                       b.cmds[3].order->tmpl.kind == Cmd::Stop,
                   std::string("a mixed bundle round-trips (") + (strict ? "strict" : "live") + ")");
         }
-        Reader old(w.b.data(), w.b.size());
-        uint32_t tick = 0;
-        Bundle b;
-        check(!getBundle(old, tick, b, true, 266), "a strict protocol-266 read refuses an order");
     }
     // Strict reads validate the order whole.
     auto strictOk = [](const Command& c) {

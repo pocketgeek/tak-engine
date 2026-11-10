@@ -40,7 +40,6 @@
 #include "client/watchonly.h"    // what a spectator or replay viewer may do
 #include "net/replaywriter.h"    // the replay recording, streamed as the game is played
 #include "client/situation.h"    // TAK_SITUATION (debug builds)
-#include "client/postrail.h"      // TAK_POSTRAIL (debug builds)
 #include "client/pacelog.h"       // TAK_PACELOG (debug builds)
 #include <future>
 #include "util/procmetrics.h"   // benchmark: cross-platform CPU/RSS sampling
@@ -2665,8 +2664,6 @@ public:
 #endif
         }
     };
-    tak::postrail::Writer postrail_;              // TAK_POSTRAIL: this playback's digest trail, for the head to read back
-    void openPostrail(const char* path) { postrail_.open(path); }
 private:
 #endif
     ReplayCheckTracker replayTracker_;            // first state divergence + first position divergence

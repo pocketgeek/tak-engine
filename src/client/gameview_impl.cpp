@@ -407,9 +407,7 @@
             // in-sim script -- exactly as the game did. Replaying it through
             // setupMatch produced a plain skirmish on the mission's map: none of the
             // placed units, none of the scripting, so the recorded commands landed in
-            // a world that had nothing to do with the one they came from. The
-            // recorded mission stem is new in format 6; before it, the loader could
-            // not have known.
+            // a world that had nothing to do with the one they came from.
             missionStem_ = mission;
             int human = 0;
             tak::sim::MissionSetup ms;
@@ -502,9 +500,6 @@
         writableWorld().tick(1.0f / 30.0f);
         captureTransportEffects();
         ++replayTick_;
-#ifndef NDEBUG
-        if (postrail_.active()) postrail_.record(uint32_t(replayTick_ - 1), world_);
-#endif
         // COMPARE against what the original game computed at this tick. Recording
         // the checkpoints was only half of it -- playback printed the count and
         // checked nothing, so a replay that diverged still ran happily to the end

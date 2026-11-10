@@ -3,7 +3,7 @@
 # Cuts one WE timing situation (docs/development.md "WE timing") out of a recording: runs the replay
 # with TAK_SITUATION=<tick>:<file>, stops it the moment the file is written, and gzips the .scn.
 # <takclient> is a DEBUG/o2 build (the hook is debug-only) of the tree the replay plays back on
-# (protocol must match: tools/legion_identity.py patch-replay re-stamps an older recording).
+# (protocol must match: tools/legion_identity.py patch-replay re-stamps a current-format recording).
 # The command window is TAK_SITUATION_CMDS (default 3000 ticks): a timing run replays the recording's
 # commands (human and AI) for as long as it simulates.
 set -euo pipefail

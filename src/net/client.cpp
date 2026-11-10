@@ -191,8 +191,8 @@ bool MpClient::poll() {
         if (err_.empty()) {
             err_ = conn_.error().empty() ? std::string("peer closed") : conn_.error();
             // A close during the handshake (never Welcomed) is almost always a
-            // version gate on a server too old to flush its Reject reason --
-            // say so instead of a bare "peer closed".
+            // version gate whose Reject reason did not arrive -- say so instead
+            // of a bare "peer closed".
             if (state_ == State::Connecting)
                 err_ = "server closed during handshake -- likely a protocol version "
                        "mismatch (this client speaks v" + std::to_string(kNetVersion) + ")";
@@ -493,7 +493,7 @@ void MpClient::onFrame(const Frame& f) {
         case Msg::Welcome:
             myId_ = r.u32();
             name_ = r.str();
-            lanServer_ = r.u8() == 1;   // absent (0) from a server without the byte
+            lanServer_ = r.u8() == 1;   // 1 = a LAN host's server
             // A Welcome is NOT a login. If we came here with credentials, the
             // only way in is a verified AuthResult -- otherwise a machine posing
             // as the server could skip the whole exchange and answer our Hello
@@ -961,7 +961,7 @@ void MpClient::sendCommands(const std::vector<Command>& cmds) {
     send(Msg::PlayerCommands, w);
 }
 
-// One explicit selection order as its transaction (protocol 267, net/protocol.h):
+// One explicit selection order as its transaction (net/protocol.h):
 // Begin, the members in chunks of at most kOrderChunkMembers, Commit. The frames
 // go out back to back on this connection, so nothing the client sends later can
 // come between them.

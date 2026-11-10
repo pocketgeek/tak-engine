@@ -182,18 +182,14 @@ void putBundle(Writer& w, uint32_t tick, const std::vector<Command>& cmds, const
     for (const auto& e : events) { w.u8(uint8_t(e.kind)); w.u8(e.player); }
 }
 
-bool getBundle(Reader& r, uint32_t& tick, Bundle& out, bool strict, uint32_t proto) {
+bool getBundle(Reader& r, uint32_t& tick, Bundle& out, bool strict) {
     tick = r.u32();
     if (!r.ok) return false;
     // Counts are bounded by what is left before anything is reserved: a command is
     // at least 35 bytes and an event 2, so a corrupt count cannot ask for gigabytes.
     const uint32_t nc = r.u32();
     if (uint64_t(nc) * 35 > uint64_t(r.end - r.p)) return false;
-    const auto maxKind = proto >= kBenchClockProtocol ? Cmd::BenchClock
-                       : proto >= kAttackGroundProtocol ? Cmd::AiGroup
-                       : proto >= kResurrectProtocol ? Cmd::Resurrect
-                       : proto >= kPowerCodesProtocol ? Cmd::PowerCode : proto >= 267 ? Cmd::Order
-                       : proto >= 221 ? Cmd::BuildManaArea : Cmd::ShareMana;
+    constexpr auto maxKind = Cmd::BenchClock;   // the last command kind
     for (uint32_t i = 0; i < nc && r.ok; ++i) {
         auto c = r.cmd();
         if (strict && (uint8_t(c.kind) > uint8_t(maxKind) || c.player >= kMaxSlots ||
@@ -203,11 +199,10 @@ bool getBundle(Reader& r, uint32_t& tick, Bundle& out, bool strict, uint32_t pro
     }
     const uint32_t ne = r.u32();
     if (!r.ok || uint64_t(ne) * 2 > uint64_t(r.end - r.p)) return false;
-    // Kinds 1 (Forfeit) and 2 (Leave), and 4 (AiTakeover) from protocol 289. Kind 3,
-    // the removed Darien Crusades CampaignForfeit, is refused.
-    const auto validEvent = [proto](uint8_t kind) {
+    // Kinds 1 (Forfeit), 2 (Leave) and 4 (AiTakeover). Kind 3 is reserved and refused.
+    const auto validEvent = [](uint8_t kind) {
         return kind == uint8_t(Event::Kind::Forfeit) || kind == uint8_t(Event::Kind::Leave) ||
-               (kind == uint8_t(Event::Kind::AiTakeover) && proto >= kAiTakeoverProtocol);
+               kind == uint8_t(Event::Kind::AiTakeover);
     };
     for (uint32_t i = 0; i < ne && r.ok; ++i) {
         Event e; e.kind = Event::Kind(r.u8()); e.player = r.u8();

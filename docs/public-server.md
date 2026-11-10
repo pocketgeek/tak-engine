@@ -27,14 +27,9 @@ game is loading (15 s elsewhere), and its own start-up work no longer counts
 as player silence. Which versions play together is listed in
 the [user guide](user-guide.md#versions) and in the [CHANGELOG](../CHANGELOG.md).
 
-**0.9.4 removes the Darien Crusades campaign service.** `--crusades-db` and
-`--crusades-definition` no longer exist: a server still started with either
-(and its value) logs a warning that the option was removed and is ignored, and
-starts as usual, so take them out of your service drop-in or script. A leftover campaign database (`campaign.sqlite` and its `-journal`,
-`-wal`, `-shm` and `.service-lock` companions) and `crusades-replays/` folder are
-never read; delete them when you no longer want them. `crusades_admin` is no
-longer shipped. The Crusades *balance* is unaffected: it is still the room's
-CRUSADES option.
+`takserver` refuses any option it does not know: it exits at start-up with
+`unknown option or missing value: <option>`, so a service drop-in or script
+must pass only the options this guide lists.
 
 ## Quick setup: Linux package
 
