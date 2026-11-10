@@ -41,11 +41,12 @@ contract today:
   float bits (`src/sim/sim.cpp` `stateHash`).
 - **`-ffp-contract=off`** on EVERY target (directory-wide in CMakeLists.txt), so
   the compiler never fuses `a*b+c` into an FMA that rounds differently on
-  different CPUs. **No `-ffast-math`.** It used to be set on `tak-formats` only,
-  which missed `src/ai/ai.cpp` (a `takserver` source, not part of the library):
-  Apple Clang on arm64 contracts by default, so a Mac-hosted server's AI issued a
-  door-clearing Move one ulp off (`factory.z + sin(a)*r`) and the game diverged
-  from the same game hosted on Linux/Windows. `fp_contract_test` guards it.
+  different CPUs. **No `-ffast-math`.** Setting it per library is not enough: it
+  would miss `src/ai/ai.cpp` (a `takserver` source, not part of the library), and
+  Apple Clang on arm64 contracts by default, so a Mac-hosted server's AI would
+  issue a door-clearing Move one ulp off (`factory.z + sin(a)*r`) and the game
+  would diverge from the same game hosted on Linux/Windows. `fp_contract_test`
+  guards it.
 
 Why that is *not yet* enough for cross-build play:
 

@@ -794,9 +794,8 @@ void Server::handshake(Client& c, const Frame& f) {
     }
     // Gameplay-data agreement: every peer must feed its sim byte-identical gameplay
     // data (verifies the retail files are unmodified, and that every player of a
-    // game-mods room shares the host's game mods). The referee's own hash is the authority -- there is
-    // no relay mode adopting the first client's any more, which could only ever hold
-    // peers to whatever the earliest arrival happened to have.
+    // game-mods room shares the host's game mods). The referee's own hash is the authority,
+    // never a client's.
     // The Hello hash is the client's PURE-RETAIL gameplay fingerprint (mounted with
     // no mods), so the base game files must match regardless of anyone's mods.
     // (Game mods are checked per game at Loaded.)
@@ -1101,7 +1100,7 @@ void Server::sendGameList(Client& c) {
         w.u8(r.running ? 1 : 0);
         w.u8(r.password.empty() ? 0 : 1);
         w.u32(uint32_t((t - r.createdMs) / 1000));
-        w.u8(r.opts.allowSpectators);   // 258: the browser's WATCH honours it
+        w.u8(r.opts.allowSpectators);   // the browser's WATCH honours it
     }
     c.conn.send(Msg::GameList, w);
 }
@@ -2038,10 +2037,9 @@ void Server::tryStart(Client& c) {
                 refuseStart(c, *r, "Seat player " + std::to_string(i + 1) + " in the lobby to play this scenario");
                 return;
             }
-    // The referee is MANDATORY, so resolve what it needs before committing to run.
-    // Failing here used to leave r->ref null and the game carried on as a relay --
-    // silently giving up the canonical hash and, for a mission, the strategic AI.
-    // A game that cannot be refereed does not start; the host is told why.
+    // The referee is MANDATORY, so resolve what it needs before committing to run:
+    // it holds the canonical hash and, for a mission, the strategic AI. A game that
+    // cannot be refereed does not start; the host is told why.
     if(r->opts.gameMods && !r->modData) {
         if(!r->modPackage){sendReject(c,"waiting for game mods");return;}
         try {
@@ -2476,8 +2474,8 @@ void Server::gameMsg(Client& c, const Frame& f) {
             Reader rd(f.payload.data(), f.payload.size());
             std::string text = rd.str();
             const uint8_t recipients = rd.u8();
-            // 316: spectators read it only when the player ticks them (the Diplomacy
-            // SPECTATORS row); before the game starts the whole room does, as ever. A
+            // Spectators read it only when the player ticks them (the Diplomacy
+            // SPECTATORS row); before the game starts the whole room does. A
             // spectator in a running game cannot chat at all.
             const bool toSpectators = rd.u8() != 0;
             if (!rd.ok || text.size() > 512) return;
@@ -2622,12 +2620,9 @@ void Server::checkHashes(Room& r, uint32_t tick) {
 
     // The canonical hash is the REFEREE's. A game only runs if a referee was built
     // (tryStart refuses otherwise), so there is always one; the ring just may not
-    // hold this tick yet, in which case wait rather than judging anybody.
-    //
-    // The client-majority branch that used to sit here belonged to the relay-only
-    // mode and is gone with it. It was never a good judge anyway: with two clients
-    // it had no majority to find, and with a modded pair against one honest client
-    // it would convict the honest one.
+    // hold this tick yet, in which case wait rather than judging anybody. (A client
+    // majority would be no judge: with two clients it has no majority to find, and
+    // with a modded pair against one honest client it would convict the honest one.)
     if (!r.refHash.count(tick)) return;
     const uint64_t canon = r.refHash[tick];
     // Referee suspicion needs a client CONSENSUS to appeal against the server
@@ -3196,8 +3191,8 @@ int Server::run() {
     std::vector<pollfd> pfds;
     std::vector<uint32_t> ids;
     // With --replaydir, a SIGTERM (systemctl stop) or Ctrl-C writes the replays of the
-    // games still running before the server exits; they used to be lost, being
-    // written only when a room is torn down. Without it nothing is kept, so the
+    // games still running before the server exits (otherwise a replay is written
+    // only when a room is torn down). Without it nothing is kept, so the
     // default (exit at once) stays -- a single-player client stops its private server
     // with SIGTERM and waits for it.
     static std::atomic<bool> stopRequested{false};
@@ -3511,8 +3506,7 @@ int Server::run() {
             }
         }
         // Say WHY: a bare "disconnected" hid whether a drop was silence, a deadline or a
-        // send backlog, all of which the client only sees as "peer closed" (the
-        // mod_transfer flake, 0.9.4, was a seat silent while its test client loaded).
+        // send backlog, all of which the client only sees as "peer closed".
         for (uint32_t id : dead) {
             const auto it = clients_.find(id);
             if (it == clients_.end()) continue;
@@ -3620,7 +3614,7 @@ static int serverMain(int argc, char** argv) {
                         "  No data, account, or TLS arguments are needed; default port is 7677.\n"
                         "  Status uses loopback-only UDP on the game port's numeric value.\n"
                         "  --data is REQUIRED when hosting: it is what the referee sim and the\n"
-                        "  server-hosted AI players read. There is no relay-only mode.\n"
+                        "  server-hosted AI players read; every game runs both.\n"
                         "  --replaydir writes a .takrep replay file per finished game.\n"
                         "  --map-cache-dir holds uploaded maps and game mods and saved generated\n"
                         "  maps (default: TAKengine/takserver in the per-user data folder, e.g.\n"

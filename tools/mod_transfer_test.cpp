@@ -90,8 +90,8 @@ int main(int argc,char** argv){try{
     initialDigest=host.modPackage()->digest;auto opts=host.room().opts;opts.gameMods=0;host.setGameOptions(opts);transition=1;
    } else if(transition==1 && host.room().opts.gameMods==0 && peer.room().opts.gameMods==0) {
     check(!host.modPackage()&&!peer.modPackage(),"GAME MODS off retained shared game mods");
-    // A room is off only when an older (0.8.12/0.8.13) host asks: then no game pack
-    // at all, the host's always-enabled ones included.
+    // A room is off only when its host asks (a debug --mods launch): then no game
+    // pack at all, the host's always-enabled ones included.
     check(!host.modVfs({}).has("sounds/host-rules.wav"),"GAME MODS off still applied an always-enabled game pack");
     check(hpi::gameplayHash(peer.modVfs({"Local"}))==stockHash,"GAME MODS off loaded local gameplay");
     check(peer.modVfs({"Local"}).has("sounds/pack-test.wav"),"cosmetic packs must load with GAME MODS off");

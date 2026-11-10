@@ -1,5 +1,5 @@
 #pragma once
-// One client's selection-order transactions at the server (protocol 267; the
+// One client's selection-order transactions at the server (the
 // formats and limits are in net/protocol.h beside kOrderMaxMembers). Header-only
 // and free of the Server so server_orders_test can drive it frame by frame.
 //

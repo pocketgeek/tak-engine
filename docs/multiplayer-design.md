@@ -1,20 +1,18 @@
 # Multiplayer Design: Client–Server, 8 Players, Teams
 
 Status: **implemented** (v1 scope agreed 2026-09-04; milestones M0-M6 all
-shipped). It superseded the 2-player peer-to-peer lockstep (`net::Session`,
-since removed; `src/net/lockstep.h` is now header-only); the deterministic-sim
-substrate underneath it is kept. Sections 1-12 are the original design, kept as
-written apart from short notes where it has since moved on; the later sections
-and the protocol history (to protocol 312) describe the
+shipped), on the deterministic-sim substrate (`src/net/lockstep.h` holds the
+command format). Sections 1-12 are the original design, kept as written apart
+from short notes where the engine differs; the later sections describe the
 current engine.
-Notable changes since the v1 design: single-player runs a private local
+Where the engine differs from the v1 design: single-player runs a private local
 `takserver` (`--local --no-auth`) instead of in-process AI
-([sp-mp-equivalence.md](sp-mp-equivalence.md)); the server requires `--data`
-(there is no relay-only mode) and hosts the AI; accounts with sign-in are the
+([sp-mp-equivalence.md](sp-mp-equivalence.md)); the server requires `--data`,
+runs the referee for every game and hosts the AI; accounts with sign-in are the
 default and public listeners use native TLS ([public-server.md](public-server.md));
 allied mana sharing and unit gifting exist ([unit-gifting.md](unit-gifting.md));
 the headless test client is `TAK_HEADLESS=1 takclient game ... --mpai`
-(debug builds), not `--headless-net`.
+(debug builds).
 
 ## 1. Goals
 
@@ -149,7 +147,7 @@ Two refinements make it self-tuning:
   ping/sec) plus a decaying-max of the measured bundle-arrival jitter size the
   reserve each frame — `clamp(2 + max(kJit, kRtt, kFrame), 2, cap)` ticks
   (`tak::net::jitterTargetTicks`, `src/net/pacing.h`) — so a clean LAN sits at 2
-  and a jittery WAN grows the cushion only as needed. Since 0.9.1 the cap is
+  and a jittery WAN grows the cushion only as needed. The cap is
   `min(max(16, 16·speed), flowBufferLimit)`: never more than server flow control
   lets the client hold (`flowLeadTicks` less a Progress period, the round trip
   and the sim inbox), which would pin the servo at its floor. A bundle's
@@ -201,13 +199,10 @@ agreed:
   the host's always-enabled `mods/game/always_enabled/<pack>` folders and its
   ticked `mods/game/<pack>` folders are packaged and transferred (see
   [Per-room game mods](#per-room-game-mods)); every player mounts that verified
-  package at game start so its registry matches the referee's. From
-  0.8.14 (still protocol 293) every host sends 1, single player and
-  multiplayer alike: the create screen's GAME MODS toggle is gone. 0 came from a
-  0.8.12/0.8.13 host that turned the toggle off (from 0.9.0, protocol 294, such
-  a host can no longer connect) and still comes from a debug `--mods` launch; it
-  is honoured as before (no package, no game packs at all).
-  Campaign missions are forced to 0.
+  package at game start so its registry matches the referee's. Every host
+  sends 1, single player and multiplayer alike (there is no create-screen GAME
+  MODS toggle); 0 comes only from a debug `--mods` launch and means no package
+  and no game packs at all. Campaign missions are forced to 0.
 - **Cosmetic mods are per player and never travel.** Each client lays on top of
   the room's package its own always-enabled `mods/cosmetic/always_enabled/<pack>`
   folders (every room) and its
@@ -222,9 +217,8 @@ agreed:
   **`Loaded`** the client sends its gameplay hash *with the room's game mods*, and
   the referee (mounted with the same package) rejects a mismatch — so a player
   lacking or differing on a game mod is caught before tick 0 rather than as a
-  mid-game desync. *(The pure-relay mode without `--data`, which had no referee
-  hash and fell back to a client `StateHash` cross-check, has been removed:
-  `takserver` refuses to start without `--data`.)*
+  mid-game desync. `takserver` refuses to host without `--data`, so every game
+  has the referee's hash.
 
 ### Determinism contract (explicit)
 
@@ -404,11 +398,8 @@ link `sim`, `tdf`, `net`, and the new `ai` module only.
     when the player quits a running game from the menu) is a `Leave` event at
     once -- the units go inert, no wait. A defeated player's departure never
     waits either.
-  - Replaced (0.8.9 and earlier): the slot held for 5 minutes, the 2-minute
-    per-player auto-pause budget with its grace-expiry `Forfeit`, and the long
-    rejoin that rebuilt the world from tick 0 by replaying the whole bundle log
-    (with its resume-ticket file and `--mprejoin`). Spectators still catch up
-    that way; seated players no longer do.
+  - *Spectators* catch up by rebuilding the world from tick 0, replaying the
+    whole bundle log; seated players never do.
 - **Log format.** Bundles including events, prefixed by a header: format
   version, build id, data checksum, and the full `GameStarting` payload (slot
   table, map, options, per-AI seeds) — that header is exactly what makes a log
@@ -548,7 +539,7 @@ not from the connection's own. The client
 (`client/voice.h`) captures and plays on SDL audio devices of its own, buffers
 2–8 frames per talker, rebuilds a frame the server dropped from the next frame's
 FEC, and conceals a late one. It sends while the push-to-talk key is held or,
-under TALK MODE Voice Activation (0.8.6, client only, no wire change), while
+under TALK MODE Voice Activation (client only, no wire message of its own), while
 `voice::VoiceGate` (`client/voiceptt.h`) is open: a 20 ms frame whose peak
 reaches ACTIVATION LEVEL opens it, it holds 20 frames (400 ms) after the last
 such frame, and the 2 frames (40 ms) before it opened lead the transmission. It mixes the talkers with each one scaled by that
@@ -565,9 +556,8 @@ page, the per-player mix), `diplomacy_ui` (the VOLUME sliders), `voice_client_te
 Bundle **Event** records (u8 kind + payload): `Forfeit{player}` (explicit
 surrender), `Leave{player}` (voluntary, units per forfeit rule),
 `AiTakeover{player}`
-(protocol 289: the disconnect wait ran out; a server Normal AI plays the seat
-from this tick, the player becomes computer-owned; kind 3, the Darien Crusades
-`CampaignForfeit` removed in 0.9.4, is reserved and refused),
+(the disconnect wait ran out; a server Normal AI plays the seat
+from this tick, the player becomes computer-owned; kind 3 is reserved and refused),
 reserved: `AllianceChange` (v2 diplomacy). Defeat itself is *not* an event —
 it's derived deterministically inside the sim from unit state, so every sim
 concludes it independently on the same tick.
@@ -728,10 +718,10 @@ The retail binary confirms these existed; all are natural extensions of this
 design and none block v1:
 
 - **Spectators** ("Watching" lobby checkbox, host-deniable) — a watcher is a
-  bundle subscriber with no slot. The host-deniable part landed in protocol 258
-  as the room's ALLOW SPECTATORS rule (see the protocol history); per-team fog
-  toggling for watchers is still open.
-- **In-lobby map transfer:** implemented in protocol 193; see [map transfer](map-transfer.md).
+  bundle subscriber with no slot. The host-deniable part is the room's ALLOW
+  SPECTATORS rule (see [Room options](#room-options)); per-team fog toggling for
+  watchers is still open.
+- **In-lobby map transfer:** implemented; see [map transfer](map-transfer.md).
 - **Alliance economy:** `AutoShareMana` with limit/percentage, unit gifting
   (`ShareUnits`).
 - **Mid-game diplomacy:** requires mutable `Player::team` as a sequenced
@@ -742,7 +732,7 @@ design and none block v1:
   not appear in multiplayer (see `src/sim/matchsetup.cpp`).
 - **Spectator snapshots:** referee-written World snapshots to cut a late
   spectator's catch-up in long games (the log header/format anticipates them).
-  Seated players no longer rebuild from the log (§4 disconnect policy).
+  Seated players never rebuild from the log (§4 disconnect policy).
 - Host migration is a non-issue by construction (the server owns the game; the
   "host" is a player with lobby permissions — pre-start they pass to the next
   human, in-game they matter only for pause and speed, and follow the host's
@@ -781,10 +771,9 @@ Each lands independently, keeps single-player green, and is verifiable.
   clean `Bye`, replay-to-disk, replay-throughput guard ("machine too slow").
   *Verify: kill -9 a client mid-game, rejoin, finish hash-clean; measure
   replay time vs. game length (decides the snapshot backlog item's priority);
-  forfeit fires as a logged event and replays identically.* (Protocol 289
-  replaced the hold, the budgets and the log-replay rejoin with the 30 s
-  disconnect wait and the AI takeover, §4; tests `server_disconnect` and
-  `disconnect_client`.)
+  forfeit fires as a logged event and replays identically.* (The engine has the
+  30 s disconnect wait and the AI takeover instead of the hold, the budgets and
+  the log-replay rejoin, §4; tests `server_disconnect` and `disconnect_client`.)
 - **M6 — Polish.** In-game team/status UI at 8 players, chat overlay, det-math
   shim (`sim/detmath`) for cross-build play, spectator/map-transfer
   groundwork, docs + server deployment notes (systemd unit, TLS proxy
@@ -825,16 +814,13 @@ exception recovery. It runs without networking or retail assets.
 
 ### Per-room game mods
 
-Protocol 213 added the pack transfer messages alongside map transfer; they are
-now ModOffer/ModRequest/ModChunk/ModReady/ModError (same ids, same order; the
-offer label is `"mods"`). The host selects named immediate subfolders of
+The pack transfer messages, alongside map transfer, are
+ModOffer/ModRequest/ModChunk/ModReady/ModError (the offer label is `"mods"`). The host selects named immediate subfolders of
 `mods/game/`, and every immediate subfolder of `mods/game/always_enabled/` is
 added (`MpClient::hostGameModPacks`); files directly in `mods/`, `mods/game/` or
 `always_enabled/` are excluded, and `always_enabled` itself is never a pack. An
 always-enabled pack hides an ordinary pack whose name matches ignoring case
-(`hpi::modPacks`), so the names in the package are unique and plain; they pass
-0.8.12/0.8.13's `mods::decode` unchanged, so the wire and package format did not
-change. A guest never adds its own always-enabled game packs: it mounts the
+(`hpi::modPacks`), so the names in the package are unique and plain. A guest never adds its own always-enabled game packs: it mounts the
 host's package alone. Selections
 are merged with the always-enabled packs first, then the ticked ones, each in
 alphabetical order (later layers win), into a bounded, SHA-256-addressed package (no
@@ -842,17 +828,17 @@ cosmetic file ever goes in it). Server and peers verify it before room
 readiness. Each game-mods room owns its own VFS and registries, leaving other
 rooms unchanged. The server takes a package only from the host of a skirmish
 room with game mods on: an offer or chunk from a guest or in a campaign
-room, and an offer while game mods are off, are answered with ModError. Replay
-format 10 records the shared package digest (`ReplayHeader::modDigest`, with the
-`gameMods` byte where `overridePolicy` was) and loads it from `ModCache/` (in the per-user
-folder, `hpi::userMapRoot`; never the game data folder).
+room, and an offer while game mods are off, are answered with ModError. The
+replay header records the shared package digest (`ReplayHeader::modDigest`) and
+the `gameMods` byte, and playback loads the package from `ModCache/` (in the
+per-user folder, `hpi::userMapRoot`; never the game data folder).
 The package also carries a pack's `ai/takengine.txt` (loose in the pack's `ai/`
 folder or under `ai/` in an archive in it), and a map package carries it when
 the map's own archive (its `.kmp`) has it (`maps::build`, checked on decode). The
 server reads the room's one file, from the game-mod package, else from the map
 package, and each of its AI levels 0-5 applies it over that level's own built-in
-profile table (`src/ai/builtinprofile.h`). The old per-level files `ai/d.txt` ...
-`ai/ad.txt` are not read. A root `takengine.txt` is not read, cosmetic
+profile table (`src/ai/builtinprofile.h`). No other file name in `ai/` is read
+for them. A root `takengine.txt` is not read, cosmetic
 packs can never supply `ai/` files, and the base install's `ai/` folder is never
 consulted for these names. Classic reads the map's `ai/<aiprofile>.txt` /
 `ai/default.txt` with the same rule for `ai/` files: game mods, else the map
@@ -861,746 +847,140 @@ other map content keeps the view's map-over-mod layering.
 
 ### Match pathfinding selection
 
-The creation-time choice is `Retail` (the default) or `Legion`.
-Protocol 220 introduced the selection (then Retail or Flowfield); protocols
-225-227 added Cooperative and Retail+, and 228 added Legion. Protocol 231
-removed Retail+, Flowfield and Cooperative (2026-10-06, by user decision; they
-remain in git history). Protocols 232-236 carry later Legion and Retail
-behavior changes; 0.7.25 shipped protocol 236. Protocol 237 adds grouped flyer
-movement (retail's VTOL_Move group checks in Retail; Legion flyers holding
-stations over a mixed formation); 0.7.26 shipped protocol 237. Protocol 238
-changes Legion internals for large battles (clustered static-map repair and
-held units resting between updates); 0.7.27 shipped protocol 238. Protocols
-239-248 carry the Legion plan's workstreams W0-W9 (shared goal fields, one
-convoy per click, upkeep on demand, reach rings, flyer stations for squads,
-paused first builds, crossing-group corridors, the passage gate and head-on
-meets); 239 also carries whole-file override packages and nearest-first
-lodestone areas. Protocol 249 adds client progress acks and ping-scaled flow
-control, 250 the original game's speed levels (0.1x-2x), 251 the original's
-blocked-site placement retry, 252 the fire-at-will weapon sweep with
-deterministic per-player vision, AI weapon switching and idle retaliation, and
-253 the sweep's `shootme` test; 0.7.28 shipped protocol 253. Protocol 254 moves
-Legion flyer stations in squads that mix ground units and flyers over the front
-of the ground (stations, positions and the flyer order point; Legion only), and
-255 admits a factory's ground output only by the footprint-strict mobile
-placement test, with a hashed retry delay when the site is refused, and 256
-lets an air transport whose unload empties its orders stand by (and land) at
-the drop point instead of flying on along the unload's step-out course; 0.8.0
-and 0.8.1 ship protocol 256. Protocol 257 ends Legion's walk-in-place livelock
-(Legion only): the pinwheel no longer takes a lone tree or rock for a wall end,
-a blocked side-step does not step straight back, and a body without net
-headway stands in its scripts and is held; 0.8.2 ships protocol 257. Protocols
-258 to 260 change only the lobby (ALLOW SPECTATORS, MAP SCENARIO, START
-LOCATIONS: BY SLOT), 261 ports retail healtime self-repair, 262 and 263 air
-combat (see below), 264 carries the 2026-10-14 Legion review (Legion only; see
-the replay notes below), 265 the 2026-10-15 retail path-search fidelity fixes
-(all modes), and 266 entity pools sized from retail's maxunits that grow as
-needed (all modes); 0.8.3 ships protocol 266. Protocols 267 to 272 carry the
-Legion 10,000 program (Legion only), 273 shares short mana across construction
-(all modes), 274 lets a lodestone upgrade finish under a short share, 275 adds
-the Absurdly Defensive AI level, 276 voice chat, and 277 keeps a Legion
-formation's flyers over the front while its ground waits to register (Legion
-only); 0.8.4 ships protocol 277. Protocol 278 adds random-map recipe version 9
-(scattered neutral mana; all modes); 0.8.5 ships protocol 278. Protocol 279 retunes Legion movement at about 100
-bodies: passage admission, departures through arrived crowds and attack rings
-(Legion only). Protocol 280 is the second round at about 100 bodies: sub-cell
-presses and ring bends, passage lanes through wide gaps and flow-around at travel
-speed (Legion only). Protocol 281 makes attackers walk to a clear shot when their
-shots keep stopping on terrain or scenery they cannot destroy (all modes);
-0.8.6 ships protocol 281. Protocol 282 is the third Legion round at about 100
-bodies: rings round still targets, passage greens that scale with the crossing
-with small groups queueing, and corridor-mouth funnel claims (Legion only).
-Protocol 283 is the fourth: lane order kept through turns, deeper rings along
-walls, fight and guard members round still targets, and room at a corner's
-merge (Legion only). Protocol 284 adds the lobby seat move (`MoveSeat`) with an
-unchanged simulation; 0.8.7 ships protocol 284. Protocol 285 is the fifth Legion
-round at about 100 bodies: attackers press into a wall's shadow, fight-move columns
-ring a still target, and a body on the reach edge counts as in reach (Legion only).
-Protocol 286 is the sixth, for gatehouse corridors: an attacker that would plug a
-narrow approach walks on past the shot, and deep rings fill back to front (Legion only).
-Protocol 287 replaces override packs with mods: the host-only game-mods flag replaces the
-override tier, and cosmetic mods are never sent; the simulation is 286's.
-Protocol 288 adds power codes: the POWER CODES room option and `Cmd::PowerCode`; with
-the option off the simulation is 287's; 0.8.8 ships protocol 288, and so does 0.8.9
-(client-only changes; it plays with 0.8.8 and its replays).
-Protocol 289 replaces the disconnect hold and the log-replay rejoin with the 30 s
-disconnect wait and the AI takeover (§4): `Waiting`, `Reseated`, `Rejoin` with its
-`fromTick`, and `Event::AiTakeover`; the simulation is 288's until a takeover,
-except that 289 also seats the campaign human at the mission's Player1 (world slot 0,
-as retail does) and scales the target score's turn penalty by the shooter's terrain
-turn rate (roads and water, as retail does). 0.8.10 ships protocol 289; it plays
-with neither 0.8.9 nor 0.8.8, nor their replays.
-Protocol 290 adds AI level 6,
-Classic, shown to players as RETAIL (DEFAULT in 0.8.11; `SlotInfo.aiLevel` 6): a server-side port of the retail AI
-(`ai::ClassicBrain`, [classic-ai-plan.md](classic-ai-plan.md)). Its seat gets
-exactly a Normal seat's match config, so the simulation is 289's; a 289 peer would
-clamp level 6 to Normal, hence the bump. A campaign mission's strategic computer
-players are always Classic (`CreateGame` carries no AI choice). 289 replays are refused.
-0.8.11 ships protocol 290; it plays with neither 0.8.10 nor any earlier version,
-nor their replays.
-Game options
-and every lobby/start/spectate snapshot carry the choice. The server validates the
-value, includes it in the authoritative rules digest, and retains it when a
-host sends later option updates. Both clients and the referee apply that choice
-through shared match setup. Campaign missions remain
-Retail. The lobby reports the selected mode without changing it.
-Protocol 291 changes which AI files a map package carries, not the messages: a
-map's `ai/<aiprofile>.txt`, `ai/default.txt` and level files now come from the
-map's own archive (`Vfs::readFromMapArchive`). Before, the package took only the
-copy that won the `Maps/` mount, so of two installed `.kmp` files carrying the same
-file name (the Cartographer stamps every entry with date 0) one map silently sent
-none, and a ticked game mod's copy kept the map's out of its package. Hosts and
-clients both build packages, so a 290 peer could compute a different digest for
-such a map; the simulation is 290's. 290 replays are refused.
-Protocol 292 changes the simulation: a Shift-queued patrol of an armed or
-builder flyer now closes its loop when the leg starts (`World::openFlightPatrol`,
-`Order::patrolOpen`), adding the return point where the flyer then stands, as
-ground units and unarmed flyers already did. Under 291 such a flyer (drakes, say)
-flew "move A, Shift-patrol B" to B and hovered there until its next order. 291
-replays are refused.
-Protocol 293 changes map and game-mod packages, not the simulation: our six AI
-levels read one file, `ai/takengine.txt`, each applying it over its own built-in
-table, instead of `ai/d.txt` ... `ai/ad.txt`. A map's package carries
-`ai/takengine.txt` and no longer the per-level files (a package naming one is
-refused), so a 292 peer could compute a different digest for a map that carries
-them. 292 replays are refused.
-0.8.12 ships protocol 293; it plays with neither 0.8.11 nor any earlier version,
-nor their replays. 0.8.13 keeps protocol 293 (client and Cartographer changes
-only), so it plays with 0.8.12 and its replays, both ways, and likewise not with
-0.8.11 or earlier. 0.8.14 keeps protocol 293 too: its mods changes (no GAME MODS
-toggle, `always_enabled/` pack folders) are client logic, server comments and
-the Cartographer; the `GameOptions` byte, the package format and the replay
-header are unchanged, so it plays with 0.8.13 and 0.8.12 and their replays, both
-ways. A 0.8.12/0.8.13 host's `gameMods=0` is still honoured, and a 0.8.14 host's
-package (always-enabled names included) decodes on 0.8.12/0.8.13.
-Protocol 294 changes the simulation: area clear follows retail. Overlapped TNT
-features that retail removes at load are gone everywhere
-(`World::installedMapFeatures`: no art, blocker, sacred site, deposit or target),
-fogged but explored world features stay clearable (the cell owner byte, the
-room's FOG OF WAR option read by the sim, replay format 15), and the area order's
-own approach, a reclaim child's failed approach and a re-pick in the last
-target's cell all end the order. 293 replays are refused.
-0.9.0 ships protocol 294; it plays with neither 0.8.14 nor any earlier version,
-nor their replays. Its other changes (the Rolling Tower spelling in the AI,
-server side; build sparkles; gate doorway picking and the reclaim fan-out,
-client side) need no protocol change of their own.
+The creation-time choice is `Retail` (the default) or `Legion`. Game options and
+every lobby/start/spectate snapshot carry it. The server validates the value and
+keeps it when a host sends later option updates; both clients and the referee
+apply it through shared match setup. Campaign missions are always Retail, and
+campaign playback forces Retail whatever a header supplies. The lobby reports the
+selected mode without changing it.
 
-Protocol 295 changes the simulation: SweetSpot is retail's drawn piece bounds
-(the piece chain plus the body's pitch, heading and roll, not the authored local
-vertices), and a structure's ground or water output gets retail GetBuilt's
-rally, else a PARK ring kept to the cells connected to its birth point, in place
-of the exit step. A structure's flyer output gets the rally alone, else retail
-PARK's flight branch: one flight move to a point on a circle of the factory's
-park radius plus (rand(6)+rand(3)+6)*16 at a rand(65536) angle, drawn from the
-game RNG when the move first runs, and held as a PARK until the flight arrives.
-Under Legion a ground output's PARK claims a free spot of its own over the ring
-band (`World::legionParkSpot`: layers two footprints apart, nearest the door
-first on alternating sides, never in the door lane, reachable only, beyond the
-band once it is full) instead of the shared bearing's midpoint; Retail
-pathfinding keeps the plain PARK. 294 replays are refused. The AI's pond-yard
-refusal is server side, and the client's pacing fix (a client stall is not
-network jitter; the buffer target stays under the flow-control limit) changes
-nothing on the wire. The SweetSpot query's per-unit cache is bit-identical.
-0.9.1 ships protocol 295; it plays with neither 0.9.0 nor any earlier version,
-nor their replays. Its streaming, cursor and Windows renderer changes are
-client only and need no protocol change of their own.
+The wire byte, the replay header and the saved `gameCreate.pathfindingMode` use
+the identities `0=Retail` and `4=Legion`; `1`, `2` and `3` name no mode. A
+missing or unknown saved value loads as Retail, while an unknown network or
+replay mode byte is rejected. Legion's groups and per-unit state are part of the
+simulation checksum only in mode 4. A Legion client sends each click as one
+explicit selection order (`Cmd::Order` in the tick bundles, carried up by the
+OrderBegin/OrderMembers/OrderCommit/OrderAbort transaction); Retail clients, the
+AI and scripts send per-unit commands. Debug-only `TAK_LEGION=1` selects Legion
+in the headless multiplayer test harness, and `crowdbench` accepts `--mode
+retail` or `legion` for direct comparisons.
 
-Protocol 296 changes the simulation: a flame reports its first impact with the
-unit it was fired at (`FlameShot::targetId`, hashed), so flames feed the
-blocked-shot count; a Hold Position unit whose auto target interrupted a
-movement order repositions for a clear shot, and an auto target with a movement
-order behind it is dropped when no spot is found or the three walks are spent.
-A Ballistic weapon is in range only where retail's arc solve (`52bc60`, origin
-to origin under the map's gravity, no footprint pad) reaches the target; a
-loaded, aimed weapon whose muzzle solve has no arc spends its reload as a
-blocked shot (`World::noteNoArc`) instead of lobbing flat. 295 replays are
-refused. The AI's factory-door strips and Navy Yard door-clearance siting are
-server side and change nothing on the wire.
-0.9.2 ships protocol 296; it plays with neither 0.9.1 nor any earlier version,
-nor their replays.
+### Room options
 
-Protocol 297 (0.9.3) changes hashed firing decisions only: the 2D line-of-sight
-test applies per weapon (`Weapon::needsClearLine`), and a plain Ballistic shell
-(arrows, spears, cannon balls, Trebuchet shells) is exempt because it flies its
-arc, as in retail, which tests no line before firing. A building or Hold unit
-drops an auto target it has no line to. Nothing on the wire changes; 296
-replays are refused. The macOS FFmpeg TLS switch to OpenSSL is client side.
-0.9.3 ships protocol 297; it plays with neither 0.9.2 nor any earlier version,
-nor their replays.
+`GameOptions` is 19 bytes on the wire, in this order: crusades,
+forfeitSelfDestruct, gameMods, speed, speedUnlock, unitCap (u32),
+monarchExpendable, stressTest, fogExplored, benchmark, randomStarts,
+doubleSight, the pathfinding mode, allowSpectators, mapScenario and powerCodes.
+`CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting` carry it, and
+each `GameList` entry ends with the room's allowSpectators byte. In a running
+game `SetGameOptions` adopts only speed.
 
-Protocol 298 (0.9.4) removes the Darien Crusades meta game from the wire. Its
-22 `Crusades*` messages are deleted, so every message id from `ModOffer` on
-moves down; a 297 peer would misread them, which is why the handshake's version
-check turns it away. Bundle event kind 3 (`CampaignForfeit`) is deleted but the
-number stays reserved: `getBundle` refuses it and the sim ignores it, so
-`AiTakeover` keeps kind 4. The `GameOptions` byte layout is unchanged (the
-257-byte rules encoding is folded back into `put`), and so is replay format 15.
-The same protocol also changes hashed state in Crusades-balance games: the roster
-comes only from `unitscb/` with no `units/` fallback (so `monelem`, `monmum`,
-`tarcship`, `tarhel`, `tarnecr2` and `zonspide` do not exist), and build menus
-always come from the standard `canbuild/` tree, kept to roster types and sorted
-by ascending `[Menu] Priority` (stable; a missing priority is 9999999999), as
-retail does (`0x518080`, `0x4c1950`, `0x515ac0`). `canbuildcb/` is no longer
-gameplay data, so the gameplay-data hash changes for every install. Standard
-games are bit-identical to 297. 297 replays are refused.
-0.9.4 ships protocol 298; it plays with neither 0.9.3 nor any earlier version,
-nor their replays.
+- **ALLOW SPECTATORS** (`allowSpectators`, default 1). With it off the server
+  answers every `Spectate` with a failed `JoinResult` ("spectators are not
+  allowed in this game"). `Spectate` is the only way into a room without a slot,
+  so this one check covers the browser's watch request, a seated player who left
+  and asks to watch, and a dropped watcher reconnecting (watchers hold no resume
+  token, and `Rejoin` seats only seated players). The host changes the rule in
+  the lobby; it is fixed at start, so an admitted watcher is never stranded. A
+  host who created the room to watch it is never removed by the rule. The client
+  keeps a refusal's reason for the browser (`MpClient::joinError`) and clears the
+  pending spectate on any refusal.
+- **MAP SCENARIO** (`mapScenario`, default 0, creation-only). With it on, shared
+  match setup plays the map's own scenario -- the `.crt` placements and rules
+  and the Use Only `.tdf` -- as for a Cartographer Test Map copy, except that a
+  Use Only entry no unit type answers to is left out rather than refused (maps
+  made for the original game name such units; NeverGlory names 44). Setup runs
+  the scenario when the map's `.ota` carries the Test Map opt-in
+  (`[TAKPlaytest] authoredscenario=1`) or when the option is on and the `.ota`
+  declares `hasscenario`. The server keeps the created value through later
+  `SetGameOptions`, because players choose seats, sides and READY for the game
+  it makes, and the creating client sized the room's open seats for it (a
+  scenario can need seats past the map's start positions). The server clears it
+  for campaign missions, generated maps, stress tests and benchmarks, and forces
+  Start Locations to FIXED with it. At START it reads the verified package's own
+  files (`maps::scenarioInfo` over the package, never the host's claim): it
+  refuses a room whose map has no scenario content ("this map has no scenario
+  to play"), refuses while a seat the scenario needs is empty ("Seat player N in
+  the lobby to play this scenario"), and refuses a package that leaves out a
+  scenario file setupMatch will read: the `.crt` of a declared scenario, or the
+  named Use Only list ("the map package leaves out its Use Only list"), since
+  setupMatch would otherwise read each machine's own copy, which no digest
+  covers. A start refusal reaches the host as `MapError` and the client shows it
+  in the room (`MpClient::startError`). The seats a scenario needs are its
+  placement owners 0-7 and every Player N rule bank with a group that has a
+  condition or an action. The option is sim-affecting and recorded in the replay
+  header.
+- **START LOCATIONS** (`randomStarts`): 0 FIXED, 1 RANDOM, 2 BY SLOT
+  (`net::kStartsBySlot`): slot N takes the map's Nth start whichever seats are
+  empty, and a seated slot past the map's last start takes the lowest start no
+  seated slot claims by its own number, then a spot near the map centre
+  (`sim::startSpotsFor`). Any other nonzero value reads as RANDOM
+  (`normalizeStartMode`).
+- **POWER CODES** (`powerCodes`, default 0, set at creation and kept by later
+  option updates, forced off in campaigns). `Cmd::PowerCode` carries one of the
+  seven simulation codes (`targetId` the code, `queue` the +LOS argument,
+  `unitId` the +ManaMe unit); the server drops it while the room's option is
+  off and treats an unknown code or argument as a forgery.
+- **FOG OF WAR** (`fogExplored`, 0..2) is display for every client, and
+  sim-affecting for area clear only (`MatchConfig::roomMapRevealed` /
+  `roomLosOff`, `World::setRoomVision`: retail's explored allowance reads the
+  Mapping plane, which Map Revealed fills).
+- **Benchmark** rooms run the spawn ramp on the server's wall clock: the server
+  adds `Cmd::BenchClock` to a tick's bundle whenever more of the ramp's stages
+  are due (`targetId`, out of `benchmarkSpawns(level)` spread over 60 real
+  seconds from the first tick) and once more when the 60 seconds are up
+  (`queue` = 1); every sim fires the due stages in order and ends the run on it,
+  and a replay reproduces it from the recorded commands. A client never sends
+  `BenchClock` (its parser refuses the kind). A benchmark room may run at
+  `kMaxBenchmarkGameSpeed` (110, +100).
 
-Protocol 299 (0.9.5) changes only hashed sim state: a unit already at 0 HP or
-below takes no further hits in the tick it dies (retail `51a140`: the hit's CRT
-draw is still spent, but its HP, kill credit, death type, overkill, hit
-response and status effects come from the fatal hit only), and the HP
-subtraction of a hit, of construction decay and of deadly water saturates
-instead of wrapping, with `maxdamage` loaded capped at 32767 (the retail 16-bit
-HP word). Nothing on the wire changes, and replay format 15 is kept; 298
-replays are refused. Map and mod caches move from the data folder to the
-per-user folder (see [map-transfer.md](map-transfer.md)), which the wire does
-not see. 0.9.5 ships protocol 299; it plays with neither 0.9.4 nor any earlier
-version, nor their replays.
+AI seats carry their level in `SlotInfo.aiLevel`: 0-4 our Defensive, Easy,
+Normal, Hard and Absurd, 5 Absurdly Defensive (every peer derives its double
+income and defensive stance from the level), 6 Classic, shown to players as
+RETAIL (a server-side port of the retail AI, `ai::ClassicBrain`; its seat gets
+exactly a Normal seat's match config), and 7 Passive (run as Easy with no
+exploring and builders held near home; an Easy seat's match config). A level of
+8 or more is stored as Normal. A campaign mission's strategic computer players
+are always Classic. The server's classic AI tells the sims its squads with
+`Cmd::AiGroup`, applied only for a computer-owned player and never accepted from
+a client.
 
-Protocol 300 (0.9.6) adds producer rally plans: the rally list is part of
-`stateHash` when non-empty, a repeating mobile builder accepts Attack and
-fight-move rallies, and Stop clears the rally. It also changes hashed sim
-state for cloaking and raising the dead: a cloak-capable unit's cloak block
-(`cloakBlockedUntil`, set by shots, building, reclaiming, repairing and
-resurrecting, and by an empty cloak pool) is hashed when set; cloaking pays
-from the unit's own mana; resurrect and animate cost no mana, and their
-channel counter (`reviveWork`, retail's 16.16 work word) is hashed while it
-runs. No command changes; replay format 15 is unchanged; 299 replays are
-refused. 0.9.6 ships protocol 300; it plays with neither 0.9.5 nor any earlier
-version, nor their replays.
+Chat and voice in a running game reach the seated players in the recipients mask,
+and spectators only when the sender ticks them (`Chat`'s trailing u8, `VoiceUp`'s
+`kVoiceSpectators` flag, which the server strips before `VoiceDown`); a
+spectator's own chat and voice reach nobody. Before the game starts everything
+goes to the whole room.
 
-Protocol 301 ports retail HelpBuild. A factory's or conjurer's output has one
-progress, its producer's: helpers advance it (converted from their own
-workertime), so the output finishes once, sooner, for its buildcost in total,
-and the producer is freed at that moment. A guarding mobile builder repairs or
-helps what it guards, or what that unit is building, producing, helping or
-repairing; the job goes ahead of the guard order, and the next look is due at
-`guardHelpTick` (hashed when set). A HelpBuild approach leg carries `helpSite`
-(hashed when set). Assist is checked by the sim (same owner, mobile builder,
-build menu when builderlimited) and is accepted from a repeating conjurer,
-whose own output waits while it works elsewhere. No command changes; replay
-format 15 is unchanged; 300 replays are refused. 0.9.7 ships protocol 301; it
-plays with neither 0.9.6 nor any earlier version, nor their replays.
+`BuildManaArea` carries a builder, lodestone type, queue flag and two rectangle
+corners in 43 bytes, like area reclaim; every other command keeps the 35-byte
+layout. Every peer executes one persistent area mission, exploring deposits
+before trying normal clearing, placement, construction and upgrades; its cursor
+and exploration stage are hashed. An order verb's `queue` byte carries
+`kQueueFront` (Ctrl: the order goes in at the head without clearing the queue)
+and the `kQueueToggle` bit (a player's own Shift or Ctrl click takes back a
+queued order of the same kind on its target or within 16 px of its point); a
+producer's rally list takes both. Fire at a point arrives as `Cmd::AttackGround`.
+Builders on patrol repair nearby units automatically (`MatchConfig::patrolRepairs`).
+Defensive AI interception is server-local policy; its ordinary movement commands
+are sequenced and recorded as usual.
 
-Protocol 302 ports a guard's answer to an attack on what
-it guards. Every hit that runs the hit response stamps the victim's
-`attackedTick` (not hashed); a ground or flying guard whose guarded unit has a
-newer stamp than its `guardHeard` (hashed when set) attacks that unit's
-`lastHitBy` ahead of the guard order, past Hold Fire and Hold Position and with
-no leash, and resumes guarding when the attack ends. An idle computer caster
-takes up no resurrect or animate while its allocation is under 0.7, and none
-starts or ends past the unit limit or the type's `totalallowed` (the corpse
-stays). No command changes; replay format 15 is unchanged; 301 replays are
-refused. 0.9.8 ships protocol 302; it plays with neither 0.9.7 nor any earlier
-version, nor their replays.
+### Versions and replays
 
-Protocol 303 lets a build order through on a site its player's own idle or
-guarding units stand on, and moves them off it: `canPlaceOrder` (the build
-order and the build cursor) passes over units `yieldsToSite` accepts (the
-player's own, mobile, able to move, idle or guarding), and on each of the
-builder's placement retries `clearBuildSite` sends them just off the site, a
-guard keeping its guard order under the move. Units of other players and own
-units with other work still block, and the builder still drops the order
-after 31 retries. A ground guard now keeps to Follow_Ground's ring round its
-ward (`World::guardRing`: inner radius (max ward foot + guard footX + 2) x 16
-px, three cells deep) instead of stopping within 70 px of the ward's centre,
-so it never parks in a factory's yard; flyers keep their orbit. No hashed
-field is added. No command changes; replay format 15 is unchanged; 302
-replays are refused. 0.9.9 ships protocol 303; it plays with neither 0.9.8 nor
-any earlier version, nor their replays. 0.9.10 changes only the client's
-display and options and keeps protocol 303, so it plays with 0.9.9 and its
-replays.
+Peers, the server and replays must all match `kNetVersion` exactly: the handshake
+refuses a peer of any other protocol, and a replay plays only under the replay
+format and protocol that recorded it (`supportedReplayProtocol`). The loader reads
+the current format (15) and refuses any other format or protocol, and a strict
+bundle read accepts every current command kind and event kinds 1, 2 and 4 (3 is
+reserved). There are no compatibility variants of the simulation. The replay
+header records, beside the map, slots and seed, the pathfinding mode, the MAP
+SCENARIO byte, the POWER CODES byte (bit 0 the option, bit 1 the map started
+revealed: FOG OF WAR Explored or Full Vision, which +Mapping starts from), the FOG
+OF WAR byte, and the `gameMods` byte with the shared package's `modDigest`.
+Which release uses which protocol and replay format is in the
+[CHANGELOG](../CHANGELOG.md).
 
-Protocol 304 changes four pieces of hashed behaviour. A hovering attacker
-whose shots stop three times running on scenery it cannot destroy moves round
-its ring to the nearest 1/32-turn bearing with a clear line
-(`World::hoverForShot`); retail never re-aims. A factory that dies, changes
-hands or has the unit in production cancelled (the last queued copy, repeat
-off, Stop, a leaving player) kills that unfinished unit at once with retail's
-30000-point type-11 hit credited to the factory: no corpse, no kill credit, no
-refund; a Zhon mobile producer's unit and a building site stay. Legion bodies
-sliding round units and walls turn toward their actual motion (new tracked
-members in the Legion checksum). Our AI levels (not Retail AI) pick strike
-targets from every enemy unit and building by value, threat, distance and
-defence, unseen ones weighted lower. No command changes; replay format 15 is
-unchanged; 303 replays are refused. 0.9.11 ships protocol 304; it plays with
-neither 0.9.10 nor any earlier version, nor their replays.
-
-Protocol 305 changes two things. Our AI levels (not Retail AI) choose strike
-targets only from enemy units their side has seen: their own and their allies'
-sight through `World::playerSees`, plus a unit that hit theirs within the last
-5 s from within reach. A building is remembered where it was last seen until
-that spot is in sight again without it, a mobile unit for 25 s; only a target
-in sight is ordered on by id, a heard or remembered one gets an attack-move to
-where it was, and with nothing known the army and per-level scouts explore
-unseen enemy starts and then map sectors. The think at tick 0, before the first
-view pass, sees only radar; under NOT EXPLORED, where it would know no ground
-either, it waits for tick 1. What a seat knows follows the room: team radar
-counts as sight out to radardistance, FULL VISION sees every unit
-(`World::roomLosOff`); deposits count only on ground the team has explored
-unless the map is revealed (`mapRevealedFor`, `exploredAt`), taken only by an
-enemy lodestone seen, remembered, or learned from a refused site;
-the server hands each AI seat its enemy start spots as the room shows them
-(`ai::enemyStartSpots`: with owners for FIXED and BY SLOT, every map spot but
-its own and its allies' for RANDOM, from `setupMatch`'s start table). Enemy
-strength and units left are reckoned from what the AI has seen, and scouts
-back off targets and routes where scouts died.
-This lives in the server's AI state and only its commands reach the game.
-`World::stateHash` now mixes one 64-bit word per multiply round over four
-rotating lanes (`src/sim/statefold.h`) and folds the exploration and view-count
-planes in fixed 64Ki-cell chunks and each COB script on its own, combined in a
-fixed order, so the value is the same with any number of workers; the
-simulation is unchanged but every hash value differs. A server with no human
-slot computes the hash only for replay checkpoints. No command changes; replay
-format 15 is unchanged; 304 replays are refused. 0.9.12 ships protocol 305; it
-plays with neither 0.9.11 nor any earlier version, nor their replays.
-
-Protocol 306 flies the mind-control, stone and freeze Line-of-Sight shots.
-They launch as the ordinary straight shot and fly by retail's own updates
-(`52d8d0`, `52db40`, `52dda0`); the unit a shot strikes goes to retail's
-callback (`52da10`, `52dca0`, `52df00`, which the Area Mind Control and Area
-Freeze use too) instead of the damage: the caster's player, a body without a
-mover, a Monarch, an immune unit and one still being built are refused, then
-one CRT roll decides, and nothing deals damage. The stone and freeze picker
-skips unfinished units and no longer skips paralyzed ones. All of it is hashed
-state; no command changes; replay format 15 is unchanged; 305 replays are
-refused (docs/retail-engine.md, "Mind control, stone and freeze fly").
-306 was never released.
-
-Protocol 307 changes four combat and flight rules, all hashed state
-(docs/retail-engine.md, "Enemies with construction left", "Melee never
-reaches a flyer in the air" and "Air traffic"). A ground melee attacker on a
-building walks to Attack_Melee's rectangle round its footprint, each to its
-own free perimeter origin, and the melee in-range test snaps both boxes to
-their footprint origins. A flyer's air-traffic counter steps after each
-occupancy rebuild, and at 5 the ported flyer missions push a step-out ahead
-of themselves (a new front order); AirToGroundHover, VTOL_SeekGuard and
-AirStrike are ported whole, and a shot posts its outcome to the shooter's
-mission. A melee weapon never reaches a unit in the air, and every
-`noairweapon` / `toairweapon` test reads the target's current layer, not its
-type; a ranged attack on a carried target ends. Idle, patrolling and moving
-units take an enemy with construction left as a target, behind finished
-ones. Legion flight stations hold only an Alt+N formation's flyers. No
-command changes; replay format 15 is unchanged; 305 and 306 replays are
-refused. 0.9.13 ships protocol 307; it plays with neither 0.9.12 nor any
-earlier version, nor their replays.
-
-Protocol 308 adds AI level 7, Passive (`SlotInfo.aiLevel`). The server runs it
-as Easy with no exploring and builders held near home, and a Passive seat's sim
-config is exactly an Easy seat's, so no hashed state changes. A 307 server would
-store level 7 as Normal, which is why the protocol moves. No command changes;
-replay format 15 is unchanged; 307 replays are refused. 0.9.14 and 0.9.15 ship
-protocol 308; they play with each other, and with neither 0.9.13 nor any earlier
-version, nor their replays.
-
-Protocol 309 changes a mobile producer's rallied output, hashed: it starts its rally
-with no exit step, and with no room for the next unit the producer moves one idle unit
-aside. A rally step the output cannot perform is dropped. It adds sign-in tokens
-(`AuthResult`'s optional token, `AuthToken`, `AuthRevoke`), issued and accepted over TLS
-only. Replay format 15 is unchanged; 308 replays are refused. 0.9.16 ships protocol 309;
-it plays with neither 0.9.15 nor any earlier version, nor their replays. 0.9.17 keeps
-309 (interface changes only), so it plays with 0.9.16 and its replays, and so does
-0.9.18 (build clean-up only).
-
-Protocol 310 changes Legion steering only, hashed (docs/legion-pathfinding.md, "Blocked
-bodies: speed, ahead, pressing"): an unturned step keeps travel speed except a plain
-mover's flow-around shuffle and the in-reach press, a flow-around shuffle never steps
-behind its aim, and a body blocked by bodies on a leg that engages no enemies presses on
-instead of stopping dead. Retail is bit-identical to 309. Nothing on the wire changes;
-replay format 15 is unchanged; 309 replays are refused (a 309 peer would desync in a
-Legion game, and a 309 replay would play differently). It was never released on its
-own: 0.9.19 ships 311, which includes it.
-
-Protocol 311 changes Legion steering only, hashed (docs/legion-pathfinding.md, "Allies
-swap places"): two members of allied players on move legs that block each other head on
-trade places in one step, and each then waits 45 ticks before it swaps again (the swap
-ticks are navigator state, hashed). Retail is bit-identical to 310. Nothing on the wire
-changes; replay format 15 is unchanged; 310 replays are refused (a 310 peer would desync
-in a Legion game, and a 310 replay would play differently). 0.9.19 ships protocol 311;
-it plays with neither 0.9.18 nor any earlier version, nor their replays.
-
-Protocol 312 changes the simulation in both pathfinding modes, hashed, and adds one
-command. A unit's
-write-off of an enemy it found blocked (`blockedShots`, docs/retail-engine.md "Blocked
-shots") now covers the line between the shooter's spot and the target's, and lapses when
-either moves more than 16 px (the target's spot is new hashed unit state); and a Navy
-Yard's owner's idle ships move out of the yard's way while one of its ships is leaving,
-or off the pad when its next site is refused (`World::clearYardDoor`, docs/retail-engine.md
-"A Navy Yard's door"). The same door rule now covers every scripted land factory: the
-owner's idle ground and hover units step aside while one of its outputs is on its way
-out (its PARK, its rally's plain move, or still on the pad), off the pad while its next
-site is refused, and, under the Retail navigator, out of the cells round an output held
-up on its PARK; the factory's own parked outputs move only off the pad or off an output
-they hold up (`Unit::builtBy`, set once at completion from hashed state, not hashed
-itself; docs/retail-engine.md "A land factory's door"). At land factories and the Navy
-Yard the owner's guards step aside too, unless fighting (`World::doorGuard`: the guard is
-the current leg, its ward lives, no ward alarm to answer, no weapon slot on a target):
-the move goes ahead of the guard order, which resumes when it ends, and a guard steps
-aside once per factory event, keyed on the factory's own `Unit::doorSerial` (the next
-even number per finished output, odd for a refusal episode of its next site) and
-remembered on the guard as `doorYieldFactory`/`doorYieldSerial` (cleared by a fresh
-guard order); all three are hashed when set. A refused site's own footprint, which can
-lie just outside the pad, is cleared with the pad (`Unit::refusedSiteX/Z`, set at each
-refusal from hashed state and read only while it lasts, not hashed). A factory whose
-rally point is on its own pad no longer stalls: its output steps off the pad. A sprite
-feature destroyed by damage plays its
-`seqnamedie` before `featuredead` replaces it: `Feature::dieLeft` counts the ticks down
-and is hashed, and each type's death length (`FeatType::dieTicks`) joins the
-gameplay-data hash; while it dies, and while it burns, it takes no weapon damage, and a
-dying feature cannot ignite or be reclaimed; fire spread skips burning, fading and dying
-cells before its roll (docs/retail-engine.md "The death playback").
-Every automatic target pick now goes through retail's mission scan (docs/retail-engine.md
-"Mission target scan"; `4d8370` -> `412620`) over the owner's 7-tick
-visible-enemy list, from the mission that runs it (Standby, Standby_Wander,
-VTOL_Standby, Patrol, VTOL_Patrol, Move/VTOL_Move and their formation forms, the air
-retargets, Attack_Melee); the per-stride `findTarget` scan, `acquireTarget` and
-`acqStride_` are gone, and Guard_NoMove only releases slots (`401a90`). An idle flyer
-on Hold Position takes no automatic attack: the scan's issue
-(`World::retailIssueAutoAttackAllowed`) refuses it, as retail's VTOL standby does at
-4d7de0, and it fires from its post through the fire-at-will sweep. Attack-move legs
-are retail's MoveFight: Move_Ground/VTOL_Move with response mode -1. Each player's sight
-plane (`viewCounts_`) and explored bits now also take the footprints of every allied
-player, human or computer (`World::viewShareMask`: retail's game-start sharing `4f6770`
-covers same-team humans only; the owner widened it to every ally), except a passive
-neutral player's (`Player::passiveNeutral`, hashed with the player's flags). New hashed state:
-`Unit::viewPlanes`, `RetailDeathSight::planes`, the Attack_Melee retarget wake tick (in
-the order's `airRunCount`) and, in Legion only, `Unit::aimWait` (`World::legionAimStall`:
-a standing ground unit whose started aim its script has not accepted for 90 ticks hears
-TargetCleared once; folded in only when non-zero, always 0 in Retail mode). Legion's
-`passAhead` also no longer counts an enemy's fight-leg body as oncoming traffic to a
-fight leg. Retail's fire at a point (SUPPRESS, and AIRSTRIKE, AIRTOGROUNDHOVER and
-AIRTOGROUND for flyers; docs/retail-engine.md "Fire at a point: SUPPRESS" and "SUPPRESS
-port") arrives as the new order verb `Cmd::AttackGround` (base layout); its order state
-(`Order::suppress*`, `Order::airPoint`) and a slot's point target (`Unit::slotPoint`,
-`slotPointAt`) are hashed when set. The server's classic AI tells the sims its squads
-with the new `Cmd::AiGroup` (applied only for a computer-owned
-player and never accepted from a client; `World::setAiGroup`). An order verb's `queue` byte now also carries
-`kQueueFront` (Ctrl: the order goes in at the head without clearing the queue, retail
-4d7a09 -> 4d7750) and the `kQueueToggle` bit (a player's own Shift or Ctrl click takes
-back a queued order of the same kind on its target or within 16 px of its point, retail
-4d7a30); a producer's rally list takes both. A build leg Ctrl interrupts after its site
-went down keeps that site (`Order::resumeSite`, hashed when set) and helps it, or places
-it again, when it runs again. The RNG streams change (`fireRand` per
-scan, mission wake draws), so every hash changes. Replay format 15 is unchanged; 311
-replays are refused (a 311 peer would desync, and a 311 replay would play differently).
-0.9.20 ships protocol 312; it plays with neither 0.9.19 nor any earlier version, nor
-their replays.
-
-Protocols 313 and 314 change hashed Legion behaviour only: 313 keeps a column's files in
-their lanes round a corner from one narrow corridor into another (`cornerCommit`), 314
-circles a moving Legion formation's flyers over its front instead of holding them to the
-ground's pace. Protocol 315 runs the menu Benchmark on the server's wall clock: in a
-benchmark room the server adds `Cmd::BenchClock` to a tick's bundle whenever more of the
-spawn ramp's stages are due (`targetId`, out of `benchmarkSpawns(level)` spread over
-60 real seconds from the first tick) and once more when the 60 seconds are up
-(`queue` = 1); every sim fires the due stages in order and ends the run on it, so the
-run's length no longer depends on the game speed or on keeping up with it, and a replay
-reproduces it from the recorded commands. A client never sends `BenchClock` (its parser
-refuses the kind). A benchmark room may also run at `kMaxBenchmarkGameSpeed` (110,
-+100). Replay format 15 is unchanged. 0.9.21 ships protocol 315; it plays with neither
-0.9.20 nor any earlier version, nor their replays.
-
-Protocol 316 gives spectators their own choice in chat and voice. `Chat` (C->S) carries a
-trailing u8 after the recipients mask: 1 = spectators read it too. `VoiceUp` gains the flag
-`kVoiceSpectators` (8), which the server strips before `VoiceDown`. In a running game the
-server sends a line or frame to the seated players in the mask and to the spectators only
-with that flag (before 316, spectators got it for a mask of 0xff), and a spectator's own
-chat and voice reach nobody. Before the game starts everything still goes to the whole
-room. The client sends the flag from the Diplomacy screen's SPECTATORS row, off at the
-start of each game, and starts the player columns at the player's allies. 0.9.22 ships
-protocol 316; it plays with neither 0.9.21 nor any earlier version, nor their replays.
-0.9.23 keeps protocol 316 and plays with 0.9.22. 0.9.24 ships protocol 320 (317 to 319 were
-never released on their own) and plays with no earlier version.
-
-Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
-wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
-in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each
-`GameList` entry ends with it. With the rule off the server answers every
-`Spectate` with a failed `JoinResult` ("spectators are not allowed in this
-game"). `Spectate` is the only way into a room without a slot, so this one check
-covers the browser's watch request, a seated player who left and asks to watch,
-and a dropped watcher reconnecting (watchers hold no resume token, and `Rejoin`
-seats only seated players). The host changes the rule in the lobby. In a running
-game `SetGameOptions` adopts only speed, so the rule is fixed at start and an
-admitted watcher is never stranded. The only lobby spectator is a host who
-created the room to watch it. The rule governs who else may watch, so that host
-is never removed. Crusades battle rooms carry 0. The Crusades rules digest still
-hashes 257's option bytes (`putRules`), so battles issued before the upgrade
-still verify. Because the simulation was unchanged, protocol-257 replays played
-under 258 (`supportedReplayProtocol`; 261 ended that). The client keeps a refusal's reason for the
-browser (`MpClient::joinError`). It also clears the pending spectate on any
-refusal; before this, a refused watch turned the next ordinary join's start into
-a spectator start.
-
-Protocol 259 adds the room's MAP SCENARIO option: `GameOptions.mapScenario` (u8,
-default 0) follows `allowSpectators` in `CreateGame`, `SetGameOptions`,
-`LobbyState` and `GameStarting`; `GameList` is unchanged. With it on, shared
-match setup plays the map's own scenario -- the `.crt` placements and rules and
-the Use Only `.tdf` -- as for a Cartographer Test Map copy, except that a Use
-Only entry no unit type answers to is left out rather than refused (maps made
-for the original game name such units; NeverGlory names 44). Setup runs the
-scenario when the map's `.ota` carries the Test Map opt-in (`[TAKPlaytest]
-authoredscenario=1`) or when the option is on and the `.ota` declares
-`hasscenario`. The opt-in route is unchanged, so Test Map and `--play-map`
-games, and their recordings, behave as before. The option is creation-only: the
-server keeps the created value through later `SetGameOptions`, because players
-choose seats, sides and READY for the game it makes, and the creating client
-sized the room's open seats for it (a scenario can need seats past the map's
-start positions). The server clears it for campaign missions, generated maps,
-stress tests and benchmarks (at creation, and when a lobby update turns a stress
-test or benchmark on), and forces Random Start Locations off with it. At START
-it reads the verified package's own files (`maps::scenarioInfo` over the
-package, never the host's claim): it refuses a room whose map has no scenario
-content ("this map has no scenario to play"), refuses while a seat the scenario
-needs is empty, with setupMatch's own message ("Seat player N in the lobby to
-play this scenario"), and refuses a package that leaves out a scenario file
-setupMatch will read (below). A start refusal reaches the host as `MapError` and
-the client shows it in the room (`MpClient::startError`) without recording it as
-a map or connection error; before this, a setup refusal at START was invisible,
-because the room shows its map status only while maps are being verified. The
-seats a scenario needs are its placement owners 0-7 and every Player N rule bank
-with a group that has a condition or an action; a bank holding only empty groups
-no longer demands a seat. That fix only lets a refused setup start, so with the
-option off the simulation is 258's and protocol-257 and 258 replays played under 259.
-The option is sim-affecting and is recorded in replay format 13. It is outside
-the Crusades rules digest (`putRules` keeps 257's bytes); Crusades battle rooms
-carry 0, and the Crusades replay archive refuses a recording that has it on. The
-map package carries every map's `.ota`, `.crt` and `.tdf`, and its digest covers
-the files it contains. A package may leave a companion out, though, and
-setupMatch would then read each machine's own copy (from `maps.hpi`, or from a
-mod pack, since `maps/*.tdf` is not gameplay data), which no digest covers.
-So at START the server refuses a room whose setup will read a scenario file the
-package lacks: the `.crt` of a declared scenario, or the named Use Only list
-("the map package leaves out its Use Only list"). A damaged or misnamed file
-inside the package is setupMatch's to refuse, with its own message. With that,
-every peer and the referee play the same scenario files.
-
-Protocol 260 adds START LOCATIONS: BY SLOT. `GameOptions.randomStarts` keeps its
-byte and place and gains the value 2 (`net::kStartsBySlot`): slot N takes the
-map's Nth start whichever seats are empty, and a seated slot past the map's last
-start takes the lowest start no seated slot claims by its own number, then a
-spot near the map centre (`sim::startSpotsFor`). Any other nonzero value still
-reads as RANDOM (`normalizeStartMode`), which is why 259 needed the bump: a 259
-peer would read 2 as RANDOM and desync. FIXED and RANDOM set up exactly as in
-259, and the replay header's `randomStarts` byte simply carries 2 as well, so
-the replay format is unchanged and protocol 257-259 recordings played under 260. A
-MAP SCENARIO room is still forced to FIXED.
-
-Replay format 11 records the pathfinder. Playback requires a protocol that
-`supportedReplayProtocol` accepts. While 258-260 were current that included
-257 onward (their simulation is the same); protocol 261 (retail healtime
-self-repair) changed the simulation, so playback again requires the current
-protocol, and protocol 262 changed it again: a flyer held still in range of its
-attack target zeroes its hashed `flightVelocity` and speed, so shooters stop
-leading it by the speed it flew in at (see "Shooting at flyers" in
-`retail-engine.md`). Protocol 263 changes air combat, and protocol 262
-recordings no longer play: World's other flyer holds stop the velocity and
-speed too; impacts follow retail's dispatch, a weapon with areaofeffect 16 or
-less that struck a unit damaging it alone and every other impact damaging units
-by 3D distance to the blast; each weapon slot's facing request points at its led
-SweetSpot; and a flyer without hoverattack flies attack runs at a target that
-cannot fly instead of holding still in range (see "World's other flyer holds",
-"Impact damage", "The facing request" and "Attack runs" in `retail-engine.md`).
-Its `--mpai` Inner Circle seed 1 hashes: Retail 300 s `bf6f1ac3081f9ee6`, 60 s
-`8db23af1b0260ba1`; Legion 300 s `7def7a0fa5dedfc6`, 60 s `5bc7e8001c06611f`
-(the 60 s ones are 262's: no flyer fights in the first minute).
-Normal's larger builder total (up to the Monarch and four, see
-`ai-expansion-2026-09-29.md`) moves the 300 s ones, protocol unchanged: Retail
-`76f7e976cd6a00c9`, Legion `99e2f137cde8d769`; the 60 s ones stand.
-Protocol 264 changes Legion movement and only Legion (every Retail record of the
-scenario set is unchanged), and protocol 263 recordings no longer play: field
-potentials are 32-bit, so a long connected route is walked instead of standing
-trapped; a body's progress is measured in one measure at a time, so its stall
-clock runs with its walk; the settle rule reads a body of another footprint
-where it stands; a formation takes the slots past a narrow entrance in the order
-its bodies come through it; a formation member keeps its lateral place through a
-short passage; and one formation slot-search budget a tick is shared by every
-point, round robin (see the 2026-10-14 review in `legion-pathfinding.md`). The
-`--mpai` Inner Circle seed 1 hashes stay as above in both modes: Retail 300 s
-`76f7e976cd6a00c9`, 60 s `8db23af1b0260ba1`; Legion 300 s `99e2f137cde8d769`,
-60 s `5bc7e8001c06611f`.
-Protocol 265 changes path search in every mode, and protocol 264 recordings no
-longer play: each player's path requests are admitted from a production entity
-pool, scanned slot by slot with its holes as retail's scheduler does (the CRT
-stream, each pool's size and every unit's slot are hashed); where ground
-footprints overlap, the cell keeps its live holder instead of going to the last
-unit in vector order; and re-requesting a pending path for the same controller
-and goal leaves it alone however far the unit has moved (see the 2026-10-15
-audits in `pathfinding-port.md`). The `--mpai` Inner Circle seed 1 hashes:
-Retail 300 s `9b48eb78e62650cb`, 60 s `42a9fc16c5df77b8`; Legion 300 s
-`96fa40176b9881d5`, 60 s `24b3ccbd8e6bb61e`.
-Protocol 266 sizes those pools as retail does, and protocol 265 recordings no
-longer play: a player's pool starts at retail's maxunits for the unit cap (the
-cap itself from 20 to 500, 500 for the 1,000 and 2,000 lobby caps, 250
-uncapped) instead of the cap, and gains a slot only when a unit finds it full,
-so the default 2,000 cap scans 500 slots a player, not 2,000 (hashed pool
-sizes; see the 2026-10-15 grow-as-needed audit in `pathfinding-port.md`). The
-`--mpai` Inner Circle seed 1 hashes: Retail 300 s `7535cb08ee787b75`, 60 s
-`2c39430636a3dbda`; Legion 300 s `c707e1a8063bc0c7`, 60 s `532539f51d70840b`.
-Protocol 267 adds explicit selection orders (`Cmd::Order` in the tick bundles,
-the OrderBegin/OrderMembers/OrderCommit/OrderAbort uplink transaction; Legion
-clients only, so Retail is bit-identical), and protocol 266 recordings no longer
-play. An AI-only game issues no orders, so the `--mpai` hashes above are
-unchanged under 267 (both modes, 60 s and 300 s).
-Protocols 268 to 272 carry stages 4 to 8 of the Legion 10,000 program (budgeted
-navigation scheduling, route queries, hierarchical routes, static changes apart
-from traffic, chokepoints, subgroups and arrivals; see `legion-pathfinding.md`
-and `legion-10000-report.md`). Each changes Legion movement and only Legion, and
-each refuses the previous protocol's recordings; Retail stays bit-identical to
-266. The program's merge left the `--mpai` Legion hashes at 300 s
-`47b705a730bbc22f`, 60 s `f75b2a11410f43b4`, and Retail's as under 266.
-Protocol 273 shares short mana across construction in every mode: production,
-mobile construction and repair each do the player's allocation (the stored mana
-over last tick's demand) of a full tick of work, as retail does, instead of each
-paying in full or doing nothing in unit order. Per-player demand and
-per-producer fractional progress are hashed, and 272 recordings no longer play.
-The `--mpai` Inner Circle seed 1 hashes: Retail 300 s `a3d953803a064191`, 60 s
-`b353410003e98dd5`; Legion 300 s `ce5c4ba7562e53b9`, 60 s `0825aeb9e8139203`.
-Protocol 274 scales a lodestone upgrade's tick of work by that allocation before
-clamping it to what is left, so a short share no longer leaves the upgrade one
-rounding step from done; 273 recordings no longer play, and the `--mpai` hashes
-are unchanged. Protocol 275 adds AI level 5, Absurdly Defensive
-(`SlotInfo.aiLevel`): every peer derives its double income and defensive stance
-from the level, so an older peer would read 5 as Normal and desync; the
-simulation is otherwise unchanged and 274 recordings no longer play. Protocol
-276 adds voice chat (`VoiceListen`, `VoiceUp`, `VoiceDown`; see
-[Voice chat](#voice-chat-protocol-276)), relayed beside the game and never in a
-tick bundle or replay; the simulation is unchanged, but a 275 peer would not
-know the messages, and 275 recordings no longer play. The `--mpai` hashes stand
-as under 273. Protocol 277 (Legion only) counts a unit waiting in the Legion
-registration queue as delayed, not stalled, so a formation's flyers keep their
-stations over the front while the ground waits for its first navigation plane
-(on big maps since stage 4) instead of flying straight to the goal; Retail is
-bit-identical, 276 recordings no longer play, and the `--mpai` hashes stand as
-under 273 (the AI never forms formations). Protocol 278 adds generator recipe
-version 9, whose one extra byte in the `~gen1~` map id carries the Scattered
-Mana level (`Params.manaScatter`); a 277 peer would refuse a v9 id, so 277
-recordings no longer play. Version-8 ids still decode as None and regenerate
-byte-identically, and authored maps are untouched, so the simulation is
-otherwise unchanged. Protocol 279 (Legion only) admits one stream per narrow
-passage however many opening records it spans, lets head-on meets narrow near
-the goals, has allied settled bodies step aside for a departing order and
-keeps attack rings filled round their target; protocol 280 (Legion only) adds
-sub-cell presses into reach, ring bends round other commands' rings, passage
-lanes through gaps up to 32 origins and flow-around shuffles at travel speed.
-Retail is bit-identical under both, and 278 and 279 recordings no longer play.
-Protocol 281 (all modes) watches where shots land: three in a row on terrain,
-water or scenery the weapon cannot destroy write the target off for auto
-weapons and send an attacking ground mover off Hold Position to a nearby spot
-with a clear shot (`World::noteShotImpact`, `repositionForShot`); that state
-is hashed only once a blocked impact occurs, so the `--mpai` hashes stand as
-under 278 (60 s Retail `b353410003e98dd5`, Legion `0825aeb9e8139203`), but 280
-recordings no longer play.
-Protocol 282 (Legion only) is the third round at about 100 bodies: attackers round
-a still target stop creeping, passage greens scale with the crossing and small
-groups queue for their turn, and single-file corridor mouths hand out claims; Retail
-is bit-identical and the 60 s `--mpai` hashes are unchanged, but 281 recordings no
-longer play.
-Protocol 283 (Legion only) is the fourth round at about 100 bodies: a formation keeps
-its lanes through turns (the turn ribbon and lane exchange), rings along walls stand
-deeper and walk on through a still target's shadow, fight and guard members round a
-still target stop creeping and flow round at travel speed, and members passing a
-starved queue head at a corner's merge move over a lane; Retail is bit-identical
-and the `--mpai` hashes are unchanged (60 s and 300 s), but 282 recordings no longer play.
-Protocol 284 adds the lobby seat move (`MoveSeat`); the sim is 283's, but 283
-recordings no longer play.
-Protocol 285 (Legion only) is the fifth round at about 100 bodies: a body held just
-outside reach of a ring that walls hide in part presses into the shadow and, once it
-has pressed, holds there; an attack group of eight or more that got no ring at its
-first field (a fight-move column acquiring one body at a time) plans one late; a
-press may end exactly on the reach edge, where combat fires (a melee weapon keeps its
-contact test); and a ring's stop origin is the edge point's own origin. Retail is
-bit-identical and the `--mpai` hashes are unchanged (60 s and 300 s, Retail and
-Legion), but 284 recordings no longer play.
-Protocol 286 (Legion only) is the sixth round at about 100 bodies, for attack rings
-reached through a narrow approach (a gatehouse corridor): a ring member that combat
-would brake where it plugs the approach, with the queue behind it out of reach, walks
-on first to the farthest ground with the shot, only onward and only past a queue that
-comes up to it; and a ring that a narrow approach feeds hands out its spots deepest
-first by walk, so the approach fills from its far end as Retail's does. Retail is
-bit-identical and the `--mpai` hashes are unchanged (60 s and 300 s, Retail and
-Legion), but 285 recordings no longer play.
-Protocol 287 replaces override packs with mods. `GameOptions` byte 3 is now
-`gameMods` (0 or 1, default 0; was the 0/1/2 override tier): only the host selects
-game packs, the server refuses them from anyone else and forces the flag off in
-campaigns and Crusades battles, and the `Override*` messages are renamed `Mod*`
-with the same ids and the offer label `"mods"`. The replay header keeps the same
-byte as `gameMods` and the digest as `modDigest`. Cosmetic mods (selected pack
-folders and the always-on `mods/cosmetic/*.hpi` archives, since replaced by
-`mods/cosmetic/always_enabled/<pack>` folders) stay local to each player
-and are never sent. The simulation is 286's, but 286 recordings no longer play.
-Protocol 288 adds power codes. `GameOptions` gains a `powerCodes` byte after
-`mapScenario` (0 or 1, default 0, outside the Crusades rules digest): set when the
-room is created and kept by later option updates, and forced off by the server in
-campaigns and Crusades battles. `Cmd::PowerCode` (28, after `Order`) carries one of
-the seven simulation codes (`targetId` the code, `queue` the +LOS argument,
-`unitId` the +ManaMe unit); the server drops it while the room's option is off and
-treats an unknown code or argument as a forgery. Replay format 14 appends the POWER
-CODES byte after the MAP SCENARIO byte: bit 0 the option, bit 1 the map started
-revealed (FOG OF WAR Explored or Full Vision, which +Mapping starts from). With power codes
-off the simulation and the `--mpai` hashes are 287's, but 287 recordings no longer
-play.
-Protocol 294 makes the room's FOG OF WAR option sim-affecting for area clear only
-(`MatchConfig::roomMapRevealed` / `roomLosOff`, `World::setRoomVision`: retail's
-explored allowance reads the Mapping plane, which Map Revealed fills). Replay
-format 15 appends the option byte (0..2) after POWER CODES.
-Campaign playback forces Retail even if a header supplies another mode.
-Replay format 13 adds the room's MAP SCENARIO byte after the slot table. Saved
-`gameCreate.pathfindingMode` values and the wire byte keep the stable identities
-`0=Retail` and `4=Legion`; `1`, `2` and `3` (the removed Flowfield, Cooperative
-and Retail+) are invalid. Missing, unknown or removed saved values default to
-Retail, while unknown network/replay mode bytes are rejected. The creation
-control switches between Retail and Legion. Debug-only `TAK_LEGION=1` selects
-Legion in the headless multiplayer test harness. `crowdbench` accepts `--mode
-retail` or `legion` for direct comparisons. Legion's groups and per-unit state
-are part of the simulation checksum only in mode 4. A replay plays only under the
-replay format and protocol that recorded it (`supportedReplayProtocol`): the loader
-reads the current format (15) and refuses any other format or protocol, and a strict
-bundle read accepts every current command kind and event kind 1, 2 and 4 (3 is
-reserved).
 For `tools/desync-hunt-remote.sh`, `--minutes` limits simulated match time.
 `TAK_WALL_TIMEOUT=3600` grants each client up to one real hour for a dense
 stress run; the default remains simulated seconds plus 300.
 The same tick, completion and hash checks apply. `--only` retains each scenario's
 full-table seed so targeted retries reproduce its original map/start seed.
-
-Protocol 221 appends `BuildManaArea` to the command enum. It carries a builder,
-lodestone type, queue flag, and two rectangle corners in 43 bytes, like area
-reclaim; existing commands retain their 35-byte layout. Every peer executes one
-persistent area mission, exploring deposits before trying normal clearing,
-placement, construction, and upgrades. Its cursor and exploration stage are
-hashed, with no per-deposit command list or render-owned decisions. The server
-validates coordinates and command ownership; build-menu restrictions apply.
-
-New matches also enable automatic nearby repairs during builder patrols.
-Replay format 11 is unchanged. Defensive AI interception is server-local policy;
-its ordinary movement commands are sequenced and recorded as usual.
-
-(History: protocols 222-227 below concern the since-removed Flowfield,
-Cooperative and Retail+ modes.)
-
-Protocol 222 retains the same wire layout and replay format, while fixing
-Flowfield arrivals around parked formations at a shared rally point. The
-additional allowance remains bounded by group population, local distance and
-full-footprint collision checks. Retail pathfinding is unchanged.
-
-Protocol 223 adds footprint-sized destination areas, reserved final approaches,
-equal-cost lane preservation, and strict Flowfield formation pacing. The wire
-layout and replay format remain unchanged. Local traffic reservations, work
-admission, and validation budgets participate in deterministic simulation state.
-All live peers and the server must use the same protocol. Older replay protocols are refused rather
-than running compatibility variants of the simulation.
-
-Protocol 224 retains the wire layout and replay format while fixing Flowfield
-turning, local crowd escapes, and arrival avoidance around terrain obstacles.
-It requires matching clients and server; protocol-223 replays require the engine
-that recorded them. Retail pathfinding behavior is unchanged.
-
-Protocol 225 first added Cooperative selection without changing the existing mode
-values, command layout, or replay format 11. Retail and Flowfield remain separate
-choices with their existing behavior. This was superseded by protocols 226 and
-227. Peers, the server and replays must all match `kNetVersion` exactly: the
-handshake refuses a peer of any other protocol, and the replay loader rejects
-every other simulation protocol.
-Campaign missions remain fixed to Retail.

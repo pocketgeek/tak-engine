@@ -1860,10 +1860,10 @@ static void levelWiring() {
     net::GameOptions o2;net::SlotInfo back[net::kMaxSlots];net::matchInputsFrom(h,o2,back);
     check(read && proto==net::kNetVersion && back[1].aiLevel==5 && expect(net::matchConfigFor(o2,back,7)),
           "a replay header keeps level 5 and replays it with double income");
-    check(!net::supportedReplayProtocol(fmt,272),"a protocol 272 replay, which had no level 5, is refused");
+    check(!net::supportedReplayProtocol(fmt,272),"a replay of another protocol is refused");
 }
 
-// Classic (wire level 6, protocol 290): the retail AI's port. Its seat's sim config
+// Classic (wire level 6): the retail AI's port. Its seat's sim config
 // is exactly a Normal seat's, the level survives the room and replay records, and
 // the P0 brain takes every tick from the Controller and does nothing with it.
 static void classicLevel() {
@@ -1901,7 +1901,7 @@ static void classicLevel() {
     net::GameOptions o2;net::SlotInfo back[net::kMaxSlots];net::matchInputsFrom(h,o2,back);
     check(read && proto==net::kNetVersion && back[1].aiLevel==6 && sameAsNormal(net::matchConfigFor(o2,back,7)),
           "a replay header keeps level 6");
-    check(net::kNetVersion>=290 && !net::supportedReplayProtocol(fmt,289),"a protocol 289 replay, which had no level 6, is refused");
+    check(net::kNetVersion>=290 && !net::supportedReplayProtocol(fmt,289),"a replay of another protocol is refused");
     {
         // The brain's constructor already draws (the AI manager's squad rolls,
         // then the build manager's block grids).
@@ -1943,12 +1943,10 @@ static void classicLevel() {
           "the Classic brain gives each unit its standing orders, idle patrols and wave moves where Normal attacks");
 }
 
-// OUR LEVELS RAISE THE DEAD BY ORDER. Until 0.9.12 the sim raised bodies on its
-// own (an idle caster took up any body within 56 px), and our levels' casters
-// raised the dead that way. Retail raises only by order (0x4de530), so the sim no
-// longer does, and these levels give the order instead (Controller::reviveIdle):
-// an idle caster beside a body it can raise -- any side's -- is sent to raise the
-// nearest. One that is busy, a body past the old 56 px reach, or an allocation
+// OUR LEVELS RAISE THE DEAD BY ORDER. Retail raises only by order (0x4de530), so
+// the sim never raises a body by itself, and these levels give the order
+// (Controller::reviveIdle): an idle caster beside a body it can raise -- any
+// side's -- is sent to raise the nearest. One that is busy, a body past the 56 px reach, or an allocation
 // under 0.7 (a computer player's revive would end unraised) gets none.
 static void aiRaisesTheDead(const sim::TypeRegistry& registry,const ai::Profile& profile,
                             const sim::UnitType& soldier) {
@@ -1999,7 +1997,7 @@ static void aiRaisesTheDead(const sim::TypeRegistry& registry,const ai::Profile&
     }
 }
 
-// The 0.9.12 reviveIdle search, kept verbatim as the reference: every eligible
+// The straightforward reviveIdle search, kept as the reference: every eligible
 // caster scans every unit record for the nearest raisable body within 56 px.
 // reviveIdle must give the same commands, in the same order, and leave the same
 // assigned list.
@@ -2363,7 +2361,7 @@ int main(int argc,char** argv) {
     // Absurd doubles recurring income. Reclaim (features, ordered corpses)
     // pays nothing at all in retail (406250, 494fd0), so there is nothing for
     // it to double; the targets still go. An idle builder beside a body (source
-    // 3) clears nothing: retail reclaims only by order (0.9.12).
+    // 3) clears nothing: retail reclaims only by order.
     for (int source=0;source<4;++source) {
         double earned[2]{};bool cleared[2]{};
         for (int bonus=0;bonus<2;++bonus) {

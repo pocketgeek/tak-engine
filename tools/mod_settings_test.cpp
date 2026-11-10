@@ -84,18 +84,17 @@ int main() {
         std::ofstream(path)<<"gameCreate.pathfindingMode = 4\n";
         if(tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Legion)
             throw std::runtime_error("saved value 4 did not load as Legion");
-        // Saved Flowfield (1), Cooperative (2) and Retail+ (3) preferences
-        // fall back to Retail now that those modes are gone.
+        // 1, 2 and 3 name no pathfinding mode: they load as Retail.
         for(const char* removed:{"1","2","3"}) {
             std::ofstream(path)<<"gameCreate.pathfindingMode = "<<removed<<"\n";
             if(tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Retail)
-                throw std::runtime_error("a removed pathfinding preference did not fall back to Retail");
+                throw std::runtime_error("a pathfinding preference that names no mode did not fall back to Retail");
         }
         auto modeChanged=s;modeChanged.gameCreate.pathfindingMode=PathMode::Retail;
         if(modeChanged==s)throw std::runtime_error("pathfinding preference changes not detected");
         std::ofstream(path)<<"gameCreate.crusades = true\ngameCreate.doubleSight = true\ngameCreate.unitCap = 2000\n";
         if(tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Retail)
-            throw std::runtime_error("legacy create preferences must remain Retail");
+            throw std::runtime_error("create preferences without a pathfinding row must load as Retail");
         for(const char* value:{"", "0", "-1", "5", "255", "256", "04", "4 4", "flowfield", "cooperative", "legion", "1oops", "2oops", "4oops"}) {
             std::ofstream(path)<<"gameCreate.pathfindingMode = "<<value<<"\n";
             if(tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Retail)

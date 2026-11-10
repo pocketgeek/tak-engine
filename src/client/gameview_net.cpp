@@ -1233,7 +1233,7 @@ void GameView::autoplayStep() {
     autoplayHelpStep(rnd);
 }
 
-// TAK_AUTOPLAY's production and HelpBuild orders (protocol 301): now and then
+// TAK_AUTOPLAY's production and HelpBuild orders: now and then
 // the seat has a builder put down a factory (or anything on its menu) near
 // itself, trains at its factories, puts a conjurer on a repeat queue, has a
 // builder guard a busy unit of its own (guard-help: repair, HelpBuild on a
@@ -1363,7 +1363,7 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
 }
 #endif
 
-    // The disconnect wait (protocol 289), the client's side. The server holds a seat it
+    // The disconnect wait, the client's side. The server holds a seat it
     // stopped hearing from for what is left of its kDropWaitMs budget; a player whose link dropped reconnects
     // inside that window and carries on from the first bundle it lacks, its world
     // intact. Only a seated player in a game still being played, and only with another

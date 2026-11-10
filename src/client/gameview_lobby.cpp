@@ -1094,7 +1094,7 @@ float createOptionPx(float maxW) {
                   if (gen) { mpMapId_.clear(); mapPath_.clear(); }  // drop back to the list
                   else applyGenParams();                           // encode the current gen params
               });
-        // MAP SCENARIO (protocol 259): play the map's own scenario -- its placed armies,
+        // MAP SCENARIO: play the map's own scenario -- its placed armies,
         // trigger rules and Use Only list -- instead of a skirmish. Off for every map until
         // chosen; greyed, with the reason, when the map has no playable scenario. The lines
         // under it say what turning it on changes (dim while it is off).
@@ -1305,7 +1305,8 @@ float createOptionPx(float maxW) {
             // mission room); they are never sent anywhere and cannot change the game.
             // GAME: only the host of a skirmish room ticks mods/game packs; they and the
             // host's always-enabled game packs are sent to every player, and everyone
-            // else sees the host's choice. A room is OFF only when a 0.8.12 or 0.8.13 host chose so.
+            // else sees the host's choice. A room is OFF only for a debug --mods launch, and
+            // campaign mission and Benchmark rooms are always off.
             scanModPacks();
             const bool gameRoom=room.mission.empty();
             const bool gameOn=gameRoom && room.opts.gameMods;

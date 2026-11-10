@@ -18,10 +18,10 @@ terrain skew). Everything below lives in the client's `GameView`
   absolute height (units `0x4fcd1f`, features `0x421dad`, minimap dots
   `0x4f95c5`), and the shipped maps' heightmaps are painted to that rule — a
   plateau of height 220 is painted 110px north of its heightmap cells.
-  Through 0.9.19 we subtracted the map's **modal** height (and used cell-centre
-  sampling), which drew every unit, feature, effect and the fog `min(h, modal)/2`
-  px south of retail: 110px on the INDUSTRIAL Zone map, whose ground is at 220,
-  enough to stand units on a lava-side road in the painted lava.
+  Subtracting a per-map reference (such as the map's modal height) would draw
+  every unit, feature, effect and the fog `min(h, modal)/2` px south of retail:
+  110px on the INDUSTRIAL Zone map, whose ground is at 220, enough to stand units
+  on a lava-side road in the painted lava.
 - `terrainLift = floor(heightAbove * kHeightScale_)` (screen-Y, toward north) and
   `terrainLiftX = heightAbove * kHeightScaleX_` (screen-X). Current constants:
   `kHeightScale_ = 0.5` (retail's `sar $1`; an earlier art-calibrated 1.1 lifted

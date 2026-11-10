@@ -1,7 +1,7 @@
 #pragma once
 // packClick: the commands one player click built (in the order the client
 // issued them) turned into what the uplink carries -- explicit selection orders
-// (Cmd::Order, protocol 267) for the per-unit verbs, ordinary commands for the
+// (Cmd::Order) for the per-unit verbs, ordinary commands for the
 // rest. Header-only; the client (GameView's click scope) and the tools' client
 // mirror (tools/legion_issue_selection.h) call the same function.
 //

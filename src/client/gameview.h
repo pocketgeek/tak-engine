@@ -270,7 +270,7 @@ public:
     void pumpVoice();
     // The VOICE CHAT screen, in the same overlay as Options (Esc menu > VOICE CHAT).
     void openVoiceOptions();
-    // The disconnect wait, the client's side (protocol 289): beginReconnect starts
+    // The disconnect wait, the client's side: beginReconnect starts
     // reconnecting when a seated player's link drops mid-game (false: nothing to come
     // back to), reconnectStep drives it each frame (false: given up, netError_ says why).
     bool beginReconnect();
@@ -438,7 +438,7 @@ public:
     // for the server, which stamps ownership and sequences it into a tick bundle.
     // Inside a ClickScope it is held until the scope closes (see below).
     void issue(tak::net::Command c);
-    // One player click (protocol 267): the commands issued while a ClickScope is
+    // One player click: the commands issued while a ClickScope is
     // open are one click. When the outermost scope closes, a Legion net game packs
     // them (net/orderpack.h) into explicit selection orders -- one order per
     // selection verb, applied to every member in one tick -- and everything else
@@ -2446,7 +2446,7 @@ private:
     // rules (allies only; reset each game; sent with every frame, enforced by the server).
     uint8_t voiceRecipients_ = 0xff;
     // The Diplomacy SPECTATORS row: whether spectators read this player's chat / hear its
-    // voice (protocol 316). Off at the start of each game. Spectators themselves never
+    // voice. Off at the start of each game. Spectators themselves never
     // chat or talk in a running game (client and server).
     bool chatSpectators_ = false, voiceSpectators_ = false;
     static constexpr int kDiplomacySpectators = 8;   // DiplomacyHot::player of that row
@@ -2510,7 +2510,7 @@ private:
     tak::net::MpClient* mp_ = nullptr;
     std::vector<tak::net::Command> outbox_;   // local orders to send to the server (commands and Cmd::Order items, FIFO)
     std::optional<ClickBuffer> click_;        // the open click (ClickScope), if any
-    // Explicit orders (protocol 267): the next serial (continues above every own
+    // Explicit orders: the next serial (continues above every own
     // order seen in a bundle, so a rejoin never reuses one that activated), and the
     // orders sent but neither seen back nor dropped by the server (OrderWindow).
     uint32_t nextOrderSerial_ = 1;
@@ -2721,7 +2721,7 @@ private:
     uint8_t createStartMode_ = tak::net::kStartsFixed;   // create dialog: START LOCATIONS (default FIXED, retail)
     bool createMonarchExp_ = false;   // create dialog: Monarch Expendable (default OFF = monarch matters)
     bool createAllowSpectators_ = true;   // create dialog (MP): ALLOW SPECTATORS (default ON, as before the option)
-    // Create dialog: MAP SCENARIO (protocol 259). Per map and never saved: it starts OFF
+    // Create dialog: MAP SCENARIO. Per map and never saved: it starts OFF
     // and goes back OFF whenever the selected map changes (syncCreateScenario).
     bool createMapScenario_ = false;
     std::string createScenarioFor_;           // mapPath_ the two fields here belong to

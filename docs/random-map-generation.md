@@ -1,12 +1,11 @@
 # Random map generation
 
-The current engine uses generator version 10. The map ID carries the seed,
-optional title and parameters in `~gen1~` followed by hexadecimal bytes; the first
-two payload bytes identify the generator version. Version 10 adds three bytes, the
-**Plateaus**, **Mountains** and **Towns** amounts, after the scattered-mana level
-and before the title, and assembles the retail terrain kits described below. With
-all three at zero a version-10 map is byte-identical to the version-9 map of the
-same settings (checked on 75 recipes covering every world and layout).
+The engine uses generator version 10. The map ID carries the seed, optional
+title and parameters in `~gen1~` followed by hexadecimal bytes; the first two
+payload bytes identify the generator version. Three bytes, the **Plateaus**,
+**Mountains** and **Towns** amounts, follow the scattered-mana level and come
+before the title; they control the retail terrain kits described below. With all
+three at zero the map has none of those kits.
 
 Only version 10 is a valid recipe: an ID with any other version, or a payload
 that is not exactly the 26 fixed bytes plus a title of at most 24, is malformed.
@@ -95,11 +94,11 @@ or unavailable relief pieces are omitted, never replaced with invisible raised
 ground. Available pieces and free space limit hill variety, particularly on
 small islands with large reserved home areas. Maze and Highlands assemble
 compatible Taros cliff and Creon hillside sections with their matching
-high-ground fills, exactly as in version 9. Version 10 assembles the retail
-cliff/plateau, mountain and town kits on every layout (next section). All
+high-ground fills. Every layout also assembles the retail
+cliff/plateau, mountain and town kits (next section). All
 section assets the generators read participate in the data hash.
 
-### Retail terrain kits (version 10)
+### Retail terrain kits
 
 **How retail builds them.** Every shipped multiplayer map is tiled entirely from
 the 512-pixel sections in `sections.hpi` / `IPSections.hpi` (each section is one
@@ -223,7 +222,7 @@ exhausted. Raising the slider retains the earlier rounds; it does not place
 partial rounds that favor some players. Cartographer's Mana density field uses
 the same 0–255-to-0–6 mapping.
 
-### Scattered mana (version 9)
+### Scattered mana
 
 **Scattered Mana** places neutral sacred stones, which belong to no player's
 rounds, as an area density rather than a count. **Max** is the density of a
@@ -259,7 +258,7 @@ map is subsequently treated as an authored map.
 
 All generation decisions use integer arithmetic and fixed traversal orders.
 Prefab discovery is sorted. The asset-free synthetic golden is
-`6bf977a42891c638`, unchanged since version 8 (the synthetic install has no kit
+`6bf977a42891c638` (the synthetic install has no kit
 sections, so the default kit amounts are a no-op there). The multiplayer gameplay-data hash includes the
 coast and relief sections used by the generators, as well as its existing
 feature-definition checks. It therefore detects differences in the source

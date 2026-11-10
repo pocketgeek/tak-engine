@@ -547,7 +547,7 @@ void delivery() {
     const auto first = link.land(500);
     check(first.size() == 2 && first[0].order && first[1].kind == Cmd::Train,
           "an ordinary command behind a 10,000-unit order lands in the same tick, after it");
-    // The per-unit stream (the AI's path, the client's before 267) takes 157 ticks without a window.
+    // The per-unit stream (the AI's and scripts' path) takes 157 ticks without a window.
     tak::scn::Uplink perUnit;
     perUnit.issue(tak::scn::hudCommands(f.world, ids, o));
     int ticks = 0;

@@ -267,7 +267,7 @@ void repairEligibility() {
         w.cancelBuilds(id);w.stop(id);w.unit(mobile)->hp=sim::Fixed::fromInt(20);
         w.setPatrolRepairs(false);w.patrol(id,288,736);ticks(w,120);
         check(w.unit(mobile)->hp==sim::Fixed::fromInt(20) && !w.unit(id)->repairId,
-              "legacy replay policy retains patrols without automatic repair");
+              "with patrol repairs off (World::setPatrolRepairs), a patrol repairs nothing");
     }
 }
 void movingRepair() {

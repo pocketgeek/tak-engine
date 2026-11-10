@@ -62,13 +62,12 @@ suite. Some animation checks also require extracted scripts under
 `assets/extracted/all/scripts`. Rebuild **all targets** after simulation, AI, or
 network changes so the client, server, and tools use the same code.
 
-### Building an older version
+### Building another version
 
-Releases from 0.9.0 on stay on the GitHub releases page; versions before 0.9.0
-are no longer offered for download. To play such a version's replays, or with
-friends who have not updated, build that version from its git
-tag (every release has one, `v0.9.24`, `v0.9.23` and so on; the
-[CHANGELOG](../CHANGELOG.md) lists them):
+Released versions stay on the GitHub releases page. To play another version's
+replays, or with friends on another version, you can also build that version
+from its git tag (every release has one; the [CHANGELOG](../CHANGELOG.md) lists
+them):
 
 ```sh
 git clone https://github.com/pocketgeek/tak-engine.git
@@ -79,7 +78,7 @@ git checkout v0.9.0
 Then follow the build steps in that checkout's own `docs/development.md` (or
 its README for versions before that guide existed), since the dependencies and
 steps have changed over time. Each version's client plays only with servers and
-replays of its own protocol, so a client built from an older tag needs a server
+replays of its own protocol, so a client built from another tag needs a server
 of that version too.
 
 ### Static dependencies and menu videos
@@ -124,8 +123,8 @@ frameworks. CI checks these dependency boundaries for release packages.
   and CMake commands. As on Windows x64, use the toolchain's static archives
   instead of `build-static-deps.sh`. The Windows workflow runs natively on
   `windows-11-arm`, checks executable architecture and static dependency imports,
-  and produces Release and Debug portable ZIPs. ARM64 ZIPs are published starting with
-  version 0.7.19; the NSIS installer remains x64 only. The pinned FFmpeg version
+  and produces Release and Debug portable ZIPs. ARM64 ZIPs are published with each
+  release; the NSIS installer is x64 only. The pinned FFmpeg version
   excludes NVENC on Windows ARM64; x264 CPU streaming remains available. Qualcomm
   hardware encoding is not implemented.
 - **macOS ARM64 and Intel x64:** install Xcode Command Line Tools, then
@@ -135,7 +134,7 @@ frameworks. CI checks these dependency boundaries for release packages.
   executables link only system libraries/frameworks, and packages signed app
   bundles, DMGs, and Release/Debug ZIPs. CI packages target macOS 14 or later;
   use `MACOSX_DEPLOYMENT_TARGET=14.0` for matching source builds. Intel packages
-  are published starting with version 0.7.19, as well as CI artifacts.
+  are published with each release, as well as CI artifacts.
   See [macos.yml](../.github/workflows/macos.yml) for app/DMG packaging.
 - **Linux x64 and ARM64:** native CI runners build Ubuntu 22.04/24.04/26.04,
   Debian 12/13, Fedora 44/45, and openSUSE Leap 16.0 containers for each architecture. Arch's official
@@ -145,8 +144,8 @@ frameworks. CI checks these dependency boundaries for release packages.
   not emulation. Dependencies and caches are isolated by distro and architecture;
   both architectures run the same package-workflow regression tests, ELF checks,
   package metadata checks, and static-link gate. Ubuntu 22.04 supplies each
-  architecture's Debug tarball. ARM64 artifacts are available from CI and have
-  been attached to releases since 0.7.23. This does not cover 32-bit ARM or certify
+  architecture's Debug tarball. ARM64 artifacts are available from CI and are
+  attached to releases. This does not cover 32-bit ARM or certify
   graphical performance on individual ARM boards.
 - **Slackware64 15.0:** CI builds inside the Slackware 15.0 container referenced by
   [SlackDocs](https://docs.slackware.com/howtos:misc:slackware_docker_image), using

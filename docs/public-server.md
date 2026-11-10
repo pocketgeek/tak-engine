@@ -12,20 +12,18 @@ independent security audit or protection against a volumetric DDoS.
 ## Versions
 
 Server and clients must speak the same gameplay protocol; update the server and
-every client together when it changes. **0.9.24 changed it (protocol 320):** a 0.9.24
-`takserver` turns away 0.9.23 and older clients with a *protocol version mismatch*
-message, and a 0.9.23 or older server turns away 0.9.24 clients, so a server still on
-0.9.23 or older must update. (0.9.23 and 0.9.22 shared protocol 316; 0.9.21 used protocol 315; 0.9.20 312; 0.9.19 311; 0.9.16, 0.9.17 and 0.9.18 shared protocol 309; 0.9.15 and 0.9.14 used protocol 308, 0.9.13 307, 0.9.12 305, 0.9.11 304; 0.9.9 and 0.9.10 shared 303;
-306, 313, 314 and 317 to 319 were never released.) Since 0.9.12 a
-server whose game has no human player left (AIs watched by spectators) no longer
-computes the lockstep check nobody compares, except for a recorded replay's
-checkpoints. Since 0.9.8 a release `takserver` reads only its four test timers
+every client together when it changes. A `takserver` turns away a client of
+another protocol with a *protocol version mismatch* message. Which versions play
+together is listed in the [user guide](user-guide.md#versions) and in the
+[CHANGELOG](../CHANGELOG.md).
+
+A server whose game has no human player left (AIs watched by spectators) does
+not compute the lockstep check nobody compares, except for a recorded replay's
+checkpoints. A release `takserver` reads only its four test timers
 (`TAK_TIMEOUT_MS`, `TAK_LOAD_TIMEOUT_MS`, `TAK_STALL_MS`, `TAK_DROP_WAIT_MS`)
-from the environment; its other `TAK_*` diagnostic variables now work only in
-debug builds. Since 0.9.6 a server also allows a seat 30 s of silence while its
-game is loading (15 s elsewhere), and its own start-up work no longer counts
-as player silence. Which versions play together is listed in
-the [user guide](user-guide.md#versions) and in the [CHANGELOG](../CHANGELOG.md).
+from the environment; its other `TAK_*` diagnostic variables work only in debug
+builds. A server allows a seat 30 s of silence while its game is loading (15 s
+elsewhere), and its own start-up work does not count as player silence.
 
 `takserver` refuses any option it does not know: it exits at start-up with
 `unknown option or missing value: <option>`, so a service drop-in or script
@@ -119,8 +117,8 @@ The template lists the default paths, port, game/account limits, storage budgets
 and systemd resource limits. Change individual values such as
 `Environment="TAK_SERVER_MAX_RUNNING_GAMES=8"` without rewriting the startup
 command. It works with both certificate modes. Restart between matches, since
-it disconnects active games. For examples and existing-installation migration,
-see [changing server defaults](#changing-server-defaults).
+it disconnects active games. For examples, see
+[changing server defaults](#changing-server-defaults).
 
 The server renews its certificate automatically and opens port 80 only during
 validation. Local configuration stays in `/etc/systemd/system/takserver.service.d/`;
@@ -209,9 +207,8 @@ retried unencrypted. A player who needs the TLS guarantee on a bare hostname typ
 interface, announcing its open game on the LAN (UDP port 7678, once a second) and
 telling clients in its Welcome, so they join that game directly. Automatically launched single-player servers
 keep their private loopback connection. Debug command-line harness connections
-retain their explicit transport behavior. Clients too old to support TLS cannot
-connect to a TLS listener; see [Versions](#versions) for which clients a server
-accepts.
+retain their explicit transport behavior. See [Versions](#versions) for which
+clients a server accepts.
 
 The login exchange alone is not session encryption. Do not expose the old
 plaintext port alongside TLS as a compatibility fallback.
@@ -431,7 +428,7 @@ voice fails that connection. Voice leaves through a low-priority queue behind
 all game traffic, and a listener whose link lags the running game is sent no
 voice for 5 to 60 seconds, so voice never slows a game.
 `server_voice_test.py` and `server_voice_slow_test.py` check these rules against
-a real server. See [voice chat](multiplayer-design.md#voice-chat-protocol-276).
+a real server. See [voice chat](multiplayer-design.md#voice-chat).
 
 Public games cannot enable benchmark/stress workloads or launch local campaign
 missions. Private `--local --no-auth` games retain those features. Debug builds
@@ -447,7 +444,7 @@ not award victory credit. Ordinary replay saving is skipped when its disk quota
 is full; a campaign outcome whose required replay cannot be persisted is handled
 as a no-credit abort. With `--replaydir`, stopping the server with SIGTERM
 (`systemctl stop`) or Ctrl-C first writes the replays of the games still
-running, which used to be lost. Every replay is written under a temporary name
+running. Every replay is written under a temporary name
 and renamed once complete, so a server stopped part way never leaves a
 truncated `.takrep`.
 
@@ -704,16 +701,17 @@ and systemd resource limits without rewriting `ExecStart`.
    The variables are expanded by systemd into normal command-line arguments;
    this does not add environment-variable handling to the Release server.
 
-**Upgrading an existing setup:** an older `acme.conf` or a full service copy under
-`/etc/systemd/system/takserver.service` may contain a hard-coded `ExecStart`.
-Environment settings will not change that command. Use `systemctl cat takserver`
-to inspect it, then merge the current packaged template's variable-based command
-into your local configuration, preserving your hostname and custom settings.
-Do not overwrite an existing ACME file with `YOUR.SERVER.NAME` still in it.
+**A full service copy:** a service copied whole to
+`/etc/systemd/system/takserver.service`, or a drop-in with its own `ExecStart`,
+fixes the command line, and environment settings will not change it. Use
+`systemctl cat takserver` to inspect it, then merge the packaged template's
+variable-based command into your local configuration, preserving your hostname
+and custom settings. Do not overwrite an existing ACME file with
+`YOUR.SERVER.NAME` still in it.
 
-### Source installations and older packages
+### Source installations
 
-If installing from source, or using an older package without these files, use
+If installing from source, use
 [the service unit](../packaging/systemd/takserver.service) and
 [ACME template](../packaging/systemd/takserver-acme.conf) from this checkout.
 From the checkout root, install the service with:

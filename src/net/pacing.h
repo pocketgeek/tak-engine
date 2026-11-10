@@ -6,11 +6,11 @@
 // Pacing only: which bundles play, and in what order, never changes, so no sim state or hash
 // depends on anything here.
 //
-// 0.9.1 fix D ("+10 stuck at +4"): two controllers fought. The arrival time was stamped when
-// the client POLLED, so the client's own stall (alt-tab, a menu, the load gap of a watch game)
-// read as a second or more of network jitter; the target then asked for more buffered ticks
-// than the server's flow control lets a client hold (flowLeadTicks), the buffer could never
-// reach it, and the playout sat at its 0.7 floor -- 0.7 x 2.0 = 1.40x for a minute or more.
+// Why arrival is stamped where it is ("+10 stuck at +4"): stamped when the client POLLED, the
+// client's own stall (alt-tab, a menu, the load gap of a watch game) would read as a second or
+// more of network jitter; the target would then ask for more buffered ticks than the server's
+// flow control lets a client hold (flowLeadTicks), the buffer could never reach it, and the
+// playout would sit at its 0.7 floor -- 0.7 x 2.0 = 1.40x for a minute or more.
 // Retail has no jitter buffer at all: its speed setter (0x4999b0) writes the requested and the
 // effective level together and it throttles only on frame time and MP lag (0x526090).
 

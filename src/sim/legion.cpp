@@ -1123,7 +1123,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         std::tuple<int,uint32_t,int32_t,int32_t> point{}; // player, command (convoy) tick, requested point
         // The 64-unit part of the click this member's order came in (the
         // order's own issuedTick; the point's tick is the convoy's, A2); an
-        // explicit order (protocol 267) lands whole, so it is one part. The
+        // explicit order lands whole, so it is one part. The
         // pinwheel ranks a member within its part (C33). Hashed when it
         // differs from the point's tick.
         uint32_t part=0;
@@ -3811,7 +3811,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // A kind without a shared destination area gets a point of its own
         // (keyed by the unit), so no formation or area logic joins it.
         // The part: the tick the leg's command was applied in. An explicit
-        // order (protocol 267) is applied whole in one tick, so it is one part
+        // order is applied whole in one tick, so it is one part
         // however many units it has; orders applied in one tick share it, as
         // per-unit commands of one tick always did. (Keeping 64-body rank
         // groups inside an order was measured and rejected: the click-heavy
@@ -7799,7 +7799,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                         // One selection sent as several groups (one player,
                         // within kConvoyTicks, to points within kConvoyCells)
                         // never plans round itself. An explicit order's area
-                        // (protocol 267) is exact: the same command or not, so
+                        // is exact: the same command or not, so
                         // the tick rule is for per-unit commands only.
                         const int64_t gcx=int64_t(g.minX+g.maxX)*8,gcz=int64_t(g.minZ+g.maxZ)*8;
                         if(mv.player==g.player&&!explicitArea(mv.issue)&&!explicitArea(g.issuedTick)&&
@@ -8289,7 +8289,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // the uplink landed as several commands -- the convoy rule of the
     // awareness scan: one player, within kConvoyTicks, to points within
     // kConvoyCells.
-    // (An explicit order's area key, protocol 267, is exact: equal or not.)
+    // (An explicit order's area key is exact: equal or not.)
     static bool oneSelection(const PointKey& a,const PointKey& b) {
         if(std::get<0>(a)!=std::get<0>(b))return false;
         if(std::get<1>(a)==std::get<1>(b))return true;
@@ -10524,7 +10524,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // several ticks (the 64-per-tick uplink); its convoy stays joinable for
     // up to kGapTicks after its last order (sim/convoy.h). Slots wait for it
     // to close, so the formation is sized and ranked over the whole click.
-    // An explicit order (protocol 267) lands whole in one tick, but its area
+    // An explicit order lands whole in one tick, but its area
     // stays joinable by further orders to the same point for as long.
     bool commandOpen(const std::tuple<int,uint32_t,int32_t,int32_t>& key) const {
         if(std::get<0>(key)<0)return false;
@@ -10587,7 +10587,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // tell: it takes its formation at once, provisionally, and if another
         // part joins the point before the convoy closes the formation is
         // rebuilt over every part then.
-        // (An explicit order, protocol 267, keeps this rule unchanged: taking
+        // (An explicit order keeps this rule unchanged: taking
         // the formation at once for any order size was measured and rejected --
         // one-1000 822 arrived instead of 847, churn-1000's last member started
         // at 86 instead of 46, one-2500 2014 instead of 1970, the rest equal.) (Waiting the convoy's 9-plus ticks

@@ -90,9 +90,9 @@ A **mission** is a bundle keyed by the stem:
 
 A mission `.cob` is an ordinary COB v6 module. `MAP_COMMAND` and `PLAY_SOUND`
 resolve their inline operands through the module's name table. The current
-`MissionScript` dispatches the authored command string and arguments. The old
-Debug-only numeric interpreter was removed; `--mission` now aliases the same
-server-driven campaign launch used by the menu and `--campaign`.
+`MissionScript` dispatches the authored command string and arguments. Debug's
+`--mission` is an alias for the same server-driven campaign launch used by the
+menu and `--campaign`.
 
 ### Engine-invoked entry points
 `Start` (once at load) · `TriggerHit(regionId, unitId, ownerByte)` (a unit's
@@ -206,7 +206,7 @@ referee independently construct the same mission world and execute its script;
 client-owned presentation consumes cosmetic events. Mission conditions, rather
 than skirmish last-team-standing, determine the campaign result. Script-driven
 reinforcements can revive otherwise empty factions. Strategic opponents play the
-**Retail AI** (since 0.8.11, with no choice): a port of retail's strategic AI
+**Retail AI** (with no choice): a port of retail's strategic AI
 over the mission's `aiprofile` file (`ai/mission<NN>.txt`, else
 `ai/default.txt`), its `.ota` StartPos table and its Player lines' `massattack`
 (see [classic-ai-acceptance.md](classic-ai-acceptance.md#campaign)). A player
@@ -245,7 +245,7 @@ Release-server/optimized-Debug-client checks exercised loaded briefings in base
 chapter 1, Iron Plague chapter 1 and Iron Plague chapter 13. Each screenshot path
 asserted that rendering and dismissing the briefing left the tick-zero simulation
 hash unchanged. Both campaign book screenshots and the battlefield briefing were
-visually reviewed. The normal base-chapter launch and legacy `--mission` alias
+visually reviewed. The normal base-chapter launch and the `--mission` alias
 repeated the same ten-second state hash, `d10fe3f010796c06`, without desync.
 
 Native comparisons include 7,205 condition cases, 512 mission-audio routing
@@ -265,5 +265,5 @@ ordinary skirmish checksum. No pathfinding implementation was changed.
 A final direct-launch check also asserts that the front-end campaign catalog
 survives GameView construction. Command-line campaign sessions now retain it for
 result/progression and subsequent Next/Retry sessions instead of moving it away.
-Both the normal command-line launch and legacy alias passed that assertion,
+Both the normal command-line launch and the `--mission` alias passed that assertion,
 briefing tick-zero invariance, and the same repeated campaign state hash above.

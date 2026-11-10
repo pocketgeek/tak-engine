@@ -178,7 +178,7 @@ enum class Msg : uint8_t {
     Bye,                // clean shutdown, reason string
     // lobby
     ListGames,          // C->S
-    GameList,           // S->C: list of GameInfo (allowSpectators last, from 258)
+    GameList,           // S->C: list of GameInfo (allowSpectators last)
     CreateGame,         // C->S: name, password, mapId, options
     JoinGame,           // C->S: gameId, password
     JoinResult,         // S->C: ok+slot or error reason
@@ -200,7 +200,7 @@ enum class Msg : uint8_t {
     Desynced,           // S->C: tick, reason
     PlayerStatus,       // S->C: slot, status, ping (informational)
     // durability (M5)
-    Rejoin,             // C->S: u32 gameId, u64 resume token, u32 fromTick (289: the first tick whose
+    Rejoin,             // C->S: u32 gameId, u64 resume token, u32 fromTick (the first tick whose
                         // bundle this client does not have). Only a seat still held for the
                         // disconnect wait (or still seated: the old connection is replaced) ->
                         // Reseated, then the bundles from fromTick; refused with JoinResult.
@@ -213,10 +213,9 @@ enum class Msg : uint8_t {
     SetPause,           // C->S (host/only-human): u8 want -- pause or resume the game.
                         // Distinct from the disconnect wait (Msg::Waiting): it never
                         // expires, because nobody is disconnected; it ends if the host leaves.
-    // account login (SCRAM-SHA-256; see src/net/auth.h). APPENDED, not slotted in
-    // beside Hello where they belong logically: these values are written into
-    // replay files, so renumbering the existing ones would break every replay
-    // ever recorded.
+    // account login (SCRAM-SHA-256; see src/net/auth.h). Listed here, not beside
+    // Hello where they belong logically: these values are written into replay
+    // files, so renumbering the existing ones is a wire change.
     AuthRequired,       // S->C: this server wants an account -- sent INSTEAD of Welcome
     AuthBegin,          // C->S: username, client nonce
     AuthChallenge,      // S->C: does the account exist?, salt, iterations, server nonce
@@ -342,9 +341,8 @@ inline constexpr int kMinGameSpeed = 1, kMaxGameSpeed = 20, kMaxDevGameSpeed = 8
 
 // Per-game settings chosen by the host.
 constexpr uint8_t kStressImmediate = 1, kStressStaged = 2;
-// Start Locations, GameOptions::randomStarts (see there). Every build before BY SLOT
-// read any nonzero value as RANDOM, and normalizeStartMode keeps that for values
-// other than these three.
+// Start Locations, GameOptions::randomStarts (see there). normalizeStartMode reads
+// any nonzero value other than these three as RANDOM.
 constexpr uint8_t kStartsFixed = 0, kStartsRandom = 1, kStartsBySlot = 2;
 constexpr uint8_t normalizeStartMode(uint8_t v) {
     return v == kStartsBySlot ? kStartsBySlot : v ? kStartsRandom : kStartsFixed;
@@ -373,9 +371,7 @@ struct GameOptions {
     // Stress test (SP all-AI spectate): spawn each AI at ~95% of the unit cap in its
     // faction's combat units at the start, to load-test the sim. 0 = off;
     // kStressStaged (2, what TAK_STRESS asks for) spreads the fill over the first
-    // kStressStageTicks ticks; kStressImmediate (1) spawns it all at setup, as every
-    // game did before staging -- kept so the stress replays recorded then (the L-2h/R-2h
-    // timing and identity references among them) still replay exactly.
+    // kStressStageTicks ticks; kStressImmediate (1) spawns it all at setup.
     uint8_t stressTest = 0;
     // Fog of war (client-only display, never hashed -- every client applies the
     // same room rule, so it stays fair): 0 = NOT EXPLORED (terrain starts hidden),
@@ -398,7 +394,7 @@ struct GameOptions {
     // Benchmark INTENSITY: 0=off, 1=Low..6=Extra Absurd -- an all-AI perf run with a spawn ramp
     // (see MatchConfig::benchmark). Deterministic, so it IS part of the hashed sim.
     uint8_t benchmark = 0;
-    // ALLOW SPECTATORS (host-set; 1 = on, the default and every room's rule before 258):
+    // ALLOW SPECTATORS (host-set; 1 = on, the default):
     // 0 makes the server refuse every Spectate into this room -- a browser's WATCH, a
     // seated player who left and asks to watch, a dropped spectator reconnecting. The
     // host's own create-as-spectator seat is the host's choice and is exempt; seated
@@ -406,7 +402,7 @@ struct GameOptions {
     // (in-game SetGameOptions changes only speed). An admission rule, never part of the
     // sim.
     uint8_t allowSpectators = 1;
-    // MAP SCENARIO (259): 1 = play the map's own scenario (.crt placements and rules, the
+    // MAP SCENARIO: 1 = play the map's own scenario (.crt placements and rules, the
     // Use Only .tdf) instead of a skirmish. Chosen when the room is created and never
     // changed after (SetGameOptions keeps the created value: seats and READY were set
     // for it). The server clears it for missions, generated maps, stress and benchmark

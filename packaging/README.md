@@ -22,7 +22,7 @@ the bundle signature before packaging.
 
 ## macOS release signing
 
-Since 0.8.0 the `sign` job in `.github/workflows/macos.yml` signs, notarizes and
+The `sign` job in `.github/workflows/macos.yml` signs, notarizes and
 staples the macOS downloads for each architecture on a separate `macos-latest`
 runner after the build, so the signing secrets never enter the build job. It
 imports the Developer ID Application certificate into a temporary keychain,

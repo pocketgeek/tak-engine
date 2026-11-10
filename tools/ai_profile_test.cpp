@@ -125,7 +125,7 @@ static void modLayers() {
     // A loose file in a game pack's ai/ folder, and ai/ inside an archive in another.
     put(root / "mods/game/my_ai/AI/TAKENGINE.TXT", engineFile);
     archive(root / "mods/game/archived/ai.hpi", {{"ai/takengine.txt", "limit arafly 0\n"}});
-    // The old per-level files are no longer read, in a game pack's ai/ or an archive's.
+    // Other file names in ai/ are not read, in a game pack's ai/ or an archive's.
     put(root / "mods/game/old/ai/n.txt", "limit arabow 0\n");
     archive(root / "mods/game/old/ai.hpi", {{"ai/h.txt", "limit arabow 0\n"}, {"ai/ad.txt", "limit arabow 0\n"}});
     // Not the file: at a pack's root (loose or an archive's), or in another folder.
@@ -169,7 +169,7 @@ static void modLayers() {
 
         const auto old = hpi::modFiles(root, hpi::ModKind::Game, {"old"});
         check(old.count("ai/n.txt") && old.count("ai/h.txt") && old.count("ai/ad.txt") && builtinAll(&old),
-              "the old per-level files (ai/n.txt, ai/h.txt, ai/ad.txt) are no longer read");
+              "other files in ai/ (ai/n.txt, ai/h.txt, ai/ad.txt) are not read");
         const auto rooted = hpi::modFiles(root, hpi::ModKind::Game, {"rooted"});
         check(rooted.count("takengine.txt") && builtinAll(&rooted), "a root takengine.txt (loose or an archive's) is not read");
         const auto nested = hpi::modFiles(root, hpi::ModKind::Game, {"nested"});
@@ -246,7 +246,7 @@ static void mapPackages(const char* data) {
             if (e.is_regular_file() && isHpi(e.path())) linkOrCopy(fs::absolute(e.path()), root / e.path().filename());
         const auto base = hpi::mountRetailRoot(data);
         const std::string own = "// the map's own profile\nlimit tarcage 0\n";
-        // The map archive also carries ai/takengine.txt, and the old per-level files.
+        // The map archive also carries ai/takengine.txt, and other files in ai/.
         std::vector<std::pair<std::string, std::string>> entries{{"ai/default.txt", own},
                                                                  {"ai/takengine.txt", "limit tarcage 0\n"}};
         for (const char* f : {"ai/d.txt", "ai/e.txt", "ai/n.txt", "ai/h.txt", "ai/a.txt", "ai/ad.txt"})
@@ -264,7 +264,7 @@ static void mapPackages(const char* data) {
         bool noOld = true;
         for (const char* f : {"ai/d.txt", "ai/e.txt", "ai/n.txt", "ai/h.txt", "ai/a.txt", "ai/ad.txt"})
             noOld = noOld && !pkg->files->count(f);
-        check(noOld, "the old per-level files (ai/d.txt ... ai/ad.txt) stay out of the package");
+        check(noOld, "other files in ai/ (ai/d.txt ... ai/ad.txt) stay out of the package");
         {
             const auto received = net::maps::decode(pkg->bytes, pkg->digest);
             const auto* mapFiles = received->files.get();
@@ -307,7 +307,7 @@ static void mapPackages(const char* data) {
         const hpi::Vfs noMaps(&vfs, true);
         const auto plain = ai::classicProfileScript(noMaps, "");
         check(!plain.text.empty() && plain.text != own, "a view without the map package skips Maps/ archives' AI files");
-        // The same package with an AI file the .ota does not choose (an old level file too).
+        // The same package with an AI file the .ota does not choose (ai/n.txt too).
         for (const char* extra : {"ai/other.txt", "ai/n.txt"}) {
             auto files = *received->files;
             files[extra] = {'x'};

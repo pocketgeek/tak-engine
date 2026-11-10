@@ -3422,13 +3422,11 @@ struct ReviveCall {
 };
 } // namespace
 
-// Until 0.9.12 the sim raised bodies by itself: an idle caster took up a body
-// within 56 px, and our levels' priests, Chief Engineers, Spirit Wolves and
-// kings raised the dead that way. Retail raises only by order, so the sim no
-// longer does; these levels give the order instead, in the same place: an idle
-// caster (not one given anything else this think) and a body within 56 px that
-// it can raise (World::reviveKind), the nearest, one caster per body. Like the
-// old search it starts none the end would refuse or abandon -- the player at
+// Retail raises bodies only by order, so the sim never raises one by itself;
+// our levels' priests, Chief Engineers, Spirit Wolves and kings are given the
+// order: an idle caster (not one given anything else this think) and a body
+// within 56 px that it can raise (World::reviveKind), the nearest, one caster
+// per body. The search starts none the end would refuse or abandon -- the player at
 // its unit limit, the output at its totalallowed, an allocation under 0.7 (a
 // computer player's revive then ends unraised, 0x406e79). The Retail AI never
 // gets here (Classic returns first): retail's AI orders no revive -- its group

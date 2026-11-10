@@ -22,7 +22,7 @@ from server_public_test import server, login
 def options(speed):
     # crusades, forfeitSelfDestruct, gameMods, speed (tenths), speedUnlock, unitCap,
     # monarchExpendable, stressTest, fogExplored, benchmark, randomStarts, doubleSight, pathMode,
-    # allowSpectators (protocol 258), mapScenario (259), powerCodes
+    # allowSpectators, mapScenario, powerCodes
     return bytes([0, 1, 0, speed, 1]) + struct.pack('<I', 2000) + bytes([0, 0, 0, 0, 0, 0, 0, 1, 0, 0])
 
 

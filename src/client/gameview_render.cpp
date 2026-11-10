@@ -6714,8 +6714,6 @@
     // The plane is in PROJECTED coordinates (x, z - y/2): its rows already are
     // the rows of the tile art units are drawn on, so the overlay is flat -- no
     // per-corner terrain lift. Units draw at z - h/2 too, so no offset either.
-    // (Through 0.9.19 the bodies were drawn at z - (h - modal)/2 and the overlay
-    // was pushed modal/2 south to follow them.)
     void GameView::drawFog() {
         if (noFog_) return;
         const Frame& f = front();

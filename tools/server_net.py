@@ -180,7 +180,7 @@ class BufferedPeer(Peer):
                 self.pending[message[0]].append(message[1:])
 
 
-OPTIONS_BYTES = 19  # GameOptions on the wire; protocol 258 appended allowSpectators, 259 mapScenario, then powerCodes
+OPTIONS_BYTES = 19  # GameOptions on the wire; its last three bytes are allowSpectators, mapScenario, powerCodes
 
 
 def lobby(r):

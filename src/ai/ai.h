@@ -56,11 +56,11 @@ Profile loadProfile(const tak::hpi::Vfs& vfs, const std::string& name = "default
 // Defensive builds a home force and intercepts nearby
 // threats, scouting or attacking enemy bases only when far ahead, and keeps
 // building in step with its income with no AI-imposed limit on how much. Absurd = Hard with a
-// mana-income cheat (see incomeMultFor). AbsurdlyDefensive (5, added under protocol
-// 273) = Defensive with Absurd's cheat. Classic (6, added under protocol 290) is a
+// mana-income cheat (see incomeMultFor). AbsurdlyDefensive (5) = Defensive with
+// Absurd's cheat. Classic (6) is a
 // port of the retail game's own AI (docs/classic-ai-plan.md): a separate brain
 // (ClassicBrain) with no difficulty knobs and no income cheat, so the sim gives its
-// seat exactly a Normal seat's config. Passive (7, added under protocol 308) plays
+// seat exactly a Normal seat's config. Passive (7) plays
 // Easy in every way but two: nothing of its goes looking for the enemy, scout, army
 // or fleet, so it attacks only what it has seen, and its builders stay within 900 px
 // of home (Controller::stayHome_). Its seat's sim config is exactly an Easy seat's.
@@ -606,8 +606,7 @@ private:
             [](const tak::sim::Order& o){return o.park || o.landing;}));
     }
     // Only raising a body (a RESURRECT leg, which reviveIdle gives): as free to
-    // produce as an idle builder, as it was while the sim's own idle raise did
-    // the raising (before 0.9.12) -- a build order simply replaces it.
+    // produce as an idle builder -- a build order simply replaces it.
     static bool raising(const tak::sim::Unit& u) {
         return !u.orders.empty() && u.orders.back().reviveKind &&
                std::none_of(u.orders.begin(),u.orders.end(),[](const tak::sim::Order& o) {

@@ -791,9 +791,9 @@ void OptionsScreen::build(int channels) {
            [&](float v) { s_.cursorScale = int(v + 0.5f); },
            [](float v) { return std::to_string(int(v + 0.5f)) + "X"; });
 
-    // (Hotkey rebinding moved OUT of Options: it's now a CONTROLS entry in the settings
+    // (Hotkey rebinding is not part of Options: it is a CONTROLS entry in the settings
     // menu -- the in-game Esc menu and the title screen's menu button. See mainmenu.cpp
-    // and the in-game GAME MENU. onHotkeys_ is retained for compatibility but unused here.)
+    // and the in-game GAME MENU. onHotkeys_ serves only the VOICE page's PUSH TO TALK.)
     // DEFAULTS / BACK are drawn as a fixed footer (see layout()/render()), not list rows.
 
     // The rows above are every one-time OPTIONS setting; keep this page's. A section goes

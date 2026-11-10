@@ -84,8 +84,7 @@ The template lists the default paths, port, game/account limits, storage budgets
 and systemd resource limits. Change individual values such as
 `Environment="TAK_SERVER_MAX_RUNNING_GAMES=8"` without rewriting the startup
 command. It works with both certificate modes. Restart between matches, since
-it disconnects active games. For examples and existing-installation migration,
-see [changing server defaults](https://github.com/pocketgeek/tak-engine/blob/main/docs/public-server.md#changing-server-defaults).
+it disconnects active games. For examples, see [changing server defaults](https://github.com/pocketgeek/tak-engine/blob/main/docs/public-server.md#changing-server-defaults).
 
 The server renews its certificate automatically and opens port 80 only during
 validation. Local configuration stays in `/etc/systemd/system/takserver.service.d/`;

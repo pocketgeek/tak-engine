@@ -40,7 +40,7 @@ int main() {
     check("numbers read", hu::parse("0") == hu::kOff && hu::parse("1") == hu::kDots &&
                           hu::parse("2") == hu::kFade && hu::parse("3") == hu::kFade);
     check("unknown value reads as the default", hu::parse("") == hu::kDefault && hu::parse("halo") == hu::kDefault);
-    check("the removed SHADOW and OUTLINE read as FADE", hu::parse("shadow") == hu::kFade &&
+    check("other names (shadow, outline) read as FADE", hu::parse("shadow") == hu::kFade &&
                                                          hu::parse("outline") == hu::kFade);
 
     // ---- the low layer ----

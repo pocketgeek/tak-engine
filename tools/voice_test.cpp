@@ -299,12 +299,12 @@ static void testSettings(const fs::path& dir) {
     check(d.voiceMicEnabled, "the MICROPHONE is on by default");
     const fs::path file = dir / "settings.ini";
     setSettingsPath(file.string());
-    {   // a file from before voice chat: still off.
+    {   // a file with no voice rows: voice off.
         std::ofstream f(file); f << "masterVol = 200\n";
     }
     Settings old = loadSettings();
     check(!old.voiceEnabled && !old.voiceActivation && old.masterVol == 200,
-          "an older settings file loads with voice off, push to talk");
+          "a settings file without voice rows loads with voice off, push to talk");
     Settings s;
     s.voiceEnabled = true; s.voiceMicDevice = "USB Mic"; s.voiceOutputSameAsGame = false;
     s.voiceOutputDevice = "Headset"; s.voiceMicVolume = 35; s.voiceOutputVolume = 70;

@@ -4,13 +4,13 @@ A recurring, fair worry about a lockstep engine: could single-player and
 multiplayer *do things differently*? Here is the precise answer for this engine,
 with the guardrail that keeps it honest.
 
-> **Status (0.9.7):** the in-process single-player driver described in the table
-> below is gone. Single-player now launches a private local `takserver`
+> **Status:** single-player launches a private local `takserver`
 > (`--local --no-auth`) and plays through exactly the same server-sequenced
-> bundles, fixed 1/30 step and server-run AI as multiplayer, so the latency,
-> substep, ordering, AI-tick and AI-seed differences no longer exist (a room's
-> RNG seed is now rolled per room, or pinned with `takserver --seed`). The
-> table is kept as the history of why that change was made. The direct-vs-wire
+> bundles, fixed 1/30 step and server-run AI as multiplayer, so there are no
+> latency, substep, ordering, AI-tick or AI-seed differences (a room's RNG seed
+> is rolled per room, or pinned with `takserver --seed`). The table below
+> compares the in-process single-player driver the engine does not have with the
+> server path, and records why single-player goes through the server. The direct-vs-wire
 > regression test below still stands: the server referee applies commands
 > directly, while every client applies them after the wire.
 

@@ -238,7 +238,7 @@ private:
             for (const auto& c : bundles[req_.tick + k].cmds) {
                 V v;
                 if (c.kind == tak::net::Cmd::Order) {
-                    // An explicit selection order (protocol 267) is a click already: its verb, point,
+                    // An explicit selection order is a click already: its verb, point,
                     // target and exact members, no clustering needed.
                     if (!c.order) continue;
                     const auto& t = c.order->tmpl;

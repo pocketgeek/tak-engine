@@ -2229,7 +2229,7 @@ void World::beginOrder(uint32_t serial, int player, bool point, Fixed x, Fixed z
 // of that class any member gets. Only the member being applied (orderMember)
 // gets it, and only for an order with a click point; anything else -- a leg the
 // command gives another unit, an Assist's approach move toward its site -- joins
-// per unit, as before 267. (A changed owner is refused before this by
+// per unit. (A changed owner is refused before this by
 // applyCommand's ownership check.)
 OrderIdentity World::stampIdentity(const Unit& u, ConvoyClass cls, Fixed x, Fixed z) {
     if (!activeOrder_ || !activeOrder_->point || activeOrder_->member != u.id || activeOrder_->player != u.player)
@@ -3513,9 +3513,9 @@ void World::planLegionFlightStations() {
         // planned once per tick on the first use. arriving: the ground's
         // centroid has come within the formation radius of its goals' centroid
         // while a flyer is on station (every flyer of the bucket takes its
-        // landing point at once). Not the flyer's own point: since 0.9.12 a
-        // flyer keeps retail's spread (sim/retailflyerspread.h), up to
-        // sqrt(3000 n) px from the click, where it was within 60 px.
+        // landing point at once). Not the flyer's own point: a flyer keeps
+        // retail's spread (sim/retailflyerspread.h), up to sqrt(3000 n) px
+        // from the click.
         std::vector<std::array<int64_t,2>> onStation,toLand;
         std::vector<std::array<Fixed,2>> front,landing;
         bool planned=false,landed=false,arriving=false;
@@ -14177,7 +14177,7 @@ void World::tickAirToGroundHover(Unit& u,const Unit* target,const Weapon* select
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (target && host.ringInstalled && !u.orders.empty() && host.owns(u.orders.front()) &&
         shotBlockedHere(u,*target)) {
-        // Engine deviation (protocol 304): shots from here keep stopping on
+        // Engine deviation: shots from here keep stopping on
         // something the weapon cannot destroy (noteShotImpact): move round the
         // ring to a clear shot instead, kept until the flyer can have flown
         // there or a wake redraws it.
@@ -16182,13 +16182,11 @@ void World::tickAbilities(float) {
         return n >= out->totalAllowed;
     };
 
-    // Nothing raises or clears a body on its own any more. Retail creates a
+    // Nothing raises or clears a body on its own. Retail creates a
     // Resurrect, Reclaim or ReclaimArea task only from an order (the resolver
     // 0x4de530, modes 1 and 12, reached from the player's command path, a
     // scripted initial mission or a ReclaimArea's own child); its idle Standby
-    // never does. Ours used to: an idle caster searched 56 px for a body to
-    // raise, and an idle reclaimer cleared every body around it. Both are gone
-    // (0.9.12). What is left is the channel of a RESURRECT leg, which
+    // never does, and neither does ours. What is left is the channel of a RESURRECT leg, which
     // tickReclaim starts once the caster has walked, turned and taken its
     // stance (Unit::reviveTarget).
     //

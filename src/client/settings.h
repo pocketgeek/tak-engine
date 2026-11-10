@@ -70,7 +70,7 @@ struct Settings {
     // UI FONT (client/uitext.h): the face of the interface's plain text. 0 = MODERN (Noto
     // Sans Bold, the default), 1 = CLASSIC (the 5x7 block font and the retail text
     // faces). Retail art lettering is the same either way. Applied live. Persisted as
-    // uiFont = modern | classic; absent (a settings file from before it) = MODERN.
+    // uiFont = modern | classic; absent = MODERN.
     int   uiFont = 0;
     bool  treeSway   = true;       // animated tree and shadow sway; default on
     bool  tacticalDots = true;     // zoomed far out, draw units as minimap-style dots
@@ -80,8 +80,7 @@ struct Settings {
     // building is shown anyway -- 0 = OFF (as retail), 1 = DOTS (its tactical dot on top
     // when its centre is covered), 2 = FADE (a tree, rock or building over a unit fades
     // out whole; the default). Persisted as hiddenUnits = off | dots | fade (by name:
-    // the numbers are not saved); absent (a settings file from before it), "outline"
-    // or "shadow" (modes since removed) or unknown = FADE.
+    // the numbers are not saved); absent or unknown = FADE (hiddenunits::parse).
     int   hiddenUnits = 2;
     // FADE OPACITY: how visible a faded cover stays, percent -- 100 = no fade, 0 = gone.
     // Persisted as hiddenFadeOpacity = 0..100 (clamped); absent = 50.

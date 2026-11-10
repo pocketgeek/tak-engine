@@ -92,8 +92,8 @@ bool AccountStore::load(const std::string& path, std::string* err) {
         if (s.front() == '[') {
             if (!flush(err)) return false;
             if (s == "[account]") { inBlock = true; cur = Account{}; }
-            // Unknown sections are skipped, so a future server can add its own
-            // without an older build refusing to start.
+            // Unknown sections are skipped, so a file with sections this build
+            // does not know still loads (forward-compatible).
             continue;
         }
         size_t eq = s.find('=');
