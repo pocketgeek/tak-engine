@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Shared helpers for the server network tests: the wire message table parsed from
 src/net/protocol.h, a strict Peer (Hello + SCRAM login), a BufferedPeer, a server
-launcher and the LobbyState decoder."""
+launcher, the LobbyState decoder and slot_update (SlotUpdate with the room revision
+the peer last saw, protocol 323)."""
 from collections import defaultdict, deque
 import contextlib
 import hashlib
@@ -53,8 +54,19 @@ class Reader:
 
 
 class Peer:
+    rev = 1   # the room revision this peer last saw (JoinResult, LobbyState); a room starts at 1
+
     def __init__(self, port):
         self.socket = socket.create_connection(('127.0.0.1', port), timeout=10)
+
+    def track(self, kind, body):
+        """A Reader over one message for the test, noting the room revision it carries."""
+        rev = room_rev(kind, body)
+        if rev is not None:
+            self.rev = rev
+        r = Reader(body)
+        r.peer = self
+        return r
 
     def close(self):
         self.socket.close()
@@ -80,7 +92,7 @@ class Peer:
                 self.send('Pong')
                 continue
             assert body[0] == MSG[kind], (kind, body[0])
-            return Reader(body[1:])
+            return self.track(body[0], body[1:])
 
     def hello(self, data_hash):
         self.send('Hello', struct.pack('<I', VERSION) + field('server-net-test') +
@@ -167,7 +179,7 @@ class BufferedPeer(Peer):
     def receive(self, kind):
         wanted = MSG[kind]
         if self.pending[wanted]:
-            return Reader(self.pending[wanted].popleft())
+            return self.track(wanted, self.pending[wanted].popleft())
         while True:
             size = struct.unpack('<I', self.exact(4))[0]
             assert 1 <= size <= 16 * 1024 * 1024
@@ -175,7 +187,7 @@ class BufferedPeer(Peer):
             if message[0] == MSG['Ping']:
                 self.send('Pong')
             elif message[0] == wanted:
-                return Reader(message[1:])
+                return self.track(wanted, message[1:])
             else:
                 self.pending[message[0]].append(message[1:])
 
@@ -184,13 +196,41 @@ OPTIONS_BYTES = 19  # GameOptions on the wire; its last three bytes are allowSpe
 
 
 def lobby(r):
+    """A LobbyState (or GameStarting header): (room, map_id, options, slots, maps_ready,
+    capacity, passworded, rev, change_bits, map_serial). A Reader from a Peer also
+    notes the revision on that peer, for slot_update."""
     room = r.num('<I')
     name, map_id, mission = r.field(), r.field(), r.field()
     options = r.data[r.pos:r.pos + OPTIONS_BYTES]
     r.pos += OPTIONS_BYTES
     host, ready = r.num('<I'), r.num('<B')
+    capacity, passworded, rev, change_bits, map_serial = r.num('<B'), r.num('<B'), r.num('<I'), r.num('<B'), r.num('<I')
     slots = []
     for _ in range(MAX_SLOTS):
         values = tuple(r.num('<B') for _ in range(6))
         slots.append((values, r.field()))
-    return room, map_id, options, slots, ready
+    if getattr(r, 'peer', None) is not None:
+        r.peer.rev = rev
+    return room, map_id, options, slots, ready, capacity, passworded, rev, change_bits, map_serial
+
+
+def room_rev(kind, body):
+    """The room revision an accepted JoinResult, a LobbyState or a GameStarting carries
+    (None for anything else)."""
+    try:
+        if kind == MSG['JoinResult']:
+            at = 4 + struct.unpack_from('<H', body, 2)[0]
+            return struct.unpack_from('<I', body, at)[0] if body[0] and len(body) >= at + 4 else None
+        if kind in (MSG['LobbyState'], MSG['GameStarting']):
+            return lobby(Reader(body))[7]
+    except (struct.error, AssertionError, IndexError):
+        pass
+    return None
+
+
+def slot_update(peer, slot, type_, faction, color, team, ready, ai=2, rev=None):
+    """Msg::SlotUpdate. `rev`: the room revision the edit was made on; None sends the
+    last one the peer saw (a guest's READY on an older one is stored as not ready)."""
+    if rev is None:
+        rev = getattr(peer, 'rev', 1)
+    peer.send('SlotUpdate', bytes([slot, type_, faction, color, team, ready, ai]) + struct.pack('<I', rev))

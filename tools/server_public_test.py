@@ -79,7 +79,8 @@ def main():
                 cache.unlink()
                 # A smaller offer is admitted; mere offers reserve aggregate memory.
                 p.send('MapOffer',struct.pack('<I',rid)+auth.field('missing-test-map')+auth.field('0'*64)+struct.pack('<I',1000))
-                assert p.receive('MapRequest').num('<I')==rid
+                request=p.receive('MapRequest');assert request.num('<I')==rid and request.field()==b'0'*64
+                assert request.num('<I')>0,'a MapRequest carries the server\'s transfer id'
                 q.send('ListGames');assert q.receive('GameList').num('<I')==1
                 p.send('LeaveGame');p.send('Ping');p.receive('Pong')
                 create(q);room(q) # capacity and upload reservation released on leave
@@ -94,8 +95,9 @@ def main():
                 # Installed map with the correct hash but a forged smaller size:
                 # cache miss must request bounded upload, never build/accept local.
                 p.send('MapOffer',struct.pack('<I',rid)+auth.field('Ulasem Arena')+auth.field(digest)+struct.pack('<I',1000))
-                assert p.receive('MapRequest').num('<I')==rid
-                p.send('MapChunk',struct.pack('<II',rid,0)+bytes(1001))
+                request=p.receive('MapRequest');assert request.num('<I')==rid and request.field()==digest.encode()
+                xfer=request.num('<I')
+                p.send('MapChunk',struct.pack('<III',rid,xfer,0)+bytes(1001))
                 error=p.receive('MapError');assert error.num('<I')==rid
                 assert b'chunk' in error.field()
                 p.send('LeaveGame');p.send('Ping');p.receive('Pong')
@@ -115,11 +117,11 @@ def main():
                 with contextlib.closing(login(port,h,'Bob')) as q:
                     q.send('JoinGame',struct.pack('<I',rid)+auth.field(''))
                     assert q.receive('JoinResult').num('<B')==1
-                    q.send('ModChunk',struct.pack('<II',rid,0)+bytes(16))
+                    q.send('ModChunk',struct.pack('<III',rid,1,0)+bytes(16))
                     error=q.receive('ModError');assert error.num('<I')==rid;assert b'only the host' in error.field()
                     # A stream of refused offers and chunks is answered (and logged)
                     # once per 5 s: the next reply here must be the Pong.
-                    for _ in range(200):q.send('ModChunk',struct.pack('<II',rid,0)+bytes(16))
+                    for _ in range(200):q.send('ModChunk',struct.pack('<III',rid,1,0)+bytes(16))
                     offer(q);q.send('Ping');q.receive('Pong')
                     assert (root/'log').read_text().count('refused game-mod upload from client')==2,'refused uploads are not rate-limited'
                 p.send('Ping');p.receive('Pong');assert process.poll() is None
@@ -148,10 +150,10 @@ def main():
                 create(p);rid=room(p)
                 data=bytes(8<<20)
                 p.send('MapOffer',struct.pack('<I',rid)+auth.field('missing-test-map')+auth.field(hashlib.sha256(data).hexdigest())+struct.pack('<I',len(data)))
-                assert p.receive('MapRequest').num('<I')==rid
+                request=p.receive('MapRequest');assert request.num('<I')==rid;request.field();xfer=request.num('<I')
                 # More than a second's upload budget: pace this, do not disconnect.
                 for offset in range(0,len(data),65536):
-                    p.send('MapChunk',struct.pack('<II',rid,offset)+data[offset:offset+65536])
+                    p.send('MapChunk',struct.pack('<III',rid,xfer,offset)+data[offset:offset+65536])
                 error=p.receive('MapError');assert error.num('<I')==rid
                 assert b'budget' not in error.field() # fully received; invalid map payload rejected
                 p.send('Ping');p.receive('Pong');assert process.poll() is None

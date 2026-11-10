@@ -430,14 +430,17 @@ silently skipped.)
 | `SetName` | display name | no accounts in v1 *(superseded: players sign in to an account by default, `--no-auth` serves without one)* |
 | `AuthToken` / `AuthRevoke` | username, sign-in token | TLS only (`src/net/auth.h`). In place of `AuthBegin`: a password login's `AuthResult` carries a token, which **Game Select** spends to sign in with no password (the `AuthResult` carries the next one) and quitting revokes. The server holds per-account hashes in memory, and a login's line of tokens ends 12 hours after the password however often it rotates. A token used twice ends its line, except a resend within 30 seconds after a lost reply; a bad token counts in the login throttle and sends the player to the normal password prompt |
 | `ListGames` / `GameList` | — / entries: id, name, map, players/capacity, state (lobby/running), passworded, uptime | running games listed but unjoinable |
-| `CreateGame` | name, password?, map id, options (crusades, gods, speed, unit cap, forfeit rule) | creator becomes host |
-| `JoinGame` / `JoinResult` | game id, password? / slot or error | error: full, bad password, running |
-| `SlotUpdate` | slot #, {human/AI/closed}, faction, color, team, ready | players set their own; host sets any (host resolves conflicts, assigns AIs); only the server seats a human, so the host can neither change a seated slot's type nor make an empty one human -- such an edit (e.g. one sent before a seat move landed) is dropped |
-| `LobbyState` | full slot table + settings | broadcast on every change |
-| `SetGameOptions` | full `GameOptions` | host only; in the lobby the server adopts them and rebroadcasts `LobbyState`; in-game only `speed` takes effect (if `speedUnlock`), pushed via `SpeedUpdate` |
+| `CreateGame` | name, password, map id, mission, options, capacity, spectate, private | creator becomes host; an empty name is the server's `"<name>'s Game"`; a name past 32 printable-ASCII bytes or a password past 128 is answered with `JoinResult(0, why)`; a random map's capacity is its player count, read by the server (protocol 323) |
+| `JoinGame` / `JoinResult` | game id, password? / ok, slot (0xFF = watching), why, room revision | error: full, bad password, running; every JoinResult carries the room's revision, so a READY sent before the first `LobbyState` counts |
+| `SlotUpdate` | slot #, {human/AI/closed}, faction, color, team, ready, AI level, room revision | players set their own; host sets any (host resolves conflicts, assigns AIs); only the server seats a human, so the host can neither change a seated slot's type nor make an empty one human -- such an edit (e.g. one sent before a seat move landed) is dropped. Only a seat's own player changes its READY, and a guest's READY on an older revision than the room's is stored as not ready (protocol 323) |
+| `LobbyState` | `RoomState`: id, name, map, mission, options, host, maps ready, capacity, passworded, revision, change bits, map serial, the 8 slots | broadcast on every change |
+| `SetGameOptions` | full `GameOptions` | host only; in the lobby the server adopts them (see [Room editing](#room-editing-protocol-323)) and rebroadcasts `LobbyState`; in-game only `speed` takes effect (if `speedUnlock`), pushed via `SpeedUpdate` |
+| `SetRoomMap` | serial, map id, capacity, MAP SCENARIO, start mode | host only, lobby only, never a mission or Benchmark room; answered by the `LobbyState` carrying the serial, after a `RoomError` when refused (protocol 323) |
+| `SetRoomInfo` | flags (1 name, 2 password), name, password | host only, lobby only; only the flagged fields apply; no player is unreadied (protocol 323) |
+| `RoomError` | request (1 map, 2 info), serial, reason | server → host: a refusal it can act on, never fatal, always followed by a `LobbyState` (protocol 323) |
 | `Chat` | text | lobby and in-game |
 | `Kick` | slot # | host only |
-| `MoveSeat` | slot # | a seated player (the host too) takes an OPEN seat inside the map capacity, lobby only; not in a campaign mission room; side, colour, team and ready move with the player, the old seat opens with the target's colour and team; the server answers the mover with `JoinResult` (its new slot), then broadcasts `LobbyState`; anything else is ignored (protocol 284) |
+| `MoveSeat` | slot # (0xFF = watch) | a seated player (the host too) takes an OPEN seat inside the map capacity, lobby only; not in a campaign mission room; side, colour, team and ready move with the player, the old seat opens with the target's colour and team; the server answers the mover with `JoinResult` (its new slot), then broadcasts `LobbyState`; the host may leave its seat to watch (0xFF) and sit down again (protocol 323); anything else is ignored (protocol 284) |
 | `StartGame` | — | host only; server validates: every human ready, colors unique, players ≤ map start positions |
 | `GameStarting` | final slot table, map id, options, per-AI RNG seeds, resume token | clients load and report `Loaded`; server starts when all humans are loaded; a `Loaded` timeout kicks that player back to the lobby and re-opens the slot (host decides: re-fill or start without) |
 
@@ -847,14 +850,15 @@ other map content keeps the view's map-over-mod layering.
 
 ### Match pathfinding selection
 
-The creation-time choice is `Retail` (the default) or `Legion`. Game options and
-every lobby/start/spectate snapshot carry it. The server validates the value and
-keeps it when a host sends later option updates; both clients and the referee
-apply it through shared match setup. Campaign missions are always Retail, and
+The host's choice is `Retail` (the default) or `Legion`. Game options and
+every lobby/start/spectate snapshot carry it. The server validates the value,
+adopts it from the host's option updates in a skirmish or Benchmark lobby and
+keeps it once the game runs; both clients and the referee apply it through
+shared match setup. Campaign missions are always Retail, and
 campaign playback forces Retail whatever a header supplies. The lobby reports the
 selected mode without changing it.
 
-The wire byte, the replay header and the saved `gameCreate.pathfindingMode` use
+The wire byte, the replay header and the saved room settings' `pathfindingMode` use
 the identities `0=Retail` and `4=Legion`; `1`, `2` and `3` name no mode. A
 missing or unknown saved value loads as Retail, while an unknown network or
 replay mode byte is rejected. Legion's groups and per-unit state are part of the
@@ -885,17 +889,18 @@ game `SetGameOptions` adopts only speed.
   host who created the room to watch it is never removed by the rule. The client
   keeps a refusal's reason for the browser (`MpClient::joinError`) and clears the
   pending spectate on any refusal.
-- **MAP SCENARIO** (`mapScenario`, default 0, creation-only). With it on, shared
+- **MAP SCENARIO** (`mapScenario`, default 0; in the lobby it changes only with the
+  map, through `SetRoomMap`). With it on, shared
   match setup plays the map's own scenario -- the `.crt` placements and rules
   and the Use Only `.tdf` -- as for a Cartographer Test Map copy, except that a
   Use Only entry no unit type answers to is left out rather than refused (maps
   made for the original game name such units; NeverGlory names 44). Setup runs
   the scenario when the map's `.ota` carries the Test Map opt-in
   (`[TAKPlaytest] authoredscenario=1`) or when the option is on and the `.ota`
-  declares `hasscenario`. The server keeps the created value through later
-  `SetGameOptions`, because players choose seats, sides and READY for the game
-  it makes, and the creating client sized the room's open seats for it (a
-  scenario can need seats past the map's start positions). The server clears it
+  declares `hasscenario`. `SetGameOptions` never changes it: the capacity it
+  implies sizes the room's open seats (a scenario can need seats past the map's
+  start positions), so it changes with the map's capacity in one `SetRoomMap`,
+  which moves seats as a map change does. The server clears it
   for campaign missions, generated maps, stress tests and benchmarks, and forces
   Start Locations to FIXED with it. At START it reads the verified package's own
   files (`maps::scenarioInfo` over the package, never the host's claim): it
@@ -916,8 +921,8 @@ game `SetGameOptions` adopts only speed.
   seated slot claims by its own number, then a spot near the map centre
   (`sim::startSpotsFor`). Any other nonzero value reads as RANDOM
   (`normalizeStartMode`).
-- **POWER CODES** (`powerCodes`, default 0, set at creation and kept by later
-  option updates, forced off in campaigns). `Cmd::PowerCode` carries one of the
+- **POWER CODES** (`powerCodes`, default 0, set by the host in a skirmish lobby,
+  fixed once the game runs, forced off in campaigns). `Cmd::PowerCode` carries one of the
   seven simulation codes (`targetId` the code, `queue` the +LOS argument,
   `unitId` the +ManaMe unit); the server drops it while the room's option is
   off and treats an unknown code or argument as a forgery.
@@ -933,6 +938,70 @@ game `SetGameOptions` adopts only speed.
   and a replay reproduces it from the recorded commands. A client never sends
   `BenchClock` (its parser refuses the kind). A benchmark room may run at
   `kMaxBenchmarkGameSpeed` (110, +100).
+
+### Room editing (protocol 323)
+
+The host picks the map and every rule in the room itself, before START. The
+server keeps one rule for what counts as a change: every host request it accepts
+in the lobby that changes the room, except the name, the password, the speed and
+the host's own READY, moves the room's revision on (`RoomState::roomRev`, from 1)
+and unreadies every ready guest in the same step, before the broadcast
+(`Server::bumpRules`). `changeBits` says what the last one changed (map,
+scenario, options, players, mods, capacity: `net::RoomChange`) so a guest's
+room can say what happened without inferring it. The changes are option
+updates, the map, MAP SCENARIO, a new game-mod package, a seat edit (a seat
+other than the host's own, or the host's own side, colour or team), the host
+moving seat, watching or sitting down again, and a KICK. A guest's own edits
+unready nobody.
+
+- **Stale READY.** `SlotUpdate` carries the revision its sender last saw. A
+  guest's READY on an older one is stored as not ready (the other fields apply),
+  so a READY clicked on a view older than the host's change never readies a guest
+  for a game it has not seen. `JoinResult` carries the revision too. The host
+  never writes another human's READY. A seat that opens or closes, a seat its
+  player left, and a newcomer's seat are not ready.
+- **Options** (`SetGameOptions`): a skirmish lobby adopts every option but MAP
+  SCENARIO, including the unit limit, the pathfinder and POWER CODES; a Benchmark
+  lobby keeps its unit limit and has no game mods; a campaign mission's lobby
+  adopts only the speed and ALLOW SPECTATORS. A speed change alone is no change.
+- **The map** (`SetRoomMap`: serial, map id, capacity, MAP SCENARIO, start mode).
+  The client sends one at a time, numbered past the room's `mapSerial`; every
+  well-formed request with a new serial is answered by the `LobbyState` that
+  carries it, after a `RoomError` when refused (more seated humans than the map
+  has starts, a random-map recipe this build cannot make). A random map's
+  capacity is its player count, read by the server; a file map's is the host's
+  count, as at CreateGame. MAP SCENARIO is forced off for a random map, a stress
+  test and a Benchmark; the start mode applies whenever the scenario ends up off,
+  so turning it off restores the host's choice in the same change. An unchanged
+  map, scenario and start mode is answered to the host alone. A new map drops the
+  room's map package and every client's transfer of the old one
+  (`Server::resetRoomMap`); the game mods are untouched. The host's client builds
+  a file map into a pending package and makes it the room's only when the answer
+  arrives, then offers it as usual.
+- **Capacity.** One plan (`net/roomseats.h` `planCapacity`) is applied by the
+  server and read by the room to warn: a human past the new capacity moves to the
+  lowest OPEN seat below it, else the lowest CLOSED one, else the highest AI seat
+  (that AI is removed), keeping its side, colour and team; every AI past it is
+  removed; the seats past it close and the seats it gains open. A moved player
+  is told its seat with `JoinResult` before the table.
+- **Name and password** (`SetRoomInfo`): only the flagged fields apply (a lobby
+  successor never knew the password, and a rename must not clear it); a name is
+  1-32 printable-ASCII bytes after trimming, a password 0-128. The browser and
+  the LAN announcement read the room live, so they follow.
+- **Watching.** The seated host may leave its seat to watch (`MoveSeat` 0xFF,
+  answered `JoinResult` 0xFF; ALLOW SPECTATORS does not apply) and take an OPEN
+  seat again; a room started with its host watching gives it slot 0xFF.
+- **Transfers.** `MapRequest`/`ModRequest` are `room, digest, xfer` and every
+  `MapChunk`/`ModChunk` is `room, xfer, offset, bytes`: the receiving side picks
+  `xfer`, a per-connection counter, so a chunk left over from an earlier request
+  (the map changed, or changed back) is dropped quietly instead of failing the
+  transfer, and a request for a package the sender no longer holds is ignored. A
+  newer request restarts an upload from offset 0. The server keeps a map
+  validation and a game-mod validation per client apart, so a map change never
+  cancels a game-mod validation; it counts only live validations against its cap,
+  answers a host's offer of the package it has already verified with that
+  package's offer, and ignores an offer of a map the room no longer plays. A host
+  offer refused for a busy server is offered again after 2, 4 and 8 s.
 
 AI seats carry their level in `SlotInfo.aiLevel`: 0-4 our Defensive, Easy,
 Normal, Hard and Absurd, 5 Absurdly Defensive (every peer derives its double

@@ -116,7 +116,7 @@ int main() {
 
         client.joinGame(12, "");
         check(server.receive(client).kind == net::Msg::JoinGame, "join request");
-        { net::Writer w; w.u8(1); w.u8(1); w.str(""); server.send(net::Msg::JoinResult, w, client); }
+        { net::Writer w; w.u8(1); w.u8(1); w.str(""); w.u32(1); server.send(net::Msg::JoinResult, w, client); }
         check(client.state() == net::MpClient::State::InRoom, "seated");
 
         const std::vector<uint8_t> opus(60, 0x5a);

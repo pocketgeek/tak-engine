@@ -3780,6 +3780,10 @@ add_test(NAME replay_writer COMMAND replay_writer_test)
 add_executable(match_codec_test tools/match_codec_test.cpp src/client/replayfile.cpp)
 target_link_libraries(match_codec_test PRIVATE tak-formats)
 add_test(NAME match_codec COMMAND match_codec_test)
+# A room's seats when its capacity changes (net/roomseats.h, protocol 323).
+add_executable(room_seats_test tools/room_seats_test.cpp)
+target_link_libraries(room_seats_test PRIVATE tak-formats)
+add_test(NAME room_seats COMMAND room_seats_test)
 
 # The skirmish AI (src/ai) is SERVER-ONLY -- it never links into takclient, so the
 # client cannot run AI locally. AIs run only on the server.
@@ -3913,6 +3917,12 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_seat_move_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_seat_move PROPERTIES TIMEOUT 120)
+    # Room editing (protocol 323): the host changes the map, rules, name and seats in the
+    # lobby; ready guests ready again; map changes race transfers (map_transfer_test --room-edit).
+    add_test(NAME server_room_edit COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_room_edit_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --map-tool "$<TARGET_FILE:map_transfer_test>")
+    set_tests_properties(server_room_edit PROPERTIES TIMEOUT 180)
     # AI levels through the lobby (protocol 290): RETAIL (6, Classic) round-trips, 7+ store Normal.
     add_test(NAME server_ai_level COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_ai_level_test.py"

@@ -13,6 +13,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -29,15 +30,9 @@
 
 namespace tak::net {
 
-// A game's setup as the client sees it in the lobby / at start.
-struct RoomView {
-    uint32_t id = 0;
-    std::string name, mapId;
-    std::string mission;   // campaign mission stem (empty = ordinary skirmish/MP)
-    GameOptions opts;
-    uint32_t hostId = 0;
-    bool mapsReady = false;
-    SlotInfo slots[kMaxSlots];
+// A game's setup as the client sees it in the lobby / at start: the server's RoomState
+// (net/protocol.h) and this player's seat (-1: none, watching).
+struct RoomView : RoomState {
     int mySlot = -1;
 };
 
@@ -211,6 +206,37 @@ public:
     // Host: change room options. In the lobby the server rebroadcasts them; in-game
     // only `speed` takes effect (re-cadences the sim), if speedUnlock was set.
     void setGameOptions(const GameOptions& opts);
+
+    // ---- room editing: the host, in its room's lobby (never a mission or Benchmark room) ----
+    // True when this client may edit its room now: InRoom, the host, not a mission or Benchmark
+    // room, no START pending or starting.
+    bool roomEditable() const;
+    // Change the room's map (Msg::SetRoomMap). Returns false and sends nothing (roomError()
+    // says why) unless roomEditable(), when a SetRoomMap is still unanswered, or when a file
+    // map cannot be built here. A file map is built into a pending package first (from the
+    // room's data, as createGame builds); the room's own package is untouched until the
+    // server confirms. randomStarts: the host's chosen start mode (it applies when the
+    // scenario ends up off).
+    bool setRoomMap(const std::string& mapId, uint8_t capacity, bool mapScenario, uint8_t randomStarts);
+    // The unanswered SetRoomMap's serial, 0 = none. It clears when the LobbyState or RoomError
+    // carrying it arrives, on GameStarting, on leaving, when this client stops being host, or
+    // 5 s after sending.
+    uint32_t roomMapPending() const { return mapSerialSent_; }
+    struct RoomMapAnswer {
+        uint32_t serial = 0;
+        enum Kind : uint8_t { None, Accepted, Refused, TimedOut } kind = None;
+        std::string why;   // Refused: the server's reason
+    };
+    const RoomMapAnswer& roomMapAnswer() const { return mapAnswer_; }   // the last one; the view acts when serial changes
+    // Msg::SetRoomInfo. Only the fields given are sent and applied.
+    void setRoomInfo(std::optional<std::string> name, std::optional<std::string> password);
+    void watch() { moveSeat(kWatchSeat); }   // JoinResult 0xFF (isSpectator())
+    // The last RoomError (or a local refusal of setRoomMap); cleared by the next room edit.
+    const std::string& roomError() const { return roomError_; }
+    RoomRequest roomErrorFor() const { return roomErrorFor_; }
+    uint64_t lobbySeq() const { return lobbySeq_; }   // +1 per LobbyState
+    // The host's own build of the room's file map failed (a lobby successor without the map).
+    bool hostMapMissing() const { return hostMapMissing_; }
     // Ask the server to pause/resume a running game (host only; in single-player
     // the host is the only human). The server stops issuing ticks, so every peer
     // freezes on the same tick -- a real pause, not a local one.
@@ -411,12 +437,37 @@ private:
     std::string modStatus_;
     void mapFrame(const Frame& f);
     void acceptMap(std::shared_ptr<maps::Package> package, uint32_t room);
+    // The host offers the room's file map to the server (building it first when needed),
+    // when it has not offered this room's map yet (mapOfferedRoom_ / mapOfferedFor_).
+    void offerRoomMap();
+    bool hostingLobby() const { return room_.hostId == myId_ && (state_ == State::Lobby || state_ == State::InRoom); }
     std::filesystem::path mapRoot_,cacheRoot_;
     std::shared_ptr<maps::Package> mapPackage_;
+    std::string mapPackageFor_;          // the map id mapPackage_ was built or received for
     maps::Receiver mapReceive_;
     maps::Sender mapSend_;
     uint32_t mapReadyRoom_ = 0, mapOfferedRoom_ = 0;
+    std::string mapOfferedFor_;          // the map id this host last offered, beside mapOfferedRoom_
     std::string mapStatus_;
+    // Room editing (see setRoomMap). confirmed*: the last LobbyState's room and map.
+    // pendingPackage_: setRoomMap's candidate, promoted when the server confirms it.
+    uint32_t confirmedRoomId_ = 0;
+    std::string confirmedMapId_;
+    std::shared_ptr<maps::Package> pendingPackage_;
+    std::string pendingPackageFor_;
+    uint32_t mapSerialSent_ = 0, mapSerialLast_ = 0;   // the outstanding request; the last one sent
+    uint64_t mapSentAt_ = 0;
+    RoomMapAnswer mapAnswer_;
+    uint32_t xferSeq_ = 0;               // this connection's transfer ids (MapRequest/ModRequest)
+    // A transient refusal of the host's offer (map validation capacity, the map memory
+    // budget): it offers again after 2, 4 and 8 s.
+    uint64_t mapRetryAt_ = 0;
+    int mapRetries_ = 0;
+    std::string roomError_;
+    RoomRequest roomErrorFor_ = RoomRequest::Map;
+    uint64_t lobbySeq_ = 0;
+    bool hostMapMissing_ = false;
+    void dropRoomMapRequest() { mapSerialSent_ = 0; pendingPackage_.reset(); pendingPackageFor_.clear(); }
     bool startRequested_ = false;
     std::optional<Frame> pendingMapStart_;
     Conn conn_;

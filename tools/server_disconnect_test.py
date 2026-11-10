@@ -71,6 +71,7 @@ class Player:
         self.token = 0
         self.slot = -1
         self.pinged = 0.0
+        self.rev = 1           # the room revision last seen (auth.slot_update sends it)
 
     def send(self, kind, payload=b''):
         try:
@@ -116,6 +117,9 @@ class Player:
         elif kind == auth.MSG['Bye']:
             self.bye = body[2:2 + struct.unpack_from('<H', body, 0)[0]]
         else:
+            rev = auth.room_rev(kind, body)
+            if rev is not None:
+                self.rev = rev
             self.other.setdefault(kind, []).append(body)
 
     def pump(self, seconds, until=None):
@@ -187,8 +191,8 @@ def start(port, h, alice_name, bob_name):
     joined = bob.take('JoinResult')
     assert joined.num('<B') == 1 and joined.num('<B') == 1
     values = state[3][0][0]
-    alice.send('SlotUpdate', bytes([0, 1, values[1], values[2], values[3], 1, values[5]]))
-    bob.send('SlotUpdate', bytes([1, 1, 1, 1, 1, 1, 2]))
+    auth.slot_update(alice, 0, 1, values[1], values[2], values[3], 1, values[5])
+    auth.slot_update(bob, 1, 1, 1, 1, 1, 1, 2)
     assert alice.pump(10, lambda p: any(lobby(auth.Reader(b))[3][1][0][4] for b in p.other.get(auth.MSG['LobbyState'], [])))
     alice.send('StartGame')
     for p in (alice, bob):

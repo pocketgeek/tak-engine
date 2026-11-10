@@ -45,7 +45,7 @@ int main(int argc,char** argv){try{
  auto stockHash=hpi::gameplayHash(base);host.setDataHash(stockHash);peer.setDataHash(stockHash);
  check(host.connect(serverHost,uint16_t(std::stoi(argv[1])),"pack-host"),"host connect");check(peer.connect(serverHost,uint16_t(std::stoi(argv[1])),"pack-peer"),"peer connect");
  sim::TypeRegistry registry;hpi::Vfs hostData,peerData;sim::World wh,wp;
- bool created=false,joined=false,ready=false,started=false,loaded=false,saveFailed=false;int transition=0,campaign=0;uint8_t benchSpeed=0;std::chrono::steady_clock::time_point benchAt;std::string initialDigest,alphaDigest;uint32_t ht=0,pt=0;std::map<uint32_t,uint64_t> hashes;
+ bool created=false,joined=false,ready=false,started=false,loaded=false,saveFailed=false;int transition=0,campaign=0;uint32_t readyRev=0;uint8_t benchSpeed=0;std::chrono::steady_clock::time_point benchAt;std::string initialDigest,alphaDigest;uint32_t ht=0,pt=0;std::map<uint32_t,uint64_t> hashes;
  // Loading builds both worlds on a worker while the main loop keeps polling both
  // clients, as a player's loading screen keeps its connection alive: the server drops
  // a seat silent for 15 s, and two Ulasem Arena loads in a row under a loaded test
@@ -98,10 +98,18 @@ int main(int argc,char** argv){try{
     auto opts=host.room().opts;opts.gameMods=1;host.setGameOptions(opts);transition=2;
    } else if(transition==2 && host.room().opts.gameMods && host.room().mapsReady && peer.modPackage()) {
     check(host.modPackage()->digest==initialDigest,"reenabling changed selected packs");
-    host.setGameModPacks({"Alpha"});transition=3;
+    // GAME MODS off and on were host changes: the guest readies again before the next one.
+    check(!host.room().slots[1].ready,"turning GAME MODS off and on left the guest ready");
+    peer.setSlot(1,1,1,1,1,1);transition=21;
+   } else if(transition==21 && host.room().slots[1].ready) {
+    readyRev=host.room().roomRev;host.setGameModPacks({"Alpha"});transition=3;
    } else if(transition==3 && !host.modPending() && host.room().mapsReady && peer.modPackage() && host.modPackage()->digest!=initialDigest && peer.modPackage()->digest==host.modPackage()->digest) {
+    // Other packs than the verified ones change the game (protocol 323): the room's
+    // revision moves on for the mods and the guest is no longer ready.
+    check(host.room().roomRev>readyRev && host.room().changeBits==net::kChangeMods && !host.room().slots[1].ready &&
+          !peer.room().slots[1].ready && peer.room().roomRev==host.room().roomRev,"a new pack selection did not unready the guest");
     alphaDigest=host.modPackage()->digest;check(alphaDigest!=initialDigest,"selection did not replace pack");host.setGameModPacks({"Beta","Alpha"});peer.setGameModPacks({"PeerGame"});transition=4;
-   } else if(transition==4 && !host.modPending() && host.room().mapsReady && peer.modPackage() && peer.modPackage()->digest==initialDigest){check(std::filesystem::exists(peerCache/"ModCache"/(initialDigest+".takmods")),"peer cache not saved after recovery");transition=5;}
+   } else if(transition==4 && !host.modPending() && host.room().mapsReady && peer.modPackage() && peer.modPackage()->digest==initialDigest){check(std::filesystem::exists(peerCache/"ModCache"/(initialDigest+".takmods")),"peer cache not saved after recovery");peer.setSlot(1,1,1,1,1,1);transition=5;}
   }
   if(!started && transition==5 && ready && host.room().mapsReady && host.room().slots[1].ready){check(host.modPackage()&&peer.modPackage(),"start allowed before packs received");check(host.modPackage()->digest==peer.modPackage()->digest,"pack digest mismatch");host.startGame();started=true;}
   if(!loaded && !campaign && host.starting() && peer.starting()){

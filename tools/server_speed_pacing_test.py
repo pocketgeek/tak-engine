@@ -86,7 +86,7 @@ def main():
                 assert r.num('<B') == 1, 'create failed'
                 p.receive('LobbyState')
                 for slot in (0, 1):
-                    p.send('SlotUpdate', bytes([slot, 2, slot, slot, slot, 1, 1]))
+                    auth.slot_update(p, slot, 2, slot, slot, slot, 1, 1)
                 p.send('StartGame')
                 p.receive('GameStarting')
                 p.send('Loaded')

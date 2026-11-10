@@ -143,8 +143,8 @@ def main():
                 recipe = '~gen1~' + (struct.pack('<HQBHH', 10, 1234, 0, 128, 128) + bytes([2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0])).hex()
                 p.send('CreateGame', auth.field('orders') + auth.field('') + auth.field(recipe) + auth.field('') + options() + bytes([2, 0, 0]))
                 p.receive('JoinResult'); values = lobby(p.receive('LobbyState'))[3][0][0]
-                p.send('SlotUpdate', bytes([0, 1, values[1], values[2], values[3], 1, values[5]]))
-                p.send('SlotUpdate', bytes([1, 2, 1, 1, 1, 1, 0]))
+                auth.slot_update(p, 0, 1, values[1], values[2], values[3], 1, values[5])
+                auth.slot_update(p, 1, 2, 1, 1, 1, 1, 0)
                 p.send('StartGame'); p.receive('GameStarting'); p.send('Loaded')
 
                 # 1. A whole order and an ordinary command right behind it: one tick, in that order.
@@ -220,8 +220,8 @@ def main():
                 # 6. A Retail game refuses orders: its clients keep the per-unit commands.
                 observer.send('CreateGame', auth.field('retail') + auth.field('') + auth.field(recipe) + auth.field('') + options(0) + bytes([2, 0, 0]))
                 observer.receive('JoinResult'); values = lobby(observer.receive('LobbyState'))[3][0][0]
-                observer.send('SlotUpdate', bytes([0, 1, values[1], values[2], values[3], 1, values[5]]))
-                observer.send('SlotUpdate', bytes([1, 2, 1, 1, 1, 1, 0]))
+                auth.slot_update(observer, 0, 1, values[1], values[2], values[3], 1, values[5])
+                auth.slot_update(observer, 1, 2, 1, 1, 1, 1, 0)
                 observer.send('StartGame'); observer.receive('GameStarting'); observer.send('Loaded')
                 observer.socket.sendall(transaction(1, [1, 2, 3], move))
                 closed = False

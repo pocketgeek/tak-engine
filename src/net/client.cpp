@@ -40,6 +40,7 @@ bool MpClient::connect(const std::string& host, uint16_t port, const std::string
     conn_ = Conn{}; err_.clear();
     resetModTransfer();resetMapTransfer();
     room_=RoomView{};roomRequestPending_=false;
+    xferSeq_ = 0; roomError_.clear();
     voice_.clear(); voiceListenSent_ = 0;   // a new connection starts unheard: the server default is off
     pingsOut_.clear(); voiceBaseRtt_ = UINT32_MAX;
     voiceHeld_ = voiceOpen_ = voiceRestart_ = voiceSlowRtt_ = false;
@@ -205,6 +206,12 @@ bool MpClient::poll() {
         offerMods();
     modSend_.pump(conn_,Msg::ModChunk);
     mapSend_.pump(conn_);
+    if (mapSerialSent_ && nowMs() - mapSentAt_ >= 5000) {   // the server never answered (it ignored it)
+        mapAnswer_ = {mapSerialSent_, RoomMapAnswer::TimedOut, {}};
+        dropRoomMapRequest();
+    }
+    if (mapRetryAt_ && nowMs() >= mapRetryAt_) { mapRetryAt_ = 0; mapOfferedFor_.clear(); }
+    if (state_ == State::InRoom && confirmedRoomId_ == room_.id) offerRoomMap();
     if (startRequested_ && !modPendingAt_ && state_ == State::InRoom && room_.mapsReady &&
         (!room_.opts.gameMods || (modPackage_ && modReadyRoom_==room_.id))) {
         send(Msg::StartGame); startRequested_ = false; startSent_ = true;
@@ -475,16 +482,7 @@ void MpClient::onAuthResult(Reader& r) {
     // The server follows this with a Welcome, which moves us into the lobby.
 }
 
-static void readSlots(Reader& r, RoomView& v) {
-    v.id = r.u32();
-    v.name = r.str();
-    v.mapId = r.str();
-    v.mission = r.str();
-    get(r, v.opts);
-    v.hostId = r.u32();
-    v.mapsReady = r.u8() != 0;
-    for (auto& s : v.slots) get(r, s);
-}
+static void readSlots(Reader& r, RoomView& v) { get(r, static_cast<RoomState&>(v)); }
 
 void MpClient::onFrame(const Frame& f) {
     lastRecvMs_ = nowMs();
@@ -567,6 +565,8 @@ void MpClient::onFrame(const Frame& f) {
         }
         case Msg::JoinResult: {
             uint8_t ok = r.u8(); uint8_t slot = r.u8(); std::string why = r.str();
+            // The room's revision, so a READY sent before the first LobbyState counts.
+            const uint32_t rev = r.avail(4) ? r.u32() : 0;
             if(!ok) {
                 roomRequestPending_=false;
                 // Keep the reason for the browser, and drop the pending kind: left
@@ -590,7 +590,12 @@ void MpClient::onFrame(const Frame& f) {
                     std::swap(room_.slots[was], room_.slots[slot]);
                     room_.slots[was].type = 0; room_.slots[was].name.clear(); room_.slots[was].ready = 0;
                 }
-                // 0xFF = the host created the game as a slot-less spectator.
+                // WATCH: the host's seat opens, as the server opened it.
+                if (state_ == State::InRoom && was >= 0 && was < kMaxSlots && slot == kWatchSeat) {
+                    room_.slots[was].type = 0; room_.slots[was].name.clear(); room_.slots[was].ready = 0;
+                }
+                room_.roomRev = rev;
+                // 0xFF = watching: the host created the game as a slot-less spectator, or left its seat.
                 room_.mySlot = (slot == 0xFF) ? -1 : int(slot);
                 spectator_ = (slot == 0xFF);
                 state_ = State::InRoom;
@@ -608,28 +613,56 @@ void MpClient::onFrame(const Frame& f) {
             RoomView incoming;
             readSlots(r, incoming);
             if (!r.ok) break;
+            ++lobbySeq_;
+            // The answer to this host's SetRoomMap carries its serial: a map the server took
+            // becomes the room's package now (and not before, so a refused or crossed change
+            // never touched it).
+            if (mapSerialSent_ && incoming.mapSerial == mapSerialSent_) {
+                mapAnswer_ = {mapSerialSent_, RoomMapAnswer::Accepted, {}};
+                if (pendingPackage_ && pendingPackageFor_ == incoming.mapId) {
+                    mapPackage_ = pendingPackage_; mapPackageFor_ = incoming.mapId;
+                }
+                dropRoomMapRequest();
+            }
+            // The room's map changed (for host and guests alike): every transfer of the old
+            // one stops, and a start waiting on it is off.
+            const bool mapChanged = confirmedRoomId_ == incoming.id && incoming.mapId != confirmedMapId_;
+            if (mapChanged) {
+                mapSend_ = {}; mapReceive_ = {}; mapReadyRoom_ = 0;
+                pendingMapStart_.reset(); startRequested_ = false;
+                mapStatus_.clear(); startError_.clear(); mapOfferedFor_.clear();
+                mapRetryAt_ = 0; mapRetries_ = 0; hostMapMissing_ = false;
+                if (mapPackageFor_ != incoming.mapId) { mapPackage_.reset(); mapPackageFor_.clear(); }
+            }
             room_ = std::move(incoming);
             room_.mySlot = keep;
             // A room's map and game mods are settled when it starts: a player made the host
             // in a running game (its host left, or reconnected under a new id) keeps the
             // packages its world was built from and offers none.
-            const bool hosting = room_.hostId == myId_ && (state_ == State::Lobby || state_ == State::InRoom);
-            if(oldGameMods!=room_.opts.gameMods && hosting){mapPackage_.reset();mapOfferedRoom_=mapReadyRoom_=0;}
+            const bool hosting = hostingLobby();
+            if(oldGameMods!=room_.opts.gameMods && hosting){mapPackage_.reset();mapPackageFor_.clear();mapOfferedRoom_=mapReadyRoom_=0;mapOfferedFor_.clear();}
             if(!room_.opts.gameMods)resetModTransfer();
             else if(hosting && modOfferedRoom_!=room_.id)offerMods();
             gameSpeed_ = room_.opts.speed;
             if (state_ == State::Lobby) state_ = State::InRoom;
             if (!room_.mission.empty() || mapgen::isGeneratedMapId(room_.mapId)) {
                 mapReadyRoom_ = room_.id; mapStatus_ = "MAP READY";
-            } else if (hosting && mapOfferedRoom_ != room_.id) {
-                try {
-                    if (!mapPackage_) mapPackage_ = maps::build(roomDataVfs(), room_.mapId);
-                    send(Msg::MapOffer, maps::offer(room_.id, room_.mapId, *mapPackage_));
-                    mapOfferedRoom_ = room_.id; mapStatus_ = "CHECKING MAP WITH SERVER";
-                } catch (const std::exception& e) {
-                    mapStatus_ = e.what(); Writer error; error.u32(room_.id); error.str(mapStatus_);
-                    send(Msg::MapError, error); mapOfferedRoom_ = room_.id;
-                }
+            } else offerRoomMap();
+            confirmedRoomId_ = room_.id; confirmedMapId_ = room_.mapId;
+            if (!hosting) dropRoomMapRequest();   // no longer the host: nothing will answer it
+            break;
+        }
+        case Msg::RoomError: {
+            const auto request = RoomRequest(r.u8());
+            const uint32_t serial = r.u32();
+            std::string why = r.str();
+            if (!r.ok) break;
+            roomError_ = why.empty() ? std::string("the server refused the change") : why;
+            roomErrorFor_ = request;
+            // Nothing changed at the server; the LobbyState that follows shows the room as it is.
+            if (request == RoomRequest::Map && mapSerialSent_ && serial == mapSerialSent_) {
+                mapAnswer_ = {serial, RoomMapAnswer::Refused, roomError_};
+                dropRoomMapRequest();
             }
             break;
         }
@@ -664,6 +697,7 @@ void MpClient::onFrame(const Frame& f) {
             if (!r.ok) break;
             room_ = std::move(incoming);
             startSent_ = false;   // the START was answered: the game is starting
+            dropRoomMapRequest(); // and the room is settled
             gameSpeed_ = room_.opts.speed;
             if (room_.mission.empty() && mapgen::isGeneratedMapId(room_.mapId)) {
                 try {
@@ -798,6 +832,7 @@ void MpClient::createGame(const std::string& name, const std::string& password,
         try {
             mapPackage_ = maps::build(hpi::mountRetailRoot(mapRoot_,
                 o.gameMods?hostGameModPacks():std::vector<std::string>{}), mapId);
+            mapPackageFor_ = mapId;
         } catch (const std::exception& e) {
             // The map cannot be built here: nothing was sent, and the connection is fine. Say why
             // (the lobby shows it, a headless run ends on it) without poisoning the link's error().
@@ -833,12 +868,59 @@ void MpClient::setSlot(int slot, uint8_t type, uint8_t faction, uint8_t color,
                        uint8_t team, uint8_t ready, uint8_t aiLevel) {
     Writer w; w.u8(uint8_t(slot)); w.u8(type); w.u8(faction); w.u8(color); w.u8(team); w.u8(ready);
     w.u8(aiLevel);
+    w.u32(room_.roomRev);   // the room this edit was made on: a READY counts only for it
     send(Msg::SlotUpdate, w);
 }
 
 void MpClient::setGameOptions(const GameOptions& o) {
     Writer w; put(w, o);
     send(Msg::SetGameOptions, w);
+}
+
+bool MpClient::roomEditable() const {
+    return state_ == State::InRoom && room_.id && room_.hostId == myId_ && room_.mission.empty() &&
+           !room_.opts.benchmark && !startPending() && !pendingMapStart_;
+}
+
+bool MpClient::setRoomMap(const std::string& mapId, uint8_t capacity, bool mapScenario, uint8_t randomStarts) {
+    const auto refuse = [&](const std::string& why) { roomError_ = why; roomErrorFor_ = RoomRequest::Map; return false; };
+    if (!roomEditable()) return refuse("only the host can change the map, before the game starts");
+    if (mapSerialSent_) return refuse("the last map change is still waiting for the server");
+    if (mapId.empty()) return refuse("no map was given");
+    roomError_.clear();
+    const bool generated = mapgen::isGeneratedMapId(mapId);
+    // A new file map is built here first, as createGame builds one: a map this player cannot
+    // build is never asked for. It becomes the room's package when the server confirms.
+    std::shared_ptr<maps::Package> candidate;
+    if (!generated && mapId != room_.mapId) {
+        try { candidate = maps::build(roomDataVfs(), mapId); }
+        catch (const std::exception& e) { return refuse(e.what()); }
+    }
+    // What the server would make of it (its own SetRoomMap rules): nothing to change is
+    // not worth a round trip -- but a map the server has not verified is offered again.
+    const uint8_t scenario = mapScenario && !generated && !room_.opts.stressTest && !room_.opts.benchmark ? 1 : 0;
+    const uint8_t starts = scenario ? kStartsFixed : normalizeStartMode(randomStarts);
+    if (mapId == room_.mapId && scenario == room_.opts.mapScenario && starts == room_.opts.randomStarts) {
+        if (mapReadyRoom_ != room_.id) { mapOfferedFor_.clear(); mapRetryAt_ = 0; err_.clear(); }
+        return true;
+    }
+    pendingPackage_ = std::move(candidate);
+    pendingPackageFor_ = pendingPackage_ ? mapId : std::string();
+    const uint32_t serial = std::max(mapSerialLast_, room_.mapSerial) + 1;
+    Writer w; w.u32(serial); w.str(mapId); w.u8(capacity); w.u8(mapScenario ? 1 : 0); w.u8(randomStarts);
+    send(Msg::SetRoomMap, w);
+    // Nothing else changes until the answer: no transfer state, no room_, no mapStatus_.
+    mapSerialSent_ = mapSerialLast_ = serial;
+    mapSentAt_ = nowMs();
+    return true;
+}
+
+void MpClient::setRoomInfo(std::optional<std::string> name, std::optional<std::string> password) {
+    const uint8_t flags = uint8_t((name ? kRoomInfoName : 0) | (password ? kRoomInfoPassword : 0));
+    if (!flags || state_ != State::InRoom || room_.hostId != myId_) return;
+    roomError_.clear();
+    Writer w; w.u8(flags); w.str(name ? *name : std::string()); w.str(password ? *password : std::string());
+    send(Msg::SetRoomInfo, w);
 }
 
 void MpClient::setPause(bool want) { Writer w; w.u8(want ? 1 : 0); send(Msg::SetPause, w); }
@@ -1001,7 +1083,8 @@ void MpClient::sendProgress(uint32_t tick) {
 
 namespace tak::net {
 void MpClient::acceptMap(std::shared_ptr<maps::Package> package, uint32_t room) {
-    mapPackage_ = std::move(package); mapReadyRoom_ = room; mapReceive_ = {};
+    mapPackage_ = std::move(package); mapPackageFor_ = room_.mapId; mapReadyRoom_ = room; mapReceive_ = {};
+    mapRetries_ = 0; mapRetryAt_ = 0;
     mapStatus_ = "MAP VERIFIED";
     try { if (const auto cache = cacheRoot(); !cache.empty()) maps::saveCache(cache, *mapPackage_); }
     catch (const std::exception& e) {
@@ -1020,25 +1103,32 @@ void MpClient::mapFrame(const Frame& f) {
             auto id = r.u32(); auto mapId = r.str(), digest = r.str(); auto size = r.u32();
             if (!r.ok || r.p != r.end) throw std::runtime_error("invalid map offer");
             if (room_.id && room_.id != id && !expectingSpectate_) return;
+            if (room_.id == id && mapId != room_.mapId) return;   // a map the room no longer plays
             if (mapReceive_.room == id && mapReceive_.digest == digest) return;
             if (mapPackage_ && mapPackage_->digest == digest) { acceptMap(mapPackage_, id); return; }
-            mapReadyRoom_ = 0; mapReceive_.begin(id, size, digest);
+            mapReadyRoom_ = 0; mapReceive_.begin(id, 0, size, digest);
             if (auto cached = cacheRoot().empty() ? nullptr : maps::loadCache(cacheRoot(), digest)) { acceptMap(std::move(cached), id); return; }
             try {
                 auto local = maps::build(roomDataVfs(), mapId);
                 if (local->digest == digest) { acceptMap(std::move(local), id); return; }
             } catch (const std::exception&) {} // Missing/different map: request the host's copy.
-            Writer request; request.u32(id); send(Msg::MapRequest, request);
+            // A transfer id of our own: chunks of an earlier request for this room are told apart.
+            mapReceive_.xfer = ++xferSeq_;
+            Writer request; request.u32(id); request.str(digest); request.u32(mapReceive_.xfer);
+            send(Msg::MapRequest, request);
             mapStatus_ = "DOWNLOADING MAP 0%";
         } else if (f.kind == Msg::MapRequest) {
-            auto id = r.u32();
-            if (!r.ok || id != room_.id || room_.hostId != myId_ || !mapPackage_ || mapSend_.package)
-                throw std::runtime_error("unexpected map upload request");
-            mapSend_ = {id, 0, mapPackage_}; mapStatus_ = "UPLOADING MAP TO SERVER";
+            // The server asks this host for the package it offered: the upload starts, or
+            // starts over from offset 0 for a newer request. One for a package this host no
+            // longer holds (the map changed since) is stale.
+            auto id = r.u32(); auto digest = r.str(); auto xfer = r.u32();
+            if (!r.ok || r.p != r.end) throw std::runtime_error("invalid map upload request");
+            if (id != room_.id || room_.hostId != myId_ || !mapPackage_ || mapPackage_->digest != digest) return;
+            mapSend_ = {id, xfer, 0, mapPackage_}; mapStatus_ = "UPLOADING MAP TO SERVER";
         } else if (f.kind == Msg::MapChunk) {
-            Reader header(f.payload.data(), f.payload.size());
-            if (header.u32() != mapReceive_.room || !mapReceive_.room) return; // left the old room
-            if (mapReceive_.append(r)) {
+            const auto got = mapReceive_.append(r);
+            if (got == maps::Append::Stale) return;   // left the old room, or an earlier request's
+            if (got == maps::Append::Done) {
                 const auto id = mapReceive_.room;
                 acceptMap(maps::decode(std::move(mapReceive_.bytes), mapReceive_.digest), id);
             } else mapStatus_ = "DOWNLOADING MAP " + std::to_string(100 * mapReceive_.bytes.size() / mapReceive_.size) + "%";
@@ -1051,6 +1141,13 @@ void MpClient::mapFrame(const Frame& f) {
                 // a stale "MAP ERROR" would come back whenever a joiner's map check hides the
                 // room's readiness, and a later disconnect would report it as its reason.
                 if (startSent_) { startError_ = why; startSent_ = false; }
+                else if ((why.find("retry later") != std::string::npos || why.find("budget") != std::string::npos) &&
+                         hostingLobby() && mapRetries_ < 3) {
+                    // The server was busy (validation capacity, map memory): offer again after
+                    // 2, 4 and 8 s. Only the status says so; it is not an error yet.
+                    mapRetryAt_ = nowMs() + (2000ull << mapRetries_++);
+                    mapStatus_ = "MAP ERROR: " + why + " (TRYING AGAIN)";
+                }
                 else { mapStatus_ = "MAP ERROR: " + why; err_ = mapStatus_; }
             }
         }
@@ -1067,9 +1164,34 @@ void MpClient::resetModTransfer() {
     modPackage_.reset();modReceive_={};modSend_={};modOfferedRoom_=modReadyRoom_=0;modStatus_.clear();modPendingAt_=0;
 }
 void MpClient::resetMapTransfer() {
-    mapPackage_.reset(); mapReceive_ = {}; mapSend_ = {};
-    mapReadyRoom_ = mapOfferedRoom_ = 0; startRequested_ = false; pendingMapStart_.reset(); mapStatus_.clear();
+    mapPackage_.reset(); mapPackageFor_.clear(); mapReceive_ = {}; mapSend_ = {};
+    mapReadyRoom_ = mapOfferedRoom_ = 0; mapOfferedFor_.clear();
+    startRequested_ = false; pendingMapStart_.reset(); mapStatus_.clear();
     startSent_ = false; startError_.clear();
+    dropRoomMapRequest(); confirmedRoomId_ = 0; confirmedMapId_.clear();
+    mapRetryAt_ = 0; mapRetries_ = 0; hostMapMissing_ = false;
+}
+void MpClient::offerRoomMap() {
+    if (!hostingLobby() || !room_.id || room_.mapId.empty() || !room_.mission.empty() ||
+        mapgen::isGeneratedMapId(room_.mapId))
+        return;
+    // Once per room and map; never while a map change is unanswered (only the room's map
+    // as the server last said it is offered), nor while a busy server's retry waits.
+    if ((mapOfferedRoom_ == room_.id && mapOfferedFor_ == room_.mapId) || mapSerialSent_ || mapRetryAt_) return;
+    mapOfferedRoom_ = room_.id; mapOfferedFor_ = room_.mapId;
+    try {
+        if (!mapPackage_ || mapPackageFor_ != room_.mapId) {
+            mapPackage_ = maps::build(roomDataVfs(), room_.mapId); mapPackageFor_ = room_.mapId;
+        }
+        send(Msg::MapOffer, maps::offer(room_.id, room_.mapId, *mapPackage_));
+        mapStatus_ = "CHECKING MAP WITH SERVER"; hostMapMissing_ = false;
+    } catch (const std::exception& e) {
+        // This host cannot build the room's map (a successor without it): the guests learn why
+        // from the server's chat line, and the room says to change the map.
+        mapPackage_.reset(); mapPackageFor_.clear(); hostMapMissing_ = true;
+        mapStatus_ = e.what(); Writer error; error.u32(room_.id); error.str(mapStatus_);
+        send(Msg::MapError, error);
+    }
 }
 void MpClient::setGameModPacks(std::vector<std::string> names) {
     // Only packs still on disk: a saved selection naming a pack folder since
@@ -1107,7 +1229,7 @@ std::vector<std::string> MpClient::hostGameModPacks() const {
 }
 void MpClient::offerMods() {
     modPendingAt_=0;room_.mapsReady=false;
-    modOfferedRoom_=room_.id;modReadyRoom_=0;mapPackage_.reset();mapOfferedRoom_=mapReadyRoom_=0;
+    modOfferedRoom_=room_.id;modReadyRoom_=0;mapPackage_.reset();mapPackageFor_.clear();mapOfferedRoom_=mapReadyRoom_=0;mapOfferedFor_.clear();
     try {modPackage_=mods::build(mapRoot_,hostGameModPacks());
         send(Msg::ModOffer,maps::offer(room_.id,"mods",*modPackage_));modStatus_="VERIFYING GAME MODS";
     }catch(const std::exception& e){modPackage_.reset();modStatus_=std::string("GAME MODS: ")+e.what();}
@@ -1148,15 +1270,20 @@ void MpClient::modFrame(const Frame& f) {
         if(f.kind==Msg::ModOffer){
             auto id=r.u32();auto label=r.str(),digest=r.str();auto size=r.u32();
             if(!r.ok || r.p!=r.end || !id || label!="mods" || (room_.id && id!=room_.id))throw std::runtime_error("invalid game mod offer");
-            modReceive_.begin(id,size,digest);modReadyRoom_=0;
+            modReceive_.begin(id,++xferSeq_,size,digest);modReadyRoom_=0;
             if(modPackage_ && modPackage_->digest==digest && modPackage_->bytes.size()==size){acceptMods(modPackage_,id);return;}
             if(auto cached=cacheRoot().empty()?nullptr:mods::loadCache(cacheRoot(),digest)){if(cached->bytes.size()!=size)throw std::runtime_error("game mod size mismatch");acceptMods(std::move(cached),id);return;}
-            Writer w;w.u32(id);w.str(digest);send(Msg::ModRequest,w);modStatus_="DOWNLOADING GAME MODS";
+            Writer w;w.u32(id);w.str(digest);w.u32(modReceive_.xfer);send(Msg::ModRequest,w);modStatus_="DOWNLOADING GAME MODS";
         }else if(f.kind==Msg::ModRequest){
-            auto id=r.u32();if(!r.ok || r.p!=r.end || id!=room_.id || room_.hostId!=myId_ || !modPackage_ || modSend_.package)throw std::runtime_error("invalid game mod upload request");
-            modSend_={id,0,modPackage_};modStatus_="UPLOADING GAME MODS";
+            // Starts the upload, or starts it over from offset 0 for a newer request (xfer);
+            // a request for another package than this host's is stale.
+            auto id=r.u32();auto digest=r.str();auto xfer=r.u32();
+            if(!r.ok || r.p!=r.end)throw std::runtime_error("invalid game mod upload request");
+            if(id!=room_.id || room_.hostId!=myId_ || !modPackage_ || modPackage_->digest!=digest)return;
+            modSend_={id,xfer,0,modPackage_};modStatus_="UPLOADING GAME MODS";
         }else if(f.kind==Msg::ModChunk){
-            if(modReceive_.append(r)){auto id=modReceive_.room;acceptMods(mods::decode(std::move(modReceive_.bytes),modReceive_.digest),id);}
+            const auto got=modReceive_.append(r);
+            if(got==maps::Append::Done){auto id=modReceive_.room;acceptMods(mods::decode(std::move(modReceive_.bytes),modReceive_.digest),id);}
         }else if(f.kind==Msg::ModError){auto id=r.u32();auto why=r.str();if(r.ok && id==room_.id){modStatus_="GAME MODS: "+why;modReceive_={};modSend_={};modReadyRoom_=0;}}
     }catch(const std::exception& e){modStatus_=std::string("GAME MODS: ")+e.what();modReceive_={};modSend_={};modReadyRoom_=0;Writer w;w.u32(room_.id);w.str(modStatus_);send(Msg::ModError,w);}
 }

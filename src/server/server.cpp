@@ -23,6 +23,7 @@
 #include "util/stoptoken.h"
 #include "util/devenv.h"
 #include "server/roomtick.h"
+#include "net/roomseats.h"
 #include "server/status.h"
 #include "net/matchconfig.h"
 #include "net/discovery.h"
@@ -260,7 +261,11 @@ struct Client {
     // this client is skipped by the live TickBundle broadcast so the stream
     // cannot go out of order.
     WorkBudget lobbyWork,uploadWork,commandBytes,commandCount;
-    uint64_t commandLogAt=0, validationId=0;
+    uint64_t commandLogAt=0;
+    // The package validation this client's offer is waiting on, one per kind: a map change
+    // resets the map's alone, so a game-mod validation running beside it survives.
+    uint64_t mapValidationId=0, modValidationId=0;
+    uint32_t xferSeq=0;   // this connection's transfer ids (MapRequest/ModRequest the server sends)
     uint64_t modRefusedAt=0;   // last refused game-mod upload answered (Server::modMsg)
     std::optional<Frame> deferredMapOffer;
     uint64_t mapReceiveStarted=0,mapReceiveProgress=0;
@@ -331,7 +336,13 @@ struct Room {
     std::vector<uint32_t> spectators;   // watching, not seated (no slot, no hash)
     bool running = false;
     bool priv = false;             // private (single-player): hidden from the game list
-    int cap = kMaxSlots;            // map capacity (from the host's CreateGame)
+    int cap = kMaxSlots;            // map capacity (from the host's CreateGame or SetRoomMap)
+    // Room editing (323). roomRev counts the host's changes in the lobby (bumpRules); a
+    // READY sent on an older one is stored as not ready. changeBits: what the last one
+    // changed (RoomChange). mapSerial: the last SetRoomMap answered.
+    uint32_t roomRev = 1, mapSerial = 0;
+    uint8_t changeBits = 0;
+    std::string modDigest;          // the last verified game-mod package's digest ("" = none)
     uint64_t createdMs = 0;
     // Per-game RNG seed, broadcast in GameStarting so every peer derives the same
     // arrangement from it. Rolled per ROOM rather than computed from the room id: a
@@ -686,7 +697,71 @@ private:
     void writeSlots(Writer& w, Room& r, bool fromStart = false);
     void sendGameStarting(Client& c, Room& r, uint8_t slot, uint64_t token, bool catchUp);
     void writeReplay(Room& r);
+    // ---- room editing (protocol 323) ----
+    // A host change in the lobby: roomRev moves on with `bits` (RoomChange) and every ready
+    // guest is unreadied, in the same step as the change, before its broadcast. Returns
+    // how many seats it unreadied.
+    int bumpRules(Room& r, uint8_t bits);
+    // The room's map package is gone (a new map, the game mods changed): every client's
+    // map transfer and the room's map validations with it. Game-mod state is untouched.
+    void resetRoomMap(Room& r);
+    // The room's seats for a new capacity (roomseats.h planCapacity, which the caller has
+    // checked fits): humans past it move down (each one's client id into `moved`, to be told
+    // its seat), AIs past it or displaced are removed, the seats past it close and the ones
+    // it gains open.
+    struct CapacityResult { int aiRemoved = 0, movedHumans = 0; bool changed = false; };
+    CapacityResult applyCapacity(Room& r, int newCap, std::vector<uint32_t>& moved);
+    // A refusal the host can act on (Msg::RoomError), then the room as it is, to `c` alone.
+    void roomRefuse(Client& c, Room& r, RoomRequest req, uint32_t serial, const std::string& why);
+    // Every JoinResult: ok, the slot (kWatchSeat = watching) and why, and the room's revision.
+    void sendJoin(Client& c, bool ok, int slot, const std::string& why, const Room* r);
+    void setRoomMap(Client& c, Room& r, const Frame& f);
+    void setRoomInfo(Client& c, Room& r, const Frame& f);
 };
+
+// A short form of a room's rules for the log ("crusades=1 fog=1 starts=0 ...").
+static std::string optionsSummary(const GameOptions& o) {
+    char b[192];
+    std::snprintf(b, sizeof b, "crusades=%d fog=%d starts=%d cap=%d path=%d codes=%d scenario=%d spectators=%d mods=%d",
+                  o.crusades, o.fogExplored, o.randomStarts, o.unitCap, int(o.pathfindingMode), o.powerCodes,
+                  o.mapScenario, o.allowSpectators, o.gameMods);
+    return b;
+}
+
+// The rules two option sets differ in, by name, the speed left out ("" = the same rules).
+static std::string optionsChanged(const GameOptions& a, const GameOptions& b) {
+    std::string out;
+    const auto field = [&](bool differs, const char* name) {
+        if (differs) { if (!out.empty()) out += ' '; out += name; }
+    };
+    field(a.crusades != b.crusades, "crusades");
+    field(a.forfeitSelfDestruct != b.forfeitSelfDestruct, "forfeit");
+    field(a.gameMods != b.gameMods, "mods");
+    field(a.speedUnlock != b.speedUnlock, "speedunlock");
+    field(a.unitCap != b.unitCap, "cap");
+    field(a.monarchExpendable != b.monarchExpendable, "monarch");
+    field(a.stressTest != b.stressTest, "stress");
+    field(a.randomStarts != b.randomStarts, "starts");
+    field(a.fogExplored != b.fogExplored, "fog");
+    field(a.pathfindingMode != b.pathfindingMode, "path");
+    field(a.doubleSight != b.doubleSight, "sight");
+    field(a.benchmark != b.benchmark, "benchmark");
+    field(a.allowSpectators != b.allowSpectators, "spectators");
+    field(a.mapScenario != b.mapScenario, "scenario");
+    field(a.powerCodes != b.powerCodes, "codes");
+    return out;
+}
+
+// A room name from a player name: printable ASCII only (a --no-auth Hello can carry
+// anything), then "'s Game", cut to kRoomNameMax bytes.
+static std::string defaultRoomName(const std::string& player) {
+    std::string clean;
+    for (unsigned char ch : player) if (ch >= 0x20 && ch <= 0x7e) clean += char(ch);
+    if (clean.empty()) clean = "Player";
+    std::string name = clean + "'s Game";
+    if (name.size() > kRoomNameMax) name.resize(kRoomNameMax);
+    return name;
+}
 
 // A running game is abandoned once nobody is left to watch it. Normally that means
 // no human slot has a live or held (disconnected, inside the wait) client. A game created by
@@ -1124,14 +1199,13 @@ static uint16_t clampUnitCap(uint16_t v) {
 // so the rebuilt world diverges from the game it is watching -- and any replay that
 // client saves records the wrong match.
 void Server::writeSlots(Writer& w, Room& r, bool fromStart) {
-    w.u32(r.id);
-    w.str(r.name);
-    w.str(r.mapId);
-    w.str(r.mission);
-    put(w, r.opts);
-    w.u32(r.hostId);
-    w.u8(mapsReady(r) ? 1 : 0);
-    for (int i = 0; i < kMaxSlots; ++i) put(w, (fromStart && r.running) ? r.startSlots[i] : r.slots[i]);
+    RoomState s;
+    s.id = r.id; s.name = r.name; s.mapId = r.mapId; s.mission = r.mission; s.opts = r.opts;
+    s.hostId = r.hostId; s.mapsReady = mapsReady(r);
+    s.capacity = uint8_t(r.cap); s.passworded = !r.password.empty();
+    s.roomRev = r.roomRev; s.changeBits = r.changeBits; s.mapSerial = r.mapSerial;
+    for (int i = 0; i < kMaxSlots; ++i) s.slots[i] = (fromStart && r.running) ? r.startSlots[i] : r.slots[i];
+    put(w, s);
 }
 
 // GameStarting: the START slot table + options, then your slot (0xFF = spectator),
@@ -1211,6 +1285,72 @@ void Server::broadcastRoom(Room& r, Msg kind, const Writer& w, uint32_t exceptCl
             !(kind == Msg::TickBundle && it->second->replaying))
             it->second->conn.send(kind, w);
     }
+}
+
+void Server::sendJoin(Client& c, bool ok, int slot, const std::string& why, const Room* r) {
+    Writer jr; jr.u8(ok ? 1 : 0); jr.u8(uint8_t(slot)); jr.str(why); jr.u32(r ? r->roomRev : 0);
+    c.conn.send(Msg::JoinResult, jr);
+}
+
+int Server::bumpRules(Room& r, uint8_t bits) {
+    ++r.roomRev;
+    r.changeBits = bits;
+    int unreadied = 0;
+    for (int i = 0; i < kMaxSlots; ++i) {
+        SlotInfo& s = r.slots[i];
+        if (s.type == 1 && s.ready && r.slotClient[i] != int(r.hostId)) { s.ready = 0; ++unreadied; }
+    }
+    return unreadied;
+}
+
+void Server::resetRoomMap(Room& r) {
+    r.mapVfs.reset(); r.mapPackage.reset();
+    for (auto& [id, peer] : clients_)
+        if (peer->roomId == r.id) {
+            peer->mapReadyRoom = peer->mapOfferedRoom = 0;
+            peer->mapSend = {}; peer->mapReceive = {};
+            peer->mapValidationId = 0; peer->deferredMapOffer.reset();
+        }
+    for (auto& job : validations_)
+        if (job.room == r.id && !job.mods) job.stop.request_stop();
+}
+
+Server::CapacityResult Server::applyCapacity(Room& r, int newCap, std::vector<uint32_t>& moved) {
+    CapacityResult out;
+    const auto plan = planCapacity(r.slots, newCap);
+    if (!plan.ok) return out;   // the caller refused it first
+    const int oldCap = r.cap;
+    const auto empty = [&](int i, uint8_t type) {
+        SlotInfo& s = r.slots[i];
+        if (s.type != type) out.changed = true;
+        s.type = type; s.name.clear(); s.ready = 0;
+    };
+    // The AIs first: a displaced one leaves the seat a human moves into.
+    for (int i : plan.removedAi) { empty(i, 0); ++out.aiRemoved; }
+    for (const auto& [from, to] : plan.moves) {
+        // As MoveSeat: side, colour and team travel with the player.
+        std::swap(r.slots[from], r.slots[to]);
+        r.slots[to].ready = 0;
+        r.slotClient[to] = r.slotClient[from]; r.slotClient[from] = -1;
+        if (const auto it = clients_.find(uint32_t(r.slotClient[to])); it != clients_.end()) {
+            it->second->slot = to;
+            moved.push_back(it->first);
+        }
+        ++out.movedHumans; out.changed = true;
+    }
+    for (int i = newCap; i < kMaxSlots; ++i) empty(i, 3);
+    // Seats it gains were closed only by the capacity: SlotUpdate allows nothing else past it.
+    for (int i = oldCap; i < newCap && i < kMaxSlots; ++i) empty(i, 0);
+    out.changed |= oldCap != newCap;
+    r.cap = newCap;
+    return out;
+}
+
+void Server::roomRefuse(Client& c, Room& r, RoomRequest req, uint32_t serial, const std::string& why) {
+    Writer e; e.u8(uint8_t(req)); e.u32(serial); e.str(why);
+    c.conn.send(Msg::RoomError, e);
+    Writer ls; writeSlots(ls, r);
+    c.conn.send(Msg::LobbyState, ls);
 }
 
 // Is this listener too far behind the running room to be sent voice? Voice shares the
@@ -1355,10 +1495,24 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             int cap = int(r.u8());
             uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
             uint8_t priv = r.u8();       // private (single-player): hidden from the list
-            if (!r.ok || r.p!=r.end || name.size()>128 || pass.size()>128 || mapId.size()>4096 || mission.size()>256) return;
+            // Only a broken client sends a malformed frame: dropped without an answer.
+            if (!r.ok || r.p!=r.end || mapId.size()>4096 || mission.size()>256) return;
+            // The name and password limits are the room's (SetRoomInfo keeps the same ones);
+            // a request past them is answered, so the player sees why.
+            if (!name.empty() && (name.size() > kRoomNameMax || !printableAscii(name))) {
+                sendJoin(c, false, 0, "the game name must be 1 to " + std::to_string(kRoomNameMax) +
+                         " plain characters", nullptr);
+                return;
+            }
+            if (pass.size() > kRoomPasswordMax || !printableAscii(pass)) {
+                sendJoin(c, false, 0, "the password must be at most " + std::to_string(kRoomPasswordMax) +
+                         " plain characters", nullptr);
+                return;
+            }
             // A random map is built from its id at START: refuse one this build cannot make.
+            // Its capacity is its player count, which the server reads from the id itself.
             if (mission.empty() && tak::mapgen::isGeneratedMapId(mapId)) {
-                try { tak::mapgen::parseMapId(mapId); }
+                try { cap = std::clamp<int>(tak::mapgen::parseMapId(mapId).players, 2, kMaxSlots); }
                 catch (const std::exception& e) { sendReject(c, e.what()); return; }
             }
             if(!(testWork_ || (loopbackOnly_ && !requireAuth_)) && (o.stressTest || o.benchmark || !mission.empty())) {
@@ -1368,7 +1522,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             if (cap < 2 || cap > kMaxSlots) cap = kMaxSlots;   // sane default
             Room& room = rooms_[nextRoomId_];
             room.id = nextRoomId_++;
-            room.name = name.empty() ? ("game" + std::to_string(room.id)) : name;
+            room.name = name.empty() ? defaultRoomName(c.name) : name;
             room.password = pass;
             room.mapId = mapId;
             room.mission = mission;
@@ -1394,21 +1548,20 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
                 // SPECTATORS does not apply: it governs who ELSE may watch.
                 room.spectators.push_back(c.id);
                 c.clearCommands();   // never inherit a previous room's queue
-            c.state = Client::InGame; c.roomId = room.id; c.slot = -1;
-                Writer jr; jr.u8(1); jr.u8(0xFF); jr.str("");   // ok, spectator
-                c.conn.send(Msg::JoinResult, jr);
+                c.state = Client::InGame; c.roomId = room.id; c.slot = -1;
+                sendJoin(c, true, kWatchSeat, "", &room);   // ok, spectator
             } else {
                 // Host takes slot 0 (human).
                 room.slots[0].type = 1; room.slots[0].faction = 0; room.slots[0].color = 0;
                 room.slots[0].team = 0; room.slots[0].name = c.name;
                 room.slotClient[0] = int(c.id);
                 c.clearCommands();   // never inherit a previous room's queue
-            c.state = Client::InGame; c.roomId = room.id; c.slot = 0;
-                Writer jr; jr.u8(1); jr.u8(0); jr.str("");   // ok, slot 0
-                c.conn.send(Msg::JoinResult, jr);
+                c.state = Client::InGame; c.roomId = room.id; c.slot = 0;
+                sendJoin(c, true, 0, "", &room);   // ok, slot 0
             }
             broadcastLobby(room);
-            std::fprintf(stderr, "client %u created game %u '%s'\n", c.id, room.id, room.name.c_str());
+            std::fprintf(stderr, "client %u created game %u '%s' on '%s' (%s)\n", c.id, room.id, room.name.c_str(),
+                         room.mission.empty() ? room.mapId.c_str() : room.mission.c_str(), optionsSummary(room.opts).c_str());
             break;
         }
         case Msg::JoinGame: {
@@ -1416,9 +1569,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             uint32_t gid = r.u32(); std::string pass = r.str();
             if (!r.ok) return;
             auto it = rooms_.find(gid);
-            auto reject = [&](const std::string& why) {
-                Writer jr; jr.u8(0); jr.u8(0); jr.str(why); c.conn.send(Msg::JoinResult, jr);
-            };
+            auto reject = [&](const std::string& why) { sendJoin(c, false, 0, why, nullptr); };
             if (it == rooms_.end()) { reject("no such game"); break; }
             Room& room = it->second;
             if (room.running) { reject("game already started"); break; }
@@ -1429,11 +1580,11 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             if (freeSlot < 0) { reject("game is full"); break; }
             room.slots[freeSlot].type = 1;
             room.slots[freeSlot].name = c.name;
+            room.slots[freeSlot].ready = 0;   // a newcomer is never READY for a game it has not seen
             room.slotClient[freeSlot] = int(c.id);
             c.clearCommands();   // never inherit a previous room's queue
             c.state = Client::InGame; c.roomId = room.id; c.slot = freeSlot;
-            Writer jr; jr.u8(1); jr.u8(uint8_t(freeSlot)); jr.str("");
-            c.conn.send(Msg::JoinResult, jr);
+            sendJoin(c, true, freeSlot, "", &room);
             broadcastLobby(room);
             std::fprintf(stderr, "client %u joined game %u at slot %d\n", c.id, room.id, freeSlot);
             break;
@@ -1447,9 +1598,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             uint32_t gid = r.u32(); uint64_t token = r.u64(); uint32_t fromTick = r.u32();
             if (!r.ok || r.p!=r.end) return;
             auto it = rooms_.find(gid);
-            auto reject = [&](const std::string& why) {
-                Writer jr; jr.u8(0); jr.u8(0); jr.str(why); c.conn.send(Msg::JoinResult, jr);
-            };
+            auto reject = [&](const std::string& why) { sendJoin(c, false, 0, why, nullptr); };
             if (it == rooms_.end() || !it->second.running) { reject("game not found or ended"); break; }
             Room& room = it->second;
             int slot = -1;
@@ -1509,9 +1658,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             uint32_t gid = r.u32(); std::string pass = r.str();
             if (!r.ok) return;
             auto it = rooms_.find(gid);
-            auto reject = [&](const std::string& why) {
-                Writer jr; jr.u8(0); jr.u8(0); jr.str(why); c.conn.send(Msg::JoinResult, jr);
-            };
+            auto reject = [&](const std::string& why) { sendJoin(c, false, 0, why, nullptr); };
             if (it == rooms_.end() || !it->second.running) { reject("game not found or ended"); break; }
             Room& room = it->second;
             // The host's ALLOW SPECTATORS rule. This is the ONLY way into a room without
@@ -1644,7 +1791,8 @@ void Server::leaveRoom(Client& c, const char* reason) {
         sp.erase(watching);
     } else if (c.slot >= 0 && c.slot < kMaxSlots) {
         r->slotClient[c.slot] = -1;
-        if (!r->running) { r->slots[c.slot].type = 0; r->slots[c.slot].name.clear(); }
+        // The seat opens unready: a READY left on it would seat its next player ready.
+        if (!r->running) { r->slots[c.slot].type = 0; r->slots[c.slot].name.clear(); r->slots[c.slot].ready = 0; }
         else {
             // Voluntary leave mid-game = immediate forfeit (sequenced event so the
             // sim disposes the units in lockstep).
@@ -1655,7 +1803,7 @@ void Server::leaveRoom(Client& c, const char* reason) {
     }
     const uint32_t rid = r->id;
     const bool wasHost = (r->hostId == c.id);
-    c.validationId=0;c.deferredMapOffer.reset();
+    c.mapValidationId=c.modValidationId=0;c.deferredMapOffer.reset();
     c.state = Client::Lobby; c.roomId = 0; c.slot = -1; c.loaded = false;
     if (spectator) std::fprintf(stderr, "client %u stopped spectating game %u (%s)\n", c.id, rid, reason);
     // A spectator that is not the host changes nothing the room is shown.
@@ -1747,7 +1895,10 @@ bool Server::mapsReady(const Room& r) const {
     return true;
 }
 void Server::validatePackage(Client& c,Room& room,bool mods,bool cache) {
-    if(validations_.size()>=3)throw std::runtime_error("map validation capacity reached; retry later");
+    // Live jobs only: a cancelled one stays listed until its worker returns, and must not
+    // refuse the next real offer.
+    if(std::count_if(validations_.begin(),validations_.end(),[](const Validation& job){return !job.stop.get_token().stop_requested();})>=3)
+        throw std::runtime_error("map validation capacity reached; retry later");
     auto& receive=mods?c.modReceive:c.mapReceive;
     if(!receive.size || mapMemory()>limits_.mapMemory)throw std::runtime_error("server map memory budget reached");
     Validation job{nextValidation_++,c.id,room.id,receive.size,mods,cache,receive.digest,room.mapId,{}, {}};
@@ -1769,45 +1920,51 @@ void Server::validatePackage(Client& c,Room& room,bool mods,bool cache) {
         }
         return package;
     });
-    c.validationId=job.id;receive={};
+    (mods?c.modValidationId:c.mapValidationId)=job.id;receive={};
     validations_.push_back(std::move(job));
 }
 void Server::finishValidations() {
     for(auto it=validations_.begin();it!=validations_.end();) {
         auto peer=clients_.find(it->client);auto room=rooms_.find(it->room);
+        // A game-mod job does not depend on the map: the room may change its map while one runs.
+        const auto kindId=[&](Client& cl)->uint64_t& {return it->mods?cl.modValidationId:cl.mapValidationId;};
         const bool valid=peer!=clients_.end() && room!=rooms_.end() &&
-            peer->second->validationId==it->id && peer->second->roomId==it->room &&
-            room->second.hostId==it->client && !room->second.running && room->second.mapId==it->map &&
+            kindId(*peer->second)==it->id && peer->second->roomId==it->room &&
+            room->second.hostId==it->client && !room->second.running && (it->mods || room->second.mapId==it->map) &&
             (!it->mods || room->second.opts.gameMods);
         if(!valid)it->stop.request_stop();
         if(it->result.wait_for(std::chrono::seconds(0))!=std::future_status::ready) {++it;continue;}
+        // A dropped job no longer holds its client's offer: it may offer again.
+        if(!valid && peer!=clients_.end() && kindId(*peer->second)==it->id)kindId(*peer->second)=0;
         auto job=std::move(*it);it=validations_.erase(it);
         try {
             auto package=job.result.get();
             if(!valid)continue;
-            auto& c=*peer->second;auto& r=room->second;c.validationId=0;
+            auto& c=*peer->second;auto& r=room->second;(job.mods?c.modValidationId:c.mapValidationId)=0;
             if(!package && job.cache) {
                 if(uint64_t(mapMemory())+uint64_t(job.size)*2>limits_.mapMemory)throw std::runtime_error("server map memory budget reached");
                 auto& receive=job.mods?c.modReceive:c.mapReceive;
-                receive.begin(job.room,job.size,job.digest);
+                const uint32_t xfer=++c.xferSeq;
+                receive.begin(job.room,xfer,job.size,job.digest);
                 if(job.mods)c.modStarted=c.modProgress=nowMs();
                 else c.mapReceiveStarted=c.mapReceiveProgress=nowMs();
-                Writer request;request.u32(job.room);c.conn.send(job.mods?Msg::ModRequest:Msg::MapRequest,request);
+                Writer request;request.u32(job.room);request.str(job.digest);request.u32(xfer);
+                c.conn.send(job.mods?Msg::ModRequest:Msg::MapRequest,request);
                 continue;
             }
             if(!package || package->bytes.size()!=job.size || uint64_t(mapMemory())+uint64_t(package->bytes.size())*2>limits_.mapMemory)
                 throw std::runtime_error("package size/budget mismatch");
             if(job.mods) {
-                r.modPackage=std::move(package);broadcastLobby(r);
+                r.modPackage=std::move(package);r.modDigest=r.modPackage->digest;broadcastLobby(r);
             } else acceptMap(r,std::move(package));
         } catch(const std::exception& e) {
             if(valid) {
-                auto& c=*peer->second;c.validationId=0;
+                auto& c=*peer->second;(job.mods?c.modValidationId:c.mapValidationId)=0;
                 Writer error;error.u32(job.room);error.str(e.what());c.conn.send(job.mods?Msg::ModError:Msg::MapError,error);
             }
         }
     }
-    for(auto& [id,peer]:clients_)if(!peer->validationId && !peer->modReceive.size && peer->deferredMapOffer) {
+    for(auto& [id,peer]:clients_)if(!peer->modValidationId && !peer->modReceive.size && peer->deferredMapOffer) {
         auto frame=std::move(*peer->deferredMapOffer);peer->deferredMapOffer.reset();
         mapMsg(*peer,frame);
     }
@@ -1849,24 +2006,33 @@ void Server::modMsg(Client& c,const Frame& f) {
     try {
         Reader rd(f.payload.data(),f.payload.size());
         if(f.kind==Msg::ModOffer){
-            if(room->running || c.modReceive.size || c.validationId)return;
+            if(room->running || c.modReceive.size || c.modValidationId)return;
             const auto id=rd.u32();const auto label=rd.str(),digest=rd.str();const auto count=rd.u32();
             if(!rd.ok || rd.p!=rd.end || id!=room->id || label!="mods")throw std::runtime_error("invalid game mod offer");
             if(count>tak::net::maps::kMaxBytes || uint64_t(mapMemory())+uint64_t(count)*2>limits_.mapMemory)throw std::runtime_error("server game mod memory budget reached");
-            c.modReceive.begin(id,count,digest);c.modStarted=c.modProgress=nowMs();
-            room->modData.reset();room->modPackage.reset();
-            room->mapVfs.reset();room->mapPackage.reset();
-            for(auto& [pid,peer]:clients_)if(peer->roomId==id){peer->mapReadyRoom=peer->mapOfferedRoom=0;peer->mapSend={};peer->mapReceive={};peer->validationId=0;peer->deferredMapOffer.reset();}
-            for(auto& [pid,peer]:clients_)if(peer->roomId==id){peer->modReady.clear();peer->modOffered.clear();peer->modSend={};if(pid!=c.id)peer->modReceive={};}
+            // Other packs than the verified ones (the host ticked a pack, or a successor host
+            // offers its own) change the game: the guests ready again.
+            if(!room->modDigest.empty() && digest!=room->modDigest) {
+                const int unreadied=bumpRules(*room,kChangeMods);
+                std::fprintf(stderr,"game %u: host changed the game mods (rev %u, %d unreadied)\n",room->id,room->roomRev,unreadied);
+            }
+            c.modReceive.begin(id,0,count,digest);c.modStarted=c.modProgress=nowMs();
+            room->modData.reset();room->modPackage.reset();room->modDigest.clear();
+            resetRoomMap(*room);
+            for(auto& [pid,peer]:clients_)if(peer->roomId==id){peer->modReady.clear();peer->modOffered.clear();peer->modSend={};if(pid!=c.id){peer->modReceive={};peer->modValidationId=0;}}
             broadcastLobby(*room);
             validatePackage(c,*room,true,true);
         }else if(f.kind==Msg::ModChunk){
             if(room->running || !room->opts.gameMods)return;   // a late chunk after GAME MODS went off
-            c.modProgress=nowMs();if(c.modReceive.append(rd))validatePackage(c,*room,true,false);
+            const auto got=c.modReceive.append(rd);
+            if(got==tak::net::maps::Append::Stale)return;   // an earlier transfer's
+            c.modProgress=nowMs();
+            if(got==tak::net::maps::Append::Done)validatePackage(c,*room,true,false);
         }else if(f.kind==Msg::ModRequest){
-            auto id=rd.u32();auto digest=rd.str();
-            if(!rd.ok || rd.p!=rd.end || id!=room->id || !room->modPackage || digest!=room->modPackage->digest || c.modSend.package)return;
-            c.modSend={id,0,room->modPackage};
+            // Starts the upload, or starts it over from offset 0 for a newer request (xfer).
+            auto id=rd.u32();auto digest=rd.str();auto xfer=rd.u32();
+            if(!rd.ok || rd.p!=rd.end || id!=room->id || !room->modPackage || digest!=room->modPackage->digest)return;
+            c.modSend={id,xfer,0,room->modPackage};
         }else if(f.kind==Msg::ModReady){
             auto id=rd.u32();auto digest=rd.str();
             if(!rd.ok || rd.p!=rd.end || id!=room->id)throw std::runtime_error("game mod verification failed");
@@ -1876,7 +2042,7 @@ void Server::modMsg(Client& c,const Frame& f) {
             auto id=rd.u32();auto why=rd.str();if(rd.ok && rd.p==rd.end && id==room->id && why.size()<=512){c.modReady.clear();c.modSend={};c.modReceive={};}
         }
     }catch(const std::exception& e){
-        c.validationId=0;c.modReceive={};c.modSend={};c.modReady.clear();
+        c.modValidationId=0;c.modReceive={};c.modSend={};c.modReady.clear();
         Writer error;error.u32(room->id);error.str(e.what());c.conn.send(Msg::ModError,error);
     }
 }
@@ -1886,14 +2052,26 @@ void Server::mapMsg(Client& c, const Frame& f) {
     try {
         Reader rd(f.payload.data(), f.payload.size());
         if (f.kind == Msg::MapOffer) {
-            if (room->running || room->hostId != c.id || room->mapPackage || c.mapReceive.size) return;
+            if (room->running || room->hostId != c.id) return;
             auto id = rd.u32(); auto name = rd.str(), hash = rd.str(); auto size = rd.u32();
-            if (!rd.ok || rd.p != rd.end || id != room->id || name != room->mapId ||
+            if (!rd.ok || rd.p != rd.end || id != room->id ||
                 !room->mission.empty() || tak::mapgen::isGeneratedMapId(name))
                 throw std::runtime_error("invalid map offer");
+            // An offer of a map the room no longer plays (sent before the host saw its change).
+            if (name != room->mapId) return;
+            if (room->mapPackage) {
+                // Already verified: a host whose transfer state was lost (its offer crossed a
+                // change it later saw undone) is told so again, and reaches MAP READY.
+                if (hash == room->mapPackage->digest) {
+                    c.mapOfferedRoom = room->id;
+                    c.conn.send(Msg::MapOffer, tak::net::maps::offer(room->id, room->mapId, *room->mapPackage));
+                }
+                return;
+            }
+            if (c.mapReceive.size || c.mapValidationId) return;
             // Clients pipeline their map offer behind game-mod chunks. Hold one
             // bounded offer until the asynchronous game-mod validation finishes.
-            if(c.validationId || c.modReceive.size) {
+            if(c.modValidationId || c.modReceive.size) {
                 if(f.payload.size()>2048)throw std::runtime_error("map offer too large");
                 c.deferredMapOffer=f;return;
             }
@@ -1901,21 +2079,23 @@ void Server::mapMsg(Client& c, const Frame& f) {
             // Decoding keeps both the canonical package and extracted files.
             if(size>tak::net::maps::kMaxBytes || uint64_t(mapMemory())+uint64_t(size)*2>limits_.mapMemory)
                 throw std::runtime_error("server map memory budget reached");
-            c.mapReceive.begin(id, size, hash);
+            c.mapReceive.begin(id, 0, size, hash);
             c.mapReceiveStarted=c.mapReceiveProgress=nowMs();
             // Installed maps follow the same content-addressed upload path on
             // a cache miss; never rebuild arbitrary maps on the network thread.
             validatePackage(c,*room,false,true);
         } else if (f.kind == Msg::MapChunk) {
             if (room->running || room->hostId != c.id || room->mapPackage) return;
+            const auto got = c.mapReceive.append(rd);
+            if (got == tak::net::maps::Append::Stale) return;   // an earlier transfer's (the map changed)
             c.mapReceiveProgress=nowMs();
-            if (c.mapReceive.append(rd)) {
-                validatePackage(c,*room,false,false);
-            }
+            if (got == tak::net::maps::Append::Done) validatePackage(c,*room,false,false);
         } else if (f.kind == Msg::MapRequest) {
-            auto id = rd.u32();
-            if (!rd.ok || id != room->id || !room->mapPackage || c.mapSend.package) return;
-            c.mapSend = {room->id, 0, room->mapPackage};
+            // A guest asks for the verified package: the upload starts, or starts over from
+            // offset 0 for a newer request (xfer). A request for another digest is stale.
+            auto id = rd.u32(); auto digest = rd.str(); auto xfer = rd.u32();
+            if (!rd.ok || rd.p != rd.end || id != room->id || !room->mapPackage || digest != room->mapPackage->digest) return;
+            c.mapSend = {room->id, xfer, 0, room->mapPackage};
         } else if (f.kind == Msg::MapReady) {
             auto id = rd.u32(); auto hash = rd.str();
             if (!rd.ok || id != room->id)throw std::runtime_error("map verification failed");
@@ -1925,13 +2105,13 @@ void Server::mapMsg(Client& c, const Frame& f) {
         } else if (f.kind == Msg::MapError) {
             auto id = rd.u32(); auto why = rd.str();
             if (rd.ok && rd.p==rd.end && why.size()<=512 && id == room->id) {
-                c.validationId=0;c.mapReadyRoom = 0; c.mapReceive = {}; c.mapSend = {};
+                c.mapValidationId=0;c.mapReadyRoom = 0; c.mapReceive = {}; c.mapSend = {};
                 Writer chat; chat.str("SERVER"); chat.str(c.name + ": " + why);
                 broadcastRoom(*room, Msg::Chat, chat);
             }
         }
     } catch (const std::exception& e) {
-        c.validationId=0;c.mapReadyRoom = 0; c.mapReceive = {}; c.mapSend = {};
+        c.mapValidationId=0;c.mapReadyRoom = 0; c.mapReceive = {}; c.mapSend = {};
         Writer error; error.u32(room->id); error.str(e.what()); c.conn.send(Msg::MapError, error);
     }
 }
@@ -2004,7 +2184,7 @@ void Server::tryStart(Client& c) {
     // retain their separate minimum-player exemption.
     const auto scenario = r->mapPackage ? tak::net::maps::scenarioInfo(*r->mapPackage) : tak::sim::ScenarioInfo{};
     if (r->opts.mapScenario && !(scenario.runnable() && scenario.content())) {
-        refuseStart(c, *r, "this map has no scenario to play -- create the game with MAP SCENARIO off");
+        refuseStart(c, *r, "this map has no scenario to play -- turn MAP SCENARIO off");
         return;
     }
     // setupMatch's own gate, read from the package: every scenario file it will read must
@@ -2270,6 +2450,106 @@ void Server::tryStart(Client& c) {
     std::fprintf(stderr, "game %u starting with %d players\n", r->id, r->usedSlots());
 }
 
+// The host changes the room's map, MAP SCENARIO or start mode (Msg::SetRoomMap). Every
+// well-formed request with a new serial is answered: by the LobbyState that carries the
+// serial, after a RoomError when refused (and then nothing else changes).
+void Server::setRoomMap(Client& c, Room& r, const Frame& f) {
+    // The host (seated or watching), in the lobby; a mission's or Benchmark's map is its own.
+    if (r.hostId != c.id || r.running || !r.mission.empty() || r.opts.benchmark) return;
+    Reader rd(f.payload.data(), f.payload.size());
+    const uint32_t serial = rd.u32();
+    const std::string mapId = rd.str();
+    const uint8_t capByte = rd.u8(), scenario = rd.u8(), starts = rd.u8();
+    if (!rd.ok || rd.p != rd.end) return;
+    if (serial <= r.mapSerial) return;   // a duplicate, or older than one already answered
+    r.mapSerial = serial;
+    const auto refuse = [&](const std::string& why) {
+        roomRefuse(c, r, RoomRequest::Map, serial, why);
+        std::fprintf(stderr, "game %u: map change refused -- %s\n", r.id, why.c_str());
+    };
+    if (mapId.empty() || mapId.size() > 4096) { refuse("no map was given"); return; }
+    // A random map's capacity is its player count, read from the id; a file map's is the
+    // host's count of its starts (the server has no file map before its package verifies),
+    // trusted as CreateGame's is.
+    const bool generated = tak::mapgen::isGeneratedMapId(mapId);
+    int cap = std::clamp<int>(capByte, 2, kMaxSlots);
+    if (generated) {
+        try { cap = std::clamp<int>(tak::mapgen::parseMapId(mapId).players, 2, kMaxSlots); }
+        catch (const std::exception& e) { refuse(e.what()); return; }
+    }
+    const uint8_t mapScenario = scenario && !generated && !r.opts.stressTest && !r.opts.benchmark ? 1 : 0;
+    // The host's start mode applies whenever the scenario ends up off.
+    const uint8_t randomStarts = mapScenario ? kStartsFixed : normalizeStartMode(starts);
+    if (mapId == r.mapId && mapScenario == r.opts.mapScenario && randomStarts == r.opts.randomStarts) {
+        Writer ls; writeSlots(ls, r); c.conn.send(Msg::LobbyState, ls);   // nothing to change
+        return;
+    }
+    int humans = 0;
+    for (const auto& s : r.slots) humans += s.type == 1;
+    if (humans > cap) {
+        refuse("this map has " + std::to_string(cap) + " starts and " + std::to_string(humans) + " players are seated");
+        return;
+    }
+    const bool mapChanged = mapId != r.mapId, scenarioChanged = mapScenario != r.opts.mapScenario;
+    const bool startsChanged = randomStarts != r.opts.randomStarts;
+    // Every guest readies again (counted before the capacity moves any of them).
+    const int unreadied = bumpRules(r, 0);
+    // A new map has no package yet: the host's client offers it on the LobbyState below.
+    if (mapChanged) { resetRoomMap(r); r.mapId = mapId; }
+    r.opts.mapScenario = mapScenario;
+    r.opts.randomStarts = randomStarts;
+    std::vector<uint32_t> moved;
+    const auto seats = applyCapacity(r, cap, moved);
+    r.changeBits = uint8_t((mapChanged ? kChangeMap : 0) | (scenarioChanged ? kChangeScenario : 0) |
+                           (!mapChanged && !scenarioChanged && startsChanged ? kChangeOptions : 0) |
+                           (seats.changed ? kChangeCapacity : 0));
+    // A player the capacity moved learns its new seat before the table that shows it there.
+    for (uint32_t id : moved)
+        if (const auto it = clients_.find(id); it != clients_.end()) sendJoin(*it->second, true, it->second->slot, "", &r);
+    broadcastLobby(r);
+    char detail[160];
+    std::snprintf(detail, sizeof detail, "capacity %d, scenario %d, %d AI removed, %d moved, %d unreadied", cap,
+                  mapScenario, seats.aiRemoved, seats.movedHumans, unreadied);
+    if (mapChanged) std::fprintf(stderr, "game %u: host changed the map to '%s' (%s)\n", r.id, r.mapId.c_str(), detail);
+    else if (scenarioChanged) std::fprintf(stderr, "game %u: host turned MAP SCENARIO %s (%s)\n", r.id, mapScenario ? "on" : "off", detail);
+    else std::fprintf(stderr, "game %u: host changed the rules (starts; rev %u, %d unreadied)\n", r.id, r.roomRev, unreadied);
+}
+
+// The host renames its room or changes its password (Msg::SetRoomInfo). Neither changes
+// the game: nobody is unreadied, and the players already in it stay.
+void Server::setRoomInfo(Client& c, Room& r, const Frame& f) {
+    if (r.hostId != c.id || r.running) return;
+    Reader rd(f.payload.data(), f.payload.size());
+    const uint8_t flags = rd.u8();
+    std::string name = rd.str();
+    const std::string password = rd.str();
+    if (!rd.ok || rd.p != rd.end || !(flags & (kRoomInfoName | kRoomInfoPassword))) return;
+    const auto refuse = [&](const std::string& why) { roomRefuse(c, r, RoomRequest::Info, 0, why); };
+    if (flags & kRoomInfoName) {
+        const auto first = name.find_first_not_of(' '), last = name.find_last_not_of(' ');
+        name = first == std::string::npos ? std::string() : name.substr(first, last - first + 1);
+        if (name.empty() || name.size() > kRoomNameMax || !printableAscii(name)) {
+            refuse("the game name must be 1 to " + std::to_string(kRoomNameMax) + " plain characters");
+            return;
+        }
+    }
+    if ((flags & kRoomInfoPassword) && (password.size() > kRoomPasswordMax || !printableAscii(password))) {
+        refuse("the password must be at most " + std::to_string(kRoomPasswordMax) + " plain characters");
+        return;
+    }
+    // Only the flagged fields: a successor host never knew the password, and a rename must
+    // not clear it.
+    if (flags & kRoomInfoName) {
+        r.name = name;
+        std::fprintf(stderr, "game %u: renamed to '%s'\n", r.id, r.name.c_str());
+    }
+    if (flags & kRoomInfoPassword) {
+        r.password = password;
+        std::fprintf(stderr, "game %u: password %s\n", r.id, r.password.empty() ? "cleared" : "set");
+    }
+    broadcastLobby(r);
+}
+
 void Server::gameMsg(Client& c, const Frame& f) {
     Room* r = roomOf(c);
     if (!r) return;
@@ -2279,11 +2559,13 @@ void Server::gameMsg(Client& c, const Frame& f) {
             int slot = int(rd.u8());
             uint8_t type = rd.u8(), faction = rd.u8(), color = rd.u8(), team = rd.u8(), ready = rd.u8();
             uint8_t aiLevel = rd.u8();
+            const uint32_t seenRev = rd.u32();   // the room revision the sender last saw
             if (!rd.ok || slot < 0 || slot >= kMaxSlots || r->running) return;
             bool isHost = (r->hostId == c.id);
             // A player edits only their own slot; the host may edit any.
             if (!isHost && slot != c.slot) return;
             SlotInfo& s = r->slots[slot];
+            const SlotInfo before = s;
             // Only the server seats a human (JoinGame, MoveSeat, leaving), so in the
             // lobby a HUMAN slot is exactly one with a client. A host edit never
             // changes a seated slot's type nor makes an empty one HUMAN: an edit sent
@@ -2305,9 +2587,24 @@ void Server::gameMsg(Client& c, const Frame& f) {
             s.faction = faction % 5;
             s.color = color % 10;
             s.team = uint8_t(team % kMaxSlots);
-            s.ready = ready ? 1 : 0;
+            // READY: only a seat's own player changes it, never the host for someone else; a
+            // guest's READY counts only for the room it saw (a change it had not seen yet
+            // would have it ready for a game it never looked at). An OPEN or CLOSED seat is
+            // never ready.
+            const int owner = r->slotClient[slot];
+            if (s.type == 0 || s.type == 3) s.ready = 0;
+            else if (owner >= 0 && uint32_t(owner) != c.id) {}   // the host editing a guest's seat
+            else if (s.type == 1 && owner != int(r->hostId)) s.ready = ready && seenRev == r->roomRev ? 1 : 0;
+            else s.ready = ready ? 1 : 0;
             // 0=passive 1=easy 2=normal 3=hard 4=absurd 5=absurdly defensive 6=classic (DEFAULT)
             s.aiLevel = aiLevel >= tak::ai::kAiLevels ? 2 : aiLevel;
+            // Any seat edit of the host's but its own READY is a change the guests ready again for.
+            SlotInfo unready = before; unready.ready = s.ready;
+            if (isHost && (unready.type != s.type || unready.faction != s.faction || unready.color != s.color ||
+                           unready.team != s.team || unready.aiLevel != s.aiLevel || unready.name != s.name)) {
+                const int unreadied = bumpRules(*r, kChangePlayers);
+                std::fprintf(stderr, "game %u: host changed the players (rev %u, %d unreadied)\n", r->id, r->roomRev, unreadied);
+            }
             broadcastLobby(*r);
             break;
         }
@@ -2320,10 +2617,43 @@ void Server::gameMsg(Client& c, const Frame& f) {
             Reader rd(f.payload.data(), f.payload.size());
             const int to = int(rd.u8());
             if (!rd.ok || rd.p != rd.end || r->running || !r->mission.empty()) return;
+            const bool isHost = r->hostId == c.id;
             const int from = c.slot;
-            if (from < 0 || from >= kMaxSlots || r->slotClient[from] != int(c.id)) return;   // spectators have no seat
+            const bool seated = from >= 0 && from < kMaxSlots && r->slotClient[from] == int(c.id);
+            if (to == kWatchSeat) {
+                // The seated host leaves its seat to watch (single player's WATCH). ALLOW
+                // SPECTATORS does not apply: it governs who ELSE may watch.
+                if (!isHost || !seated) return;
+                SlotInfo& s = r->slots[from];   // its colour and team stay with the open seat
+                s.type = 0; s.name.clear(); s.ready = 0;
+                r->slotClient[from] = -1;
+                r->spectators.push_back(c.id);
+                c.slot = -1;
+                const int unreadied = bumpRules(*r, kChangePlayers);
+                sendJoin(c, true, kWatchSeat, "", r);
+                broadcastLobby(*r);
+                std::fprintf(stderr, "client %u now watches game %u (rev %u, %d unreadied)\n", c.id, r->id, r->roomRev, unreadied);
+                break;
+            }
             if (to < 0 || to >= kMaxSlots || to == from || to >= r->cap) return;
             if (r->slots[to].type != 0 || r->slotClient[to] >= 0) return;
+            if (!seated) {
+                // A watching host sits down again; nobody else in the room is a lobby
+                // spectator with a seat to take.
+                const auto watching = std::find(r->spectators.begin(), r->spectators.end(), c.id);
+                if (!isHost || from != -1 || watching == r->spectators.end()) return;
+                r->spectators.erase(watching);
+                SlotInfo& s = r->slots[to];   // the seat's own side, colour and team
+                s.type = 1; s.name = c.name; s.ready = 0;
+                r->slotClient[to] = int(c.id);
+                c.slot = to;
+                const int unreadied = bumpRules(*r, kChangePlayers);
+                sendJoin(c, true, to, "", r);
+                broadcastLobby(*r);
+                std::fprintf(stderr, "client %u takes slot %d in game %u (rev %u, %d unreadied)\n", c.id, to, r->id,
+                             r->roomRev, unreadied);
+                break;
+            }
             // The player's side, colour, team and READY travel with them; the seat
             // they leave opens with the target's old colour and team, so the room's
             // defaults (slot N: colour N, team N) stay distinct.
@@ -2331,10 +2661,11 @@ void Server::gameMsg(Client& c, const Frame& f) {
             r->slots[from].type = 0; r->slots[from].name.clear(); r->slots[from].ready = 0;
             r->slotClient[to] = int(c.id); r->slotClient[from] = -1;
             c.slot = to;
+            // The host moving is a change of the room's players.
+            if (isHost) bumpRules(*r, kChangePlayers);
             // The mover learns its new seat the way it learned the first one, before
             // the table that shows it there.
-            Writer jr; jr.u8(1); jr.u8(uint8_t(to)); jr.str("");
-            c.conn.send(Msg::JoinResult, jr);
+            sendJoin(c, true, to, "", r);
             broadcastLobby(*r);
             std::fprintf(stderr, "client %u moved from slot %d to slot %d in game %u\n", c.id, from, to, r->id);
             break;
@@ -2347,7 +2678,13 @@ void Server::gameMsg(Client& c, const Frame& f) {
             int cid = r->slotClient[slot];
             if (cid >= 0 && uint32_t(cid) != c.id) {
                 auto it = clients_.find(uint32_t(cid));
-                if (it != clients_.end()) { leaveRoom(*it->second, "kicked"); it->second->conn.send(Msg::Bye, Writer{}); }
+                if (it != clients_.end()) {
+                    leaveRoom(*it->second, "kicked"); it->second->conn.send(Msg::Bye, Writer{});
+                    // A change of the room's players: the guests left ready again.
+                    const int unreadied = bumpRules(*r, kChangePlayers);
+                    broadcastLobby(*r);
+                    std::fprintf(stderr, "game %u: host changed the players (rev %u, %d unreadied)\n", r->id, r->roomRev, unreadied);
+                }
             }
             break;
         }
@@ -2389,34 +2726,42 @@ void Server::gameMsg(Client& c, const Frame& f) {
             // The only lobby spectator is a host who created the room to watch, whom
             // the rule never removes (see Spectate).
             o.allowSpectators = o.allowSpectators ? 1 : 0;
-            // Creation-only: lobby updates cannot change the selected pathfinder.
-            o.pathfindingMode = r->opts.pathfindingMode;
-            // MAP SCENARIO is creation-only too: players chose seats, sides and READY for the
-            // game it makes, and the room's open seats were sized for it at CreateGame.
+            o.powerCodes = o.powerCodes ? 1 : 0;
+            // MAP SCENARIO changes only with the map (SetRoomMap): the capacity it implies
+            // moves seats, which a rules change does not.
             o.mapScenario = r->opts.mapScenario;
-            // POWER CODES is creation-only as well: the players joined a room with that rule.
-            o.powerCodes = r->opts.powerCodes;
             if (o.stressTest || o.benchmark) o.mapScenario = 0;   // as CreateGame clears it
-            if (o.mapScenario) o.randomStarts = 0;
+            if (o.mapScenario) o.randomStarts = kStartsFixed;     // ownership and rule regions follow fixed seats
             if (!r->mission.empty()) o.doubleSight = 0;
             if (!rd.ok || rd.p!=rd.end) return;
             if(!(testWork_ || (loopbackOnly_ && !requireAuth_)) && (o.stressTest || o.benchmark)) {sendReject(c,"public benchmark/stress requests disabled");return;}
             o.speed = uint8_t(std::clamp<int>(o.speed, kMinGameSpeed, maxGameSpeed(o)));   // 0.1x .. 2x (a benchmark 11x)
             if (!r->running) {
-                // The unit limit is fixed when the room is created.
-                o.unitCap = r->opts.unitCap;
-                // Lobby: adopt the remaining options and rebroadcast the slot table.
+                // Lobby: adopt the options (protocol 323 adoption table). A campaign mission's
+                // rules are the mission's: only the speed and ALLOW SPECTATORS change there.
+                if (!r->mission.empty()) {
+                    const uint8_t speed = uint8_t(std::min<int>(o.speed, maxGameSpeed(r->opts))), spectators = o.allowSpectators;
+                    o = r->opts; o.speed = speed; o.allowSpectators = spectators;
+                }
+                // A Benchmark room keeps the unit limit it was made with.
+                if (r->opts.benchmark) o.unitCap = r->opts.unitCap;
                 o.gameMods = o.gameMods ? 1 : 0;
                 // Campaign mission rooms never run game mods.
                 if(!r->mission.empty())o.gameMods=0;
                 if(o.benchmark || r->opts.benchmark)o.gameMods=0;   // the Benchmark runs the plain retail data
                 if(o.gameMods!=r->opts.gameMods){
-                    r->modData.reset();r->modPackage.reset();
-                    r->mapVfs.reset();r->mapPackage.reset();
-                    for(auto& [id,peer]:clients_)if(peer->roomId==r->id){peer->mapReadyRoom=peer->mapOfferedRoom=0;peer->mapSend={};peer->mapReceive={};peer->validationId=0;peer->deferredMapOffer.reset();}
-                    for(auto& [id,peer]:clients_)if(peer->roomId==r->id){peer->modReady.clear();peer->modOffered.clear();peer->modSend={};peer->modReceive={};}
+                    r->modData.reset();r->modPackage.reset();r->modDigest.clear();
+                    resetRoomMap(*r);
+                    for(auto& [id,peer]:clients_)if(peer->roomId==r->id){peer->modReady.clear();peer->modOffered.clear();peer->modSend={};peer->modReceive={};peer->modValidationId=0;}
                 }
+                // Every rule but the speed is a change the guests ready again for.
+                const std::string changed = optionsChanged(r->opts, o);
                 r->opts = o;
+                if (!changed.empty()) {
+                    const int unreadied = bumpRules(*r, kChangeOptions);
+                    std::fprintf(stderr, "game %u: host changed the rules (%s; rev %u, %d unreadied)\n", r->id,
+                                 changed.c_str(), r->roomRev, unreadied);
+                }
                 broadcastLobby(*r);
             } else if (r->opts.speedUnlock && r->opts.speed != o.speed) {
                 // In-game: only speed can change (re-cadences the sim), and only if the
@@ -2431,6 +2776,8 @@ void Server::gameMsg(Client& c, const Frame& f) {
             break;
         }
         case Msg::StartGame: tryStart(c); break;
+        case Msg::SetRoomMap: setRoomMap(c, *r, f); break;
+        case Msg::SetRoomInfo: setRoomInfo(c, *r, f); break;
         case Msg::Loaded: {
             // The client reports its gameplay-data fingerprint with the room's game
             // mods mounted. With referee data we hold it to the room's canonical hash,
@@ -2863,7 +3210,7 @@ void Server::unseat(Client& c, const char* reason) {
         dropPendingCommands(c, *r);
         if (c.slot >= 0 && c.slot < kMaxSlots && r->slotClient[c.slot] == int(c.id)) r->slotClient[c.slot] = -1;
     }
-    c.replaying = false; c.validationId = 0; c.deferredMapOffer.reset();
+    c.replaying = false; c.mapValidationId = c.modValidationId = 0; c.deferredMapOffer.reset();
     c.state = Client::Lobby; c.roomId = 0; c.slot = -1; c.loaded = false;
     Writer w; w.str(reason); c.conn.send(Msg::Bye, w);
     c.conn.fail(reason);
@@ -3053,9 +3400,10 @@ bool Server::allowLobbyWork(Client& c,const Frame& f) {
         case Msg::ListGames: case Msg::JoinGame: case Msg::Spectate:
         case Msg::ModRequest: case Msg::ModReady: case Msg::ModError:
         case Msg::Chat: case Msg::MapRequest: case Msg::MapReady: case Msg::MapError:
+        case Msg::SetRoomMap: cost=4;break;   // its expensive part, a MapOffer, is charged on its own
         case Msg::Ping: case Msg::Pong: case Msg::SlotUpdate: case Msg::MoveSeat: case Msg::SetGameOptions:
         case Msg::LeaveGame: case Msg::Rejoin: case Msg::Kick: case Msg::SetPause:
-        case Msg::VoiceListen: break;
+        case Msg::VoiceListen: case Msg::SetRoomInfo: break;
         default:return true; // Login and command queues have their own budgets.
     }
     auto& keys=lobbyWorkKeys_;
@@ -3144,18 +3492,22 @@ void Server::announceLan(uint64_t now) {
                     for (const auto& [key, node] : root.children)
                         if (const std::string* en = node.value("english"); en && !en->empty()) lanTranslate_[lower(key)] = *en;
                 } catch (const std::exception&) {}
+            bool titled = false;
             if (const auto t = lanTranslate_.find(lower(r.mapId)); fresh && t != lanTranslate_.end() && lower(t->second) == lower(r.mapId))
-                it->second = t->second;
+                it->second = t->second, titled = true;
             else if (fresh) try {
                 const tak::hpi::Vfs& vfs = r.mapVfs ? *r.mapVfs : retail_.vfs;
                 std::string path = tak::hpi::findMap(vfs, r.mapId);
                 if (const auto dot = path.rfind('.'); dot != std::string::npos) path.resize(dot);
                 if (const auto ota = vfs.tryRead(path + ".ota")) {
                     const auto title = tak::tnt::Scenario::parse(std::string(ota->begin(), ota->end())).missionName;
-                    if (!title.empty() && lower(title) == lower(r.mapId)) it->second = title;
+                    if (!title.empty() && lower(title) == lower(r.mapId)) it->second = title, titled = true;
                 }
             } catch (const std::exception&) {}
             a.map = it->second;
+            // The raw id stands in until the map's package has verified (a map the server's
+            // install does not have): look again then, rather than keep the stand-in.
+            if (fresh && !titled && !r.mapVfs) lanMapTitles_.erase(it);
         }
         for (int i = 0; i < std::min(r.cap, int(kMaxSlots)); ++i)
             if (r.slots[i].type == 1 || r.slots[i].type == 2) ++a.players;

@@ -1,5 +1,6 @@
 #include "net/mappackage.h"
 #include "net/client.h"
+#include "net/netcompat.h"
 #include "sim/matchsetup.h"
 #include "tnt/mapgen.h"
 #include "tnt/tnt.h"
@@ -11,6 +12,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <thread>
@@ -169,6 +171,386 @@ static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) 
     throw std::runtime_error("solo authored network timed out: "+host.mapStatus()+"; "+host.error());
 }
 
+// A scripted loopback server for one MpClient (as spectator_client_test's): the client's
+// side of room editing and of the transfer ids, without takserver.
+struct FakeServer {
+    int listener = -1; uint16_t port = 0; net::Conn conn;
+    FakeServer() {
+        std::string error; listener = net::listenOn(0, error, true);
+        if (listener < 0) throw std::runtime_error(error);
+        sockaddr_storage address{}; socklen_t n = sizeof address;
+        if (getsockname(listener, reinterpret_cast<sockaddr*>(&address), &n)) throw std::runtime_error("getsockname");
+        port = address.ss_family == AF_INET ? ntohs(reinterpret_cast<sockaddr_in*>(&address)->sin_port)
+                                            : ntohs(reinterpret_cast<sockaddr_in6*>(&address)->sin6_port);
+    }
+    ~FakeServer() { if (listener >= 0) net::sockClose(listener); }
+    void accept(net::MpClient& client) {
+        for (auto end = std::chrono::steady_clock::now() + std::chrono::seconds(2); std::chrono::steady_clock::now() < end;) {
+            client.poll();
+            sockaddr_storage address{}; socklen_t n = sizeof address;
+            int fd = int(::accept(listener, reinterpret_cast<sockaddr*>(&address), &n));
+            if (fd >= 0) { net::setupSocket(fd); conn = net::Conn(fd); return; }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        throw std::runtime_error("timed out accepting the client");
+    }
+    // Send the frames and let the client poll a few times (it answers a Ping inside the
+    // poll that reads it, before that poll's uploads go out), then a Ping: return what the
+    // client sent before its Pong (keepalives skipped), everything it did about them.
+    std::vector<net::Frame> exchange(net::MpClient& client, std::vector<std::pair<net::Msg, net::Writer>> frames = {}) {
+        for (const auto& [kind, w] : frames) conn.send(kind, w);
+        std::vector<net::Frame> out;
+        bool pinged = false;
+        for (auto end = std::chrono::steady_clock::now() + std::chrono::seconds(3); std::chrono::steady_clock::now() < end;) {
+            for (int i = 0; i < 10; ++i) {
+                conn.flushWrite(); client.poll();
+                if (!conn.recv()) throw std::runtime_error("fake server receive");
+                net::Frame f;
+                while (conn.poll(f)) {
+                    if (f.kind == net::Msg::Pong && pinged) return out;
+                    if (f.kind == net::Msg::Pong) continue;
+                    if (f.kind == net::Msg::Ping) { conn.send(net::Msg::Pong); continue; }
+                    out.push_back(f);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            if (!pinged) { conn.send(net::Msg::Ping); pinged = true; }
+        }
+        throw std::runtime_error("timed out waiting for the client to process a message");
+    }
+};
+static const net::Frame* findFrame(const std::vector<net::Frame>& frames, net::Msg kind) {
+    for (const auto& f : frames) if (f.kind == kind) return &f;
+    return nullptr;
+}
+
+// MpClient's side of protocol 323: the host's map transfer follows the server's MapRequest
+// (digest and xfer), and setRoomMap changes nothing until its serial is answered.
+static void clientRoomEdits(const std::filesystem::path& root, const net::maps::Package& package) {
+    std::vector<hpi::PackFile> files;
+    for (const auto& [path, bytes] : *package.files) files.push_back({path, bytes});
+    write(root / "data" / "Maps" / "edit-test.kmp", hpi::pack(files));
+    FakeServer server; net::MpClient client;
+    client.setMapRoot(root / "data"); client.setCacheRoot(root / "cache");
+    check(client.connect("127.0.0.1", server.port, "edit-host"), "fake server connect");
+    server.accept(client);
+    check(findFrame(server.exchange(client), net::Msg::Hello) != nullptr, "hello");
+    { net::Writer w; w.u32(5); w.str("edit-host"); w.u8(0); server.exchange(client, {{net::Msg::Welcome, w}}); }
+    check(client.state() == net::MpClient::State::Lobby, "fake server: in the lobby");
+    net::GameOptions opts; opts.gameMods = 0;
+    client.createGame("edit", "", "test", opts, 2);
+    check(findFrame(server.exchange(client), net::Msg::CreateGame) != nullptr, "create request");
+    auto lobby = [&](const std::string& mapId, uint32_t rev, uint32_t serial) {
+        net::RoomState r; r.id = 9; r.name = "edit"; r.mapId = mapId; r.hostId = 5; r.capacity = 2;
+        r.roomRev = rev; r.mapSerial = serial; r.slots[0].type = 1; r.slots[0].name = "edit-host";
+        for (int i = 2; i < net::kMaxSlots; ++i) r.slots[i].type = 3;
+        net::Writer w; net::put(w, r); return w;
+    };
+    auto joinResult = [](uint8_t slot, uint32_t rev) { net::Writer w; w.u8(1); w.u8(slot); w.str(""); w.u32(rev); return w; };
+    auto mapRequest = [](const std::string& digest, uint32_t xfer) { net::Writer w; w.u32(9); w.str(digest); w.u32(xfer); return w; };
+    auto out = server.exchange(client, {{net::Msg::JoinResult, joinResult(0, 1)}, {net::Msg::LobbyState, lobby("test", 1, 0)}});
+    const auto* offer = findFrame(out, net::Msg::MapOffer);
+    check(offer != nullptr, "the host offers its room's map");
+    net::Reader offered(offer->payload.data(), offer->payload.size());
+    offered.u32(); const auto offeredMap = offered.str(), digest = offered.str();
+    check(offeredMap == "test" && digest == client.mapPackage()->digest, "the offer is the room's map");
+    // A MapRequest for another package (the map changed since it was sent) is stale.
+    out = server.exchange(client, {{net::Msg::MapRequest, mapRequest(std::string(64, '0'), 3)}});
+    check(!findFrame(out, net::Msg::MapChunk) && !findFrame(out, net::Msg::MapError) && client.error().empty(),
+          "a stale MapRequest at the host starts no upload and is no error");
+    // The current one starts the upload with its xfer; a newer one starts it over from 0.
+    auto firstChunk = [&](const std::vector<net::Frame>& frames, uint32_t& xfer, uint32_t& offset) {
+        const auto* chunk = findFrame(frames, net::Msg::MapChunk);
+        check(chunk != nullptr, "the host uploads its package");
+        net::Reader r(chunk->payload.data(), chunk->payload.size());
+        check(r.u32() == 9, "a chunk names its room"); xfer = r.u32(); offset = r.u32();
+    };
+    uint32_t xfer = 0, offset = 1;
+    firstChunk(server.exchange(client, {{net::Msg::MapRequest, mapRequest(digest, 3)}}), xfer, offset);
+    check(xfer == 3 && offset == 0, "the upload carries the request's xfer, from offset 0");
+    firstChunk(server.exchange(client, {{net::Msg::MapRequest, mapRequest(digest, 4)}}), xfer, offset);
+    check(xfer == 4 && offset == 0, "a newer request starts the upload over from offset 0");
+
+    // setRoomMap: nothing changes when it is sent; a refusal leaves everything as it was.
+    const auto recipe = mapgen::encodeMapId(mapgen::Params{});
+    const auto before = client.mapPackage();
+    check(client.roomEditable() && client.setRoomMap(recipe, 2, false, 0) && client.roomMapPending() == 1, "a map change is sent");
+    check(!client.setRoomMap(recipe, 2, false, 0) && !client.roomError().empty(), "one map change at a time");
+    out = server.exchange(client);
+    {
+        const auto* request = findFrame(out, net::Msg::SetRoomMap);
+        check(request != nullptr, "SetRoomMap sent");
+        net::Reader r(request->payload.data(), request->payload.size());
+        const uint32_t serial = r.u32(); const auto mapId = r.str();
+        check(serial == 1 && mapId == recipe && r.u8() == 2 && r.u8() == 0 && r.u8() == 0 && r.ok && r.p == r.end,
+              "SetRoomMap: serial, map, capacity, scenario, start mode");
+    }
+    check(client.room().mapId == "test" && client.mapPackage() == before, "nothing changes before the answer");
+    {
+        net::Writer refused; refused.u8(uint8_t(net::RoomRequest::Map)); refused.u32(1); refused.str("not this one");
+        server.exchange(client, {{net::Msg::RoomError, refused}, {net::Msg::LobbyState, lobby("test", 1, 1)}});
+    }
+    check(client.roomMapAnswer().serial == 1 && client.roomMapAnswer().kind == net::MpClient::RoomMapAnswer::Refused &&
+          client.roomMapAnswer().why == "not this one" && client.roomMapPending() == 0 &&
+          client.roomError() == "not this one" && client.roomErrorFor() == net::RoomRequest::Map,
+          "a refused map change is answered, with the reason");
+    check(client.room().mapId == "test" && client.mapPackage() == before && client.error().empty(),
+          "a refusal changes no transfer state");
+    // The next one is numbered past what the room answered, and its answer is the LobbyState
+    // carrying its serial.
+    check(client.setRoomMap(recipe, 2, false, 0) && client.roomMapPending() == 2 && client.roomError().empty(),
+          "the next serial follows the room's");
+    server.exchange(client);
+    const uint64_t seq = client.lobbySeq();
+    server.exchange(client, {{net::Msg::LobbyState, lobby(recipe, 2, 2)}});
+    check(client.lobbySeq() == seq + 1, "lobbySeq counts LobbyStates");
+    check(client.roomMapAnswer().serial == 2 && client.roomMapAnswer().kind == net::MpClient::RoomMapAnswer::Accepted &&
+          client.roomMapPending() == 0 && client.room().mapId == recipe && client.mapStatus() == "MAP READY" &&
+          client.room().roomRev == 2, "an accepted map change becomes the room's map");
+    // The same map, scenario and start mode: nothing to ask.
+    check(client.setRoomMap(recipe, 2, false, 0) && client.roomMapPending() == 0 && !findFrame(server.exchange(client), net::Msg::SetRoomMap),
+          "an unchanged map is not asked for");
+    check(!client.setRoomMap("No Such Map", 2, false, 0) && !client.roomError().empty() && client.roomMapPending() == 0,
+          "a map this host cannot build is refused here");
+    // Back to the file map: built into a pending package, offered only once answered.
+    check(client.setRoomMap("test", 2, false, 0) && client.roomMapPending() == 3, "file map change sent");
+    out = server.exchange(client, {{net::Msg::LobbyState, lobby(recipe, 2, 2)}});
+    check(client.roomMapPending() == 3 && client.room().mapId == recipe && !findFrame(out, net::Msg::MapOffer),
+          "another LobbyState is not the answer, and offers nothing");
+    out = server.exchange(client, {{net::Msg::LobbyState, lobby("test", 3, 3)}});
+    offer = findFrame(out, net::Msg::MapOffer);
+    check(client.roomMapAnswer().kind == net::MpClient::RoomMapAnswer::Accepted && client.roomMapPending() == 0 &&
+          offer != nullptr && client.mapPackage() && client.mapPackage()->digest == digest,
+          "the confirmed file map's pending package is offered");
+    // WATCH: the server's JoinResult 0xFF opens the host's seat in the client's table too.
+    client.watch();
+    out = server.exchange(client);
+    {
+        const auto* move = findFrame(out, net::Msg::MoveSeat);
+        check(move && move->payload.size() == 1 && move->payload[0] == net::kWatchSeat, "watch asks for kWatchSeat");
+    }
+    server.exchange(client, {{net::Msg::JoinResult, joinResult(net::kWatchSeat, 4)}});
+    check(client.isSpectator() && client.room().mySlot == -1 && client.room().slots[0].type == 0 &&
+          client.room().slots[0].name.empty() && client.room().roomRev == 4, "watching: the old seat opens");
+    // A START pending: the room is not editable.
+    client.startGame();
+    check(!client.roomEditable() && !client.setRoomMap(recipe, 2, false, 0) && !client.roomError().empty() &&
+          !findFrame(server.exchange(client), net::Msg::SetRoomMap), "no map change once START is pending");
+    std::cout << "room editing (client): stale and newer MapRequests, refused/accepted/unchanged map changes, pending package, watch, START lock passed\n";
+}
+
+// A map only `root` has: a shipped map's package under a new name (its own digest, so no
+// server or guest holds it until it is sent).
+static void hostOnlyMap(const std::filesystem::path& root, const hpi::Vfs& data, const std::string& source,
+                        const std::string& stem) {
+    const auto package = net::maps::build(data, source);
+    const auto from = package->mapPath.substr(0, package->mapPath.size() - 4);
+    std::vector<hpi::PackFile> entries;
+    for (const auto& [name, bytes] : *package->files)
+        entries.push_back({name.starts_with(from + ".") ? "kmap/" + stem + name.substr(from.size()) : name, bytes});
+    write(root / "Maps" / (stem + ".kmp"), hpi::pack(entries));
+}
+
+// --room-edit: protocol 323's map changes between real MpClients through a real takserver
+// (run by server_room_edit_test.py, which checks the server's log afterwards). Each case
+// is a fresh room of fresh connections.
+static int roomEdit(uint16_t port, const std::filesystem::path& hostRoot, const std::filesystem::path& peerRoot,
+                    const std::filesystem::path& thirdRoot) {
+    using S = net::MpClient::State;
+    using Answer = net::MpClient::RoomMapAnswer;
+    auto base = hpi::mountRetailRoot(peerRoot);
+    const std::string A = "Room Edit A", B = "Room Edit B", C = "Room Edit C", KOTH = "King of the Hill", INNER = "Inner Circle";
+    hostOnlyMap(hostRoot, base, INNER, "room edit a");    // ~6 MB: the server must take an upload
+    hostOnlyMap(hostRoot, base, KOTH, "room edit b");     // small: guests download it
+    hostOnlyMap(hostRoot, base, "Ulasem Arena", "room edit c");
+    const auto cacheBase = std::filesystem::temp_directory_path() / ("tak-room-edit-" + crypto::toHex(crypto::randomVec(8)));
+    struct CleanCache { std::filesystem::path p; ~CleanCache() { std::error_code ec; std::filesystem::remove_all(p, ec); } } clean{cacheBase};
+    sim::TypeRegistry reg; sim::setupRegistry(reg, base, true);
+    int made = 0;
+    std::map<const net::MpClient*, std::vector<std::string>> history;   // each client's map status changes
+    auto client = [&](const std::filesystem::path& root, const std::string& name) {
+        auto c = std::make_unique<net::MpClient>();
+        c->setMapRoot(root); c->setCacheRoot(cacheBase / (name + std::to_string(++made)));   // nothing downloaded yet
+        c->setDataHash(hpi::gameplayHash(hpi::mountRetailRoot(root)));
+        check(c->connect("127.0.0.1", port, name), "room edit connect");
+        return c;
+    };
+    auto pump = [&](const std::vector<net::MpClient*>& clients, double seconds, const std::function<bool()>& done,
+                    const std::string& what) {
+        const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(int(seconds * 1000));
+        while (std::chrono::steady_clock::now() < end) {
+            for (auto* c : clients) {
+                if (!c->poll()) throw std::runtime_error(what + ": a client lost its connection: " + c->error());
+                auto& seen = history[c];
+                if (seen.empty() || seen.back() != c->mapStatus()) seen.push_back(c->mapStatus());
+            }
+            if (done()) return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        throw std::runtime_error(what + ": timed out");
+    };
+    auto saw = [&](const net::MpClient& c, const std::string& text) {
+        const auto& seen = history[&c];
+        return std::any_of(seen.begin(), seen.end(), [&](const std::string& s) { return s.find(text) != std::string::npos; });
+    };
+    // A room of `mapId` with the guests seated (slots 1, 2, ...), every client in it.
+    auto open = [&](net::MpClient& host, const std::vector<net::MpClient*>& guests, const std::string& mapId, uint8_t cap) {
+        std::vector<net::MpClient*> all{&host}; all.insert(all.end(), guests.begin(), guests.end());
+        pump(all, 10, [&] { return std::all_of(all.begin(), all.end(), [](auto* c) { return c->state() == S::Lobby; }); }, "lobby");
+        net::GameOptions o; o.gameMods = 0;
+        host.createGame("room edit", "", mapId, o, cap);
+        pump(all, 10, [&] { return host.room().id != 0; }, "room created");
+        for (auto* g : guests) {
+            g->joinGame(host.room().id, "");
+            pump(all, 10, [&] { return g->state() == S::InRoom && g->room().id == host.room().id; }, "guest seated");
+        }
+        return all;
+    };
+    auto ready = [&](net::MpClient& c) {
+        const int slot = c.room().mySlot;
+        c.setSlot(slot, 1, uint8_t(slot % 5), uint8_t(slot), uint8_t(slot), 1);
+    };
+    auto readyAll = [&](const std::vector<net::MpClient*>& all) {
+        for (auto* c : all) ready(*c);
+        pump(all, 20, [&] {
+            const auto& r = all[0]->room();
+            return r.mapsReady && std::all_of(all.begin(), all.end(), [&](auto* c) {
+                return c->room().mySlot >= 0 && r.slots[c->room().mySlot].ready && c->room().roomRev == r.roomRev; });
+        }, "every player ready and every map verified");
+    };
+    // Ask for a map change and wait for its answer.
+    auto change = [&](const std::vector<net::MpClient*>& all, const std::string& mapId, uint8_t cap, bool scenario,
+                      Answer::Kind want, const std::string& what) {
+        auto& host = *all[0];
+        check(host.setRoomMap(mapId, cap, scenario, 0), (what + ": setRoomMap refused locally: " + host.roomError()).c_str());
+        const uint32_t serial = host.roomMapPending();
+        check(serial != 0, (what + ": nothing was sent").c_str());
+        pump(all, 10, [&] { return host.roomMapAnswer().serial == serial; }, what);
+        check(host.roomMapAnswer().kind == want && host.roomMapPending() == 0,
+              (what + ": answered " + std::to_string(int(host.roomMapAnswer().kind)) + " " + host.roomMapAnswer().why).c_str());
+    };
+    auto noMapError = [&](const std::vector<net::MpClient*>& all, const std::string& what) {
+        for (auto* c : all) check(!saw(*c, "MAP ERROR") && c->error().empty(), (what + ": a MAP ERROR").c_str());
+    };
+    auto bothStart = [&](const std::vector<net::MpClient*>& all, const std::string& what) {
+        pump(all, 20, [&] { return std::all_of(all.begin(), all.end(), [](auto* c) { return c->starting() || c->state() == S::InGame; }); }, what);
+    };
+
+    {   // change map: the guest downloads the new map, is unready, and both play it.
+        auto host = client(hostRoot, "edit-host"), guest = client(peerRoot, "edit-guest");
+        auto all = open(*host, {guest.get()}, KOTH, 4);
+        readyAll(all);
+        const uint32_t rev = host->room().roomRev;
+        change(all, B, 4, false, Answer::Accepted, "change map");
+        pump(all, 10, [&] { return guest->room().mapId == B; }, "the guest sees the new map");
+        check(host->room().roomRev > rev && (host->room().changeBits & net::kChangeMap) && !host->room().slots[1].ready,
+              "a map change unreadies the guest");
+        pump(all, 60, [&] { return host->room().mapsReady && guest->mapStatus() == "MAP VERIFIED"; }, "the new map verifies");
+        check(saw(*guest, "DOWNLOADING MAP"), "the guest did not download the host's new map");
+        noMapError(all, "change map");
+        readyAll(all);
+        host->startGame();
+        bothStart(all, "change map: start");
+        check(host->mapPackage() && guest->mapPackage() && host->mapPackage()->digest == guest->mapPackage()->digest &&
+              host->startRoom().mapId == B && guest->startRoom().mapId == B, "both start on the new map");
+        // Both load it and play 60 matching ticks.
+        sim::World wh, wg; uint32_t th = 0, tg = 0; std::map<uint32_t, uint64_t> hashes;
+        for (auto [c, world] : {std::pair{host.get(), &wh}, std::pair{guest.get(), &wg}}) {
+            hpi::Vfs view(&base); view.setMapFiles(c->mapPackage()->files);
+            sim::MatchConfig cfg; cfg.vfs = &view; cfg.mapPath = c->mapPackage()->mapPath;
+            cfg.startSeed = c->startSeed(); cfg.startMode = sim::StartMode(net::normalizeStartMode(c->startRoom().opts.randomStarts));
+            cfg.unitCap = c->startRoom().opts.unitCap;
+            cfg.slots = {{true, 0, 0, 1, false, false}, {true, 1, 1, 1, false, false}};
+            sim::setupMatch(*world, reg, cfg);
+            c->reportLoaded(c->dataHash());
+        }
+        auto advance = [&](net::MpClient& c, sim::World& world, uint32_t& tick, bool reference) {
+            net::Bundle bundle;
+            while (tick < 60 && (reference || hashes.count(tick)) && c.takeBundle(tick, bundle)) {
+                for (const auto& cmd : bundle.cmds) sim::applyCommand(world, reg, cmd);
+                for (const auto& e : bundle.events) sim::applyEvent(world, e);
+                world.tick(1.f / 30.f);
+                const auto hash = world.stateHash();
+                if (reference) hashes[tick] = hash; else check(hashes.at(tick) == hash, "change map: the worlds diverged");
+                if (tick % net::kHashPeriod == 0) c.sendHash(tick, hash);
+                ++tick;
+            }
+        };
+        pump(all, 30, [&] { advance(*host, wh, th, true); advance(*guest, wg, tg, false); return th == 60 && tg == 60; },
+             "change map: 60 ticks");
+        std::cout << "change map: the guest downloaded the new map, readied again; 60 matching ticks on it\n";
+    }
+    {   // flip: A -> B -> A, each as soon as the last is answered.
+        auto host = client(hostRoot, "flip-host"), guest = client(peerRoot, "flip-guest");
+        auto all = open(*host, {guest.get()}, INNER, 4);
+        readyAll(all);
+        change(all, B, 4, false, Answer::Accepted, "flip to B");
+        change(all, INNER, 4, false, Answer::Accepted, "flip back");
+        pump(all, 60, [&] { return host->room().mapId == INNER && guest->room().mapId == INNER && host->room().mapsReady &&
+                                   guest->room().mapsReady; }, "flip: verified on the first map");
+        noMapError(all, "flip");
+        std::cout << "flip: A -> B -> A ends verified on A, no MAP ERROR\n";
+    }
+    {   // mid-upload: the host is uploading a map the server lacks when it changes the map.
+        auto host = client(hostRoot, "upload-host"), guest = client(peerRoot, "upload-guest");
+        auto all = open(*host, {guest.get()}, A, 4);
+        pump(all, 30, [&] { return host->mapStatus() == "UPLOADING MAP TO SERVER"; }, "mid-upload: the upload starts");
+        check(!host->room().mapsReady, "mid-upload: the map verified before the change");
+        change(all, KOTH, 4, false, Answer::Accepted, "mid-upload change");
+        pump(all, 30, [&] { return host->room().mapId == KOTH && host->room().mapsReady && guest->room().mapsReady; },
+             "mid-upload: the new map verifies");
+        noMapError(all, "mid-upload");
+        std::cout << "mid-upload: the change during an upload verifies the new map, no MAP ERROR\n";
+    }
+    {   // refused mid-upload: three seated humans refuse a 2-start map while the host uploads.
+        auto host = client(hostRoot, "refused-host"), guest = client(peerRoot, "refused-guest"), third = client(thirdRoot, "refused-third");
+        auto all = open(*host, {guest.get(), third.get()}, C, 4);
+        const bool uploading = !host->room().mapsReady;
+        change(all, INNER, 2, false, Answer::Refused, "refused mid-upload");
+        check(host->roomMapAnswer().why.find("3 players are seated") != std::string::npos, "refused mid-upload: the reason");
+        pump(all, 60, [&] { return host->room().mapId == C && std::all_of(all.begin(), all.end(), [](auto* c) {
+                                return c->room().mapsReady; }); }, "refused mid-upload: the map still verifies");
+        noMapError(all, "refused mid-upload");
+        std::cout << "refused mid-upload: refused" << (uploading ? " while the host uploaded" : "") << "; the map still verifies\n";
+    }
+    {   // MAP SCENARIO on and off, then START.
+        auto host = client(hostRoot, "scenario-host"), guest = client(peerRoot, "scenario-guest");
+        auto all = open(*host, {guest.get()}, KOTH, 4);
+        readyAll(all);
+        change(all, KOTH, 4, true, Answer::Accepted, "scenario on");
+        check(host->room().opts.mapScenario == 1 && !host->room().slots[1].ready, "scenario on: unready guest");
+        change(all, KOTH, 4, false, Answer::Accepted, "scenario off");
+        check(host->room().opts.mapScenario == 0, "scenario off");
+        readyAll(all);
+        host->startGame();
+        bothStart(all, "scenario toggle then START");
+        std::cout << "scenario toggle, then START: both start\n";
+    }
+    {   // A refused change, then START.
+        auto host = client(hostRoot, "refusal-host"), guest = client(peerRoot, "refusal-guest");
+        auto all = open(*host, {guest.get()}, KOTH, 4);
+        readyAll(all);
+        change(all, "~gen1~09000100000000000000038001800108ffffffffff0004", 2, false, Answer::Refused, "unknown recipe");
+        check(host->room().slots[1].ready, "a refused change unreadied the guest");
+        host->startGame();
+        bothStart(all, "refused change then START");
+        std::cout << "refused SetRoomMap, then START: both start\n";
+    }
+    {   // START, then a change before GameStarting: refused here, the game starts on the old map.
+        auto host = client(hostRoot, "start-host"), guest = client(peerRoot, "start-guest");
+        auto all = open(*host, {guest.get()}, KOTH, 4);
+        readyAll(all);
+        host->startGame();
+        check(!host->roomEditable() && !host->setRoomMap(INNER, 4, false, 0) && host->roomMapPending() == 0,
+              "a change after START was not refused locally");
+        bothStart(all, "START then change");
+        check(host->startRoom().mapId == KOTH && guest->startRoom().mapId == KOTH, "the game starts on the old map");
+        std::cout << "START, then setRoomMap: refused locally; the game starts on the old map\n";
+    }
+    std::cout << "PASS: room editing between real clients\n";
+    return 0;
+}
+
 int main(int argc, char** argv) try {
     if(argc>=4 && argc<=6 && std::string(argv[1])=="--export-package") {
         auto data=hpi::mountRetailRoot(argv[2]);
@@ -197,6 +579,7 @@ int main(int argc, char** argv) try {
         write(argv[3],hpi::pack(files));return 0;
     }
     if(argc==5 && std::string(argv[1])=="--solo-network")return soloNetwork(uint16_t(std::stoi(argv[2])),argv[3],argv[4]);
+    if(argc==6 && std::string(argv[1])=="--room-edit")return roomEdit(uint16_t(std::stoi(argv[2])),argv[3],argv[4],argv[5]);
     if (argc >= 5 && std::string(argv[1]) == "--network") {
         const auto port = uint16_t(std::stoi(argv[2]));
         const bool diplomacy=std::getenv("TAK_DIPLOMACY_NETWORK")!=nullptr;
@@ -564,20 +947,28 @@ int main(int argc, char** argv) try {
     check(net::maps::build(changed,"test")->digest != p->digest, "art mismatch ignored");
     hpi::Vfs room(&source); room.setMapFiles(bad);
     check(source.read("terrain/00001234.jpg").size()==3 && room.read("terrain/00001234.jpg").size()==4,"room data leaked");
-    net::maps::Receiver receive; receive.begin(1,uint32_t(p->bytes.size()),p->digest);
+    net::maps::Receiver receive; receive.begin(1,7,uint32_t(p->bytes.size()),p->digest);
     for (size_t off=0; off<p->bytes.size();) {
-        net::Writer w; w.u32(1); w.u32(uint32_t(off));
+        net::Writer w; w.u32(1); w.u32(7); w.u32(uint32_t(off));
         size_t n=std::min(net::maps::kChunkBytes,p->bytes.size()-off);
         w.b.insert(w.b.end(),p->bytes.begin()+off,p->bytes.begin()+off+n);
-        net::Reader r(w.b.data(),w.b.size()); receive.append(r); off+=n;
+        net::Reader r(w.b.data(),w.b.size()); off+=n;
+        check(receive.append(r)==(off==p->bytes.size()?net::maps::Append::Done:net::maps::Append::More),"chunk progress");
     }
     check(receive.complete() && receive.bytes==p->bytes,"chunk assembly");
-    rejects([&]{receive.begin(1,uint32_t(net::maps::kMaxBytes+1),p->digest);},"oversized offer");
-    receive.begin(1,uint32_t(p->bytes.size()),p->digest);
-    net::Writer wrong; wrong.u32(2); wrong.u32(0); wrong.u8(1);
-    rejects([&]{net::Reader r(wrong.b.data(),wrong.b.size());receive.append(r);},"wrong room chunk");
-    wrong.b[0]=1; wrong.b[4]=1;
-    rejects([&]{net::Reader r(wrong.b.data(),wrong.b.size());receive.append(r);},"out-of-order chunk");
+    rejects([&]{receive.begin(1,7,uint32_t(net::maps::kMaxBytes+1),p->digest);},"oversized offer");
+    receive.begin(1,7,uint32_t(p->bytes.size()),p->digest);
+    // A chunk of another room, or of an earlier request (xfer) of this one, is left over
+    // from a transfer that is over: dropped quietly, never a MAP ERROR.
+    auto chunk=[](uint32_t room,uint32_t xfer,uint32_t offset){net::Writer w;w.u32(room);w.u32(xfer);w.u32(offset);w.u8(1);return w;};
+    auto append=[&](const net::Writer& w){net::Reader r(w.b.data(),w.b.size());return receive.append(r);};
+    check(append(chunk(2,7,0))==net::maps::Append::Stale && receive.bytes.empty(),"another room's chunk is stale");
+    check(append(chunk(1,6,0))==net::maps::Append::Stale && receive.bytes.empty(),"an earlier transfer's chunk is stale");
+    rejects([&]{append(chunk(1,7,1));},"out-of-order chunk");
+    {
+        net::maps::Receiver idle;net::Writer w=chunk(1,7,0);net::Reader r(w.b.data(),w.b.size());
+        check(idle.append(r)==net::maps::Append::Stale,"a chunk with no transfer under way is stale");
+    }
     net::Writer hostile; hostile.u32(2); hostile.str("kmap/../evil.tnt"); hostile.u32(1);
     rejects([&]{net::maps::decode(hostile.b,"");},"traversal accepted");
     hostile={}; hostile.u32(2); hostile.str("kmap/test.tnt"); hostile.u32(2); hostile.str("scripts/evil.cob"); hostile.u32(1); hostile.u8(0);
@@ -608,6 +999,7 @@ int main(int argc, char** argv) try {
         check(package->mapPath=="kmap/test.tnt" && package->files->count("kmap/test.recipe"),
               "a saved random map of another generator version is not playable as an ordinary map");
     }
+    clientRoomEdits(root/"client-edit", *p);
     if (argc == 2) {
         auto vfs=hpi::mountRetailRoot(argv[1]);
         {

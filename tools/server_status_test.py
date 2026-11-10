@@ -106,8 +106,8 @@ def create_room(peer, name, private=False):
 
 def start_room(peer, baseline):
     values = baseline[3][0][0]
-    peer.send('SlotUpdate', bytes([0, 1, values[1], values[2], values[3], 1, values[5]]))
-    peer.send('SlotUpdate', bytes([1, 2, 1, 1, 1, 1, 0]))
+    auth.slot_update(peer, 0, 1, values[1], values[2], values[3], 1, values[5])
+    auth.slot_update(peer, 1, 2, 1, 1, 1, 1, 0)
     peer.send('StartGame')
     peer.receive('GameStarting')
     # Deliberately omit Loaded: the room has started, but its simulation waits

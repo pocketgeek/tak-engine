@@ -126,11 +126,20 @@ def join(p, room, slot):
 
 
 def ready_and_start(host, players, ai=()):
-    """Ready every seated player (each its own slot), seat AIs, and start."""
-    for p in players:
-        p.send('SlotUpdate', bytes([p.slot, 1, p.slot % 5, p.slot, p.slot, 1, 2]))
+    """Seat AIs, ready every seated player (each its own slot), and start. The players
+    ready on the room with the AIs seated: a host's change unreadies the guests, and a
+    READY sent on an older revision does not count (protocol 323)."""
     for slot in ai:
-        host.send('SlotUpdate', bytes([slot, 2, slot % 5, slot, slot, 1, 2]))
+        auth.slot_update(host, slot, 2, slot % 5, slot, slot, 1, 2)
+    if ai:
+        def seated(q):
+            return any(all(lobby(auth.Reader(b))[3][s][0][0] == 2 for s in ai)
+                       for b in q.other.get(auth.MSG['LobbyState'], []))
+        assert host.pump(10, seated), 'the AIs were never seated'
+        for p in players:
+            assert p.pump(10, lambda q: q.rev >= host.rev), 'a player never saw the AIs seated'
+    for p in players:
+        auth.slot_update(p, p.slot, 1, p.slot % 5, p.slot, p.slot, 1, 2)
     want = len(players) + len(ai)
 
     def all_ready(q):

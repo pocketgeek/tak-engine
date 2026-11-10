@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """POWER CODES on a local server: the room option and Cmd::PowerCode.
 
-  room        the option travels in LobbyState and is creation-only (SetGameOptions keeps it)
+  room        the option travels in LobbyState, and the host may change it in a skirmish lobby
+              (SetGameOptions, protocol 323; a mission room keeps it off: server_room_edit_test)
   off         a power code sent while the room has POWER CODES off never reaches a tick bundle,
               and the connection stays up (the chat line carried it; it is not a fault)
   on          the same command is sequenced, owned by the sender's slot
@@ -36,13 +37,16 @@ def start(p, power):
     p.receive('JoinResult')
     state = lobby(p.receive('LobbyState'))
     assert state[2][POWER] == power, ('the room did not keep POWER CODES', power, state[2])
-    # Creation-only: the host cannot flip it in the lobby.
+    # The host may change it in a skirmish lobby, and back.
     p.send('SetGameOptions', options(power_codes=1 - power))
     state = lobby(p.receive('LobbyState'))
-    assert state[2][POWER] == power, 'SetGameOptions changed POWER CODES'
+    assert state[2][POWER] == 1 - power, 'SetGameOptions did not change POWER CODES in the lobby'
+    p.send('SetGameOptions', options(power_codes=power))
+    state = lobby(p.receive('LobbyState'))
+    assert state[2][POWER] == power, 'SetGameOptions did not change POWER CODES back'
     values = state[3][0][0]
-    p.send('SlotUpdate', bytes([0, 1, values[1], values[2], values[3], 1, values[5]]))
-    p.send('SlotUpdate', bytes([1, 2, 1, 1, 1, 1, 0]))
+    auth.slot_update(p, 0, 1, values[1], values[2], values[3], 1, values[5])
+    auth.slot_update(p, 1, 2, 1, 1, 1, 1, 0)
     p.send('StartGame'); p.receive('GameStarting'); p.send('Loaded')
 
 
@@ -73,7 +77,7 @@ def main():
         except BaseException:
             print((root / 'log').read_text()[-3000:])
             raise
-    print('PASS POWER CODES: room option creation-only, codes dropped while off, sequenced while on, forgeries refused')
+    print('PASS POWER CODES: room option set in the lobby, codes dropped while off, sequenced while on, forgeries refused')
 
 
 def run(a, root):

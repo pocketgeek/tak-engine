@@ -28,7 +28,8 @@ CAP = 4
 
 
 def recipe():
-    return '~gen1~' + (struct.pack('<HQBHH', 10, 1234, 0, 128, 128) + bytes([2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0])).hex()
+    # CAP players: the server opens a random map's seats from its player count.
+    return '~gen1~' + (struct.pack('<HQBHH', 10, 1234, 0, 128, 128) + bytes([CAP, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0])).hex()
 
 
 def joined(peer):
@@ -74,7 +75,7 @@ def main():
             room = lobby(host.receive('LobbyState'))[0]
 
             # host move: take slot 3 with a chosen side (Zhon) and colour 0.
-            host.send('SlotUpdate', bytes([0, 1, 3, 0, 0, 0, 2]))
+            auth.slot_update(host, 0, 1, 3, 0, 0, 0, 2)
             table(host)
             move(host, 2)
             assert joined(host) == 2, 'the host was not told its new seat'
@@ -85,7 +86,7 @@ def main():
 
             # stale host edit: READY on the row it just left, sent before the move
             # reached it, must not make that open seat a clientless HUMAN.
-            host.send('SlotUpdate', bytes([0, 1, 3, 0, 0, 1, 2]))
+            auth.slot_update(host, 0, 1, 3, 0, 0, 1, 2)
             quiet(host, 'a stale edit of the left seat')
 
             # joiner: the first open seat is the one the host left.
@@ -96,8 +97,8 @@ def main():
             table(host)
 
             # refused: occupied, AI, closed, past capacity, out of range, own seat.
-            host.send('SlotUpdate', bytes([3, 2, 1, 3, 3, 1, 2]))   # slot 4: AI
-            host.send('SlotUpdate', bytes([1, 3, 0, 1, 1, 0, 2]))   # slot 2: closed
+            auth.slot_update(host, 3, 2, 1, 3, 3, 1, 2)   # slot 4: AI
+            auth.slot_update(host, 1, 3, 0, 1, 1, 0, 2)   # slot 2: closed
             for _ in range(2):
                 table(host); table(player)
             for slot, what in ((2, 'occupied'), (3, 'AI'), (1, 'closed'), (CAP, 'past capacity'),
@@ -110,7 +111,7 @@ def main():
             quiet(player, 'malformed')
 
             # player move: reopen slot 2 and take it; the host sees slot 1 open.
-            host.send('SlotUpdate', bytes([1, 0, 0, 1, 1, 0, 2]))
+            auth.slot_update(host, 1, 0, 0, 1, 1, 0, 2)
             table(host); table(player)
             move(player, 1)
             assert joined(player) == 1
@@ -123,15 +124,15 @@ def main():
             # stale host type click: the host's table still showed slot 2 open; AI,
             # CLOSED or OPEN on it must not replace the player who just took it.
             for t in (2, 3, 0):
-                host.send('SlotUpdate', bytes([1, t, 0, 1, 1, 0, 2]))
+                auth.slot_update(host, 1, t, 0, 1, 1, 0, 2)
             quiet(host, 'a type change of a seated slot')
             quiet(player, 'a type change of a seated slot')
 
             # running: no moves once the game starts.
             v = slots[2][0]
-            host.send('SlotUpdate', bytes([2, 1, v[1], v[2], v[3], 1, v[5]]))
+            auth.slot_update(host, 2, 1, v[1], v[2], v[3], 1, v[5])
             v = slots[1][0]
-            player.send('SlotUpdate', bytes([1, 1, v[1], v[2], v[3], 1, v[5]]))
+            auth.slot_update(player, 1, 1, v[1], v[2], v[3], 1, v[5])
             for _ in range(2):
                 table(host); table(player)
             host.send('StartGame')

@@ -25,7 +25,7 @@ def recipe():
 
 def level(host, value):
     """Seat slot 2 as an AI (Verdana, colour 1, team 1) at `value`; the level the room shows."""
-    host.send('SlotUpdate', bytes([1, 2, 2, 1, 1, 1, value]))
+    auth.slot_update(host, 1, 2, 2, 1, 1, 1, value)
     slots = lobby(host.receive('LobbyState'))[3]
     assert slots[1][0][0] == 2, ('slot 2 is not an AI', slots[1])
     return slots[1][0][5]
