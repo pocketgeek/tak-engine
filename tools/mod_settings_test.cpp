@@ -41,25 +41,10 @@ int main() {
         const auto loaded=tak::loadSettings();
         if(loaded.gameModPacks!=s.gameModPacks || loaded.cosmeticModPacks!=s.cosmeticModPacks)
             throw std::runtime_error("mod selections did not survive save/load");
-        {   // Written under the new keys; the old override keys are neither written nor read.
+        {   // Written under the mods.* keys, one line per pack.
             std::ifstream saved(path);std::string text((std::istreambuf_iterator<char>(saved)),{});
             if(text.find("mods.gamePack = ")==text.npos || text.find("mods.cosmeticPack = ")==text.npos)
                 throw std::runtime_error("mod selections not written under the mods.* keys");
-            // 0.8.13's multiplayer GAME MODS toggle is gone: never written.
-            if(text.find("gameCreate.gameMods")!=text.npos)throw std::runtime_error("the removed GAME MODS key is still written");
-            if(text.find("overrides")!=text.npos)throw std::runtime_error("an old overrides key is still written");
-            std::ofstream(path)<<"overrides.hostPack = 4f6c64\noverrides.cosmeticPack = 4f6c64\ngameCreate.overrides = 2\n";
-            const auto old=tak::loadSettings();
-            if(!old.gameModPacks.empty() || !old.cosmeticModPacks.empty())
-                throw std::runtime_error("old overrides keys must be ignored (no migration)");
-            // A 0.8.13 file's gameCreate.gameMods loads (skipped like any unknown key)
-            // and vanishes on the next save.
-            std::ofstream(path)<<"gameCreate.gameMods = 1\nmods.gamePack = 4b656570\n";
-            auto kept=tak::loadSettings();
-            if(kept.gameModPacks!=std::vector<std::string>{"Keep"})throw std::runtime_error("a file with the old GAME MODS key did not load");
-            if(!tak::saveSettings(kept))throw std::runtime_error("save failed");
-            std::ifstream again(path);std::string resaved((std::istreambuf_iterator<char>(again)),{});
-            if(resaved.find("gameCreate.gameMods")!=resaved.npos)throw std::runtime_error("the old GAME MODS key survived a save");
         }
         {   // takclient --game-mod (Cartographer's TEST IN GAME): a launch-only selection never
             // replaces the player's saved ticks, until the player changes the ticks themselves.
@@ -118,13 +103,14 @@ int main() {
         }
         if(!tak::saveSettings(modeChanged) || tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Retail)
             throw std::runtime_error("Retail create preference did not persist");
-        // START LOCATIONS was a RANDOM on/off toggle under the same key: 0 and 1 keep their
-        // meaning (a hand-written true/on is RANDOM too), 2 is BY SLOT, and absent is FIXED.
+        // START LOCATIONS: 0 FIXED, 1 RANDOM, 2 BY SLOT; absent, out of range or not a
+        // number reads as the nearest choice or FIXED (true/on are not numbers: FIXED).
         struct StartsCase { const char* text; int expected; };
         for(const StartsCase& c:std::initializer_list<StartsCase>{
                 {"gameCreate.randomStarts = 0\n",0},{"gameCreate.randomStarts = 1\n",1},
-                {"gameCreate.randomStarts = true\n",1},{"gameCreate.randomStarts = on\n",1},
-                {"gameCreate.randomStarts = 2\n",2},{"gameCreate.crusades = 1\n",0}}) {
+                {"gameCreate.randomStarts = 2\n",2},{"gameCreate.randomStarts = 7\n",2},
+                {"gameCreate.randomStarts = true\n",0},{"gameCreate.randomStarts = on\n",0},
+                {"gameCreate.crusades = 1\n",0}}) {
             std::ofstream(path)<<c.text;
             if(tak::loadSettings().gameCreate.randomStarts!=c.expected)
                 throw std::runtime_error(std::string("start locations preference not read: ")+c.text);
@@ -136,8 +122,7 @@ int main() {
         }
         auto changed=s;changed.scorecardScale=1.0f;
         if(changed==s)throw std::runtime_error("scorecard scale changes not detected");
-        // Texture Filtering persists all three levels under its own key (the legacy
-        // migrations are checked with the other graphics keys below).
+        // Texture Filtering persists all three levels under its own key.
         for(int level=0;level<3;++level) {
             auto filtered=s;filtered.textureFilter=level;
             if(!tak::saveSettings(filtered) || tak::loadSettings().textureFilter!=level)
@@ -148,9 +133,9 @@ int main() {
             if(text.find("textureFilter = 2\n")==text.npos || text.find("bilinearFilter")!=text.npos)
                 throw std::runtime_error("texture filtering is not written as textureFilter");
         }
-        // GPU MEMORY LIMIT: every choice persists under its own key, a file from before
-        // the option (or one still saying "auto") loads as the 1280 MiB default, which is
-        // saved as its number, and a hand-edited value is snapped or falls back.
+        // GPU MEMORY LIMIT: every choice persists under its own key, a file without it loads
+        // as the 1280 MiB default, which is saved as its number, and a hand-edited value is
+        // snapped or falls back.
         for(int mib:tak::kGpuMemoryLimits) {
             auto limited=s;limited.gpuMemoryLimit=mib;
             if(!tak::saveSettings(limited) || tak::loadSettings().gpuMemoryLimit!=mib)
@@ -165,12 +150,12 @@ int main() {
             if(defText.find("\ngpuMemoryLimit = 1280\n")==defText.npos)throw std::runtime_error("the default must be written as 'gpuMemoryLimit = 1280'");
         }
         std::ofstream(path)<<"vsync = 1\n";
-        if(tak::loadSettings().gpuMemoryLimit!=1280)throw std::runtime_error("pre-option file must load GPU memory limit as 1280");
+        if(tak::loadSettings().gpuMemoryLimit!=1280)throw std::runtime_error("a file without the key must load GPU memory limit as 1280");
         struct GpuCase { const char* text; int expected; };
         for(const GpuCase& c:std::initializer_list<GpuCase>{
                 {"gpuMemoryLimit = 2048\n",2048},{"gpuMemoryLimit =  UNLIMITED \n",-1},{"gpuMemoryLimit = 900\n",1024},
                 {"gpuMemoryLimit = 64\n",512},{"gpuMemoryLimit = lots\n",1280},{"gpuMemoryLimit =\n",1280},
-                {"gpuMemoryLimit = auto\n",1280},{"gpuMemoryLimit = AUTO\n",1280},{"gpuMemoryLimit = 0\n",1280}}) {
+                {"gpuMemoryLimit = 0\n",1280}}) {
             std::ofstream(path)<<c.text;
             if(tak::loadSettings().gpuMemoryLimit!=c.expected)
                 throw std::runtime_error(std::string("GPU memory limit value not normalised: ")+c.text);
@@ -255,50 +240,24 @@ int main() {
             if(!tak::saveSettings(v) || !(tak::loadSettings()==v))
                 throw std::runtime_error("graphics preferences failed round trip");
         }
-        // Older keys, used only when textureFilter is absent. 0.7.25-0.7.28's
-        // bilinearFilter, Zoom Smoothing's Smooth and 0.7.24's bilinear = 1 were all
-        // the Units level; every other choice and every AA key has no successor and
-        // loads as the default (Everything).
-        struct Legacy { const char* text; int expected; };
-        for(const Legacy& c:std::initializer_list<Legacy>{
-                {"bilinear = 1\n",1},{"bilinear = 0\n",0},
-                {"zoomSmoothing = smooth\n",1},{"zoomSmoothing = 1\n",1},
-                {"zoomSmoothing = sharp\n",0},{"zoomSmoothing = off\n",0},{"zoomSmoothing = bogus\n",0},
-                // the newer Zoom Smoothing key wins over 0.7.24's bilinear, in either order
-                {"bilinear = 1\nzoomSmoothing = sharp\n",0},{"zoomSmoothing = sharp\nbilinear = 1\n",0},
-                {"bilinear = 0\nzoomSmoothing = smooth\n",1},
-                // bilinearFilter wins over both, in any order
-                {"zoomSmoothing = smooth\nbilinear = 1\nbilinearFilter = 0\n",0},
-                {"bilinearFilter = 0\nzoomSmoothing = smooth\nbilinear = 1\n",0},
-                {"bilinearFilter = 1\nzoomSmoothing = off\n",1},
-                // and textureFilter wins over everything, in any order
-                {"bilinearFilter = 1\ntextureFilter = 0\nbilinear = 1\n",0},
-                {"textureFilter = 2\nbilinearFilter = 0\n",2},
-                // a hand-edited level out of range clamps like every other number
-                {"textureFilter = 7\nbilinearFilter = 0\n",2},{"bilinearFilter = 1\ntextureFilter = -3\n",0},
-                {"antiAlias = 4\nterrainAA = 4\nmodelAA = 16\nunitEdgeAA = 16\nzoomedOutTerrain = 4\n",2}}) {   // no filter key at all: the default, Everything
-            std::ofstream(path)<<c.text<<"smoothArt = on\nvideoDeblock = 1\ntreeSway = 0\nvsync = 0\n";
+        // A file without textureFilter loads the default, Everything. The keys it replaced
+        // (bilinearFilter, bilinear, zoomSmoothing) are not read: unknown keys like any other,
+        // never written back.
+        for(const char* text:{"","bilinearFilter = 1\n","bilinear = 1\n","zoomSmoothing = smooth\n"}) {
+            std::ofstream(path)<<text<<"smoothArt = 1\n";
             const auto loaded=tak::loadSettings();
-            if(loaded.textureFilter!=c.expected)throw std::runtime_error(std::string("legacy filter not migrated: ")+c.text);
-            if(!loaded.smoothArt || !loaded.videoDeblock || loaded.treeSway || loaded.vsync)
-                throw std::runtime_error("legacy graphics keys disturbed other preferences");
+            if(loaded.textureFilter!=2 || !loaded.smoothArt)throw std::runtime_error(std::string("texture filtering without its key: ")+text);
+            if(*text && tak::serializeSettings(loaded).find(text)!=std::string::npos)
+                throw std::runtime_error(std::string("an unknown key was written back: ")+text);
         }
-        // The retired keys are dropped on the next save; only textureFilter is written.
-        std::ofstream(path)<<"antiAlias = 4\nterrainAA = 2\nmodelAA = 16\nbilinear = 1\nunitEdgeAA = 8\n"
-                             "zoomSmoothing = smooth\nzoomedOutTerrain = 4\nsmoothArt = 1\n";
-        s=tak::loadSettings();
-        if(s.textureFilter!=1 || !s.smoothArt)throw std::runtime_error("legacy file did not load");
-        if(!tak::saveSettings(s))throw std::runtime_error("save failed");
-        std::ifstream saved(path);
-        const std::string contents((std::istreambuf_iterator<char>(saved)),{});
-        for(const char* old:{"antiAlias","terrainAA","modelAA","bilinear =","bilinearFilter","unitEdgeAA","zoomSmoothing","zoomedOutTerrain"})
-            if(contents.find(old)!=std::string::npos)throw std::runtime_error(std::string("retired graphics key still saved: ")+old);
-        for(const char* key:{"textureFilter = 1","smoothArt = 1","videoDeblock ="})
-            if(contents.find(key)==std::string::npos)throw std::runtime_error("graphics preference not saved");
-        if(!(tak::loadSettings()==s))throw std::runtime_error("migrated settings did not round trip");
+        // Out of range clamps like every other number.
+        std::ofstream(path)<<"textureFilter = 7\n";
+        if(tak::loadSettings().textureFilter!=2)throw std::runtime_error("texture filtering not clamped high");
+        std::ofstream(path)<<"textureFilter = -3\n";
+        if(tak::loadSettings().textureFilter!=0)throw std::runtime_error("texture filtering not clamped low");
         s.textureFilter=2;s.smoothArt=s.videoDeblock=true;
         if(!tak::saveSettings(s))throw std::runtime_error("save failed");
         graphicsDefaults(tak::loadSettings());
-        fs::remove_all(root);std::cout<<"PASS: game and cosmetic mod selections persist; old override keys ignored\n";return 0;
+        fs::remove_all(root);std::cout<<"PASS: game and cosmetic mod selections and other preferences persist\n";return 0;
     }catch(const std::exception& e){fs::remove_all(root);std::cerr<<e.what()<<'\n';return 1;}
 }

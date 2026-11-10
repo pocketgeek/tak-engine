@@ -171,7 +171,8 @@ inline Startup& startup() { static Startup s; return s; }
 // preferences), so each start converts at most once per switch and never compounds. S
 // is the native Wayland scale: measured now when this session is native, else the last
 // one remembered (an X11 window cannot see the compositor's scale); unknown = 1 = no
-// change.
+// change. The first start has nothing to convert from: it is recorded and the sizes are
+// left (a fresh profile's were already set by the first-run rule, firstRunScale).
 //
 // Which X11 kind a Wayland desktop gives is MEASURED, not looked up per desktop (KDE's
 // kwinrc, Hyprland's xwayland:force_zero_scaling and GNOME's experimental
@@ -179,10 +180,9 @@ inline Startup& startup() { static Startup s; return s; }
 // desktop width it got (XWayland's screen), a native window records the desktop's
 // logical width (Wayland's xdg-output, in points) and scale S. Real pixels make the X11
 // desktop S times the logical one, stretching makes them equal (classifyX11). Whichever
-// session comes second has both numbers. With no X11 record yet (a settings file from
-// 0.9.5 or earlier), the native start asks XWayland directly for its screen width
-// (waylandmeasure.h); only if that fails too does kwinrc decide on KDE, and anywhere
-// else the kind counts as real pixels, which leaves the sizes alone (fallbackX11Kind).
+// session comes second has both numbers. When they do not tell (the two widths come from
+// different monitors), kwinrc decides on KDE, and anywhere else the kind counts as real
+// pixels, which leaves the sizes alone (fallbackX11Kind).
 enum Mode : int { kModeUnknown = 0, kModeX11Real = 1, kModeX11Stretched = 2, kModeWayland = 3,
                   kModeX11 = 4 /* X11 under a Wayland desktop, kind not measured yet */ };
 
@@ -213,7 +213,7 @@ inline int classifyX11(int x11W, int logicalW, float S) {
 // system" stretches), otherwise real pixels. Real is the safe guess because it never
 // converts against a native window: a wrong x S would make the HUD and cursor S times too
 // big (clamped at 200%), a wrong / S S times too small, while leaving the numbers keeps
-// what the player chose. It only applies when even asking XWayland failed.
+// what the player chose.
 inline int fallbackX11Kind(const Session& s) {
     return s.kde && !s.kdeX11RealPixels ? kModeX11Stretched : kModeX11Real;
 }
@@ -247,16 +247,20 @@ struct Observation {
     int logicalWidth = 0;      // native: the logical desktop width
 };
 
+// The display scale the first-run rule (tak::applyFirstRunScale) uses for this start's
+// window: the settled compositor scale in a native Wayland window, on every desktop; 1 in
+// an X11 one, plain or through XWayland (and in a native start whose scale never settled),
+// which leaves the defaults.
+inline float firstRunScale(const Observation& now) {
+    return now.mode == kModeWayland && now.scale > 0.0f ? now.scale : 1.0f;
+}
+
 // Records this start in `h` and returns the factor for the size settings (1 = leave
-// them). `assumedPrev` stands in for a history that does not exist yet: the mode the
-// settings were last chosen in (for a file from before this was recorded, kModeX11 --
-// every earlier Linux build ran X11). `probeX11Width` (may be null) asks XWayland for its
-// desktop width now; it is called only when a native start must know an unmeasured X11
-// kind. `fallback` is fallbackX11Kind(session). `kinds` (may be null) receives the
-// previous and this window's kind as measured (kModeX11 where the fallback stood in).
-using ProbeX11Width = int (*)();
-inline float advanceDisplay(DisplayHistory& h, const Observation& now, int assumedPrev, Units u, int fallback,
-                            ProbeX11Width probeX11Width = nullptr, int (*kinds)[2] = nullptr) {
+// them; always 1 with no history yet). `fallback` is fallbackX11Kind(session). `kinds`
+// (may be null) receives the previous and this window's kind as measured (kModeX11 where
+// the fallback stood in, kModeUnknown for a previous window that was never recorded).
+inline float advanceDisplay(DisplayHistory& h, const Observation& now, Units u, int fallback,
+                            int (*kinds)[2] = nullptr) {
     if (now.mode == kModeUnknown) return 1.0f;
     // A native start whose scale has not arrived from the compositor yet could read 1 and
     // record it, losing the conversion: leave everything for the next start instead.
@@ -268,15 +272,9 @@ inline float advanceDisplay(DisplayHistory& h, const Observation& now, int assum
     }
     if (now.mode == kModeX11 && now.x11Width > 0) next.x11Width = now.x11Width;
     const float S = next.scale;
-    int prev = h.mode != kModeUnknown ? h.mode : assumedPrev;
-    if (prev == kModeX11) {   // the earlier X11 window, measured against what is known now
+    int prev = h.mode;
+    if (prev == kModeX11)   // the earlier X11 window, measured against what is known now
         prev = classifyX11(h.x11Width, next.logicalWidth, S);
-        if (prev == kModeX11 && now.mode == kModeWayland && S > 1.01f && probeX11Width) {
-            const int w = probeX11Width();
-            if (w > 0) next.x11Width = w;
-            prev = classifyX11(w, next.logicalWidth, S);
-        }
-    }
     int cur = now.mode == kModeX11 ? classifyX11(next.x11Width, next.logicalWidth, S) : now.mode;
     if (kinds) { (*kinds)[0] = prev; (*kinds)[1] = cur; }
     // Unmeasured stays kModeX11, for a later native start to settle -- while the sizes are

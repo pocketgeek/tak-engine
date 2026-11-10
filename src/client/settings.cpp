@@ -88,20 +88,15 @@ std::string videoDir() {
     return dir.empty() ? dir : dir + "videos" + dir.back();
 }
 
-Settings loadSettings() {
+Settings loadSettings(bool* fileFound) {
     Settings s;   // defaults
+    if (fileFound) *fileFound = false;
     std::string path = settingsPath();
     if (path.empty()) return s;
     std::ifstream in(path);
     if (!in) { diskDataFolder() = {true, {}, {}}; return s; }
+    if (fileFound) *fileFound = true;
 
-    // Filtering keys, resolved after the loop so line order does not matter (see
-    // resolveTextureFilter): textureFilter, else 0.7.25-0.7.28's bilinearFilter, else
-    // 0.7.24's bilinear toggle or the unreleased Zoom Smoothing choice whose Smooth mode
-    // was that filter. Zoom Smoothing's Sharp and Off, and the AA keys (antiAlias/
-    // terrainAA/modelAA/unitEdgeAA/zoomedOutTerrain), have no successor; like any
-    // unknown key they are skipped and vanish on the next save.
-    int textureFilter=-1,bilinearFilter=-1,legacyBilinear=-1,legacyZoom=-1;
     std::string line;
     while (std::getline(in, line)) {
         std::string key, val;
@@ -135,13 +130,12 @@ Settings loadSettings() {
         }
         if      (key == "fullscreen")      s.fullscreen = asBool();
         else if (key == "vsync")           s.vsync = asBool();
-        else if (key == "maxFps") {        // 0 (or anything past 240) = unlimited
+        else if (key == "maxFps") {        // 0 = unlimited, else 30..240
             const int v = std::atoi(val.c_str());
-            s.maxFps = v <= 0 || v > 240 ? 0 : clampv(v, 30, 240);
+            s.maxFps = v <= 0 ? 0 : clampv(v, 30, 240);
         }
         else if (key == "renderer")        s.renderer = renderdriver::normalize(val);
         else if (key == "ignoreDpiScaling") s.ignoreDpiScaling = asBool();
-        else if (key == "dpiMigrated")     s.dpiMigrated = asBool();
         else if (key == "nativeWayland")   s.nativeWayland = val == "on" ? 1 : val == "off" ? 2 : 0;
         else if (key == "displayMode")     s.displayMode = wayland::parseMode(val);
         else if (key == "displayScale") {
@@ -154,10 +148,7 @@ Settings loadSettings() {
         }
         else if (key == "scorecardScale")  s.scorecardScale = asFloat(0.5f, 2.0f);
         else if (key == "uiScale")         s.uiScale = asFloat(0.5f, 2.0f);
-        else if (key == "textureFilter")   textureFilter = asInt(0, 2);
-        else if (key == "bilinearFilter")  bilinearFilter = asBool();
-        else if (key == "bilinear")        legacyBilinear = asBool();
-        else if (key == "zoomSmoothing")   legacyZoom = val == "smooth" || val == "1";
+        else if (key == "textureFilter")   s.textureFilter = asInt(0, 2);
         else if (key == "buildBarAlign")   s.buildBarAlign = asInt(0, 2);
         // 4.0, matching the slider and GameView. This still said 2.0 when the slider
         // went to 400%, so 300-400% survived until the next restart and then silently
@@ -230,8 +221,7 @@ Settings loadSettings() {
         else if (key == "gameCreate.doubleSight") s.gameCreate.doubleSight = asBool();
         else if (key == "gameCreate.speedUnlock") s.gameCreate.speedUnlock = asBool();
         else if (key == "gameCreate.monarchExpendable") s.gameCreate.monarchExpendable = asBool();
-        else if (key == "gameCreate.randomStarts")   // was a bool: "true"/"on" meant RANDOM
-            s.gameCreate.randomStarts = val == "true" || val == "on" ? 1 : asInt(0, 2);
+        else if (key == "gameCreate.randomStarts") s.gameCreate.randomStarts = asInt(0, 2);
         else if (key == "gameCreate.allowSpectators") s.gameCreate.allowSpectators = asBool();
         else if (key == "gameCreate.powerCodes") s.gameCreate.powerCodes = asBool();
         else if (key == "gameCreate.generated") s.gameCreate.generated = asBool();
@@ -264,13 +254,7 @@ Settings loadSettings() {
             while (std::getline(cs, tok, ','))
                 if (!tok.empty()) s.campaignCompleted[id].insert(std::atoi(tok.c_str()));
         }
-        else if (key.rfind("campaign.", 0) == 0 && key.size() > 9) {   // legacy: campaign.<id> = <count>
-            std::string id = key.substr(9);
-            int n = std::atoi(val.c_str());   // migrate the old completed-count watermark
-            for (int i = 0; i < n; ++i) s.campaignCompleted[id].insert(i);
-        }
     }
-    s.textureFilter = resolveTextureFilter(textureFilter, bilinearFilter, legacyBilinear, legacyZoom);
     diskDataFolder() = {true, s.dataDir, s.dataManifest};
     return s;
 }
@@ -283,7 +267,6 @@ std::string serializeSettings(const Settings& s) {
     o << "maxFps = " << s.maxFps << "\n";
     o << "renderer = " << (s.renderer.empty() ? "auto" : s.renderer) << "\n";
     o << "ignoreDpiScaling = " << (s.ignoreDpiScaling ? 1 : 0) << "\n";
-    o << "dpiMigrated = " << (s.dpiMigrated ? 1 : 0) << "\n";
     o << "nativeWayland = " << (s.nativeWayland == 1 ? "on" : s.nativeWayland == 2 ? "off" : "auto") << "\n";
     if (s.displayMode != wayland::kModeUnknown) o << "displayMode = " << wayland::modeName(s.displayMode) << "\n";
     if (s.displayScale > 0.0f) o << "displayScale = " << s.displayScale << "\n";

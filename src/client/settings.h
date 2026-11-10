@@ -33,9 +33,8 @@ struct Settings {
                                    // only (restart required); see client/renderdriver.h.
     // Windows only (ignored elsewhere): opt the process out of Windows display scaling so
     // the window is real pixels instead of a bitmap-stretched (blurry) low-res surface.
-    // Applied at startup only (restart required); see applyDpiMigration below.
+    // Applied at startup only (restart required); see applyFirstRunScale below.
     bool  ignoreDpiScaling = true;
-    bool  dpiMigrated = false;     // one-time: uiScale/cursorScale already adapted to the OS scale
     // Linux only (ignored elsewhere): 0 = Auto, 1 = On, 2 = Off -- open a native Wayland
     // window (real pixels at any display scale) instead of X11 through XWayland. Applied
     // at startup only (restart required); see client/waylandchoice.h.
@@ -102,7 +101,7 @@ struct Settings {
     // GPU MEMORY LIMIT (client/gpuvram.h): the ceiling on the video memory the game's own
     // textures and buffers may use, in MiB: one of kGpuMemoryLimits, 1280 (1.25 GiB) by
     // default, or -1 = UNLIMITED (only each subsystem's own ceiling applies). Applied live.
-    // Persisted as gpuMemoryLimit = <MiB> | unlimited (an older file's "auto" reads as 1280).
+    // Persisted as gpuMemoryLimit = <MiB> | unlimited.
     int   gpuMemoryLimit = 1280;
     bool  unitShadows = true;      // projected unit shadows (retail Glide casts them; the
                                    // single largest cost in a crowded frame, so it is worth
@@ -190,8 +189,6 @@ struct Settings {
         sim::PathfindingMode pathfindingMode = sim::PathfindingMode::Retail;
         int unitCap = 2000, fog = 1;
         // START LOCATIONS, net::GameOptions::randomStarts: 0 FIXED, 1 RANDOM, 2 BY SLOT.
-        // Saved under the same key it had as a RANDOM on/off toggle, so 0 and 1 keep
-        // their meaning.
         int randomStarts = 0;
         int mapSort = 0, mapSortDir = 1;
         std::string name = "game", generator;
@@ -206,8 +203,7 @@ struct Settings {
     // room this player hosts, sent to every player) and mods/cosmetic/<pack> (every
     // player's own, never sent anywhere). Saved as mods.gamePack / mods.cosmeticPack.
     // A name an always-enabled pack (mods/<kind>/always_enabled/) also uses is kept
-    // but has no effect while that pack is there. (The 0.8.13 gameCreate.gameMods
-    // key, its multiplayer GAME MODS toggle, is gone: skipped on load, never saved.)
+    // but has no effect while that pack is there.
     std::vector<std::string> gameModPacks, cosmeticModPacks;
     std::string lastMap;           // last map picked in the create/SP lobby (remembered)
     // Servers that connected successfully (most recent first, capped at
@@ -285,7 +281,7 @@ struct Settings {
             && a.voiceOutputSameAsGame == b.voiceOutputSameAsGame && a.voiceOutputDevice == b.voiceOutputDevice
             && a.voiceMicVolume == b.voiceMicVolume && a.voiceOutputVolume == b.voiceOutputVolume
             && a.voiceMicEnabled == b.voiceMicEnabled
-            && a.ignoreDpiScaling == b.ignoreDpiScaling && a.dpiMigrated == b.dpiMigrated
+            && a.ignoreDpiScaling == b.ignoreDpiScaling
             && a.nativeWayland == b.nativeWayland
             && a.displayMode == b.displayMode && a.displayScale == b.displayScale
             && a.displayX11Width == b.displayX11Width && a.displayLogicalWidth == b.displayLogicalWidth
@@ -311,7 +307,9 @@ std::string videoDir();
 void setSettingsPath(std::string path);
 
 // Read the config file; returns defaults for anything missing/corrupt (never throws).
-Settings loadSettings();
+// `fileFound` (may be null) says whether there was a file to read: false is a fresh
+// profile, which the first-run rule (applyFirstRunScale) keys on.
+Settings loadSettings(bool* fileFound = nullptr);
 
 // Atomically write the config file. Returns false on I/O failure.
 //
@@ -373,8 +371,7 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.dataManifest = cur.dataManifest;
     d.campaignCompleted = cur.campaignCompleted;
     d.knownServers = cur.knownServers;
-    d.dpiMigrated = cur.dpiMigrated;              // bookkeeping, not a preference
-    d.displayMode = cur.displayMode;              // likewise
+    d.displayMode = cur.displayMode;              // bookkeeping, not a preference
     d.displayScale = cur.displayScale;
     d.displayX11Width = cur.displayX11Width;
     d.displayLogicalWidth = cur.displayLogicalWidth;
@@ -469,27 +466,13 @@ inline Settings voiceDefaults(const Settings& cur) {
     return d;
 }
 
-// The Texture Filtering level a settings file asks for, from the keys it holds (-1 =
-// absent). textureFilter wins; a file written before it existed falls back to the
-// 0.7.25-0.7.28 bilinearFilter toggle (0 = Off, 1 = Units, which is exactly what that
-// toggle smoothed), then to 0.7.24's bilinear toggle or the unreleased Zoom Smoothing
-// choice whose Smooth mode was the same filter. Nothing at all = the default (Everything).
-inline int resolveTextureFilter(int textureFilter, int bilinearFilter, int legacyBilinear,
-                                int legacyZoom) {
-    if (textureFilter >= 0) return std::clamp(textureFilter, 0, 2);
-    if (bilinearFilter >= 0) return bilinearFilter ? 1 : 0;
-    if (legacyZoom >= 0) return legacyZoom == 1 ? 1 : 0;
-    if (legacyBilinear >= 0) return legacyBilinear == 1 ? 1 : 0;
-    return Settings{}.textureFilter;
-}
-
 // GPU MEMORY LIMIT choices, in Options order (MiB; -1 = UNLIMITED). 1280 is the default.
 inline constexpr int kGpuMemoryLimits[] = {512, 768, 1024, 1280, 1536, 2048, 3072, 4096, -1};
 inline constexpr int kGpuMemoryDefaultMiB = 1280;   // gpuvram::kDefaultLimit
 
-// Any stored value onto a listed choice: -1 stays; a number of MiB becomes the nearest
-// listed size (a hand-edited 900 -> 1024, 100 -> 512); 0 (what AUTO was stored as before
-// 0.8.8) and other negatives are the default.
+// Any stored value onto a listed choice: -1 stays; a positive number of MiB becomes the
+// nearest listed size (a hand-edited 900 -> 1024, 100 -> 512); 0 and other negatives are
+// not a size and read as the default.
 inline int snapGpuMemoryLimit(int mib) {
     if (mib == -1) return mib;
     if (mib <= 0) return kGpuMemoryDefaultMiB;
@@ -498,8 +481,8 @@ inline int snapGpuMemoryLimit(int mib) {
         if (c > 0 && std::abs(c - mib) < std::abs(best - mib)) best = c;
     return best;
 }
-// The settings-file value: "unlimited" = -1, a whole number of MiB = snapped; "auto" (the
-// pre-0.8.8 default) or anything unreadable = the default. Case-insensitive.
+// The settings-file value: "unlimited" = -1, a whole number of MiB = snapped; anything
+// unreadable = the default. Case-insensitive.
 inline int parseGpuMemoryLimit(std::string v) {
     std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return char(std::tolower(c)); });
     if (v == "unlimited") return -1;
@@ -527,17 +510,17 @@ inline std::string gpuMemoryLimitLabel(int mib) {
 // Options row can say RESTART REQUIRED when the saved choice differs.
 inline bool& dpiIgnoredAtStartup() { static bool v = false; return v; }
 
-// First run with DPI-unaware scaling switched off (Windows, macOS): the window used to be
-// stretched by the OS scale, so keep the HUD/cursor the same apparent size by folding the
-// scale into uiScale/cursorScale (clamped to their ranges). Runs once (dpiMigrated);
-// returns true if the settings changed and should be saved. osScale = display DPI / 96 on
-// Windows, the Retina backing scale (drawable / window, normally 2) on macOS.
+// First run: a FRESH profile (no settings file when the game started; loadSettings says
+// so) starts UI Scale and Cursor Size at the display's scale, once, so the HUD and cursor
+// are the size the desktop gives everything else instead of 1999's pixels at full
+// resolution. `displayScale`: the primary display's DPI / 96 on Windows (with IGNORE DPI
+// SCALING on; off, the OS stretches the window itself, so 1), the backing scale (drawable /
+// window, normally 2) on macOS, the settled compositor scale in a native Wayland window
+// (tak::wayland::firstRunScale), 1 in an X11 window. An existing profile is never rescaled
+// here: its sizes are the player's. Returns true if the settings changed and should be saved.
 inline bool rescaleUi(Settings& s, float factor);
-inline bool applyDpiMigration(Settings& s, float osScale) {
-    if (s.dpiMigrated) return false;
-    s.dpiMigrated = true;
-    if (s.ignoreDpiScaling && osScale > 1.01f) rescaleUi(s, osScale);
-    return true;
+inline bool applyFirstRunScale(Settings& s, bool freshProfile, float displayScale) {
+    return freshProfile && rescaleUi(s, displayScale);
 }
 
 // UI Scale and Cursor Size times `factor`, clamped to their ranges (so a value at the edge

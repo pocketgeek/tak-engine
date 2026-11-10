@@ -1,5 +1,5 @@
-// waylandmeasure -- Linux: the numbers tak::wayland::advanceDisplay compares, read from SDL
-// (and, once, from XWayland). See client/waylandchoice.h for what they decide.
+// waylandmeasure -- Linux: the numbers tak::wayland::advanceDisplay compares, read from SDL.
+// See client/waylandchoice.h for what they decide.
 #pragma once
 
 #include "client/settings.h"
@@ -9,10 +9,6 @@
 
 #include <algorithm>
 #include <cmath>
-
-#if defined(__linux__)
-#include <dlfcn.h>
-#endif
 
 namespace tak::wayland {
 
@@ -31,34 +27,6 @@ inline int desktopWidth() {
         any = true;
     }
     return any ? hi - lo : 0;
-}
-
-// XWayland's screen width, asked directly (libX11 loaded at run time, like SDL's own x11
-// driver): what an X11 window gets on this desktop now. 0 when there is no X server.
-inline int probeXWaylandWidth() {
-#if defined(__linux__)
-    void* lib = dlopen("libX11.so.6", RTLD_LAZY | RTLD_LOCAL);
-    if (!lib) return 0;
-    using Open = void* (*)(const char*);
-    using Close = int (*)(void*);
-    using Screen = int (*)(void*);
-    using Width = int (*)(void*, int);
-    const auto open = reinterpret_cast<Open>(dlsym(lib, "XOpenDisplay"));
-    const auto close = reinterpret_cast<Close>(dlsym(lib, "XCloseDisplay"));
-    const auto screen = reinterpret_cast<Screen>(dlsym(lib, "XDefaultScreen"));
-    const auto width = reinterpret_cast<Width>(dlsym(lib, "XDisplayWidth"));
-    int w = 0;
-    if (open && close && screen && width) {
-        if (void* dpy = open(nullptr)) {
-            w = width(dpy, screen(dpy));
-            close(dpy);
-        }
-    }
-    dlclose(lib);
-    return w;
-#else
-    return 0;
-#endif
 }
 
 // The scale the window's display has: its native mode over its logical desktop size (SDL

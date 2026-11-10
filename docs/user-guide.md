@@ -1913,9 +1913,9 @@ Enter or click elsewhere. **Defaults** asks first (**Reset to defaults?**
 **Yes** / **No**), then puts that page's options back to their defaults; the
 **Game** page's leaves your player name and data folder alone, and no page touches
 key bindings, audio or voice chat. It also sets UI Scale and Cursor Size
-back to their defaults, undoing the one-time enlargement made by Ignore Windows
-Display Scaling, Native Retina Resolution or Native Wayland, so raise them again
-on a scaled or Retina display.
+back to 100% and 1×, not to the display scale the
+[first start](#interface-size-on-the-first-start) chose, so raise them again on a
+scaled or Retina display.
 
 Every choice here is remembered. When a new version changes a default, a
 settings file you already have keeps the values saved in it; press **Defaults**
@@ -2008,15 +2008,26 @@ missed are silent while the game catches up.
 | **Fullscreen** | On | Borderless fullscreen. **F11** switches it on any screen. |
 | **VSync** | On | Match the frame rate to the display. While it is on, the game also waits for each display refresh itself if the graphics driver does not. |
 | **Max FPS** | 60 | Frame-rate cap when VSync is off: 30–240, or **Unlimited** at the far right of the slider. Greyed out while VSync is on, because the display then sets the frame rate. |
-| **Native Wayland** | Auto | Linux only. **Auto** opens a native Wayland window on any Wayland desktop (GNOME, KDE Plasma, Sway and other wlroots desktops, Hyprland), so the game draws at the screen's real resolution at any display scale, 125%, 150% and 200% included, instead of an X11 window that many desktops enlarge and blur. On GNOME, Auto keeps X11 if the libdecor library (which draws the window's title bar there) is not installed. On an X11 desktop the game always uses X11. **On** uses Wayland whenever there is a Wayland desktop; **Off** always uses X11. Takes effect after a restart; the row's help says which one is running. If Wayland cannot start, the game opens on X11 by itself. Switching keeps the interface the same size on screen: the game measures whether its X11 window had real pixels (KDE Plasma's default, and Hyprland or GNOME set up that way) or was enlarged by the desktop. In the first case UI Scale and Cursor Size stay exactly as you set them; in the second they are multiplied by the display scale the first time the Wayland window opens, and divided again if you switch back. Cartographer follows the same setting and keeps its UI Scale and window size the same way. |
+| **Native Wayland** | Auto | Linux only. **Auto** opens a native Wayland window on any Wayland desktop (GNOME, KDE Plasma, Sway and other wlroots desktops, Hyprland), so the game draws at the screen's real resolution at any display scale, 125%, 150% and 200% included, instead of an X11 window that many desktops enlarge and blur. On GNOME, Auto keeps X11 if the libdecor library (which draws the window's title bar there) is not installed. On an X11 desktop the game always uses X11. **On** uses Wayland whenever there is a Wayland desktop; **Off** always uses X11. Takes effect after a restart; the row's help says which one is running. If Wayland cannot start, the game opens on X11 by itself. Switching keeps the interface the same size on screen: the game measures whether its X11 window had real pixels (KDE Plasma's default, and Hyprland or GNOME set up that way) or was enlarged by the desktop. In the first case UI Scale and Cursor Size stay exactly as you set them; in the second they are multiplied by the display scale the first time the Wayland window opens, and divided again if you switch back (see [below](#the-interface-changed-size-after-switching-native-wayland)). Cartographer follows the same setting and keeps its UI Scale and window size the same way. |
+
+#### Interface size on the first start
+
+The first time the game starts with a new profile (no settings file yet), it sets
+**UI Scale** and **Cursor Size** to the display's scale once, so the interface
+starts at the size the desktop gives everything else: your Windows display scale
+(with Ignore Windows Display Scaling on), the Retina scale on a Mac (normally 2×),
+or the desktop's scale in a native Wayland window on Linux, on every Wayland
+desktop. In an X11 window on Linux they stay at 100% and 1×. A profile you already
+have is never resized this way; change the two values in
+[Interface](#interface) and [Camera](#camera) whenever you like.
 
 ### Graphics
 
 | Option | Default | What it does |
 | --- | --- | --- |
 | **Renderer** | Auto | Which graphics backend draws the game. Takes effect after a restart; see [Renderer](#renderer). |
-| **Ignore Windows Display Scaling** | On | Windows only. Stops Windows from enlarging the game window to match your display scaling (for example 150%), which made everything blurry. The game draws at the real screen resolution instead. Takes effect after a restart. The first time it runs, UI Scale and Cursor Size are raised to your Windows scale so the interface stays the same size, now sharp; adjust them afterwards if you like. |
-| **Native Retina Resolution** | On | macOS only; the same row as Ignore Windows Display Scaling. Draws at the full resolution of a Retina display (normally twice the window's size in points) instead of letting macOS double a half-size image, which made everything soft. Takes effect after a restart. The first time it runs on a Retina display, UI Scale and Cursor Size are doubled so the interface stays the same size, now sharp; adjust them afterwards if you like. The window can move between a Retina and an ordinary display: the picture and the pointer follow the display it is on, but UI Scale is not changed again, so the interface looks bigger on an ordinary display. |
+| **Ignore Windows Display Scaling** | On | Windows only. Stops Windows from enlarging the game window to match your display scaling (for example 150%), which made everything blurry. The game draws at the real screen resolution instead. Takes effect after a restart. A new profile starts UI Scale and Cursor Size at your Windows scale ([first start](#interface-size-on-the-first-start)). |
+| **Native Retina Resolution** | On | macOS only; the same row as Ignore Windows Display Scaling. Draws at the full resolution of a Retina display (normally twice the window's size in points) instead of letting macOS double a half-size image, which made everything soft. Takes effect after a restart. A new profile on a Retina display starts UI Scale and Cursor Size at the Retina scale ([first start](#interface-size-on-the-first-start)). The window can move between a Retina and an ordinary display: the picture and the pointer follow the display it is on, but UI Scale is not changed again, so the interface looks bigger on an ordinary display. |
 | **Texture Filtering** | Everything | How the game area is smoothed when you zoom in. **Off**: nothing is smoothed, as in the original. **Units**: the original game's Bilinear Filtering option; smooths unit textures and unit shadows only. **Everything**: Units, plus terrain, trees, rocks and other scenery, and effects, once you zoom in past 150%. Not in the original game. The interface, cursor and movies are never affected; see below. |
 | **Shadows** | On | Unit, scenery and projectile shadows, boats and every lodestone included. The biggest single graphics cost in a crowded battle. See below. |
 | **Smooth GUI Art** | On | Sharpens the low-resolution interface art, menus, fonts, cursors and build-menu portraits with an edge-aware upscale. Applies at once. No cost per frame; uses more video memory. |
@@ -2183,7 +2194,7 @@ your system appear.
 | --- | --- | --- |
 | **Modern UI Font** | On | The lettering of the interface's text. **On** is a clean bold sans-serif (the chat box's), sharp at every UI Scale; **Off** is the look this engine had before: its blocky pixel font in the menus, rooms and Options, and the game's original serif faces in the HUD, scoreboard, briefings and Unit Info. The original decorative lettering (big messages, PAUSED, briefing headings, Unit Info labels, the title doors) is the same with either. Takes effect at once. |
 | **F4 Scorecard Scale** | 100% | Size of the F4 player panel (50–200%). |
-| **UI Scale** | 100% | Size of the in-game interface (50–200%). |
+| **UI Scale** | 100% | Size of the in-game interface (50–200%). A new profile starts at the display's scale ([first start](#interface-size-on-the-first-start)). |
 | **Health Bars** | Damaged | Off, only on damaged units, or always. |
 | **Stats Panel** | On | Live statistics in the space under the minimap. |
 | **Build Menu** | Center | Where the build icons sit: left, centre or right. |
@@ -2254,7 +2265,7 @@ mod packs, units), while labels such as **START** stay in capitals.
 | **Mouse Zoom Speed** | 1× | Wheel zoom speed (greyed while Mouse Zoom is off). |
 | **Edge Scrolling** | On | Scroll when the cursor touches a screen edge. |
 | **Edge Scroll Speed** | 1× | Edge scrolling speed. |
-| **Cursor Size** | 1× | Cursor size, 1× (the original size) to 8×. |
+| **Cursor Size** | 1× | Cursor size, 1× (the original size) to 8×. A new profile starts at the display's scale ([first start](#interface-size-on-the-first-start)). |
 
 Key bindings are under **Settings → Controls**.
 
@@ -3236,10 +3247,9 @@ install the libdecor package (`libdecor` or `libdecor-0-0`) or choose **On**.
 
 ### The interface changed size after switching Native Wayland
 
-Switching **Native Wayland** (including the first start of a version whose Auto
-picks Wayland where the previous one ran X11) changes how many screen pixels the
-game's window has, so on the first start after a switch the game adjusts **UI
-Scale** and **Cursor Size** once to keep the interface the same size on screen:
+Switching **Native Wayland** changes how many screen pixels the game's window
+has, so on the first start after a switch the game adjusts **UI Scale** and
+**Cursor Size** once to keep the interface the same size on screen:
 
 - From an X11 window the desktop enlarged (GNOME, Sway and Hyprland by default) to
   Wayland, they are multiplied by the display scale; switching back divides them
@@ -3250,9 +3260,8 @@ Scale** and **Cursor Size** once to keep the interface the same size on screen:
 - Changing the desktop's display scale while on Wayland leaves them as they are.
 
 The game does not guess which kind the X11 window was: it compares the size of
-the X11 desktop with the Wayland desktop. If it cannot tell (no X11 server to
-ask, or the monitors changed between the two starts), it leaves the sizes as they
-are, except on KDE Plasma set to "scaled by the system", which it reads from
+the X11 desktop with the Wayland desktop. If it cannot tell (the monitors changed
+between the two starts), it leaves the sizes as they are, except on KDE Plasma set to "scaled by the system", which it reads from
 Plasma's settings. It also waits for the desktop to report the Wayland window's
 scale before deciding, and remembers which window it last had, so this never adds
 up over several switches. UI Scale stops at 200% and Cursor Size at 8×, so a
