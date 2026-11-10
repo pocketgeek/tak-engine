@@ -42,23 +42,53 @@ public:
     // The CPU threads this process may use, at least 1: its affinity mask on
     // Linux (taskset, containers), the machine's thread count elsewhere.
     static unsigned usableCpus();
-    // The most simulation threads a setting may ask for here (SIMULATION THREADS
-    // in Options, takserver --sim-threads): min(usableCpus(), kMaxThreads).
-    static unsigned maxThreads() { return std::min(usableCpus(),kMaxThreads); }
-    // Such a choice -- 0 = AUTO, else that many threads, the one that ticks the
-    // World included -- as the threads it runs on here (a count above
-    // maxThreads() runs as maxThreads()), and as World::setSimWorkers's argument.
-    static unsigned threadsFor(int choice) {
-        return choice<=0 ? 1+defaultWorkers() : std::min(unsigned(choice),maxThreads());
+    // How many threads a simulation gets. Scheduling only; pure, so
+    // tools/simpool_test.cpp pins both rules.
+    //
+    // The game: a SIMULATION THREADS choice (Options > GAME, Settings::simThreads)
+    // is 0 = AUTO, every CPU thread, or a count from 1 up to twice the CPU threads
+    // (above them is more threads than the computer has; Options draws that red).
+    // kMaxChoice is the most any machine offers: two simulations of kMaxThreads.
+    static constexpr unsigned kMaxChoice=2*kMaxThreads;
+    static constexpr unsigned maxChoice(unsigned cpus) { return 2*std::min(std::max(cpus,1u),kMaxThreads); }
+    // T, the threads a choice configures on a machine of `cpus` threads: a count
+    // above maxChoice(cpus) (a profile from a bigger machine) is used as that.
+    static constexpr unsigned configured(int choice,unsigned cpus) {
+        return std::min(choice<=0 ? std::max(cpus,1u) : unsigned(choice),maxChoice(cpus));
     }
-    static int workersFor(int choice) { return choice<=0 ? -1 : int(threadsFor(choice))-1; }
-    // Workers per sim when nothing chooses a width (AUTO): clamp(usableCpus() / 8,
-    // 0, 3). A single-player game runs two sims (client + local referee), so the
-    // cap keeps both within 8 cores. A chosen width is World::setSimWorkers.
-    // Debug builds honour TAK_SIM_WORKERS (0..kMaxWorkers) here, so it overrides
-    // AUTO and only AUTO. A World asks once and keeps the answer (World::simPool):
-    // this reads the CPU mask anew on every call.
+    // What a game session's simulations get of T. A game with its own local server
+    // (single player, a LOCAL SERVER the player hosts, the Benchmark, --play-map)
+    // shares T with it: ceil(T / 2) for the game's simulation and floor(T / 2) for
+    // the server's (passed as takserver --sim-threads), each at least 1. Any other
+    // session (a game on someone else's server, a replay) has the one simulation,
+    // which gets T; `server` is then 0. No simulation gets more than kMaxThreads.
+    struct Session { unsigned total,game,server; };
+    static constexpr Session sessionThreads(int choice,unsigned cpus,bool localServer) {
+        const unsigned t=configured(choice,cpus);
+        if (!localServer) return {t,std::min(t,kMaxThreads),0};
+        return {t,std::min(std::max((t+1)/2,1u),kMaxThreads),std::min(std::max(t/2,1u),kMaxThreads)};
+    }
+    // takserver: each running game's share of the server's total S (--sim-threads;
+    // auto is usableCpus()): floor(S / running games), but never fewer than 2 --
+    // than 1 when S is 1, so whoever asked for one thread gets one -- and never
+    // more than kMaxThreads. The floor means a busy server can run more simulation
+    // threads than it has CPUs.
+    static constexpr unsigned serverShare(unsigned total,size_t running) {
+        total=std::max(total,1u);
+        const unsigned share=unsigned(total/std::max<size_t>(running,1));
+        return std::min(std::max(share,std::min(2u,total)),kMaxThreads);
+    }
+    // Workers per sim when nothing chooses a width: clamp(usableCpus() / 8, 0, 3).
+    // The library default, for the tools and tests that build a World and set no
+    // width; the game and takserver always set one (World::setSimWorkers, from the
+    // rules above). Debug builds honour TAK_SIM_WORKERS here (debugWorkers). A
+    // World asks once and keeps the answer (World::simPool): this reads the CPU
+    // mask anew on every call.
     static unsigned defaultWorkers();
+    // Debug builds: TAK_SIM_WORKERS (0..kMaxWorkers workers beside the ticking
+    // thread), else -1; always -1 in a release build. It overrides AUTO, and only
+    // AUTO, wherever a width is decided: here, the game's latch and takserver.
+    static int debugWorkers();
 
     explicit SimPool(unsigned workers);
     ~SimPool();

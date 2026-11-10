@@ -2970,19 +2970,15 @@ public:
     // (a commander unit) loses you the game even if other units survive.
     void setMonarchExpendable(bool e) { monarchExpendable_ = e; }
     bool monarchExpendable() const { return monarchExpendable_; }
-    // Keep this World's intra-tick work on the calling thread (no worker pool). The
-    // server sets it on a referee World when it ticks several games IN PARALLEL: the
-    // parallelism is already at the game level, so a per-game nested pool would just
-    // oversubscribe. A lone game (SP, or the client's own sim) leaves it off.
-    //
-    // It was named serialFlow_ and gated the flow-field prefetch; the flow fields are
-    // gone. Today it gates the sim's SimPool: serial runs the pool's identical
-    // fixed chunks inline.
+    // Keep this World's intra-tick work on the calling thread (no worker pool): the
+    // sim's SimPool then runs its identical fixed chunks inline. For tests and tools;
+    // the game and takserver choose a width instead (setSimWorkers).
     // Never affects results -- purely scheduling.
     void setSerialThreads(bool s) { serialThreads_ = s; }
     // The SimPool's worker count (-1: SimPool::defaultWorkers(), AUTO), at most
-    // SimPool::kMaxWorkers: the client's SIMULATION THREADS setting and
-    // takserver --sim-threads (SimPool::workersFor), and tests.
+    // SimPool::kMaxWorkers: the client's SIMULATION THREADS setting
+    // (SimPool::sessionThreads), a game's share of takserver --sim-threads
+    // (SimPool::serverShare, set again before each tick), and tests.
     // setSerialThreads(true) still means 0. Scheduling only, like the above.
     // AUTO is read once, at the first simPool() call after this, and kept as a
     // chosen count is: the width never follows a CPU mask that changes mid-game.

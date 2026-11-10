@@ -511,28 +511,42 @@ void OptionsScreen::build(int channels) {
         return out;
     };
 
-    // PERFORMANCE. SIMULATION THREADS: the threads one game simulation may use, the one
-    // that ticks it included: AUTO at the left (the count the CPU rule picks, shown
-    // beside it), then 1 (serial) up to every thread this process may use
-    // (sim::SimPool::maxThreads). A saved count above that shows and runs as the top.
-    // It never changes a game's outcome; a session latches it as it opens (GameView,
-    // and the local server it starts).
+    // PERFORMANCE. SIMULATION THREADS: the threads the game's simulations may use: AUTO at
+    // the left (every thread this computer has, shown beside it), then 1 up to twice
+    // that (sim::SimPool::maxChoice). Above the computer's own count the slider is red:
+    // more threads than it has. A saved count above the top shows and runs as the top.
+    // The lines under it say what that comes to: a game with its own local server gives
+    // half to each, any other game uses it all (sim::SimPool::sessionThreads). It never
+    // changes a game's outcome; a session latches it as it opens (GameView, and the
+    // local server it starts).
     section("PERFORMANCE");
     {
-        const int most = int(sim::SimPool::maxThreads());
+        const int cpus = int(sim::SimPool::usableCpus());
+        const int most = int(sim::SimPool::maxChoice(unsigned(cpus)));
         slider("SIMULATION THREADS", 0, float(most),
                [this, most] { return float(std::clamp(s_.simThreads, 0, most)); },
                [this, most](float v) { s_.simThreads = std::clamp(int(v + 0.5f), 0, most); },
-               [](float v) {
-                   return v < 0.5f ? "AUTO (" + std::to_string(sim::SimPool::threadsFor(0)) + ")"
+               [cpus](float v) {
+                   return v < 0.5f ? "AUTO (" + std::to_string(sim::SimPool::configured(0, unsigned(cpus))) + ")"
                                    : std::to_string(int(v + 0.5f));
                });
+        ctls_.back().warn = [this, cpus] { return s_.simThreads > cpus; };
         ctls_.back().help = [] {
             return std::vector<std::string>{
-                "HOW MANY CPU THREADS THE GAME SIMULATION MAY USE. AUTO CHOOSES FROM YOUR CPU COUNT.",
-                "SINGLE PLAYER RUNS TWO SIMULATIONS, THE GAME AND ITS LOCAL SERVER, AND EACH USES THIS MANY.",
+                "HOW MANY CPU THREADS THE GAME'S SIMULATIONS MAY USE. AUTO IS EVERY THREAD THIS COMPUTER HAS.",
+                "A GAME WITH ITS OWN LOCAL SERVER GIVES HALF TO EACH. A GAME ON SOMEONE ELSE'S SERVER USES THEM ALL.",
+                "RED IS MORE THREADS THAN THIS COMPUTER HAS.",
                 "IT NEVER CHANGES A GAME'S OUTCOME. APPLIES FROM THE NEXT GAME YOU OPEN."};
         };
+        ctls_.push_back({Control::Info, "SIMULATION THREADS INFO", 0, 0, {}, {}, {}, {}, [this, cpus] {
+            const auto local = sim::SimPool::sessionThreads(s_.simThreads, unsigned(cpus), true);
+            return std::vector<std::string>{
+                "THIS COMPUTER HAS " + std::to_string(cpus) + (cpus == 1 ? " THREAD." : " THREADS."),
+                "SINGLE PLAYER, A LOCAL SERVER YOU HOST AND THE BENCHMARK: HALF OF THE THREADS SET HERE GO TO THE GAME (" +
+                    std::to_string(local.game) + "), HALF TO ITS LOCAL SERVER (" + std::to_string(local.server) + ").",
+                "A GAME ON SOMEONE ELSE'S SERVER: THE GAME USES ALL OF THEM (" +
+                    std::to_string(sim::SimPool::sessionThreads(s_.simThreads, unsigned(cpus), false).game) + ")."};
+        }});
     }
 
     // DISPLAY: the window / output device itself.
@@ -853,11 +867,12 @@ void OptionsScreen::build(int channels) {
 
 void OptionsScreen::layout(int winW, int winH) {
     u_ = std::clamp(std::min(winW / 1280.0f, winH / 720.0f), 1.0f, 3.0f);
-    auto rowH = [&](Control::Kind k) {
-        return k == Control::Section ? 30 * u_ : k == Control::Folder ? 74 * u_ : 36 * u_;
-    };
     // The AUDIO page is wider, for the music file names.
     float panelW = page_ == OptionsPage::Audio ? std::min(1000 * u_, winW * 0.92f) : std::min(660 * u_, winW * 0.72f);
+    auto rowH = [&](const Control& c) {
+        if (c.kind == Control::Info) return float(infoLines(c, panelW - 52 * u_).size()) * 14 * u_ + 6 * u_;
+        return c.kind == Control::Section ? 30 * u_ : c.kind == Control::Folder ? 74 * u_ : 36 * u_;
+    };
     float titleH = 3.4f * 7 * u_ + 26 * u_;
     float footerH = 52 * u_;    // DEFAULTS / BACK buttons, fixed at the panel bottom
     // A slider's label is at the top of its row, over its track: straight under a
@@ -866,7 +881,7 @@ void OptionsScreen::layout(int winW, int winH) {
         return i > 0 && ctls_[i].kind == Control::Slider && ctls_[i - 1].kind == Control::Section ? 6 * u_ : 0.0f;
     };
     contentH_ = 0;
-    for (size_t i = 0; i < ctls_.size(); ++i) contentH_ += lead(i) + rowH(ctls_[i].kind);
+    for (size_t i = 0; i < ctls_.size(); ++i) contentH_ += lead(i) + rowH(ctls_[i]);
     float viewH = std::min(contentH_, winH * 0.92f - titleH - footerH);
     float panelH = titleH + viewH + footerH;
     panel_ = {(winW - panelW) / 2, (winH - panelH) / 2, panelW, panelH};
@@ -878,7 +893,7 @@ void OptionsScreen::layout(int winW, int winH) {
     float y = vy - scroll_;
     for (size_t i = 0; i < ctls_.size(); ++i) {
         Control& c = ctls_[i];
-        float h = rowH(c.kind);
+        float h = rowH(c);
         y += lead(i);
         c.row = {panel_.x + 26 * u_, y, panelW - 52 * u_, h};
         y += h;
@@ -1122,6 +1137,18 @@ bool OptionsScreen::handle(const SDL_Event& e, int winW, int winH) {
     return false;
 }
 
+std::vector<std::string> OptionsScreen::infoLines(const Control& c, float width) const {
+    const float px = 1.3f * u_, indent = uiTextWidth("    ", px);
+    auto measure = [px](const std::string& t) { return uiTextWidth(t, px); };
+    std::vector<std::string> lines;
+    if (!c.options) return lines;
+    for (const std::string& text : c.options()) {
+        const auto rows = chatbox::wrap(text, width, width - indent, measure);
+        for (size_t i = 0; i < rows.size(); ++i) lines.push_back((i ? "    " : "") + rows[i]);
+    }
+    return lines;
+}
+
 void OptionsScreen::drawHelp(const Control& c) {
     // Word-wrapped to the row width (measured in the UI font, so it fits in either
     // style); continuation lines are indented. Below the row, or above it when the
@@ -1312,11 +1339,15 @@ void OptionsScreen::render(int winW, int winH) {
             // y + 2: the caps end 2u above the handle's top (y + 18), descenders short of it.
             uiText(ren_, c.label, c.row.x, c.row.y + 2 * u_, fpx,
                           on ? SDL_Color{225, 230, 240, 255} : SDL_Color{105, 110, 122, 255});
+            // Red (SIMULATION THREADS above the computer's own count): the value text,
+            // the filled track and the handle.
+            const bool red = on && c.warn && c.warn();
             if (c.fmt) {
                 std::string vs = c.fmt(val);
                 uiText(ren_, vs, c.row.x + c.row.w - uiTextWidth(vs, fpx),
                               c.row.y + 2 * u_, fpx,
-                              on ? SDL_Color{150, 195, 235, 255} : SDL_Color{90, 100, 115, 255});
+                              red ? SDL_Color{240, 130, 120, 255}
+                              : on ? SDL_Color{150, 195, 235, 255} : SDL_Color{90, 100, 115, 255});
             }
             // track + fill + handle
             float ty = c.row.y + 22 * u_, th = 7 * u_;
@@ -1324,13 +1355,22 @@ void OptionsScreen::render(int winW, int winH) {
             SDL_SetRenderDrawColor(ren_, 48, 52, 66, 255); SDL_RenderFillRectF(ren_, &track);
             float frac = std::clamp((val - c.lo) / std::max(0.0001f, c.hi - c.lo), 0.0f, 1.0f);
             SDL_FRect fill{c.row.x, ty, c.row.w * frac, th};
-            if (on) SDL_SetRenderDrawColor(ren_, 80, 140, 225, 255);
+            if (red) SDL_SetRenderDrawColor(ren_, 215, 75, 65, 255);
+            else if (on) SDL_SetRenderDrawColor(ren_, 80, 140, 225, 255);
             else SDL_SetRenderDrawColor(ren_, 70, 76, 92, 255);
             SDL_RenderFillRectF(ren_, &fill);
             SDL_FRect handle{c.row.x + c.row.w * frac - 4 * u_, ty - 4 * u_, 8 * u_, th + 8 * u_};
-            if (on) SDL_SetRenderDrawColor(ren_, 205, 215, 240, 255);
+            if (red) SDL_SetRenderDrawColor(ren_, 245, 150, 140, 255);
+            else if (on) SDL_SetRenderDrawColor(ren_, 205, 215, 240, 255);
             else SDL_SetRenderDrawColor(ren_, 95, 100, 115, 255);
             SDL_RenderFillRectF(ren_, &handle);
+        } else if (c.kind == Control::Info) {
+            // Small lines, always shown, under the row they are about (the data folder
+            // row's note style).
+            const float npx = 1.3f * u_;
+            const auto lines = infoLines(c, c.row.w);
+            for (size_t i = 0; i < lines.size(); ++i)
+                uiText(ren_, lines[i], c.row.x, c.row.y + 4 * u_ + float(i) * 14 * u_, npx, {130, 140, 160, 255});
         }
     }
     SDL_RenderSetClipRect(ren_, nullptr);

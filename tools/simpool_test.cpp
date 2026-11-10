@@ -6,8 +6,9 @@
 // most (23) and the code's most (SimPool::kMaxWorkers, 63), with 5, 7, 15 and
 // 31 between; asynchronous jobs (start/help/finish) run every chunk exactly
 // once. At each width every slot of the pool runs, one thread to a slot (what
-// per-slot scratch relies on). And a chosen thread count maps to a worker count
-// as documented.
+// per-slot scratch relies on). And the two rules that decide a simulation's
+// width: the game's SIMULATION THREADS (AUTO, the split with a local server)
+// and takserver's share per running game.
 #include "sim/simpool.h"
 
 #include <atomic>
@@ -27,19 +28,41 @@ static void check(bool ok,const char* what,unsigned workers) {
 static uint64_t mix(uint64_t h,uint64_t v) { return (h^v)*0x100000001b3ull; }
 
 int main() {
-    // A choice of threads (0 = AUTO) as the threads it runs on and the workers
-    // a World is given: 1 is serial, a count above this machine's is its most.
-    const unsigned most=SimPool::maxThreads();
-    check(SimPool::usableCpus()>=1 && most>=1 && most<=SimPool::kMaxThreads && most<=SimPool::usableCpus(),
-          "usable CPUs and the most threads",0);
+    check(SimPool::usableCpus()>=1,"usable CPUs",0);
     check(SimPool::kMaxWorkers==63 && SimPool::defaultWorkers()<=SimPool::kMaxWorkers,"the widest pool",0);
-    check(SimPool::threadsFor(0)==1+SimPool::defaultWorkers() && SimPool::workersFor(0)==-1,"AUTO",0);
-    check(SimPool::threadsFor(-3)==SimPool::threadsFor(0) && SimPool::workersFor(-3)==-1,"below AUTO reads as AUTO",0);
-    check(SimPool::threadsFor(1)==1 && SimPool::workersFor(1)==0,"one thread is the serial simulation",0);
-    for (unsigned n=1;n<=most;++n)
-        check(SimPool::threadsFor(int(n))==n && SimPool::workersFor(int(n))==int(n)-1,"n threads: n - 1 workers",n);
-    check(SimPool::threadsFor(int(most)+1)==most && SimPool::threadsFor(100000)==most &&
-          SimPool::workersFor(100000)==int(most)-1,"more threads than this machine has: its most",0);
+    check(SimPool::debugWorkers()<0 || unsigned(SimPool::debugWorkers())==SimPool::defaultWorkers(),
+          "TAK_SIM_WORKERS is the default when set",0);
+    // The game's rule (SimPool::sessionThreads), on a machine of N threads: T is N at
+    // AUTO, a count up to 2N as itself, one above as 2N. A game with its own local
+    // server takes ceil(T / 2) and gives the server floor(T / 2), each at least 1;
+    // any other game takes T. No simulation runs more than kMaxThreads.
+    auto session=[](int choice,unsigned cpus,bool local,unsigned total,unsigned game,unsigned server) {
+        const SimPool::Session s=SimPool::sessionThreads(choice,cpus,local);
+        return s.total==total && s.game==game && s.server==server;
+    };
+    check(session(0,24,true,24,12,12) && session(0,24,false,24,24,0) && session(-3,24,true,24,12,12),"AUTO is N",24);
+    check(session(1,24,true,1,1,1) && session(1,24,false,1,1,0),"T = 1: each at least 1",24);
+    check(session(2,24,true,2,1,1) && session(2,24,false,2,2,0),"T = 2",24);
+    check(session(5,24,true,5,3,2) && session(5,24,false,5,5,0),"T = 5: the game takes the odd one",24);
+    check(session(8,24,true,8,4,4) && session(8,24,false,8,8,0),"T = 8",24);
+    check(session(48,24,true,48,24,24) && session(48,24,false,48,48,0) && SimPool::maxChoice(24)==48,"T = 2N",24);
+    check(session(49,24,true,48,24,24) && session(100000,24,false,48,48,0),"above 2N is 2N",24);
+    check(session(0,1,true,1,1,1) && session(0,1,false,1,1,0) && session(3,1,true,2,1,1) && SimPool::maxChoice(1)==2,
+          "a one-thread machine",1);
+    check(session(0,5,true,5,3,2) && session(0,5,false,5,5,0),"AUTO on an odd count",5);
+    check(session(128,64,true,128,64,64) && session(128,64,false,128,64,0) && session(0,128,true,128,64,64) &&
+          session(0,128,false,128,64,0) && SimPool::maxChoice(128)==SimPool::kMaxChoice && SimPool::kMaxChoice==128,
+          "no simulation above kMaxThreads",64);
+    // takserver's rule (SimPool::serverShare): floor(S / running games), at least 2
+    // (1 when S is 1), at most kMaxThreads.
+    check(SimPool::serverShare(24,1)==24 && SimPool::serverShare(24,2)==12 && SimPool::serverShare(24,3)==8 &&
+          SimPool::serverShare(24,5)==4 && SimPool::serverShare(24,0)==24,"S over the running games, rounded down",24);
+    check(SimPool::serverShare(24,12)==2 && SimPool::serverShare(24,13)==2 && SimPool::serverShare(24,1000)==2 &&
+          SimPool::serverShare(3,2)==2 && SimPool::serverShare(2,2)==2,"many games: never fewer than 2",24);
+    check(SimPool::serverShare(1,1)==1 && SimPool::serverShare(1,2)==1 && SimPool::serverShare(1,1000)==1 &&
+          SimPool::serverShare(0,3)==1,"S = 1 gives 1",1);
+    check(SimPool::serverShare(128,1)==64 && SimPool::serverShare(128,2)==64 && SimPool::serverShare(128,3)==42,
+          "no game above kMaxThreads",128);
     uint64_t reference=0;
     for (unsigned workers:{0u,1u,2u,3u,5u,7u,15u,23u,31u,SimPool::kMaxWorkers}) {
         SimPool pool(workers);

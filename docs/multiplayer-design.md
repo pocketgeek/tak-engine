@@ -869,10 +869,14 @@ per room. Completed bundles, replay history, checksums, and campaign results are
 published by the network thread; workers never touch sockets or shared room
 metadata. Command ordering and the wire protocol are unchanged.
 
-The running-room limit bounds the number of simulation workers. When multiple
-games run, each simulation uses serial internal jobs to avoid nested worker
-oversubscription; a lone game's internal jobs use the threads `--sim-threads`
-allows (`auto` by default). A slow tick no longer holds up the network loop or another
+The running-room limit bounds the number of simulation workers. Each running
+game's simulation gets an equal share of the server's `--sim-threads` total
+(`auto`, the default, is every usable CPU thread) for its internal jobs: the
+total divided by the running games, rounded down, never fewer than 2 (1 only
+when the total is 1) and never more than 64. The share is recomputed as games
+start and end and applied between ticks, on the game's own worker. The floor of
+2 means a busy server can run more simulation threads than it has CPUs. A slow
+tick no longer holds up the network loop or another
 room's ticks, although games still compete for CPU and memory bandwidth. Map
 startup and replay file writes remain synchronous work on the main thread.
 

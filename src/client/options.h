@@ -149,6 +149,15 @@ public:
         const float w = dropWidth(c);
         return {c.row.x + c.row.w - w, y0 + float(index) * itemH - dropScroll_, w, itemH};
     }
+    // A slider drawn red (Control::warn), and an Info row's lines as wrapped and drawn.
+    bool rowWarn(const std::string& label) const {
+        for (auto& c : ctls_) if (c.label == label && c.kind == Control::Slider) return c.warn && c.warn();
+        return false;
+    }
+    std::vector<std::string> rowLines(const std::string& label) const {
+        for (auto& c : ctls_) if (c.label == label && c.kind == Control::Info) return infoLines(c, c.row.w);
+        return {};
+    }
     std::string folderStatus() const { return folderStatusText(); }
     bool folderPicking() const { return folderPick_.busy(); }
     SDL_FRect restartNowRect() const { return restartPrompt_.open ? restartPrompt_.first : SDL_FRect{}; }
@@ -159,19 +168,20 @@ public:
 
 private:
     struct Control {
-        enum Kind { Section, Slider, Toggle, Button, Dropdown, PlayerName, Folder, Meter, MusicFile } kind;
+        enum Kind { Section, Slider, Toggle, Button, Dropdown, PlayerName, Folder, Meter, MusicFile, Info } kind;
         std::string label;
         float lo = 0, hi = 1;
         std::function<float()> get;              // Dropdown: the selected option index
         std::function<void(float)> set;          // Dropdown: select option `index`
         std::function<std::string(float)> fmt;   // value -> display text
         std::function<void()> action;            // Button: click handler
-        std::function<std::vector<std::string>()> options;   // Dropdown: the choices
+        std::function<std::vector<std::string>()> options;   // Dropdown: the choices; Info: its lines
         std::function<std::string()> note;       // Dropdown: optional status beside the label;
                                                  // Button: the chip text (default "OPEN >")
         std::function<bool()> enabled;           // unset = always; false = greyed, ignores input
         std::function<std::vector<std::string>()> help;   // optional lines shown while hovered
         std::function<float()> mark;             // Meter: a threshold tick, 0..1 (unset or < 0 = none)
+        std::function<bool()> warn;              // Slider: true draws its fill, handle and value red
         SDL_FRect row{};                          // filled by layout()
         int track = 0;                            // MusicFile: the original track it replaces
     };
@@ -246,6 +256,9 @@ private:
     float dragFrom_ = 0;    // its value when it was pressed (saved on release if it moved)
     float hoverX_ = -1, hoverY_ = -1;   // last pointer position (help text for the row under it)
     void drawHelp(const Control& c);    // the hovered row's help lines in a box beside it
+    // An Info row's lines, each word-wrapped to `width` in the note size (a continuation
+    // line is indented): small text that is always shown, under the row it is about.
+    std::vector<std::string> infoLines(const Control& c, float width) const;
 
     // GAME DATA FOLDER (client/datafolder.h): the row, its picker, the outcome of the last
     // pick, and the RESTART NOW / LATER prompt a valid pick opens.

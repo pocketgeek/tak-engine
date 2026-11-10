@@ -246,15 +246,37 @@
         hotkeys_.load(s.hotkeys);                         // Options: rebindable hotkeys
     }
 
-    void GameView::latchSimThreads(int choice) {
+    void GameView::latchSimThreads(int choice, bool localServer) {
         // k threads: the thread that ticks the World (the sim worker, or this one for a
-        // replay and the headless harness) plus k - 1 SimPool workers. AUTO leaves the
-        // World on SimPool::defaultWorkers(), which it reads once, for its first pool.
-        // Nothing has ticked yet, and the World builds its pool at its first pooled
-        // pass, on the thread that ticks it.
+        // replay and the headless harness) plus k - 1 SimPool workers. Nothing has
+        // ticked yet, and the World builds its pool at its first pooled pass, on the
+        // thread that ticks it.
+        using tak::sim::SimPool;
         simThreads_ = std::max(0, choice);
-        simThreadsRun_ = tak::sim::SimPool::threadsFor(simThreads_);
-        writableWorld().setSimWorkers(tak::sim::SimPool::workersFor(simThreads_));
+        simSession_ = SimPool::sessionThreads(simThreads_, SimPool::usableCpus(), localServer);
+        // A debug build's TAK_SIM_WORKERS overrides AUTO, and only AUTO: this simulation
+        // runs it, and so does the local server's (started with auto, it reads it too).
+        const int debug = simThreads_ == 0 ? SimPool::debugWorkers() : -1;
+        simDebugAuto_ = debug >= 0;
+        if (simDebugAuto_) {
+            simSession_.game = unsigned(debug) + 1;
+            if (localServer) simSession_.server = unsigned(debug) + 1;
+        }
+        writableWorld().setSimWorkers(int(simSession_.game) - 1);
+    }
+
+    void GameView::logSimThreads() const {
+        // sim threads: 12 (auto: 24, half; local server 12) / 4 (of 8, half; local server 4)
+        // / 24 (auto) / 8: the count this simulation runs, and where it came from.
+        char from[96] = "";
+        if (simDebugAuto_ && simSession_.server)
+            std::snprintf(from, sizeof from, " (auto: TAK_SIM_WORKERS; local server %u)", simSession_.server);
+        else if (simDebugAuto_) std::snprintf(from, sizeof from, " (auto: TAK_SIM_WORKERS)");
+        else if (simSession_.server)
+            std::snprintf(from, sizeof from, " (%s %u, half; local server %u)", simThreads_ > 0 ? "of" : "auto:",
+                          simSession_.total, simSession_.server);
+        else if (simThreads_ == 0) std::snprintf(from, sizeof from, " (auto)");
+        std::fprintf(stderr, "sim threads: %u%s\n", simSession_.game, from);
     }
 
     // The AUDIO page (Esc menu > AUDIO): sound device, volumes, speakers, CUSTOM MUSIC.
@@ -434,8 +456,7 @@
         } else {
             spots = tak::sim::setupMatch(writableWorld(), registry_, cfg);
         }
-        std::fprintf(stderr, "sim threads: %u%s\n", simThreadsRun_,
-                     simThreads_ > 0 ? "" : " (auto)");   // what this playback's simulation runs on
+        logSimThreads();   // what this playback's simulation runs on
         replayBundles_ = std::move(bundles);
         replayMode_ = true;
         replayKeyBudget_ = tak::replaybar::keyframeBudget(uint64_t(SDL_GetSystemRAM()) << 20);

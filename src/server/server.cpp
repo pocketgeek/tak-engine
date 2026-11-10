@@ -48,6 +48,7 @@
 #include <tuple>
 #include <type_traits>
 #include <cerrno>
+#include <climits>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -459,10 +460,17 @@ public:
     // harness run unrepeatable, and the headless --mpai check exists precisely to
     // produce the same state hash twice. Not for a real server.
     void setFixedSeed(uint32_t v) { fixedSeed_ = v; fixedSeedSet_ = true; }
-    // --sim-threads: the threads each game's referee sim may use, its room worker
-    // included (0 = AUTO, else a count; sim::SimPool::threadsFor). Scheduling only.
-    // More than one running game still ticks each of them serially (closeTick).
-    void setSimThreads(int choice) { simThreads_ = choice; }
+    // --sim-threads: S, the threads the running games' referee sims share, each
+    // game's room worker included (0 = auto, every CPU thread the server may use;
+    // a count above those means all of them). Each running game gets
+    // sim::SimPool::serverShare(S, running games). Scheduling only. A debug build's
+    // TAK_SIM_WORKERS overrides auto, and only auto: every game then runs that.
+    void setSimThreads(int choice) {
+        using tak::sim::SimPool;
+        simAuto_ = choice <= 0;
+        simTotal_ = simAuto_ ? SimPool::usableCpus() : std::min(unsigned(choice), SimPool::usableCpus());
+        simDebug_ = simAuto_ ? SimPool::debugWorkers() + 1 : 0;
+    }
     void setNoAuth() { requireAuth_ = false; }
 #ifndef NDEBUG
     void allowBenchmarks() {testWork_=true;}
@@ -525,7 +533,25 @@ private:
     std::shared_ptr<tak::srv::AcmeCertificates> acme_;
     bool loopbackOnly_ = false;
     bool lan_ = false;
-    int simThreads_ = 0;   // --sim-threads (0 = AUTO)
+    // --sim-threads (setSimThreads): S and whether it was auto; simDebug_ is the fixed
+    // per-game count of a debug build's TAK_SIM_WORKERS (0: none). simShare is what
+    // each of `running` games runs on, simShareLogged_ the share last logged.
+    bool simAuto_ = true;
+    unsigned simTotal_ = tak::sim::SimPool::usableCpus(), simDebug_ = 0, simShareLogged_ = 0;
+    size_t runningGames() const {
+        size_t running = 0;
+        for (const auto& [id, room] : rooms_) { (void)id; running += room.running; }
+        return running;
+    }
+    unsigned simShare(size_t running) const {
+        return simDebug_ ? simDebug_ : tak::sim::SimPool::serverShare(simTotal_, running);
+    }
+    void logSimThreads(size_t running) {
+        simShareLogged_ = simShare(running);
+        if (simDebug_) std::fprintf(stderr, "sim threads: %u (auto: TAK_SIM_WORKERS)\n", simShareLogged_);
+        else std::fprintf(stderr, "sim threads: %u (%s%u over %zu game%s)\n", simShareLogged_, simAuto_ ? "auto: " : "",
+                          simTotal_, running, running == 1 ? "" : "s");
+    }
     tak::net::LanBeacon beacon_;
     uint64_t beaconAtMs_ = 0, lanNonce_ = 0;
     std::map<std::string, std::string> lanMapTitles_;   // map id -> its shown title, for the announcement
@@ -678,7 +704,7 @@ private:
     void refuseStart(Client& c, const Room& r, const std::string& why);
     void modMsg(Client& c,const Frame& f);
     DataSet& roomData(Room& r) {return r.modData ? *r.modData : retail_;}
-    void closeTick(Room& r, bool multipleGames);
+    void closeTick(Room& r, unsigned simThreads);
     void finishTick(Room& r);
     bool canAdvance(const Room& r) const;   // false = wait for a lagging player (flow control)
     void checkHashes(Room& r, uint32_t tick);
@@ -2295,7 +2321,9 @@ void Server::tryStart(Client& c) {
     {
         r->reg = r->opts.crusades && dataSet.haveCb ? &dataSet.regCb : &dataSet.reg;
         r->ref = std::make_unique<tak::sim::World>();
-        r->ref->setSimWorkers(tak::sim::SimPool::workersFor(simThreads_));   // --sim-threads; AUTO leaves the default
+        // --sim-threads: this game's share as it starts (it is counted as running);
+        // each tick then runs on the share of that moment (closeTick).
+        r->ref->setSimWorkers(int(simShare(runningGames())) - 1);
         if (isMission) {
             // The client builds the SAME world (setupMission is deterministic), so the
             // referee and every peer stay in lockstep.
@@ -2468,13 +2496,9 @@ void Server::tryStart(Client& c) {
     }
     for(int i=0;i<std::min(kMaxSlots,r->ref->numPlayers());++i)r->defeated[size_t(i)]=r->ref->player(i).defeated;
     std::fprintf(stderr, "game %u starting with %d players\n", r->id, r->usedSlots());
-    // What its referee sim runs on (--sim-threads). Several running games each tick
-    // serially (closeTick), whatever was asked, for as long as more than one runs.
-    size_t running = 0;
-    for (const auto& [id, room] : rooms_) { (void)id; running += room.running; }
-    if (running > 1) std::fprintf(stderr, "sim threads: 1 (%zu games running)\n", running);
-    else std::fprintf(stderr, "sim threads: %u%s\n", tak::sim::SimPool::threadsFor(simThreads_),
-                      simThreads_ > 0 ? "" : " (auto)");
+    // What its referee sim runs on: its share of --sim-threads, as every running
+    // game's now is. The main loop logs the share again whenever it changes.
+    logSimThreads(runningGames());
 }
 
 // The host changes the room's map, MAP SCENARIO or start mode (Msg::SetRoomMap). Every
@@ -3062,7 +3086,7 @@ bool Server::canAdvance(const Room& r) const {
     return true;   // no live consumers at all
 }
 
-void Server::closeTick(Room& r, bool multipleGames) {
+void Server::closeTick(Room& r, unsigned simThreads) {
     if(r.tickJob.valid())return;
     // All humans must have loaded before the first tick.
     if (r.tick == 0) {
@@ -3140,7 +3164,7 @@ void Server::closeTick(Room& r, bool multipleGames) {
         }
     }
     tak::srv::TickInput input;
-    input.tick=r.tick;input.roomId=r.id;input.multipleGames=multipleGames;
+    input.tick=r.tick;input.roomId=r.id;input.simThreads=simThreads;
     // The referee's hash is read only by checkHashes, against the reports of
     // HUMAN slots (a spectator's is a progress ack), and by the replay trail. A
     // slot becomes human only before the start (joins, seat moves and slot edits
@@ -3803,7 +3827,11 @@ int Server::run() {
         // networking and other rooms continue. Only one tick per room is in flight.
         now=nowMs();
         const uint64_t nowTickUs=nowUs();
-        size_t running=0;for(const auto& [id,room]:rooms_) {(void)id;running+=room.running;}
+        // Each running game's share of --sim-threads, recomputed as games start and
+        // end; a tick takes the share of the moment it is submitted.
+        const size_t running=runningGames();
+        const unsigned simThreads=simShare(running);
+        if(running && simThreads!=simShareLogged_)logSimThreads(running);
         for(auto& [id,room]:rooms_) {
             (void)id;
             // A pause or a wait is not a seat's hold: suspend those running (trackHolds).
@@ -3813,7 +3841,7 @@ int Server::run() {
                !roomOccupied(room) || !roomActive(room) || room.nextTickUs()>nowTickUs)continue;
             trackHolds(room,now);
             if(!canAdvance(room)) {room.rebasePace(nowTickUs+kFlowRetryMs*1000);continue;}
-            try {closeTick(room,running>1);}
+            try {closeTick(room,simThreads);}
             catch(const std::exception& e) {
                 room.simulationError=e.what();
                 std::fprintf(stderr,"game %u tick submission failed: %s\n",id,e.what());
@@ -3939,7 +3967,7 @@ static int serverMain(int argc, char** argv) {
     uint32_t fixedSeed = 0;
     bool fixedSeedGiven = false;   // --seed 0 is a pinned seed, not "unset"
     tak::srv::Limits limits;
-    int simThreads = 0;   // --sim-threads: 0 = auto
+    int simThreads = 0;   // --sim-threads: 0 = auto, else the count asked for
     bool noAuth = false, loopbackOnly = false, closedRegistration=false, lan=false;
     for (int i = 1; i < argc; ++i) {
         try {if(limits.set(argv[i],i+1<argc?argv[i+1]:"")) {++i;continue;}}
@@ -3966,14 +3994,14 @@ static int serverMain(int argc, char** argv) {
             { fixedSeed = uint32_t(std::strtoul(argv[++i], nullptr, 0)); fixedSeedGiven = true; }
         else if (!std::strcmp(argv[i], "--sim-threads") && i + 1 < argc) {
             // auto, or a count from 1; one above the CPU threads this process may use
-            // runs as that many (sim::SimPool::threadsFor).
+            // means all of them (Server::setSimThreads).
             const std::string_view value(argv[++i]);
             unsigned parsed = 0;
             const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
             const bool number = error != std::errc::invalid_argument && end == value.data() + value.size();
             if (value == "auto") simThreads = 0;
-            else if (number && error == std::errc::result_out_of_range) simThreads = int(tak::sim::SimPool::kMaxThreads);
-            else if (number && parsed >= 1) simThreads = int(std::min(parsed, tak::sim::SimPool::kMaxThreads));
+            else if (number && error == std::errc::result_out_of_range) simThreads = INT_MAX;
+            else if (number && parsed >= 1) simThreads = int(std::min(parsed, unsigned(INT_MAX)));
             else {
                 std::fprintf(stderr, "takserver: --sim-threads must be auto or a number of threads, 1 or more\n");
                 return 1;
@@ -4018,11 +4046,12 @@ static int serverMain(int argc, char** argv) {
                         "  --map-cache-dir holds uploaded maps and game mods and saved generated\n"
                         "  maps (default: TAKengine/takserver in the per-user data folder, e.g.\n"
                         "  ~/.local/share). The --data folder is never written.\n"
-                        "  --sim-threads is how many CPU threads one game's simulation may use:\n"
-                        "  auto (the default: 1 to 4, from the CPU threads the server may use) or\n"
-                        "  a number from 1 (a number above those CPU threads means all of them).\n"
-                        "  It never changes a game's outcome. While more than one game is running,\n"
-                        "  each game uses one thread, whatever is set here.\n"
+                        "  --sim-threads is how many CPU threads the running games' simulations\n"
+                        "  share: auto (the default: every CPU thread the server may use) or a\n"
+                        "  number from 1 (a number above those CPU threads means all of them).\n"
+                        "  Each running game gets that total divided by the number of running\n"
+                        "  games, rounded down, but at least 2 threads (1 when the total is 1).\n"
+                        "  It never changes a game's outcome.\n"
                         "  --seed N (0 included) pins every game's RNG seed, so a headless run is\n"
                         "  repeatable. Games are otherwise seeded randomly (which is what\n"
                         "  makes Random Start Locations differ game to game).\n"

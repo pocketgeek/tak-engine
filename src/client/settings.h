@@ -156,14 +156,15 @@ struct Settings {
     bool  smoothMotion    = true;  // interpolate unit motion between 30Hz sim ticks (glide, not step)
 
     // ---- performance ----
-    // SIMULATION THREADS (Options > GAME): how many CPU threads one game simulation may
-    // use, the thread that ticks it included. 0 = AUTO (the default: 1 +
-    // sim::SimPool::defaultWorkers()), else 1 (fully serial) .. sim::SimPool::kMaxThreads.
-    // A value above this machine's thread count (a profile from a bigger machine) stays
-    // in the file and runs as that count (sim::SimPool::threadsFor). Scheduling only: it
-    // never changes a state hash or a replay. Latched when a game session opens, for the
-    // client's own simulation and for the local server it starts (takserver
-    // --sim-threads). Persisted as simThreads.
+    // SIMULATION THREADS (Options > GAME): how many CPU threads the game's simulations
+    // may use. 0 = AUTO (the default: every thread this computer has), else a count from
+    // 1 up to twice the computer's threads, stored up to sim::SimPool::kMaxChoice. A
+    // value above this machine's top (a profile from a bigger machine) stays in the file
+    // and is used as that top. A game with its own local server (single player, a LOCAL
+    // SERVER the player hosts, the Benchmark) gives half to the game's simulation and
+    // half to the server's (takserver --sim-threads); a game on someone else's server
+    // uses them all (sim::SimPool::sessionThreads). Scheduling only: it never changes a
+    // state hash or a replay. Latched when a game session opens. Persisted as simThreads.
     int   simThreads = 0;
 
     // ---- misc ----

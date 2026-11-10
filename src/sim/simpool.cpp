@@ -34,11 +34,16 @@ unsigned SimPool::usableCpus() {
     return std::max(1u,cpus);
 }
 
-unsigned SimPool::defaultWorkers() {
+int SimPool::debugWorkers() {
 #ifndef NDEBUG
     if (const char* e=std::getenv("TAK_SIM_WORKERS"))
-        return unsigned(std::clamp(std::atoi(e),0,int(kMaxWorkers)));
+        return std::clamp(std::atoi(e),0,int(kMaxWorkers));
 #endif
+    return -1;
+}
+
+unsigned SimPool::defaultWorkers() {
+    if (const int debug=debugWorkers();debug>=0) return unsigned(debug);
     return std::min(3u,usableCpus()/8);
 }
 

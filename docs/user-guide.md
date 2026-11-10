@@ -1968,21 +1968,26 @@ is the one both use next time.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| **Simulation threads** | Auto | How many of your processor's threads the game simulation may use. The slider starts at **Auto** on the left, then goes from 1 up to every thread your computer has (at most 64). |
+| **Simulation threads** | Auto | How many of your processor's threads the game's simulations may use. The slider starts at **Auto** on the left, then goes from 1 up to twice the threads your computer has (at most 128). |
 
-**Auto** chooses from the number of threads your processor has: 1 with fewer
-than 8, 2 from 8, 3 from 16 and 4 from 24. The slider shows what Auto comes to
-on your computer, for example **Auto (4)**. **1** runs the whole simulation on
-one thread.
+**Auto** is every thread your computer has. The slider shows the number, for
+example **Auto (24)**, and the lines under it say how many threads this computer
+has and what your choice comes to in each kind of game.
+
+Above the number of threads your computer has, the slider turns red: that is
+more threads than the computer has, so they take turns on the processor.
 
 The setting changes only how the work is shared out. It never changes what
 happens in a game: every value plays the same game, tick for tick, so players
 with different values play together and replays play back the same.
 
 A single-player game runs two simulations, the game itself and the local server
-that referees it and runs the computer players, and each uses this many threads.
-So does a [Local server](#local-server) you host. A game on someone else's
-server uses your setting for your own simulation only.
+that referees it and runs the computer players. They share the setting: half
+goes to the game and half to its local server. With an odd number the game gets
+the extra thread, and each always gets at least one. The same goes for a
+[Local server](#local-server) you host and for the [Benchmark](#benchmark). A
+game on someone else's server, like a replay, runs one simulation on your
+computer, and it uses all of them.
 
 The extra threads matter mostly in large battles, from about 2,000 units; a
 small game runs the same at any value. More is not always faster: a battle has
@@ -3233,9 +3238,10 @@ computer's capacity, 0–100%, and GPU use is measured as in the
 Unit limits still apply, so the highest intensities may not reach their
 requested unit counts. A computer that cannot keep up runs slower than the
 chosen speed and takes longer. The results list the **Speed** the run used;
-compare only runs at the same speed. They also list **Sim threads**, the
-[Simulation threads](#performance) value the run was opened with (**Auto** with
-the number it came to), so runs that differ only in that can be told apart.
+compare only runs at the same speed. They also list **Sim threads**: how many
+threads the game (**Client**) and its local server (**Server**) each ran on, then
+the [Simulation threads](#performance) value the run was opened with, **Auto**
+or the number, so runs that differ only in that can be told apart.
 
 **Save as JPG**, beside **Done**, saves the results screen as a picture: the
 whole window as shown, without the pointer. It goes in a `benchmarks` folder in

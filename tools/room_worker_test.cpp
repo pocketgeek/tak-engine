@@ -36,7 +36,7 @@ int main() {
     release.set_value();check(blocked.get()==7,"slow room completes after release");
     check(independent.get()==42,"independent room result");
     for(uint32_t tick=0;tick<180;++tick) {
-        srv::TickInput in;in.tick=tick;in.multipleGames=true;
+        srv::TickInput in;in.tick=tick;in.simThreads=1;
         in.replayBudget=std::numeric_limits<uint64_t>::max();
         if(tick%20==0) {
             net::Command c;c.kind=net::Cmd::Move;c.player=0;c.unitId=1;c.x=200+float(tick);c.z=200;
@@ -60,7 +60,7 @@ int main() {
     // A hash nobody reads (no human slot, no replay trail) is skipped; the
     // trail alone still gets its hash and posDigest every 10th period.
     for(uint32_t tick=180;tick<=300;++tick) {
-        srv::TickInput none;none.tick=tick;none.multipleGames=true;
+        srv::TickInput none;none.tick=tick;none.simThreads=1;
         none.replayBudget=std::numeric_limits<uint64_t>::max();
         srv::TickInput trail=none;trail.clientHashes=false;
         none.clientHashes=none.replayTrail=false;
@@ -72,7 +72,7 @@ int main() {
         if(trailTick)check(*trailed.hash==serial.stateHash() && trailed.posDigest==serial.posDigest(),"trail checkpoint is the world's");
         check(skipped.bundle==trailed.bundle && async.stateHash()==serial.stateHash(),"skipping the hash changes nothing else");
     }
-    auto before=async.stateHash();srv::TickInput exhausted;exhausted.multipleGames=true;
+    auto before=async.stateHash();srv::TickInput exhausted;exhausted.simThreads=1;
     auto limited=worker.submit([&]{return srv::simulateRoomTick(async,registry,workerAi,exhausted);}).get();
     check(limited.resourceLimited && before==async.stateHash(),"replay limit prevents simulation advancement");
     auto failed=worker.submit([]()->int{throw std::runtime_error("test failure");});

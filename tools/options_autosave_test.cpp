@@ -11,8 +11,9 @@
 //   - the Options DEFAULTS puts the sound device back to the system default and re-opens
 //     audio on it at once, only when the device in use changes;
 //   - SIMULATION THREADS (GAME page) is a whole-step slider from AUTO at its left end to
-//     every CPU thread this process may use, saved when let go, and the GAME page's
-//     DEFAULTS is live only while it is off AUTO;
+//     twice the CPU threads this process may use, red above that count, with lines under
+//     it that say the count and what the choice comes to; saved when let go, and the GAME
+//     page's DEFAULTS is live only while it is off AUTO;
 //   - the Controls hint line has a band of its own: at every window size it lies below the
 //     rows' viewport (never over a row, scrolled or not) and above the footer buttons.
 //     TAK_LAYOUT_SHOT_DIR=<dir> also writes each case as a BMP, and the GAME page with
@@ -26,6 +27,7 @@
 
 #include <SDL.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>
@@ -213,12 +215,14 @@ static void testOptions(SDL_Renderer* ren) {
 }
 
 // SIMULATION THREADS: the GAME page's slider (PERFORMANCE, after PLAYER and GAME DATA).
-// Position 0 is AUTO, then 1 (serial) .. N in whole steps, N being every CPU thread this
-// process may use (sim::SimPool::maxThreads: 1 on a one-CPU test machine, where the
-// slider has just AUTO and 1).
+// Position 0 is AUTO, then 1 (serial) .. 2N in whole steps, N being every CPU thread this
+// process may use (sim::SimPool::usableCpus: 1 on a one-CPU test machine, where the
+// slider has AUTO, 1 and 2). Above N it is red; the lines under it say N and what the
+// choice comes to with a local server (half each) and without (all of it).
 static void testSimThreads(SDL_Renderer* ren) {
     std::printf("SIMULATION THREADS\n");
-    const int most = int(sim::SimPool::maxThreads());
+    const int cpus = int(sim::SimPool::usableCpus());
+    const int most = int(sim::SimPool::maxChoice(unsigned(cpus)));
     Settings s = loadSettings();
     s.simThreads = 0;
     check(saveSettings(s), "the profile starts at AUTO");
@@ -239,17 +243,41 @@ static void testSimThreads(SDL_Renderer* ren) {
         r = o.rowRect("SIMULATION THREADS");
         const float y = r->y + r->h / 2, x0 = r->x, w = r->w;
         auto at = [&](float step) { return x0 + w * step / float(most) + 0.5f; };   // a step's place on the track
-        // The right end is N; held, it is live but not in the file yet.
+        // The lines under it, at AUTO: the computer's threads, half each with a local
+        // server, all of them without. They are wrapped to the row: read here as one text.
+        auto says = [&](const std::string& part) {
+            std::string all;
+            for (const std::string& l : o.rowLines("SIMULATION THREADS INFO")) all += l.substr(l.find_first_not_of(' ')) + " ";
+            return all.find(part) != std::string::npos;
+        };
+        const SDL_FRect* info = o.rowRect("SIMULATION THREADS INFO");
+        check(info && info->y >= r->y + r->h && info->h > 0, "the info lines are under the slider");
+        bool fits = info != nullptr;
+        for (const std::string& l : o.rowLines("SIMULATION THREADS INFO")) fits = fits && uiTextWidth(l, 1.3f) <= info->w;
+        check(fits && o.rowLines("SIMULATION THREADS INFO").size() >= 3, "each line fits the row");
+        check(says("THIS COMPUTER HAS " + std::to_string(cpus) + (cpus == 1 ? " THREAD." : " THREADS.")),
+              "they say how many threads this computer has");
+        check(says("SINGLE PLAYER, A LOCAL SERVER YOU HOST AND THE BENCHMARK: HALF") &&
+              says("THE GAME (" + std::to_string((cpus + 1) / 2) + "), HALF TO ITS LOCAL SERVER (" + std::to_string(std::max(1, cpus / 2)) + ")."),
+              "they say a game with a local server gives half to each");
+        check(says("A GAME ON SOMEONE ELSE'S SERVER: THE GAME USES ALL OF THEM (" + std::to_string(cpus) + ")."),
+              "they say a game on someone else's server uses them all");
+        check(!o.rowWarn("SIMULATION THREADS"), "AUTO is not red");
+        // The right end is 2N; held, it is live but not in the file yet.
         send(o, SDL_MOUSEBUTTONDOWN, at(float(most)), y);
-        check(s.simThreads == most && changes == 1, "the right end is every thread this machine may use");
+        check(s.simThreads == most && most == 2 * cpus && changes == 1, "the right end is twice this machine's threads");
         check(saves == 0 && loadSettings().simThreads == 0, "the slider is not saved while it is held");
-        // Every whole step down to the left end, which is AUTO.
-        bool steps = true;
+        check(says("THE GAME (" + std::to_string(cpus) + "), HALF TO ITS LOCAL SERVER (" + std::to_string(cpus) + ").") &&
+              says("ALL OF THEM (" + std::to_string(most) + ")."), "the info lines follow the slider");
+        // Every whole step down to the left end, which is AUTO; red above N only.
+        bool steps = true, red = true;
         for (int n = most; n >= 0; --n) {
             send(o, SDL_MOUSEMOTION, at(float(n)), y, SDL_BUTTON_LMASK);
             steps = steps && s.simThreads == n;
+            red = red && o.rowWarn("SIMULATION THREADS") == (n > cpus);
         }
-        check(steps && s.simThreads == 0, "it moves in whole steps, 1 to N, with AUTO at the left end");
+        check(steps && s.simThreads == 0, "it moves in whole steps, 1 to 2N, with AUTO at the left end");
+        check(red, "it is red above this machine's threads, and only there");
         if (most >= 2) {   // between two steps: the nearer one
             send(o, SDL_MOUSEMOTION, at(1.3f), y, SDL_BUTTON_LMASK);
             check(s.simThreads == 1, "a place between two steps is the nearer step");
@@ -280,20 +308,20 @@ static void testSimThreads(SDL_Renderer* ren) {
               "YES puts SIMULATION THREADS back to AUTO, keeps the player name, and saves");
         check(click(o, o.defaultsRect()) == false && o.defaultsYesRect().w == 0, "back at AUTO, DEFAULTS does nothing again");
     }
-    // A profile from a bigger machine: a saved count above this machine's N is shown (and
-    // run) as N, and stays in the file until the player moves the slider.
-    if (most < int(sim::SimPool::kMaxThreads)) {
-        s.simThreads = int(sim::SimPool::kMaxThreads);
+    // A profile from a bigger machine: a saved count above this machine's 2N is shown (and
+    // run) as 2N, and stays in the file until the player moves the slider.
+    if (most < int(sim::SimPool::kMaxChoice)) {
+        s.simThreads = int(sim::SimPool::kMaxChoice);
         check(saveSettings(s), "a bigger machine's choice is in the file");
         OptionsScreen o(ren, s, [&] { ++changes; }, save, 2, {}, {}, {}, OptionsPage::Game);
         o.render(W, H);
         const int savesBefore = saves;
         if (const SDL_FRect* r = bring(o, "SIMULATION THREADS")) {
             send(o, SDL_MOUSEMOTION, r->x + r->w / 2, r->y + r->h / 2);   // hover: the help box, nothing else
-            check(s.simThreads == int(sim::SimPool::kMaxThreads) && saves == savesBefore &&
-                  loadSettings().simThreads == int(sim::SimPool::kMaxThreads), "showing the page does not rewrite it");
-            check(int(sim::SimPool::threadsFor(s.simThreads)) == most, "it runs as this machine's most");
-            // Pressing the right end is the same place the handle already shows: N.
+            check(s.simThreads == int(sim::SimPool::kMaxChoice) && saves == savesBefore &&
+                  loadSettings().simThreads == int(sim::SimPool::kMaxChoice), "showing the page does not rewrite it");
+            check(int(sim::SimPool::configured(s.simThreads, unsigned(cpus))) == most, "it runs as this machine's most");
+            // Pressing the right end is the same place the handle already shows: 2N.
             send(o, SDL_MOUSEBUTTONDOWN, r->x + r->w, r->y + r->h / 2);
             send(o, SDL_MOUSEBUTTONUP, r->x + r->w, r->y + r->h / 2);
             check(s.simThreads == most, "moving the slider stores this machine's own count");

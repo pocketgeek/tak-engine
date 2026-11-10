@@ -861,22 +861,23 @@ int main() {
         check("fps: 45 snaps", loadFrom("streamFps = 45\n").streamFps == 60);
         check("fps: junk snaps", loadFrom("streamFps = x\n").streamFps == 60);
         // SIMULATION THREADS: 0 = AUTO, the default and what anything that is not a count
-        // reads as; 1..64 (sim::SimPool::kMaxThreads) is stored and read back as written,
-        // more is clamped to 64. The machine's own limit applies where the value is used
-        // (SimPool::threadsFor), so the file keeps a bigger machine's choice.
+        // reads as; 1..128 (sim::SimPool::kMaxChoice: twice the widest simulation) is
+        // stored and read back as written, more is clamped to 128. The machine's own top,
+        // twice its threads, applies where the value is used (SimPool::configured), so the
+        // file keeps a bigger machine's choice.
         using tak::sim::SimPool;
         check("sim threads: default auto", Settings{}.simThreads == 0);
         check("sim threads: absent", loadFrom("masterVol = 7\n").simThreads == 0);
         check("sim threads: read", loadFrom("simThreads = 8\n").simThreads == 8);
         check("sim threads: 1 (serial)", loadFrom("simThreads = 1\n").simThreads == 1);
-        check("sim threads: 64 kept", loadFrom("simThreads = 64\n").simThreads == 64 && SimPool::kMaxThreads == 64);
-        check("sim threads: clamped high", loadFrom("simThreads = 65\n").simThreads == 64 &&
-                                           loadFrom("simThreads = 100000\n").simThreads == 64);
+        check("sim threads: 128 kept", loadFrom("simThreads = 128\n").simThreads == 128 && SimPool::kMaxChoice == 128);
+        check("sim threads: clamped high", loadFrom("simThreads = 129\n").simThreads == 128 &&
+                                           loadFrom("simThreads = 100000\n").simThreads == 128);
         check("sim threads: negative", loadFrom("simThreads = -4\n").simThreads == 0);
         check("sim threads: junk is auto", loadFrom("simThreads = many\n").simThreads == 0 &&
                                            loadFrom("simThreads = auto\n").simThreads == 0 &&
                                            loadFrom("simThreads =\n").simThreads == 0);
-        for (int n : {0, 1, 2, 8, 24, 63, 64}) {
+        for (int n : {0, 1, 2, 8, 24, 48, 64, 127, 128}) {
             Settings ts{};
             ts.simThreads = n;
             check("sim threads: round trip", loadFrom(tak::serializeSettings(ts)).simThreads == n);
@@ -887,18 +888,15 @@ int main() {
             check("sim threads: saved as a number", tak::serializeSettings(ts).find("\nsimThreads = 8\n") != std::string::npos &&
                                                     tak::serializeSettings(Settings{}).find("\nsimThreads = 0\n") != std::string::npos);
             ts.simThreads = 500;   // never written out of range
-            check("sim threads: written clamped", tak::serializeSettings(ts).find("\nsimThreads = 64\n") != std::string::npos);
+            check("sim threads: written clamped", tak::serializeSettings(ts).find("\nsimThreads = 128\n") != std::string::npos);
         }
-        // As used: AUTO is the CPU rule (1 thread + SimPool::defaultWorkers()), a count runs
-        // as itself up to this machine's usable threads, and one above them as all of them
-        // (a profile moved from a bigger machine).
-        const int most = int(SimPool::maxThreads());
-        check("sim threads: auto as used", SimPool::threadsFor(loadFrom("simThreads = 0\n").simThreads) == 1 + SimPool::defaultWorkers() &&
-                                           SimPool::workersFor(loadFrom("simThreads = 0\n").simThreads) == -1);
-        check("sim threads: 1 as used", SimPool::threadsFor(loadFrom("simThreads = 1\n").simThreads) == 1 &&
-                                        SimPool::workersFor(loadFrom("simThreads = 1\n").simThreads) == 0);
-        check("sim threads: 64 as used", int(SimPool::threadsFor(loadFrom("simThreads = 64\n").simThreads)) == most &&
-                                         SimPool::workersFor(loadFrom("simThreads = 64\n").simThreads) == most - 1);
+        // As used on this machine of N threads: AUTO is N, a count runs as itself up to
+        // 2N, and one above that as 2N (a profile moved from a bigger machine).
+        const unsigned cpus = SimPool::usableCpus(), top = SimPool::maxChoice(cpus);
+        check("sim threads: auto as used", SimPool::configured(loadFrom("simThreads = 0\n").simThreads, cpus) == std::min(cpus, top));
+        check("sim threads: 1 as used", SimPool::configured(loadFrom("simThreads = 1\n").simThreads, cpus) == 1);
+        check("sim threads: 128 as used", SimPool::configured(loadFrom("simThreads = 128\n").simThreads, cpus) == top &&
+                                          top == 2 * std::min(cpus, SimPool::kMaxThreads));
     }
     // The remembered room sets: single player (spRoom.<field>) and multiplayer
     // (mpRoom.<field>), one key per field, each set saved and read on its own. The keys

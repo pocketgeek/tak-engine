@@ -11,7 +11,9 @@ struct TickInput {
     std::vector<net::Command> commands,scheduled;
     std::vector<net::Event> events;
     uint64_t replayBudget=0;
-    bool multipleGames=false;
+    // The threads this tick's simulation may use, its own included (the game's
+    // share of takserver --sim-threads at submission); 0 leaves the World's width.
+    unsigned simThreads=0;
     // Who reads the referee's hash: seated humans' desync reports (every
     // kHashPeriod ticks) and the recorded replay's checkpoint trail (every 10th
     // of those, with posDigest). Neither: the hash and posDigest are skipped.

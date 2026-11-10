@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""takserver --sim-threads <auto|N>: how many CPU threads one game's referee simulation may use.
+"""takserver --sim-threads <auto|N>: how many CPU threads the running games' referee simulations share.
 
 The command line, on the binary alone (no game data): `auto` and a count from 1 are accepted
 (the next refusal is then about something else), 0, a negative number and junk are refused with
 the option's own usage error, a missing value with the generic one, and --help lists the option.
 
-With --data, on real servers: each game start logs what its simulation runs on -- the count
-asked for, `(auto)` for the CPU rule, a count above the machine's usable threads as all of them
-(at most 64) -- and while more than one game runs each ticks on one thread, whatever was asked.
-The option is scheduling only: with --seed, the game it starts has the same seed either way.
+With --data, on real servers: the total S is every CPU thread the server may use by default
+(`auto`), or the count asked for (one above the usable threads means all of them). Each running
+game gets S divided by the running games, rounded down, but at least 2 (1 when S is 1) and at
+most 64, and the server logs that share when a game starts and whenever it changes as games
+start and end. The option is scheduling only: with --seed, the game it starts has the same seed
+either way.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -25,6 +27,11 @@ from server_public_test import server, login, options
 
 USAGE = b'--sim-threads must be auto or a number of threads, 1 or more'
 MAX_THREADS = 64   # sim::SimPool::kMaxThreads
+
+
+def share(total, running):
+    """SimPool::serverShare: each running game's threads out of the server's total."""
+    return min(max(total // max(running, 1), min(2, total)), MAX_THREADS)
 
 
 def usable_cpus():
@@ -87,39 +94,55 @@ def one_game(binary, data, *arguments):
                 return sim_lines(root, 1), seed
 
 
-def two_games(binary, data):
-    """More than one running game: each ticks on one thread, and the log says so."""
+def several_games(binary, data, total):
+    """Three games start one after another on a server of `total` threads, then two of them end:
+    the log has the share at each start, and again once it changes."""
     with tempfile.TemporaryDirectory(prefix='tak-simthreads-') as tmp:
         root = Path(tmp)
-        with server(binary, data, root, '--sim-threads', '2') as (port, h, process):
+        with server(binary, data, root, '--sim-threads', str(total)) as (port, h, process):
             first, _ = start_game(port, h, 'First')
             with contextlib.closing(first):
                 second, _ = start_game(port, h, 'Second')
-                with contextlib.closing(second):
-                    return sim_lines(root, 2)
+                third, _ = start_game(port, h, 'Third')
+                started = sim_lines(root, 3)
+                third.close()
+                second.close()
+                # Back to one game. From three games to two the share is the same for any
+                # total up to 4, so that step logs nothing.
+                return started, sim_lines(root, 4)[3:]
 
 
 def server_checks(binary, data):
-    cpus = min(usable_cpus(), MAX_THREADS)
+    cpus = usable_cpus()
     asked = (1, 2, MAX_THREADS, 1000)
     # One server per case, side by side (each has its own folder and port).
     with ThreadPoolExecutor(max_workers=7) as pool:
         default = pool.submit(one_game, binary, data)
         explicit = pool.submit(one_game, binary, data, '--sim-threads', 'auto')
         counts = [pool.submit(one_game, binary, data, '--sim-threads', str(n)) for n in asked]
-        several = pool.submit(two_games, binary, data)
+        several = pool.submit(several_games, binary, data, 4)
         auto, auto_seed = default.result()
-        assert len(auto) == 1 and re.fullmatch(r'sim threads: \d+ \(auto\)', auto[0]), auto
-        # The CPU rule, unless a debug server inherited TAK_SIM_WORKERS (which overrides AUTO, and only AUTO).
+        assert len(auto) == 1 and re.fullmatch(r'sim threads: \d+ \(auto: .*\)', auto[0]), auto
+        # Every usable CPU thread, unless a debug server inherited TAK_SIM_WORKERS (which overrides auto, and only auto).
         if 'TAK_SIM_WORKERS' not in os.environ:
-            assert auto == ['sim threads: %d (auto)' % (1 + min(3, usable_cpus() // 8))], (auto, usable_cpus())
+            assert auto == ['sim threads: %d (auto: %d over 1 game)' % (share(cpus, 1), cpus)], (auto, cpus)
         assert explicit.result() == (auto, auto_seed)
         for n, game in zip(asked, counts):
             lines, seed = game.result()
-            assert lines == ['sim threads: %d' % min(n, cpus)], (n, lines)
+            total = min(n, cpus)
+            assert lines == ['sim threads: %d (%d over 1 game)' % (share(total, 1), total)], (n, lines)
             assert seed == auto_seed == 7, (n, seed, auto_seed)   # scheduling only
-        lines = several.result()
-        assert lines == ['sim threads: %d' % min(2, cpus), 'sim threads: 1 (2 games running)'], lines
+        # Several games share the total, rounded down, never fewer than 2 each (1 on a
+        # one-thread server): 4 threads are 4, then 2 and 2, then 2, 2 and 2 -- more than
+        # the total -- and 4 again for the game that is left.
+        total = min(4, cpus)
+        started, after = several.result()
+        assert started == ['sim threads: %d (%d over 1 game)' % (share(total, 1), total),
+                           'sim threads: %d (%d over 2 games)' % (share(total, 2), total),
+                           'sim threads: %d (%d over 3 games)' % (share(total, 3), total)], started
+        back = ['sim threads: %d (%d over 1 game)' % (share(total, 1), total)] if share(total, 1) != share(total, 3) else []
+        assert after == back, (started, after)
+        assert cpus < 4 or (share(total, 2), share(total, 3)) == (2, 2), total
 
 
 def main():
@@ -133,7 +156,7 @@ def main():
     if a.data:
         server_checks(binary, a.data.resolve())
     print('PASS takserver --sim-threads: auto and a count accepted, junk refused with the usage error'
-          + ('; each game logs its sim threads, several games tick serially' if a.data else ' (no --data: command line only)'))
+          + ('; each game logs its share of the total, never fewer than 2 with several games' if a.data else ' (no --data: command line only)'))
 
 
 if __name__ == '__main__':

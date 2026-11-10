@@ -167,7 +167,8 @@ int pickFreePort() {
 // an unauthenticated server must not be reachable from the network.
 // lan: the CONNECT screen's LOCAL SERVER instead -- takserver --lan, unencrypted and
 // without accounts on every interface, so players on the network can join it.
-// simThreads: the player's SIMULATION THREADS (0 = AUTO), for its referee sim too.
+// simThreads: the server's half of the player's SIMULATION THREADS, for its referee sim
+// (0 = auto: only when a debug build's TAK_SIM_WORKERS decides AUTO, there as here).
 bool spawnLocalServer(tak::LocalServer& server, const std::string& serverBin,
                       const std::string& dataRoot, int port, bool lan = false, int simThreads = 0) {
     // It shares this player's per-user map folder (hpi::userMapRoot): a map the client
@@ -408,7 +409,7 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
     auto view = std::make_unique<GameView>(ren, std::move(rvfs), mapPath, dataRoot,
         tak::hpi::ModUse{}, false, false, true, "ara", "tar", rf.crusades);
     view->applySettings(settings); view->setSettings(&settings);
-    view->latchSimThreads(settings.simThreads);
+    view->latchSimThreads(settings.simThreads, false);   // one simulation: it gets them all
     if (canReturn) view->setCanReturnToMenu();
     std::fprintf(stderr, "replay: %s -- map '%s', %zu ticks%s (format %u, recorded by %s, %zu hash checkpoints)\n",
                  path.c_str(), rf.mapId.c_str(), rf.bundles.size(), rf.crusades ? " (Crusades)" : "",
@@ -1463,7 +1464,12 @@ int main(int argc, char** argv) {
         // exercises the launch-failure path; see the menu_launch_failure test).
         if (const char* bin = tak::devEnv("TAK_LOCAL_SERVER_BIN"); bin && *bin) serverBin = bin;
 #endif
-        if (p <= 0 || !spawnLocalServer(localServer, serverBin, dataRoot, p, lanHosting, settings.simThreads)) {
+        // SIMULATION THREADS: this game and its local server get half each (latchSimThreads
+        // below takes the game's). A debug build's TAK_SIM_WORKERS overrides AUTO in both.
+        using tak::sim::SimPool;
+        const int serverThreads = settings.simThreads <= 0 && SimPool::debugWorkers() >= 0 ? 0
+            : int(SimPool::sessionThreads(settings.simThreads, SimPool::usableCpus(), true).server);
+        if (p <= 0 || !spawnLocalServer(localServer, serverBin, dataRoot, p, lanHosting, serverThreads)) {
             std::fprintf(stderr, "single-player: could not launch a local server (%s)\n",
                          serverBin.c_str());
             if (failLaunch("could not start the local server (" + serverBin + ")")) continue;
@@ -1716,7 +1722,8 @@ int main(int argc, char** argv) {
 #endif
             gameView->applySettings(settings);   // audio / camera / UI-scale prefs
             gameView->setSettings(&settings);     // in-game Options edits + persists these
-            gameView->latchSimThreads(settings.simThreads);   // SIMULATION THREADS: this session's, as the local server's
+            // SIMULATION THREADS: half with a local server of its own (which got the other), else all.
+            gameView->latchSimThreads(settings.simThreads, localServer.started());
             gameView->setVoice(voiceOwner.get()); // voice chat in multiplayer rooms (none for replays/benchmarks)
             if (std::string n = tak::renderdriver::pendingNotice(); !n.empty()) {
                 gameView->showNotice(n, 10);   // launched straight into a game: say it here

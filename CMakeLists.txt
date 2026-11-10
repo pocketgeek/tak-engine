@@ -3837,9 +3837,9 @@ if(Python3_Interpreter_FOUND)
     "${CMAKE_SOURCE_DIR}/tools/server_status_test.py" --server "$<TARGET_FILE:takserver>")
   set_tests_properties(server_status_cli PROPERTIES TIMEOUT 30)
   # takserver --sim-threads <auto|N>: auto and a count are accepted, 0, negatives and junk are a
-  # usage error; with game data, each game start logs the threads its referee sim runs on (the
-  # count, the CPU rule for auto, the machine's most for a bigger count) and several running
-  # games each tick on one.
+  # usage error; with game data, each game start logs the threads its referee sim runs on (its
+  # share of the total: every usable thread for auto, the machine's most for a bigger count)
+  # and several running games share the total, never fewer than 2 threads each.
   if(TAK_TEST_DATA)
     add_test(NAME server_sim_threads COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_sim_threads_test.py" --server "$<TARGET_FILE:takserver>"
