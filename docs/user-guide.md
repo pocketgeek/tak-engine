@@ -2293,7 +2293,7 @@ player's game stays in step.
 - **Single player** needs no server setup: the game starts a private server on
   your own computer by itself.
 - **Online with friends:** everyone signs in to the same server and one of you
-  creates a game and gives it a password in the room if you want to keep it
+  creates a game, with a password if you want to keep it
   private; the others join it from the game browser. The list opens on the official TAK Engine server,
   `tak.pgnet.us` (marked **DEFAULT**); servers you have used before are listed
   under it.
@@ -2329,12 +2329,14 @@ host's game mods are sent automatically.
    is no separate sign-up. Names are at most 16 characters. An address typed without `tls://` or `tcp://` is tried
    encrypted (TLS) first and then unencrypted; with `tls://` or `tcp://` only that
    is tried, and if it fails the reason is shown in red.
-4. In the game browser, click a game to join it, or click **CREATE** to make
-   one: your game room opens straight away, named after you (*Name's Game*), on
-   the map and rules you last used in multiplayer. A game marked **LOCK** needs
-   its password: type it in **PASSWORD (FOR LOCKED GAMES)** at the bottom before
-   you click the game. A game marked **LIVE** has started; **WATCH** spectates it
-   (see [Spectating](#spectating)).
+4. In the game browser, click a game to join it. A game marked **LOCK** asks for
+   its password first: type it in the window that opens and click **JOIN** (or
+   press **Enter**). To make a game of your own, click **CREATE**: a window asks
+   for the **GAME NAME**, filled in as *Name's Game* after you, and a **PASSWORD**
+   if you want one; **CREATE** there (or **Enter**) opens your game room on the
+   map and rules you last used in multiplayer. A game marked **LIVE** has
+   started; **WATCH** spectates it (see [Spectating](#spectating)), after its
+   password if it is locked.
 5. In the room, choose your side, colour and team, then click **Ready**. The host
    starts the game when everyone is ready. With **By slot** start locations,
    **Move here** on an open slot takes that seat and its start (see
@@ -2345,17 +2347,27 @@ host's game mods are sent automatically.
 mods or the seats (an AI, a closed seat, a kick) after you clicked **Ready**, you
 are not ready any more: what changed flashes, the room says so (*HOST CHANGED FOG
 OF WAR -- READY AGAIN*), the chat keeps a line about it, and the button reads
-**Ready** again. Check the change and click it again. A new game name or password
-does not clear it, and nothing another player does clears yours. The host sees
-*PLAYERS MUST READY AGAIN*, and **Start** waits for them.
+**Ready** again. Check the change and click it again. Nothing another player does
+clears yours. The host sees *PLAYERS MUST READY AGAIN*, and **Start** waits for
+them.
 
-**Name and password.** A game you create is listed at once, named after you and
-with no password. The host's room has two boxes above the slots: the game's name
-and its password (empty: *NO PASSWORD*). Type in one and press **Enter**, or click
-elsewhere, to change it; **Esc** puts back what was there. A name is up to 32
-characters. The game list follows the change, and a password does not affect the
-players already in the room. To keep a game private, type its password as soon as
-the room opens. The others see the name and *LOCKED* when it has a password.
+**Name and password.** A game gets its name and its password when it is created,
+and keeps them: nobody changes either in the room. In the **CREATE** window the
+name can be up to 32 characters (leave it blank for *Name's Game*), and an empty
+password makes a game anyone on the server can join. A password is hidden as you
+type it, here and in a locked game's password window: **SHOW** beside the field
+shows what you typed and **HIDE** hides it again. **Tab** moves between the two
+fields and **Esc** closes a window. If the server refuses (a wrong password, a
+full game), the window says why and keeps what you typed, so you can correct it
+and try again; it also says when the server does not answer, and when the game
+has closed or started in the meantime.
+
+In the room, the game's name stands above the slots for everyone. When the game
+has a password, the players who typed it (the host who created the game, and
+everyone who joined with it) see **PASSWORD** and a row of dots after the name;
+**SHOW** there shows it, to read it out to a friend, and **HIDE** hides it again.
+It is hidden each time you enter a room. A player who never typed the password
+sees *LOCKED* instead.
 
 After a game, **Game Select** on the results screen takes you straight back to
 that server's game list. Your password is never kept: on a server with TLS, which
@@ -2364,7 +2376,7 @@ is the usual kind, the game holds a temporary sign-in token instead, in memory, 
 works, **CONNECT TO SERVER** opens with the server picked and you type your password
 again.
 
-![The online game browser: the GAMES list with name, map and player count columns, a LOCK marker on one game, a LIVE game with its WATCH button, REFRESH and CREATE at the top and the password field at the bottom](img/guide/game-browser.jpg)
+![The online game browser: the GAMES list with name, map and player count columns, a LOCK marker on one game, a LIVE game with its WATCH button, REFRESH and CREATE at the top and BACK at the bottom](img/guide/game-browser.jpg)
 
 *The game browser on a server.*
 
@@ -2403,9 +2415,9 @@ players on the same network, with no accounts. Type a **player name** and, if yo
 want the game locked, a **GAME PASSWORD (OPTIONAL)**, then click **START/CONNECT**:
 the game starts a server on your computer and opens your game room straight away,
 with the game named *Name's Game* (locked with your password, if you typed one), on the map and
-rules you last used in multiplayer. You can rename it or change its password in
-the room (see [Joining a game](#joining-a-game)). From then on it is announced on
-your network about once a second until it starts.
+rules you last used in multiplayer. The name and the password stay as they are;
+the room shows the password after **SHOW** (see [Joining a game](#joining-a-game)).
+From then on it is announced on your network about once a second until it starts.
 
 Everyone else on the network sees it listed under **LOCAL SERVER** with its map and
 seats (**LAN 2/8**, or **LOCK 2/8** when it has a password). They pick it, type a

@@ -1723,6 +1723,7 @@ int main(int argc, char** argv) {
             });
             if (mp) {
                 gameView->setMpClient(mp.get());
+                gameView->setLocalName(playerName);
                 gameView->setLocalServerPid(localServer.pid());
                 gameView->setMpMapId(args[0]);
                 if (fromMenu) { gameView->setExternalLobbyMusic();  // front-end owns the lobby BGM

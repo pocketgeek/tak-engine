@@ -11,7 +11,6 @@ const char* roomFieldCaption(RoomField field) {
     switch (field) {
     case RoomField::Map: return "THE MAP";
     case RoomField::Scenario: return "MAP SCENARIO";
-    case RoomField::Name: return "THE GAME'S NAME";
     case RoomField::Crusades: return "CRUSADES";
     case RoomField::DoubleSight: return "DOUBLE SIGHT/RADAR";
     case RoomField::UnitCap: return "UNIT CAP";
@@ -36,8 +35,6 @@ RoomChanges roomChanges(const net::RoomView& before, const net::RoomView& after)
     if (before.id != after.id) return c;
     const bool newRev = after.roomRev != before.roomRev;
     if (newRev) c.bits = after.changeBits;
-    c.name = before.name != after.name;
-    c.password = before.passworded != after.passworded;
     const auto& a = before.opts;
     const auto& b = after.opts;
     const auto changed = [&](RoomField field, bool differs) { if (differs) c.options.push_back(field); };
@@ -113,7 +110,6 @@ std::string roomChangeNote(const RoomChanges& c, bool host) {
     else if (rules.size() > 1 || (c.bits & net::kChangeOptions)) what = "HOST CHANGED THE RULES";
     else if (c.bits & (net::kChangePlayers | net::kChangeCapacity)) what = "HOST CHANGED THE PLAYERS";
     else if (c.bits & net::kChangeMods) what = "HOST CHANGED THE GAME MODS";
-    else if (c.name) what = "HOST RENAMED THE GAME";
     std::string note = seats.empty() ? what : seats;
     if (c.unreadied) note = note.empty() ? "READY AGAIN" : note + " -- READY AGAIN";
     return note;

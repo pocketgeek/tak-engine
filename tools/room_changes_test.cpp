@@ -3,7 +3,7 @@
 // pure diff and the note line's text.
 //
 //  - each kind of change: the map, MAP SCENARIO, one rule, several rules, the players, the
-//    game mods, the name (no revision: a rename unreadies nobody), the password (no note)
+//    game mods; the name and the password are set when the game is made, and show nothing
 //  - " -- READY AGAIN" only when the guest's READY was cleared by a new revision
 //  - AIs removed by a smaller map, told apart from seats the host closed by hand
 //  - the player the server moved down, told apart from a MoveSeat of its own
@@ -105,16 +105,13 @@ int main() {
         checkNote(roomChangeNote(c, false), "HOST CHANGED THE GAME MODS -- READY AGAIN", "mods note");
     }
     {
-        // A rename moves no revision and clears no READY.
+        // The name and the password are set when the game is made: a room that differs
+        // only there has nothing to light and no note.
         const RoomView a = room();
-        RoomView b = a; b.name = "Friday";
+        RoomView b = a; b.name = "Friday"; b.passworded = true;
         const auto c = roomChanges(a, b);
-        check(c.name && !c.bits && !c.unreadied, "a rename: no revision, no unready");
-        checkNote(roomChangeNote(c, false), "HOST RENAMED THE GAME", "rename note");
-        RoomView d = b; d.passworded = true;
-        const auto p = roomChanges(b, d);
-        check(p.password && !p.name, "a password set");
-        checkNote(roomChangeNote(p, false), "", "a password has no note");
+        check(!c.bits && c.options.empty() && c.seats.empty() && !c.unreadied, "the name and the password: no change");
+        checkNote(roomChangeNote(c, false), "", "... and no note");
     }
     {
         // The map outranks the rules it came with (MAP SCENARIO off, START LOCATIONS back).
@@ -201,8 +198,6 @@ int main() {
         checkNote(roomChangeNote(c, true), "PLAYERS MUST READY AGAIN", "the host is told to wait");
         RoomView d = bumped(b, net::kChangeOptions); d.opts.crusades = 1;   // nobody ready now
         checkNote(roomChangeNote(roomChanges(b, d), true), "", "no rule notes for the host's own change");
-        RoomView e = d; e.name = "Friday";
-        checkNote(roomChangeNote(roomChanges(d, e), true), "", "nor for its own rename");
     }
 
     // ---- another room: nothing to compare ----

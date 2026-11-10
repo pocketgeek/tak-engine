@@ -69,10 +69,10 @@ further.
    is first, marked **DEFAULT**), or **NEW SERVER...** to type an address.
 3. Type an account name and a password, then click **CONNECT**. A name the
    server has not seen before is registered as you sign in.
-4. In the game list, click a game to join it, or click **CREATE** to open your
-   own room at once (type a password in the room to lock it). For a game marked
-   **LOCK**, type its password in the field at the bottom first. A running game
-   shows **WATCH** instead, to spectate it.
+4. In the game list, click a game to join it; a game marked **LOCK** asks for
+   its password in a window first. Or click **CREATE**: type the game's name
+   and, to lock it, a password, then **CREATE** again to open your room. A
+   running game shows **WATCH** instead, to spectate it.
 5. In the room, pick your side, colour and team and click **READY**. The host
    starts the game when everyone is ready. When the host changes the map or a
    rule, click **READY** again.
@@ -308,7 +308,7 @@ More in the user guide's [Power codes](user-guide.md#power-codes).
 | **MOVE HERE** | With *Start Locations: By Slot* (slot N starts at position N): take that open slot, keeping your side, colour and team; your old slot opens. Greyed with *Fixed* and *Random*, where a slot does not pick a start. |
 | **WATCH** (single player) | Leave your slot and watch the AIs; **SIT HERE** on a slot plays again. |
 | **READY** (multiplayer) | Mark yourself ready; the host can START when everyone is. A change by the host clears it. |
-| Name and password boxes (multiplayer host) | Rename the game or lock it; **Enter** keeps the change. |
+| **SHOW** / **HIDE** (multiplayer, after the game's name) | Show or hide the game's password, if you typed it to create or join the game. The name and password are set when the game is created. |
 
 ![A single-player room with START LOCATIONS: BY SLOT: you in slot 1 with WATCH, a Normal AI in slot 2, MOVE HERE buttons on open slots 3 to 5, the match rules, and the map with numbered starts and CHANGE MAP... under it](img/quick/lobby-move-here.jpg)
 

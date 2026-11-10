@@ -23,13 +23,18 @@ cannot finish prints why and ends the client. TAK_QUIT_TICK ends a game that sta
      here), starts with one AI and no second human, and writes no remembered map.
   7  a remembered map that is not installed: the room opens on the launch's map (athri cay)
      instead, and says why.
-  8  LOCAL SERVER host: the room opens at once as "<name>'s Game" with the CONNECT password;
-     a rename reaches the server; LEAVE closes the game and goes back to CONNECT TO SERVER.
-  9  online CREATE: a room "<account>'s Game" opens at once from the multiplayer settings;
-     a rule change is remembered in mpRoom.* (spRoom.* untouched).
+  8  LOCAL SERVER host: the room opens at once as "<name>'s Game" with the CONNECT password,
+     which its line shows on SHOW; LEAVE closes the game and goes back to CONNECT TO SERVER.
+  9  online CREATE: the window's default makes a room "<account>'s Game" from the multiplayer
+     settings; a rule change is remembered in mpRoom.* (spRoom.* untouched).
   10 single player MAP SCENARIO confirm: on a map whose scenario seats more players than it
      has starts, turning the scenario off would remove AIs, so the first click only arms the
      cell (the note says what the next does); the second removes them, and the room says so.
+  11 the CREATE window and the password window: CREATE with a name and a password opens that
+     room, locked; a second player's game list has it locked (its row asks the password), a
+     wrong password is refused in the window and the right one, sent from the same window,
+     gets in; the room's password starts hidden for the host and for the guest, and SHOW
+     shows it (the log says which, never the password).
 
 Debug builds only (TAK_ROOM_SCRIPT, TAK_QUIT_TICK and the CLI game are debug hooks).
 
@@ -86,7 +91,8 @@ def run_client(client, argv, env, home, timeout=180):
 def script_ran(log, steps):
     """Every step finished, in order, and nothing failed."""
     for line in log.splitlines():
-        if line.startswith('room script: ') and not re.search(r': done$|^room script: (finished|wrote |map!:.*: refused here: )', line):
+        if line.startswith('room script: ') and not re.search(
+                r': done$|^room script: (finished|wrote |map!:.*: refused here: |(join|create)!:.*: refused: )', line):
             raise AssertionError('the room script failed: %s' % line)
     at = 0
     for step in steps:
@@ -154,6 +160,17 @@ def case_watch(args, root):
         raise AssertionError('%s\n%s' % (e, log[-4000:]))
 
 
+def wait_for(path, marker, proc, timeout=180):
+    """`marker` in the log at `path` of a running client."""
+    deadline = time.monotonic() + timeout
+    while marker not in path.read_text(errors='replace'):
+        if proc.poll() is not None or time.monotonic() > deadline:
+            raise AssertionError('%r never appeared (client %s):\n%s' % (
+                marker, 'exited %d' % proc.returncode if proc.poll() is not None else 'still running',
+                path.read_text(errors='replace')[-4000:]))
+        time.sleep(0.1)
+
+
 def run_until(client, argv, env, home, marker, timeout=180):
     """A client that does not end by itself (a room it cannot start, the menu it returns to):
     run it until `marker` is in its log, then end it (SIGTERM, as a window close); its log."""
@@ -162,13 +179,7 @@ def run_until(client, argv, env, home, marker, timeout=180):
         proc = subprocess.Popen([client] + argv + ['--winsize', '960', '540'], cwd=home, env=env,
                                 stdout=out, stderr=subprocess.STDOUT)
     try:
-        deadline = time.monotonic() + timeout
-        while marker not in path.read_text(errors='replace'):
-            if proc.poll() is not None or time.monotonic() > deadline:
-                raise AssertionError('%r never appeared (client %s):\n%s' % (
-                    marker, 'exited %d' % proc.returncode if proc.poll() is not None else 'still running',
-                    path.read_text(errors='replace')[-4000:]))
-            time.sleep(0.1)
+        wait_for(path, marker, proc, timeout)
         time.sleep(0.5)   # the lines that follow it (a settings write) land
     finally:
         if proc.poll() is None:
@@ -271,28 +282,29 @@ def case_fallback(args, root):
 
 
 def case_lan_host(args, root):
-    """LOCAL SERVER host: "<name>'s Game" with its password at once; rename; LEAVE to CONNECT."""
-    home, env = profile(root, 'case8', 'name:Friday;leave', {'TAK_MENU_PICK': 'lanhost:alice:pw'})
+    """LOCAL SERVER host: "<name>'s Game" with its password at once; SHOW; LEAVE to CONNECT."""
+    home, env = profile(root, 'case8', 'showpass:1;leave', {'TAK_MENU_PICK': 'lanhost:alice:pw'})
     log = run_until(args.client, ['menu', '--data', args.data], env, home, 'menu: back to CONNECT TO SERVER')
     try:
         assert re.search(r"client \d+ created game \d+ 'alice's Game' on 'athri cay'", log, re.I), \
             'the LOCAL SERVER room was not opened at once'
         assert re.search(r"room: game \d+ 'alice's Game' \(password set\)", log), 'the room has no password'
-        script_ran(log, ['name:Friday', 'leave'])
-        assert re.search(r"game \d+: renamed to 'Friday'", log), 'the server did not rename the game'
+        script_ran(log, ['showpass:1', 'leave'])
+        # The password typed on CONNECT is the room's to show: hidden until SHOW.
+        assert 'room: password shown' in log, "the room's line did not show the CONNECT password"
         assert log.find('menu: back to CONNECT TO SERVER') > log.find('room script: leave: done'), \
             'LEAVE did not go back to CONNECT TO SERVER'
     except AssertionError as e:
         raise AssertionError('%s\n%s' % (e, log[-4000:]))
 
 
-def case_online_create(args, root):
-    """Online CREATE: "<account>'s Game" at once, from the multiplayer settings, remembered there."""
+def account_server(args, root, name):
+    """A loopback server that signs players in (each client has an account): its process,
+    port and log path."""
     port = free_port()
-    shome, senv = profile(root, 'case9-server', '')
+    shome, senv = profile(root, name, '')
     slog_path = shome / 'server.log'
     with open(slog_path, 'w') as slog:
-        # A server that signs players in (the client has an account), on loopback.
         server = subprocess.Popen([args.server, '--port', str(port), '--data', args.data, '--local', '--seed', '1'],
                                   stdout=slog, stderr=subprocess.STDOUT, env=senv, cwd=shome)
     try:
@@ -301,6 +313,16 @@ def case_online_create(args, root):
             assert time.monotonic() < deadline and server.poll() is None, \
                 'the server never listened:\n' + slog_path.read_text(errors='replace')[-3000:]
             time.sleep(0.1)
+    except BaseException:
+        server.kill(); server.wait()
+        raise
+    return server, port, slog_path
+
+
+def case_online_create(args, root):
+    """Online CREATE: the window's default "<account>'s Game", from the multiplayer settings, remembered there."""
+    server, port, slog_path = account_server(args, root, 'case9-server')
+    try:
         steps = ['create', 'opt:crusades=1']
         home, env = profile(root, 'case9', ';'.join(steps),
                             {'TAK_MENU_PICK': 'connect:alice:alicepass1@tcp://127.0.0.1:%d' % port})
@@ -318,6 +340,62 @@ def case_online_create(args, root):
         except AssertionError as e:
             raise AssertionError('%s\nclient:\n%s\nserver:\n%s' % (e, log[-3000:], slog_text[-3000:]))
     finally:
+        if server.poll() is None:
+            server.kill(); server.wait()
+
+
+def case_windows(args, root):
+    """The CREATE window and the password window: a named, locked game; a wrong password, then the right one."""
+    server, port, slog_path = account_server(args, root, 'case11-server')
+    host = None
+    try:
+        # The host: CREATE's window with a name and a password, then SHOW and HIDE in the room.
+        hsteps = ['create:Friday Night:oak', 'showpass:1', 'showpass:0', 'wait:humans=2']
+        hhome, henv = profile(root, 'case11-host', ';'.join(hsteps),
+                              {'TAK_MENU_PICK': 'connect:alice:alicepass1@tcp://127.0.0.1:%d' % port})
+        hlog_path = hhome / 'client.log'
+        with open(hlog_path, 'w') as out:
+            host = subprocess.Popen([args.client, 'menu', '--data', args.data, '--winsize', '960', '540'], cwd=hhome,
+                                    env=henv, stdout=out, stderr=subprocess.STDOUT)
+        wait_for(hlog_path, 'room script: showpass:0: done', host)
+        # The guest: the game's row with no password, a wrong one, the right one; then SHOW.
+        gsteps = ['join!:Friday Night', 'join!:Friday Night:acorn', 'join:Friday Night:oak', 'showpass:1']
+        ghome, genv = profile(root, 'case11-guest', ';'.join(gsteps),
+                              {'TAK_MENU_PICK': 'connect:bob:bobpass12@tcp://127.0.0.1:%d' % port})
+        glog = run_until(args.client, ['menu', '--data', args.data], genv, ghome, 'room script: finished')
+        wait_for(hlog_path, 'room script: finished', host, 30)
+        hlog, slog_text = hlog_path.read_text(errors='replace'), slog_path.read_text(errors='replace')
+        try:
+            script_ran(hlog, hsteps)
+            script_ran(glog, gsteps)
+            assert re.search(r"client \d+ created game \d+ 'Friday Night' on ", slog_text), \
+                'CREATE did not open a game under the name typed'
+            for who, log in (('host', hlog), ('guest', glog)):
+                assert re.search(r"room: game \d+ 'Friday Night' \(password set\)", log), \
+                    "the %s's room is not Friday Night, locked" % who
+                # Hidden when the room opens: SHOW changed the line (it tells only a change).
+                assert log.count('room: password shown') == 1, "the %s's password did not start hidden, then show" % who
+                assert not any('oak' in line for line in log.splitlines() if line.startswith('room: ')), \
+                    "the %s's room logged the password" % who
+            assert hlog.find('room: password hidden') > hlog.find('room: password shown'), 'HIDE did not hide it again'
+            # The second player's list has the game locked: its row asks the password before anything is sent.
+            assert 'room script: join!:Friday Night: refused: a locked game needs its password' in glog, \
+                "the locked game's row did not open the password window"
+            assert 'room script: join!:Friday Night:acorn: refused: CANNOT JOIN: wrong password' in glog, \
+                'the wrong password was not refused in the window'
+            assert glog.find("room: game") > glog.find('refused: CANNOT JOIN: wrong password'), \
+                'the guest was in the room before the right password'
+            assert len(re.findall(r'client \d+ joined game \d+ at slot 1', slog_text)) == 1, \
+                'the server did not seat the guest once'
+        except AssertionError as e:
+            raise AssertionError('%s\nhost:\n%s\nguest:\n%s\nserver:\n%s' % (e, hlog[-2500:], glog[-2500:], slog_text[-2500:]))
+    finally:
+        if host is not None and host.poll() is None:
+            host.terminate()
+            try:
+                host.wait(20)
+            except subprocess.TimeoutExpired:
+                host.kill(); host.wait()
         if server.poll() is None:
             server.kill(); server.wait()
 
@@ -447,7 +525,7 @@ def case_unready(args, root):
 
 
 CASES = {1: case_single_player, 2: case_watch, 3: case_capacity, 4: case_unready, 5: case_door, 6: case_play_map,
-         7: case_fallback, 8: case_lan_host, 9: case_online_create, 10: case_scenario_confirm}
+         7: case_fallback, 8: case_lan_host, 9: case_online_create, 10: case_scenario_confirm, 11: case_windows}
 
 
 def main():

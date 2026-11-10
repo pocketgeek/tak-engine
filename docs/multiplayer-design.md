@@ -688,8 +688,9 @@ interface before the server exists.
 - **Server browser** (new screen or `--server <addr>` entry): game list with
   name, map, players/capacity, lobby/running state, lock icon; create-game
   dialog (name, password, map picker showing start-position capacity,
-  options). *(superseded in protocol 323: CREATE opens a room at once and the
-  host picks the map and options in it; see [Room editing](#room-editing-protocol-323))*
+  options). *(superseded in protocol 323: CREATE asks only the game's name and
+  password, then opens the room, and the host picks the map and options in it;
+  see [Room editing](#room-editing-protocol-323))*
 - **Lobby screen:** slot rows (name/AI/closed, faction, color swatch, team
   number, ready check, ping), chat, host controls (add AI, kick, close slot,
   start). Players edit their own row; host edits any.
@@ -990,7 +991,32 @@ unready nobody.
   1-32 printable-ASCII bytes after trimming, a password 0-128. The browser and
   the LAN announcement read the room live, so they follow. `MpClient::createGame`
   sends only the printable ASCII of a name, cut to 32 bytes, so a remembered or
-  typed name the server would refuse still creates the room.
+  typed name the server would refuse still creates the room. The server still
+  takes `SetRoomInfo`, but the client no longer sends it: a game's name and
+  password are set when it is created (below) and are static in the room.
+- **The game browser's windows and the room's name line**
+  (`gameview_lobby.cpp`: `BrowserWindow`, `browserStep`). The browser has no
+  password field. CREATE opens a modal window for GAME NAME (default
+  `"<account>'s Game"`, up to `kRoomNameMax` printable-ASCII bytes; blank means
+  the default) and PASSWORD (OPTIONAL); a click on a locked game's row, or WATCH
+  on a locked live game, opens a password window instead of sending anything.
+  Both hide the password as pips behind a SHOW / HIDE button, and both answer
+  their own request: JOINING... / OPENING THE GAME... while it waits, the
+  server's refusal (`CANNOT JOIN: wrong password`) with the text kept, NO ANSWER
+  FROM THE SERVER after 10 s (the next request first gives the stale one up with
+  `LeaveGame`), THE GAME HAS CLOSED / STARTED when the list no longer offers
+  it. CANCEL closes a window without recalling a request still on its way: its
+  answer is then the browser's, as for a game with no password. An unlocked
+  game is joined at once and its refusal stays on the browser's CANNOT JOIN
+  line, which also says NO ANSWER FROM THE SERVER for a request no window is
+  waiting on. In every multiplayer room the name line is static, for the host
+  as for a guest: the name, then LOCKED, or, when this client's player typed
+  the password (the CREATE or password window, or CONNECT TO SERVER for a LAN
+  game), PASSWORD with eight pips and the same SHOW / HIDE. That copy is kept
+  only while in the room (`roomPass_`, wiped on leaving); the password never
+  appears in a log. A shown password is drawn in the MODERN face in either UI
+  FONT (`GameView::ExactText`): CLASSIC draws capitals only, and a password
+  must read as it was typed.
 - **Watching.** The seated host may leave its seat to watch (`MoveSeat` 0xFF,
   answered `JoinResult` 0xFF; ALLOW SPECTATORS does not apply) and take an OPEN
   seat again; a room started with its host watching gives it slot 0xFF.
@@ -1007,8 +1033,9 @@ unready nobody.
   offer refused for a busy server is offered again after 2, 4 and 8 s.
 - **The client's room** (`src/client/gameview_room.cpp`,
   `gameview_mappicker.cpp`, `roomchanges.{h,cpp}`). There is no create screen:
-  Play the Machine, the browser's CREATE and a LOCAL SERVER host's
-  START/CONNECT send `CreateGame` at once (`GameView::createRoomFromPrefs`) from
+  Play the Machine and a LOCAL SERVER host's START/CONNECT send `CreateGame` at
+  once (`GameView::createRoomFromPrefs`), and so does the browser's CREATE once
+  its window has the game's name and password, from
   the remembered set of the room's kind, `Settings::spRoom` or `mpRoom` (rules,
   map or random-map recipe, map sort, game-mod packs; separate since protocol
   323, no migration of the old `gameCreate.*` keys). A remembered map that
@@ -1017,8 +1044,8 @@ unready nobody.
   back, one field at a time, and a map only when the server accepts it; never
   the name, password, watching or MAP SCENARIO, and never from a harness, a
   `--play-map` room, a mission or a Benchmark. The left column's options block
-  sends `SetGameOptions` (cells for MAP SCENARIO send `SetRoomMap`), the name
-  and password boxes `SetRoomInfo`, and the CHANGE MAP panel's PICK
+  sends `SetGameOptions` (cells for MAP SCENARIO send `SetRoomMap`) and the
+  CHANGE MAP panel's PICK
   `SetRoomMap` with the capacity `seatsFor` gives the map (start positions,
   widened for its scenario). The panel greys a map with fewer seats than the
   room's seated humans and warns which AIs a PICK removes (`planCapacity`). A

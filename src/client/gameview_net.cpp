@@ -1,6 +1,7 @@
 #include <ctime>
 #include "tnt/ota.h"
 #include "client/gameview.h"
+#include "net/crypto.h"
 #include "net/matchconfig.h"
 #include "campaign/campaign.h"
 #include "util/u8path.h"
@@ -1445,6 +1446,9 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
         // passes through Lobby, which must not read as the lobby branches below).
         if (reconnectUntilMs_) return mpStep();
         if (!mp_->poll()) {
+            // The link is gone: so are the browser's window and every password typed for a room.
+            browserStep();
+            roomPasswordStep();
             if (beginReconnect()) return true;
             netError_ = lanHostGone() ? "the host closed the game" : mp_->error();
             return false;
@@ -1453,6 +1457,8 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
         // A door's or CREATE's room: in it, or refused (the lobby says why), or gone with the link.
         if (st == S::InRoom || st == S::Done) roomAutoCreate_ = roomCreateSent_ = false;
         else if (roomCreateSent_ && !mp_->joinError().empty()) roomAutoCreate_ = roomCreateSent_ = false;
+        browserStep();   // the game browser's own request, and the window that waits on it
+        roomPasswordStep();   // the password typed for a room: its own while in it, then wiped
         if (st == S::Done) {
             if (beginReconnect()) return true;
             if (netError_.empty()) netError_ = mp_->error();
@@ -1804,20 +1810,23 @@ int roomRuleValue(const tak::net::GameOptions& o, tak::RoomField field) {
         for (const Try& t : tries) {
             try {
                 if (t.path.empty()) throw std::runtime_error("map not installed: " + t.id);
-                mp_->createGame(sp ? "Single Player" : "", roomStartPass_, t.id, o, capacityFor(t.id, t.path, false), false, sp);
+                mp_->createGame(sp ? "Single Player" : roomStartName_, roomStartPass_, t.id, o, capacityFor(t.id, t.path, false), false, sp);
                 failed = mp_->createError();
             } catch (const std::exception& e) { failed = e.what(); }
             if (failed.empty()) { opened = t.id; break; }
             std::fprintf(stderr, "room: cannot open a game on '%s': %s\n", t.id.c_str(), failed.c_str());
             if (t.remembered && why.empty()) why = failed;
         }
+        // The password is sent, or never to be: the room shows it to its host (roomPasswordStep).
+        tak::crypto::wipe(roomPassAsked_);
+        if (!opened.empty()) roomPassAsked_ = roomStartPass_;
+        tak::crypto::wipe(roomStartPass_);
         if (opened.empty()) {   // a --play-map map that cannot be built here: the lobby says why
             roomActError_ = roomOpenError_ = failed;
             roomAutoCreate_ = false;
             return;
         }
-        roomCreateSent_ = true;
-        roomPassDraft_ = roomStartPass_;
+        roomCreateSent_ = true; roomRequestMs_ = SDL_GetTicks64();
         if (!why.empty()) {
             std::string note = "THE REMEMBERED MAP COULD NOT BE USED (" + why + "): " + mapTitle(opened) + " WAS CHOSEN";
             for (char& c : note) c = char(std::toupper(static_cast<unsigned char>(c)));
@@ -1852,11 +1861,16 @@ int roomRuleValue(const tak::net::GameOptions& o, tak::RoomField field) {
             quitRequested_ = true;   // an interactive client ends too
             return false;
         };
-        // create acts in the browser; every other step in the room, once this mode has seated
-        // its player. The step's limit runs from when it can act.
+        // create, join and window act in the browser; every other step in the room, once this
+        // mode has seated its player (showpass and shot: there, or in the browser). The step's
+        // limit runs from when it can act.
+        const bool browserVerb = step.verb == "create" || step.verb == "create!" || step.verb == "join" ||
+                                 step.verb == "join!" || step.verb == "window";
         if (!roomScriptActed_) {
-            const bool due = step.verb == "create" ? st == S::Lobby
-                                                   : st == S::InRoom && (autoMode == 0 || mpReadied_);
+            const bool inRoom = st == S::InRoom && (autoMode == 0 || mpReadied_);
+            const bool inBrowser = st == S::Lobby && !singlePlayer_ && !lanHost_ && !mp_->lanServer();
+            const bool either = step.verb == "shot" || step.verb == "showpass";
+            const bool due = browserVerb ? inBrowser : inRoom || (either && inBrowser);
             if (!due) { roomScriptDueMs_ = 0; return true; }
         }
         if (!roomScriptDueMs_) roomScriptDueMs_ = now;
@@ -1875,9 +1889,88 @@ int roomRuleValue(const tak::net::GameOptions& o, tak::RoomField field) {
         std::string refused;   // the action did nothing: why
         bool done = false;
         int slot = -1;
-        if (step.verb == "create") {
-            if (!roomScriptActed_) refused = act([&] { createRoomFromPrefs(); });
-            done = st == S::InRoom;
+        // A browser window's answer: its own line, or the browser's (a game with no password).
+        const auto browserAnswer = [&] {
+            if (!browserWin_.error.empty()) return browserWin_.error;
+            return browserWin_.kind == BrowserWindow::Kind::None ? browserLine() : std::string();
+        };
+        if (browserVerb) {
+            // create[:<name>[:<password>]]: CREATE, its window's fields as given (a name left
+            // out stays the default), its CREATE. join:<game name>[:<password>]: that game's
+            // row (a live game: its WATCH) and, for a locked one, the password window's field
+            // and its JOIN; a window a refusal left open on that game is sent again. With "!"
+            // the request must be refused, and the step ends on the answer shown.
+            // window:create[:...] and window:join:<game name>[:...] stop short of the window's
+            // own button: it stays open as filled in (for a picture).
+            const bool fillOnly = step.verb == "window";
+            std::string what = step.verb, arg = step.arg;
+            if (fillOnly) {
+                const size_t cut = arg.find(':');
+                what = arg.substr(0, cut);
+                arg = cut == std::string::npos ? std::string() : arg.substr(cut + 1);
+                if (what != "create" && what != "join") return fail("no window '" + what + "'");
+            }
+            const bool wantRefusal = what.back() == '!';
+            const size_t colon = arg.find(':');
+            const std::string name = arg.substr(0, colon);
+            const std::string password = colon == std::string::npos ? std::string() : arg.substr(colon + 1);
+            if (!roomScriptActed_ && what.rfind("create", 0) == 0) {
+                refused = act([&] {
+                    openCreateWindow();
+                    if (!roomActError_.empty()) return;
+                    if (!name.empty()) browserWin_.name = name;
+                    browserWin_.password = password;
+                    if (!fillOnly) browserWindowCommit();
+                });
+            } else if (!roomScriptActed_) {
+                const auto& games = mp_->games();
+                const auto game = std::find_if(games.begin(), games.end(),
+                                               [&](const tak::net::GameInfo& g) { return g.name == name; });
+                if (game == games.end()) {   // not listed yet: ask again (nothing may be drawing the list)
+                    if (now - mpListMs_ > 300) { mp_->listGames(); mpListMs_ = now; }
+                } else {
+                    refused = act([&] {
+                        const bool watch = game->running != 0;
+                        const auto kind = watch ? BrowserWindow::Kind::Watch : BrowserWindow::Kind::Join;
+                        if (fillOnly && !game->passworded) { roomActError_ = "a game without a password has no window"; return; }
+                        if (browserWin_.kind != kind || browserWin_.gameId != game->id) {
+                            closeBrowserWindow();
+                            browserGameClick(game->id, watch);
+                        }
+                        if (!roomActError_.empty() || browserWin_.kind == BrowserWindow::Kind::None) return;
+                        browserWin_.password = password;
+                        if (!fillOnly) browserWindowCommit();
+                    });
+                }
+            }
+            if (fillOnly) {
+                done = roomScriptActed_ && refused.empty();
+            } else if (wantRefusal && !refused.empty()) {   // refused here: nothing went to the server
+                std::fprintf(stderr, "room script: %s: refused: %s\n", step.text.c_str(), refused.c_str());
+                refused.clear();
+                done = true;
+            } else if (roomScriptActed_ && refused.empty()) {
+                const std::string answer = browserAnswer();
+                if (wantRefusal && st != S::Lobby) return fail("the server accepted it");
+                if (!wantRefusal && !answer.empty()) return fail(answer);
+                if (wantRefusal && !answer.empty()) std::fprintf(stderr, "room script: %s: refused: %s\n", step.text.c_str(), answer.c_str());
+                // In the room: with its first LobbyState, so a step that leaves it finds it whole.
+                done = wantRefusal ? !answer.empty() : st == S::InRoom ? room.id != 0 : st != S::Lobby;
+            }
+        } else if (step.verb == "showpass") {
+            // The SHOW / HIDE beside the room's password, or beside an open window's field.
+            const bool show = std::atoi(step.arg.c_str()) != 0;
+            if (st == S::InRoom) {
+                if (!roomScriptActed_) refused = act([&] { roomShowPassword(show); });
+                done = roomPassShown_ == show;
+            } else {
+                if (!roomScriptActed_)
+                    refused = act([&] {
+                        if (browserWin_.kind == BrowserWindow::Kind::None) roomActError_ = "no window is open";
+                        else browserWin_.showPassword = show;
+                    });
+                done = browserWin_.showPassword == show;
+            }
         } else if (step.verb == "ai") {
             if (!slotArg(slot)) return fail("no slot '" + step.arg + "'");
             if (!roomScriptActed_) refused = act([&] { roomSetSlotType(slot, 2); });
@@ -1936,14 +2029,6 @@ int roomRuleValue(const tak::net::GameOptions& o, tak::RoomField field) {
             if (!slotArg(slot)) return fail("no slot '" + step.arg + "'");
             if (!roomScriptActed_) refused = act([&] { roomSitHere(slot); });
             done = room.mySlot == slot;
-        } else if (step.verb == "name") {
-            if (!roomScriptActed_)
-                refused = act([&] { roomNameDraft_ = step.arg; roomNameEdited_ = true; roomFieldCommit(9); });
-            done = room.name == step.arg;
-        } else if (step.verb == "pass") {
-            if (!roomScriptActed_)
-                refused = act([&] { roomPassDraft_ = step.arg; roomPassEdited_ = true; roomFieldCommit(10); });
-            done = room.passworded == !step.arg.empty();
         } else if (step.verb == "wait") {
             // wait:humans=N (seated human players), wait:ready=N (of them, READY).
             const size_t eq = step.arg.find('=');
@@ -1984,7 +2069,8 @@ int roomRuleValue(const tak::net::GameOptions& o, tak::RoomField field) {
             if (roomScriptAt_ == roomScript_.size()) std::fprintf(stderr, "room script: finished\n");
             return true;
         }
-        const uint64_t limit = step.verb == "wait" ? 30000 : 10000;
+        // (create! and join! outlast the window's own wait for an answer.)
+        const uint64_t limit = step.verb == "wait" ? 30000 : browserVerb && step.verb.back() == '!' ? 20000 : 10000;
         if (now - roomScriptDueMs_ > limit) return fail("not done after " + std::to_string(limit / 1000) + " s");
         return true;
     }

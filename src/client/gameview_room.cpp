@@ -1,4 +1,5 @@
 #include "client/gameview.h"
+#include "net/crypto.h"
 #include "net/matchconfig.h"
 #include "net/roomseats.h"
 #include <cmath>
@@ -6,8 +7,8 @@
 #include <random>
 
 // Out-of-line GameView method definitions (the game room): the left column -- the room's
-// name and password, the slot table, READY / START / LEAVE, the note line and the options
-// block -- and the room's per-frame reactions: the host's own READY in single player,
+// name and password line, the slot table, READY / START / LEAVE, the note line and the
+// options block -- and the room's per-frame reactions: the host's own READY in single player,
 // WATCH's AI fill, the change display (flashes and notes). The right column is
 // drawRoomColumn (gameview_lobby.cpp); the CHANGE MAP panel is gameview_mappicker.cpp.
 
@@ -69,12 +70,6 @@ float roomRulePx(float maxW) {
     }
     for (const char* caption : kCaptions) px = tak::uiTextFitPx(caption, px, maxW);
     return std::floor(px * 20) / 20;   // a 0.05 step, so rounding never re-overflows
-}
-
-// A multiplayer host's name (field 9) and password (10) boxes, from the slot table's left
-// edge: drawRoom draws them there, and roomInput keeps a click inside the one being typed in.
-SDL_FRect roomFieldBox(int field, float x) {
-    return field == 9 ? SDL_FRect{x, 54, 250, 24} : SDL_FRect{x + 260, 54, 180, 24};
 }
 
 // The pulsing amber fill behind a line a change lights (alpha 40..120 at 2 Hz) until `until`.
@@ -194,11 +189,6 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
                 std::fill(std::begin(roomFlashUntil_), std::end(roomFlashUntil_), 0);
                 std::fill(std::begin(roomSeatFlashUntil_), std::end(roomSeatFlashUntil_), 0);
                 roomNote_.clear(); roomRefusal_.clear(); roomNoteUntil_ = roomRefusalUntil_ = 0;
-                roomNameDraft_ = room.name; roomNameEdited_ = roomPassEdited_ = false;
-                // The host's own password, as it made the room (the draft is shown in the
-                // field); a room this client did not make shows PASSWORD SET instead.
-                if (!host || !room.passworded) roomPassDraft_.clear();
-                else if (!roomStartPass_.empty()) roomPassDraft_ = roomStartPass_;
                 // A remembered map passed over when the room was made: the room says why.
                 if (!roomOpenNote_.empty()) {
                     roomNote_ = std::exchange(roomOpenNote_, {});
@@ -213,20 +203,14 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
             // A host's own choices (a successor host's too: from the rules it inherits).
             if (!host) roomChosenSet_ = false;
             else seedChosen(roomChosen_, roomChosenSet_, room, singlePlayer_ && mp_->isSpectator(), settings_);
-            // A refused map change or rename, while the CHANGE MAP panel is closed: red on the
-            // note line for 6 s (the panel shows its own refusals in its footer). A map change
+            // A refused map change, while the CHANGE MAP panel is closed: red on the note
+            // line for 6 s (the panel shows its own refusals in its footer). A map change
             // on its way makes room for its own answer, even one worded as the last (the
             // room's own requests clear it as they send).
             if (const std::string& err = mp_->roomError(); err.empty()) {
                 if (now >= roomRefusalUntil_ || mp_->roomMapPending()) { roomRefusal_.clear(); roomRefusalUntil_ = 0; }
-            } else {
-                const bool rename = mp_->roomErrorFor() == tak::net::RoomRequest::Info;
-                const std::string text = (rename ? "CANNOT RENAME THE GAME: " : "CANNOT CHANGE THE MAP: ") + err;
-                if (text != roomRefusal_) {
-                    roomRefusal_ = text; roomRefusalUntil_ = picker_.open ? 0 : now + 6000;
-                    // The name field shows the room's name again (unless it is being typed in).
-                    if (rename && lbField_ != 9 && !roomNameEdited_) roomNameDraft_ = room.name;
-                }
+            } else if (const std::string text = "CANNOT CHANGE THE MAP: " + err; text != roomRefusal_) {
+                roomRefusal_ = text; roomRefusalUntil_ = picker_.open ? 0 : now + 6000;
             }
             // The block shows a click at once; the server's answer (or 1.5 s) replaces it.
             if (roomOptsDraft_) {
@@ -244,16 +228,12 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
             const bool newState = mp_->lobbySeq() != roomSeenSeq_;
             if (newState) {
                 changes = tak::roomChanges(roomSeen_, room);
-                // The name field's draft follows a rename as it arrives (not while the field is
-                // typed in), so a click on the field goes on from the name last sent or seen.
-                if (changes.name && lbField_ != 9 && !roomNameEdited_) roomNameDraft_ = room.name;
                 // The host's own changes light nothing; a guest sees each one.
-                if (!host && (changes.bits || changes.name || changes.password)) {
+                if (!host && changes.bits) {
                     const uint64_t until = now + 3000;
                     for (RoomField field : changes.options) roomFlashUntil_[size_t(field)] = until;
-                    if (changes.name || changes.password) roomFlashUntil_[size_t(RoomField::Name)] = until;
                     if (changes.bits & tak::net::kChangeMods) roomFlashUntil_[size_t(RoomField::Mods)] = until;
-                    if (changes.bits) for (int seat : changes.seats) roomSeatFlashUntil_[seat] = until;
+                    for (int seat : changes.seats) roomSeatFlashUntil_[seat] = until;
                     if (changes.unreadied && room.mySlot >= 0) roomSeatFlashUntil_[room.mySlot] = until;
                     // Multiplayer keeps each change in the chat's history too.
                     if (!singlePlayer_) {
@@ -264,7 +244,6 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
                             else line = std::string("THE HOST CHANGED ") + tak::roomFieldCaption(field) + " TO " + ruleValue(field, room.opts);
                             chatLog_.push_back({"SYSTEM", line});
                         }
-                        if (changes.name) chatLog_.push_back({"SYSTEM", "THE HOST RENAMED THE GAME TO " + room.name});
                         if (changes.bits & tak::net::kChangeMods) chatLog_.push_back({"SYSTEM", "THE HOST CHANGED THE GAME MODS"});
                     }
                 }
@@ -325,43 +304,55 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
         const float x = f.x, rowW = f.rowW, colX = f.colX;
         const bool host = f.host, needHuman = f.needHuman;
         const uint64_t now = SDL_GetTicks64();
-        // Multiplayer: the room's name and password. The host edits both in place (fields 9
-        // and 10, sent on Enter or when the field loses focus); a guest reads the name, and
-        // LOCKED when the room has a password.
+        // Multiplayer: the room's name and, when it has a password, either that password
+        // behind SHOW / HIDE (this client's player typed it: roomPass_) or LOCKED. Both were
+        // set when the game was made (the browser's CREATE window, or CONNECT TO SERVER for a
+        // LOCAL SERVER) and nobody changes them here. The line keeps to the slot table's
+        // width: the name shrinks before it is cut, and so does a shown password.
         if (!singlePlayer_) {
-            drawRoomFlash(RoomField::Name, {x - 4, 51, 448, 30});
-            if (host) {
-                const auto field = [&](const SDL_FRect& r, int id, float px, const std::string& shown, bool placeholder,
-                                       std::function<void()> activate) {
-                    const bool active = lbField_ == id;
-                    SDL_SetRenderDrawColor(ren_, 24, 26, 34, 255); SDL_RenderFillRectF(ren_, &r);
-                    SDL_SetRenderDrawColor(ren_, active ? 200 : 90, active ? 210 : 100, active ? 130 : 130, 255);
-                    SDL_RenderDrawRectF(ren_, &r);
-                    const float ty = r.y + (r.h - 7 * px - tak::uiTextDescent(px)) / 2;
-                    blockText(shown, r.x + 6, ty, px, placeholder ? SDL_Color{110, 116, 132, 255} : SDL_Color{225, 230, 240, 255});
-                    lobbyHots_.push_back({r, std::move(activate)});
-                };
-                // The name: its end while typing (where the typing is), else the room's own,
-                // shrunk before it is cut. The draft follows the room's name (roomStep) except
-                // while typed in or just sent, so a click on it goes on from the last text.
-                const SDL_FRect nameBox = roomFieldBox(9, x);
-                const float namePx = lbField_ == 9 ? 1.8f : tak::uiTextFitPx(room.name, 1.8f, (nameBox.w - 12) * 0.97f, 1.4f);
-                field(nameBox, 9, namePx,
-                      lbField_ == 9 ? tak::uiTextFitStart(roomNameDraft_ + "_", namePx, nameBox.w - 12)
-                                    : tak::uiTextFit(room.name, namePx, nameBox.w - 12),
-                      false, [this] { lbField_ = 9; SDL_StartTextInput(); });
-                // The password, as typed; a successor host never learns it: PASSWORD SET.
-                const SDL_FRect passBox = roomFieldBox(10, x);
-                const bool empty = roomPassDraft_.empty() && lbField_ != 10;
-                field(passBox, 10, 1.5f,
-                      lbField_ == 10 ? tak::uiTextFitStart(roomPassDraft_ + "_", 1.5f, passBox.w - 12)
-                      : empty        ? std::string(room.passworded ? "PASSWORD SET" : "NO PASSWORD")
-                                     : tak::uiTextFit(roomPassDraft_, 1.5f, passBox.w - 12),
-                      empty, [this] { lbField_ = 10; SDL_StartTextInput(); });
-            } else {
-                const std::string name = tak::uiTextFit(room.name, 2.2f, 440);
-                blockText(name, x, 54, 2.2f, {210, 210, 220, 255});
-                if (room.passworded) blockText("LOCKED", x + blockWidth(name, 2.2f) + 10, 58, 1.4f, kAmber);
+            constexpr float kTagPx = 1.4f, kGap = 12, kToggleW = 46;
+            constexpr float kPipsW = 8 * 6 * kTagPx;   // hidden: always eight pips, whatever its length
+            const bool known = room.passworded && !roomPass_.empty();
+            const char* tag = known ? "PASSWORD" : "LOCKED";
+            const float tagW = blockWidth(tag, kTagPx);
+            // What follows the name, less the password itself: the tag, and the toggle.
+            const float fixedW = !room.passworded ? 0 : known ? kGap + tagW + 6 + 8 + kToggleW : kGap + tagW;
+            float nameW = rowW - fixedW - (known ? kPipsW : 0);
+            float passW = kPipsW, passPx = kTagPx;
+            if (known && roomPassShown_) {
+                // Shown: in the room the name leaves, at the tag's size or smaller. A password
+                // too long for that takes room from the name (which keeps kNameMin) before it
+                // is cut: SHOW is pressed to read it.
+                constexpr float kNameMin = 140;
+                const float nameNow = std::min(blockWidth(room.name, tak::uiTextFitPx(room.name, 2.2f, nameW, 1.6f)), nameW);
+                passW = rowW - fixedW - nameNow;
+                const ExactText exact;   // the password's own widths
+                if (const float whole = blockWidth(roomPass_, 1.1f) + 1; whole > passW && nameNow > kNameMin) {
+                    passW = std::min(whole, rowW - fixedW - kNameMin);
+                    nameW = rowW - fixedW - passW;
+                }
+                passPx = tak::uiTextFitPx(roomPass_, kTagPx, passW, 1.1f);
+            }
+            const float namePx = tak::uiTextFitPx(room.name, 2.2f, nameW, 1.6f);
+            const std::string name = tak::uiTextFit(room.name, namePx, nameW);
+            blockText(name, x, 54 + 7 * (2.2f - namePx), namePx, {210, 210, 220, 255});   // on the 2.2 baseline
+            float tx = x + blockWidth(name, namePx) + kGap;
+            if (room.passworded) {
+                blockText(tag, tx, 58, kTagPx, kAmber);
+                tx += tagW + 6;
+            }
+            if (known) {
+                constexpr SDL_Color kInk{225, 230, 240, 255};
+                if (roomPassShown_) {
+                    const ExactText exact;   // as it was typed, in either UI FONT
+                    const std::string pass = tak::uiTextFit(roomPass_, passPx, passW);
+                    blockText(pass, tx, 58 + 7 * (kTagPx - passPx), passPx, kInk);
+                    tx += std::max(kPipsW, blockWidth(pass, passPx));   // SHOW / HIDE stays put for a short one
+                } else {
+                    tx += lbPips(tx, 58, 8, kTagPx, kInk);
+                }
+                lbBtn(tx + 8, 54, kToggleW, 18, roomPassShown_ ? "HIDE" : "SHOW", true,
+                      [this] { roomShowPassword(!roomPassShown_); }, {60, 66, 86, 255}, 1.3f);
             }
         }
         drawRoomColumn(f, winH);   // the map, its preview, the mods and the chat
@@ -416,8 +407,8 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
         else if (host && needHuman && !mp_->startPending() && !mp_->starting())
             status("NEEDS 2+ HUMAN PLAYERS");
         // The note line under the controls, one message at a time: why the server refused
-        // the last START (a needed seat, setupMatch's refusal...), a refused map change or
-        // rename, the MAP SCENARIO cell's confirm, then the room's note (what the host
+        // the last START (a needed seat, setupMatch's refusal...), a refused map change,
+        // the MAP SCENARIO cell's confirm, then the room's note (what the host
         // changed, the seats a smaller map took). Shrunk before it is cut: a refusal that
         // names a unit and the way out should be read whole.
         const auto noteLine = [&](const std::string& text, SDL_Color colour) {
@@ -891,59 +882,36 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
         mp_->moveSeat(slot);
     }
 
-    // The room's name (field 9) or password (10), when typed in since the last commit. A
-    // blank name reverts; a successor host's rename leaves the password alone.
-    void GameView::roomFieldCommit(int field) {
-        const auto& room = mpRoom();
-        if (room.hostId != mp_->myClientId()) { roomActError_ = "only the host renames the game"; return; }
-        if (field == 9) {
-            if (!roomNameEdited_) return;
-            roomNameEdited_ = false;
-            std::string name = roomNameDraft_;
-            name.erase(0, name.find_first_not_of(' '));
-            name.erase(name.find_last_not_of(' ') + 1);
-            if (name.empty()) { roomNameDraft_ = room.name; roomActError_ = "a game needs a name"; return; }
-            roomNameDraft_ = name;
-            if (name == room.name) return;
-            roomRefusal_.clear(); roomRefusalUntil_ = 0;   // room for this one's answer
-            mp_->setRoomInfo(name, std::nullopt);
-        } else if (field == 10) {
-            if (!roomPassEdited_) return;
-            roomPassEdited_ = false;
-            roomRefusal_.clear(); roomRefusalUntil_ = 0;
-            mp_->setRoomInfo(std::nullopt, roomPassDraft_);
+    // The password this client's player typed for a room is the room's own while in it, and
+    // gone when it is left; one typed for a request that was refused or given up goes too.
+    void GameView::roomPasswordStep() {
+        using S = tak::net::MpClient::State;
+        const S st = mp_->state();
+        if (st == S::InRoom) {
+            if (!roomPassAsked_.empty()) {
+                roomPass_ = roomPassAsked_;
+                tak::crypto::wipe(roomPassAsked_);
+            }
+            return;
         }
+        tak::crypto::wipe(roomPass_);
+        roomPassShown_ = false;
+        const bool waiting = st == S::Lobby && (roomRequestOut() || (lanJoinSent_ && mp_->joinError().empty()));
+        if (!waiting) tak::crypto::wipe(roomPassAsked_);
     }
 
-    void GameView::roomFieldBlur() {
-        if (roomNameEdited_) roomFieldCommit(9);
-        if (roomPassEdited_) roomFieldCommit(10);
+    // SHOW / HIDE beside the room's password. (The log says which, never the password.)
+    void GameView::roomShowPassword(bool show) {
+        if (!mpRoom().passworded || roomPass_.empty()) { roomActError_ = "this client does not know a password for the room"; return; }
+        if (show == roomPassShown_) return;
+        roomPassShown_ = show;
+        std::fprintf(stderr, "room: password %s\n", show ? "shown" : "hidden");
     }
 
-    // Enter sends the name or password being typed; Esc puts it back (the room's name; a
-    // password the field never showed reads PASSWORD SET again). A click inside the field
-    // being typed in leaves it be (anywhere else sends it: lobbyInput). Esc also lets go of
-    // an armed MAP SCENARIO click.
+    // Esc lets go of an armed MAP SCENARIO click.
     bool GameView::roomInput(const SDL_Event& e) {
-        if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT && (lbField_ == 9 || lbField_ == 10) &&
-            !singlePlayer_ && !modsScreen_ && !picker_.open && !lanLeavePrompt_) {
-            mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
-            float mx, my; lobbyMouse(mx, my);
-            return ptIn(roomFieldBox(lbField_, RoomFrame{}.x), mx, my);
-        }
-        if (e.type != SDL_KEYDOWN) return false;
-        const auto key = e.key.keysym.sym;
-        if (lbField_ == 9 || lbField_ == 10) {
-            if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
-                roomFieldCommit(lbField_);
-            } else if (key == SDLK_ESCAPE) {
-                if (lbField_ == 9) { roomNameDraft_ = mpRoom().name; roomNameEdited_ = false; }
-                else { roomPassDraft_.clear(); roomPassEdited_ = false; }
-            } else return false;
-            lbField_ = 0; SDL_StopTextInput();
-            return true;
-        }
-        if (key == SDLK_ESCAPE && !lbField_ && !modsScreen_ && scenarioArmUntil_ > SDL_GetTicks64()) {
+        if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && !lbField_ && !modsScreen_ &&
+            scenarioArmUntil_ > SDL_GetTicks64()) {
             scenarioArmUntil_ = 0;
             return true;
         }

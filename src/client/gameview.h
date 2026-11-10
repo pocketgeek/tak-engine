@@ -248,6 +248,9 @@ public:
         lanHost_ = true; roomKind_ = RoomKind::Multiplayer; roomAutoCreate_ = true; rememberRoom_ = true;
         roomStartPass_ = password;
     }
+    // The name this client plays under, for a server that asks no account: the browser's
+    // CREATE window offers "<name>'s Game".
+    void setLocalName(const std::string& name) { localName_ = name; }
     // The game password typed on the CONNECT screen, for joining a LAN host's game.
     void setLanJoinPassword(const std::string& password) { joinPass_ = password; }
     // SPECTATE on a LAN game: watch it (from its start, if it is still in its room).
@@ -2717,12 +2720,13 @@ private:
                (mp_->error().empty() || mp_->error() == "peer closed" || mp_->error().starts_with("recv failed"));
     }
     bool externalLobbyMusic_ = false;   // front-end owns the lobby BGM -> suppress ours
-    // active text field: 3=joinPass 4=chat 5=random map name 6=map filter 7/8=mod filters
-    // 9=room name 10=room password (lbFieldBuf)
+    // active text field: 4=chat 5=random map name 6=map filter 7/8=mod filters
+    // 11=the CREATE window's game name 12=a browser window's password (lbFieldBuf)
     int lbField_ = 0;
     float lobbyScale_ = 2.0f;               // lobby fit scale (set in render)
     float lobbyOffX_ = 0, lobbyOffY_ = 0;   // lobby centre offset (logical units; set in render)
-    std::string joinPass_, chatDraft_;
+    std::string joinPass_;   // a LAN game's password, typed on CONNECT (lanJoinStep)
+    std::string chatDraft_;
 #ifndef NDEBUG
     bool debugDefeatSent_ = false;
 #endif
@@ -4180,14 +4184,83 @@ private:
         lbBtn(x, y, w, h, label, enabled, {}, {60, 66, 86, 255}, labelPx);
         if (enabled && cycle) lobbyHots_.emplace_back(SDL_FRect{x,y,w,h}, std::move(cycle));
     }
-    // A text-input field: label + box; clicking activates it (id != 0).
+    // A text-input field: label + box; clicking activates it (id != 0). Not enabled: greyed,
+    // and deaf to clicks. A password's value is drawn Hidden, one pip per character
+    // (lbPips), or Shown, exactly as typed (ExactText).
+    enum class FieldText : uint8_t { Plain, Hidden, Shown };
     void lbField(float x, float y, float w, const std::string& label,
-                 const std::string& value, int id);
+                 const std::string& value, int id, bool enabled = true, FieldText text = FieldText::Plain);
+    // A hidden password: `count` square pips in a row from x, centred on the caps of text
+    // of size px at y (as the CONNECT screen draws its password box). Returns its width.
+    float lbPips(float x, float y, size_t count, float px, SDL_Color colour);
+    // A shown password must read exactly as it was typed, and CLASSIC draws capitals only
+    // (and nothing for a character its block font lacks): while one of these lives, text
+    // is measured and drawn in MODERN's face whatever the UI FONT.
+    struct ExactText {
+        const tak::UiFontStyle was = tak::uiFontStyle();
+        ExactText() { tak::setUiFontStyle(tak::UiFontStyle::Modern); }
+        ~ExactText() { tak::setUiFontStyle(was); }
+        ExactText(const ExactText&) = delete;
+        ExactText& operator=(const ExactText&) = delete;
+    };
+    // The caret to field `id` (0: none), SDL's text input on while a field has it.
+    void lbFocus(int id) { lbField_ = id; if (id) SDL_StartTextInput(); else SDL_StopTextInput(); }
     void colorSwatch(float x, float y, float s, int color, std::function<void(int)> action);
 
     void drawLobby(int winW, int winH);
 
     void drawBrowser(int winW, int winH);
+    // ---- the game browser's requests and windows (gameview_lobby.cpp) ----
+    // The browser asks the server one thing at a time (CreateGame, JoinGame, Spectate):
+    // roomCreateSent_ / roomJoinSent_ while the last is unanswered, roomRequestMs_ when it
+    // went. One with no answer after kRoomAnswerMs has none coming (a busy server drops
+    // requests), and the next request gives it up first.
+    static constexpr uint64_t kRoomAnswerMs = 10000;
+    bool roomJoinSent_ = false;
+    uint64_t roomRequestMs_ = 0;
+    bool roomRequestOut() const { return roomCreateSent_ || roomJoinSent_; }
+    bool browserBusy() const { return roomRequestOut() && SDL_GetTicks64() - roomRequestMs_ <= kRoomAnswerMs; }
+    bool browserRequestFree();   // none unanswered (a stale one is given up: LeaveGame); false while one waits
+    bool browserJoin(uint32_t id, const std::string& password, bool watch);   // JoinGame / Spectate; false: not sent
+    // The password that went with the CreateGame or JoinGame on its way, as this client's
+    // player typed it (the CREATE window, a password window, CONNECT TO SERVER for a LAN
+    // game); in the room it becomes the room's (roomPass_). Wiped when the request is
+    // refused or given up.
+    std::string roomPassAsked_;
+    // A click on a game's row (watch: its WATCH button): asks the server at once, or opens
+    // the password window when the game is locked.
+    void browserGameClick(uint32_t id, bool watch);
+    // CREATE's window (the game's name and password) and a locked game's password window
+    // (JOIN, or WATCH on a live game): modal over the game list, one at a time. The request
+    // a window sends is answered in it: the room or the watched game opens and the window
+    // goes, or its line says why not and the text stays to be changed and sent again.
+    struct BrowserWindow {
+        enum class Kind : uint8_t { None, Create, Join, Watch };
+        Kind kind = Kind::None;
+        uint32_t gameId = 0;        // Join, Watch: the game, and its name when the window opened
+        std::string gameName;
+        std::string name;           // Create: GAME NAME (lobby field 11); blank means defaultName
+        std::string defaultName;    // Create: "<player>'s Game"
+        std::string password;       // PASSWORD (lobby field 12)
+        bool showPassword = false;  // its SHOW / HIDE: pips until SHOW (every window opens hidden)
+        int focus = 0;              // the field the caret returns to after an answer
+        bool asked = false;         // this window's request is the one unanswered
+        std::string error;          // the red line: the server's refusal, or no answer
+    } browserWin_;
+    bool browserLineQuiet_ = false;   // a window showed the last refusal: not on the browser's line too
+    std::string browserLine() const;  // the browser's red line: the last refusal, or no answer
+    void openCreateWindow();          // CREATE
+    void openPasswordWindow(const tak::net::GameInfo& game, bool watch);
+    void closeBrowserWindow();        // CANCEL, Esc, or the browser moving on; the password is wiped
+    bool browserWindowReady() const;  // its JOIN / WATCH / CREATE is live
+    void browserWindowCommit();       // JOIN / WATCH / CREATE (and Enter)
+    // Why a password window's game can no longer be asked into (it closed, or started under
+    // a JOIN), or null.
+    const char* browserWindowGone() const;
+    void browserStep();               // mpAutoStep: the answer to the browser's request, or none in time
+    void drawBrowserWindow(int winW, int winH);
+    // lobbyInput's keys and clicks while a window is open: true when it used the event.
+    bool browserWindowInput(const SDL_Event& e);
 
     // Locate an 8-bit-indexed {u32 w, u32 h, w*h bytes} image at TNT header field
     // `field` (little-endian u32 pointers). Returns false (with bounds checks) if the
@@ -4285,18 +4358,23 @@ private:
     // draws): the single-player host's own READY, the spectate auto-seat, the CHANGE MAP
     // panel's answer (pickerStep).
     void roomStep();
-    // The browser's CREATE, and a door that opens a room straight away (PLAY THE MACHINE,
-    // LOCAL SERVER, --play-map): a room from the room kind's remembered set, on the first
-    // map of: the --play-map map, the remembered recipe or map, the launch's map
+    // The CREATE window's CREATE, and a door that opens a room straight away (PLAY THE
+    // MACHINE, LOCAL SERVER, --play-map): a room from the room kind's remembered set, on the
+    // first map of: the --play-map map, the remembered recipe or map, the launch's map
     // (roomDefaultMap_), the generator's defaults. A remembered map that cannot be used is
-    // passed over with a note (roomOpenNote_). Nothing is written back.
+    // passed over with a note (roomOpenNote_). A multiplayer room is named roomStartName_
+    // and locked with roomStartPass_. Nothing is written back.
     void createRoomFromPrefs();
     // A door's room is made by mpAutoStep (autoMode 0) as soon as the lobby is reached
     // (roomAutoCreate_); roomCreateSent_ while the server has not answered. Both clear in the
     // room, on a refusal (joinError) and when the connection ends.
     bool roomAutoCreate_ = false, roomCreateSent_ = false;
     std::string roomDefaultMap_;   // the launch's map (setMpMapId): the fallback after the remembered one
-    std::string roomStartPass_;    // LOCAL SERVER: the game password typed on CONNECT
+    // A multiplayer room's name and password: both typed in the browser's CREATE window, or
+    // the password alone on CONNECT (LOCAL SERVER). A blank name is the server's "<name>'s
+    // Game"; the password is wiped once the request has gone (roomPassAsked_ keeps it).
+    std::string roomStartName_, roomStartPass_;
+    std::string localName_;        // setLocalName
     std::string roomOpenNote_;     // why the remembered map was passed over: the new room's first note
     std::string roomOpenError_;    // why no game could be opened here (no map could be built): the opening screen says it
     int lobbyAutoMode_ = 0;        // mpAutoStep's autoMode: a harness room (not 0) remembers nothing
@@ -4320,15 +4398,17 @@ private:
     // chosen value (RoomField::Map: the accepted map; Mods: the game packs).
     void rememberRoomPrefs(RoomField field);
     void rememberRoomSort();   // the CHANGE MAP panel's sort
-    // The name and password fields (lobby fields 9 and 10, a multiplayer host): the drafts,
-    // and whether each was typed in since its last commit.
-    std::string roomNameDraft_, roomPassDraft_;
-    bool roomNameEdited_ = false, roomPassEdited_ = false;
-    void roomFieldCommit(int field);   // send field 9's or 10's edit (setRoomInfo); a blank name reverts
-    void roomFieldBlur();              // a mouse-down or focus loss: commit an edited field
-    // lobbyInput's room keys (Enter and Esc in fields 9/10, the MAP SCENARIO confirm): true
-    // when it used the event.
+    // lobbyInput's room keys (Esc lets go of an armed MAP SCENARIO click): true when it
+    // used the event.
     bool roomInput(const SDL_Event& e);
+    // The room's password, when this client's player typed it to make or enter the room:
+    // the name line shows it behind SHOW / HIDE (hidden whenever a room is entered). Empty
+    // in a room without one, and in a room whose password this client never learned (a
+    // successor host): that line reads LOCKED. Wiped when the room is left.
+    std::string roomPass_;
+    bool roomPassShown_ = false;
+    void roomPasswordStep();            // mpAutoStep: the asked password becomes the room's; the wipes
+    void roomShowPassword(bool show);   // SHOW / HIDE
     // The options block: one cell per rule, clickable for the host, plain text for guests.
     struct RoomRule {
         RoomField field;
@@ -4364,7 +4444,7 @@ private:
     uint64_t roomSeatFlashUntil_[tak::net::kMaxSlots] = {};
     std::string roomNote_;       // amber, under the controls
     uint64_t roomNoteUntil_ = 0;
-    std::string roomRefusal_;    // red: a map change or rename refused while the panel was closed
+    std::string roomRefusal_;    // red: a map change refused while the panel was closed
     uint64_t roomRefusalUntil_ = 0;
     // A pulsing fill behind `rect` while `field` flashes; drawn before the line it lights.
     void drawRoomFlash(RoomField field, const SDL_FRect& rect);
@@ -4391,7 +4471,7 @@ private:
     void pickerPick();                          // PICK
     void pickerStep();                          // roomStep: the PICK's answer, the panel's auto-close
     bool pickerScanPending_ = false;   // READING MAPS... is on screen; buildMapList runs next frame
-    bool lobbyModal_ = false;          // the panel (or the LAN leave prompt) is over the room: nothing under it lights up
+    bool lobbyModal_ = false;          // the panel or the LAN leave prompt is over the room, or a window over the game list: nothing under it lights up
     SDL_Point roomPreviewSize_{0, 0};  // the room preview's mapPreviewW_/H_, while the panel owns those
     // The CHANGE MAP panel's map list, generator and preview.
     void drawMapListBox(const SDL_FRect& area, MapPick& sel);
@@ -4400,11 +4480,17 @@ private:
 
     // ---- TAK_ROOM_SCRIPT (debug builds; gameview_net.cpp) ----
     // A ';'-separated list of room actions, run by mpAutoStep in any autoMode after the
-    // mode's own seating step: create (in the browser), ai:<slot>, map:<id> (map!:<id> expects
-    // a refusal), opt:<rule>=<value>, scenario:<0|1>, watch, sit:<slot>, name:<text>,
-    // pass:<text>, wait:humans=<n>, wait:ready=<n>, ready, leave, start, shot:<png>. Each calls
-    // the member its button calls and ends on its own test, within 10 s (a wait 30 s) or the run
-    // fails.
+    // mode's own seating step. In the browser: create[:<name>[:<password>]] (CREATE and its
+    // window; create! expects a refusal), join:<game name>[:<password>] (that game's row, or
+    // WATCH on a live game, and the password window of a locked one; join! expects a
+    // refusal), window:create[:<name>[:<password>]] and window:join:<game name>[:<password>]
+    // (that window opened and filled in, nothing pressed: for a picture). In the room:
+    // ai:<slot>, map:<id> (map!:<id> expects a refusal), opt:<rule>=<value>, scenario:<0|1>,
+    // watch, sit:<slot>, wait:humans=<n>, wait:ready=<n>, ready, leave, start. In either:
+    // showpass:<0|1> (the SHOW / HIDE of the room's password, or of an open window's),
+    // shot:<png>. Each calls the member its button calls and ends on its own test, within
+    // 10 s (a wait 30 s; create! and join! 20 s, past the window's own wait for an answer)
+    // or the run fails.
     struct RoomScriptStep { std::string text, verb, arg; };
     std::vector<RoomScriptStep> roomScript_;
     bool roomScriptRead_ = false;
@@ -4413,7 +4499,7 @@ private:
     bool roomScriptActed_ = false;
     uint32_t roomScriptSerial_ = 0;  // map: the SetRoomMap it waits for
     bool roomScriptStep(int autoMode);   // false: the script failed (netError_ says why; the client quits)
-    std::string roomShotPath_;   // shot: the PNG the next room frame writes
+    std::string roomShotPath_;   // shot: the PNG the next room or browser frame writes
     void roomShotCapture();
 
     // The room's map scenario facts, read once per verified package (MAP SCENARIO, 259).

@@ -1,6 +1,22 @@
 # README and user-guide screenshots
 
-**Retaken for the game room without a create screen** (2026-11-10, protocol 323): the
+**Retaken for the game browser without a password field** (2026-11-10, protocol 323):
+`guide/game-browser.jpg`, the one picture that showed the PASSWORD (FOR LOCKED GAMES)
+field (no picture showed a host's room with the name and password boxes: the room
+pictures are single-player rooms), by a Debug `-O2` build of the `lobby/int` branch
+with the CREATE and password windows (no capture patch). A private loopback
+`takserver --local` on a port of its own with a scratch account file; five headless
+debug clients signed in with `TAK_MENU_PICK=connect:...` make the games with
+`TAK_ROOM_SCRIPT`, each from its own remembered `mpRoom.map`: `create:Friday Night
+Skirmish` (ulasem arena), `create:Clan Practice:oak` (King of the Hill), `create:Evening
+Ladder;wait:humans=2;ready;wait:ready=2;start` with a second client's `join:Evening
+Ladder;ready` (Inner Circle), and `create:Newcomers Welcome` (Ladron's Tarn). The viewer
+signs in as *aldric* at 1600 x 900 with `--shot`; `TAK_SHOT_CLICKS` only waits and moves
+the pointer to a corner. Scripts `harness.py`, `scenes.py` and `shots.py` (scene `docs`)
+in `~/tak-tmp/lobby-name-pass/`; install, profile base and JPEG settings as for the
+retake below (`guide/`: quality 86, scaled to 1280 x 720).
+
+**Earlier: retaken for the game room without a create screen** (2026-11-10, protocol 323): the
 seven pictures that showed a create screen or the old room, by a Debug `-O2` build of
 the `lobby/int` branch at `00a8494a` (no capture patch: the debug `TAK_MENU_PICK`,
 `TAK_ROOM_SCRIPT`, `TAK_SHOT_CLICKS` and `TAK_SHOT_SIZES` hooks drive everything).
@@ -636,7 +652,7 @@ replace them. The unchanged views contain no version text.
 | `room-mods-power-codes.jpg` | Recaptured by the `lobby/int` debug build (2026-11-10). Single-player room on Ulasem Arena, 1600 × 900: POWER CODES: ON from the remembered settings, two Normal AIs (Taros, Veruna); the MODS line names click and House Rules (the always-enabled cosmetic and game packs of the scratch install, in green), then Classic Sounds and +1 (Big Battles, the ticked game pack), with **MODS...** and GAME MODS VERIFIED under it; MAP SCENARIO: OFF ends the rules. Seated by `TAK_ROOM_SCRIPT`, sides clicked with `TAK_SHOT_CLICKS` |
 | `build-line.jpg` | New in 0.8.9, retaken by the 0.9.0 build. A Shift-drag wall line in progress: the committed debug `TAK_BUILDLINE_SHOT=560,0,2` fixture (`--testbuild`, Ulasem Arena) selects Elsin, chooses the Aramon wall, holds Shift, presses the left button, drags 560 px east and turns the mouse wheel up two notches, so the preview shows nine wall sites two cells apart and the **GAP 2** label by the pointer. 1.5× zoom, fog off; 1600 × 900, scaled |
 | `disconnect-wait.jpg` | Recaptured for the retail fog of war (2026-10-29; second entry), by the 0.9.0 procedure. Two humans on Inner Circle through a local `takserver --local --no-auth --seed 1` at the default 8 s stall threshold (data: a copy of the retail archives); the second client (Brannoc, headless) was stopped with `SIGSTOP` 40 s in, and the first (Aldric, 1600 × 900, scaled) was captured about 4 s after the banner appeared: the game is paused and reads WAITING FOR Brannoc 19, and the ground outside Elsin's sight lies under Aramon's white mist (a first stop's countdown starts at 22, as the 8 silent seconds are already spent). Nothing is selected. Capture script `~/tak-tmp/scratch/release-090/front/shots/dw.sh` |
-| `game-browser.jpg` | New in 0.9.0. The online game browser of a client signed in as *aldric* to a private loopback `takserver --local` with a scratch account file (every name registered on first sign-in), never the public server. Four headless debug clients on the same server made the games (their names and the password set by the capture-only patch): *Friday Night Skirmish* (Ulasem Arena, 1/8, open), *Clan Practice* (King of the Hill, 1/4, password, so LOCK), *Evening Ladder* (Inner Circle, a host against one server AI, started, so 2/4 LIVE with WATCH) and *Newcomers Welcome* (Ladron's Tarn, 1/8). REFRESH and CREATE at the top, the empty PASSWORD (FOR LOCKED GAMES) field and BACK at the bottom; hardware cursor on, so no pointer is drawn. 1600 × 900, scaled. Capture script `~/tak-tmp/scratch/release-090/front/shots/browser.sh`. Rendered by the 0.9.0 build |
+| `game-browser.jpg` | Retaken by the `lobby/int` debug build (2026-11-10) for the browser without a password field. The online game browser of a client signed in as *aldric* to a private loopback `takserver --local` with a scratch account file (every name registered on first sign-in), never the public server. Headless debug clients on the same server made the games with `TAK_ROOM_SCRIPT` (`create:<name>[:<password>]`, the CREATE window's own commit): *Friday Night Skirmish* (Ulasem Arena, 1/8, open), *Clan Practice* (King of the Hill, 1/4, password, so LOCK), *Evening Ladder* (Inner Circle, two players, started, so 2/4 LIVE with WATCH) and *Newcomers Welcome* (Ladron's Tarn, 1/8). The NAME, MAP and PLAYERS columns, REFRESH and CREATE at the top and BACK at the bottom; nothing else is under the list (a locked game asks its password in a window, CREATE asks the name and password in another). Hardware cursor on, so no pointer is drawn. 1600 × 900, scaled to 1280 × 720 |
 | `build-menu-wrap.jpg` | New in 0.8.11, retaken by the 0.9.0 build. A Zhon Beast Tamer's nine-icon conjure menu wrapped into two rows (five above four, centred, the container over both) left of the command panel and the mana orb. **Selection still life** (`--testbuild --side zon`, `TAK_SELPORTRAITS=zontrain:1`, local server), Ulasem Arena, a 1024 × 768 window at Build Menu Scale 150% (the menu fits one row at 100%), hardware cursor on so no pointer is drawn; not scaled |
 
 The guide also uses `title.jpg`, `lobby.jpg`, `room.jpg`, `campaign.jpg`,

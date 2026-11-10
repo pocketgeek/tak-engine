@@ -14,6 +14,7 @@
 #include "client/runtimesettings.h"
 #include "client/chatbox.h"
 #include "client/unitstatus.h"
+#include "net/crypto.h"
 #include "sim/retailmotion.h"
 #include <cmath>
 #include <cstdlib>
@@ -142,6 +143,9 @@
         resetMinimap();
         destroyGpuTextures();
         if (gaitLog_) std::fclose(gaitLog_);
+        // No game password typed in this session outlives it.
+        for (std::string* typed : {&roomPass_, &roomPassAsked_, &roomStartPass_, &joinPass_, &browserWin_.password})
+            tak::crypto::wipe(*typed);
     }
 
     std::vector<std::pair<float, float>> GameView::parseStartPositions() const {
@@ -4183,29 +4187,51 @@
     }
 
     bool GameView::lbHot(const SDL_FRect& r) const {
-        if (lobbyModal_) return false;   // the room under the CHANGE MAP panel or the LAN leave prompt
+        if (lobbyModal_) return false;   // the room under the CHANGE MAP panel or the LAN leave prompt, the game list under a window
         float mx = mouseX_ / lobbyScale_ - lobbyOffX_, my = mouseY_ / lobbyScale_ - lobbyOffY_;
         return mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
     }
 
     void GameView::lbField(float x, float y, float w, const std::string& label,
-                 const std::string& value, int id) {
+                 const std::string& value, int id, bool enabled, FieldText text) {
         // MODERN's descenders: the label rises by part of them to stay off the box, and
         // the value is a size smaller so ascenders and descenders both sit inside it.
         blockText(label, x, y - tak::uiTextDescent(1.6f) * 0.6f, 1.6f, {150, 155, 170, 255});
         SDL_FRect r{x, y + 14, w, 22};
+        // (A shown password is MODERN's in either UI FONT, at MODERN's size and place.)
+        std::optional<ExactText> exact;
+        if (text == FieldText::Shown) exact.emplace();
         const float vpx = tak::modernUiText() ? 1.6f : 1.8f;
-        bool active = (lbField_ == id);
+        bool active = enabled && (lbField_ == id);
         SDL_SetRenderDrawColor(ren_, 24, 26, 34, 255);
         SDL_RenderFillRectF(ren_, &r);
-        SDL_SetRenderDrawColor(ren_, active ? 200 : 90, active ? 210 : 100, active ? 130 : 130, 255);
+        if (enabled) SDL_SetRenderDrawColor(ren_, active ? 200 : 90, active ? 210 : 100, active ? 130 : 130, 255);
+        else SDL_SetRenderDrawColor(ren_, 56, 60, 74, 255);
         SDL_RenderDrawRectF(ren_, &r);
-        // The END of a long value shows (where typing happens), and the text sits in
-        // the box with its descenders (MODERN) clear of the border.
-        const std::string shown = tak::uiTextFitStart(value + (active ? "_" : ""), vpx, w - 12);
+        const SDL_Color ink = enabled ? SDL_Color{225, 230, 240, 255} : SDL_Color{110, 115, 125, 255};
+        const std::string caret = active ? "_" : "";
         const float ty = tak::modernUiText() ? r.y + (r.h - 7 * vpx - tak::uiTextDescent(vpx)) / 2 : y + 20;
-        blockText(shown, x + 6, ty, vpx, {225, 230, 240, 255});
-        lobbyHots_.push_back({r, [this, id] { lbField_ = id; SDL_StartTextInput(); }});
+        if (text == FieldText::Hidden) {
+            // A password: one pip per character, as many as the box holds, then the caret.
+            // (The pips sit on the box's middle: they have no descenders to leave room for.)
+            const size_t fits = size_t(std::max(0.0f, (w - 12 - blockWidth(caret, vpx)) / (6 * vpx)));
+            const float pips = lbPips(x + 6, r.y + (r.h - 7 * vpx) / 2, std::min(value.size(), fits), vpx, ink);
+            blockText(caret, x + 6 + pips, ty, vpx, ink);
+        } else {
+            // The END of a long value shows (where typing happens), and the text sits in
+            // the box with its descenders (MODERN) clear of the border.
+            blockText(tak::uiTextFitStart(value + caret, vpx, w - 12), x + 6, ty, vpx, ink);
+        }
+        if (enabled) lobbyHots_.push_back({r, [this, id] { lbFocus(id); }});
+    }
+
+    float GameView::lbPips(float x, float y, size_t count, float px, SDL_Color colour) {
+        SDL_SetRenderDrawColor(ren_, colour.r, colour.g, colour.b, colour.a);
+        for (size_t i = 0; i < count; ++i) {
+            const SDL_FRect pip{x + float(i) * 6 * px + px * 0.5f, y + 2 * px, 3 * px, 3 * px};
+            SDL_RenderFillRectF(ren_, &pip);
+        }
+        return float(count) * 6 * px;
     }
 
     std::string GameView::readOta(const std::string& tntPath) const {
@@ -4216,13 +4242,13 @@
 
     std::string* GameView::lbFieldBuf() {
         switch (lbField_) {
-            case 3: return &joinPass_; case 4: return &chatDraft_;
+            case 4: return &chatDraft_;
             case 5: return &genParams_.name;
             case 6: return &mapFilter_;
             case 7: return &cosmeticModFilter_;
             case 8: return &gameModFilter_;
-            case 9: return &roomNameDraft_;
-            case 10: return &roomPassDraft_;
+            case 11: return &browserWin_.name;
+            case 12: return &browserWin_.password;
             default: return nullptr;
         }
     }

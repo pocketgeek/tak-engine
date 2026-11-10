@@ -329,15 +329,25 @@ against one AI and exits.
 The `--mpai` harness (with its own `takserver`, `--server` and `--serverport`)
 needs neither.
 
-`TAK_ROOM_SCRIPT` drives a debug client's game room through the members its buttons
-call, in any launch mode: a `;`-separated list of steps such as `create` (the game
-browser's CREATE), `ai:<slot>`, `map:<id>` (CHANGE MAP and PICK; `map!:<id>` expects a
-refusal), `opt:<rule>=<value>`, `scenario:<0|1>`, `watch`, `sit:<slot>`,
-`name:<text>`, `pass:<text>`, `wait:humans=<n>` or `wait:ready=<n>`, `ready`, `leave`,
-`start` and `shot:<png>`. Each step waits for its own result and ends the run with
-the reason if it does not come within 10 s (30 s for `wait`). With
-`TAK_MENU_PICK=singleplayer` it drives the room the PLAY THE MACHINE door opens;
-`tools/room_flow_test.py` uses both.
+`TAK_ROOM_SCRIPT` drives a debug client's game browser and game room through the
+members their buttons call, in any launch mode: a `;`-separated list of steps. In the
+browser: `create[:<name>[:<password>]]` (CREATE, its window's fields, its CREATE; a
+name left out is the default) and `join:<game name>[:<password>]` (that game's row, or
+WATCH on a live game; for a locked game the password window's field and its JOIN),
+each done once the room (or the watched game) is open. `create!:...` and `join!:...`
+expect a refusal and end on the answer shown, which they print (`room script:
+join!:Friday:acorn: refused: CANNOT JOIN: wrong password`), leaving the window open.
+`window:create[:<name>[:<password>]]` and `window:join:<game name>[:<password>]`
+only open and fill in that window, for a picture. In the room: `ai:<slot>`, `map:<id>`
+(CHANGE MAP and PICK; `map!:<id>` expects a refusal), `opt:<rule>=<value>`,
+`scenario:<0|1>`, `watch`, `sit:<slot>`, `wait:humans=<n>` or `wait:ready=<n>`,
+`ready`, `leave` and `start`. In either: `showpass:<0|1>` (the SHOW / HIDE beside the
+room's password, or beside the password field of an open window; the room prints
+`room: password shown` or `room: password hidden` when it changes, never the
+password) and `shot:<png>`. Each step waits for its own result and ends the run with
+the reason if it does not come within 10 s (30 s for `wait`, 20 s for `create!` and
+`join!`). With `TAK_MENU_PICK=singleplayer` it drives the room the PLAY THE MACHINE
+door opens; `tools/room_flow_test.py` uses both.
 
 Game speed follows the original's −9..+10 levels (0.1× to 2×). For testing, a
 debug client run with `TAK_FAST_SPEED=1` keeps stepping past +10 in 0.5× steps up

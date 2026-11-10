@@ -13,16 +13,15 @@ namespace tak::net { struct RoomView; }
 
 namespace tak {
 
-// One line of the room a change can light: the map and its MAP SCENARIO, the game's name,
-// each cell of the options block, the slot table, the mods line.
-enum class RoomField : uint8_t { Map, Scenario, Name, Crusades, DoubleSight, UnitCap, Monarch,
+// One line of the room a change can light: the map and its MAP SCENARIO, each cell of the
+// options block, the slot table, the mods line.
+enum class RoomField : uint8_t { Map, Scenario, Crusades, DoubleSight, UnitCap, Monarch,
     SpeedUnlock, Fog, StartLocations, Pathfinding, PowerCodes, AllowSpectators, Players, Mods, kCount };
 const char* roomFieldCaption(RoomField);   // "FOG OF WAR", ... (for the notes)
 
 // What changed between two LobbyStates of one room.
 struct RoomChanges {
     uint8_t bits = 0;                  // the server's changeBits for a new roomRev (0: none)
-    bool name = false, password = false;
     // Option cells whose value changed: RoomField::Map for a new map, Scenario for MAP
     // SCENARIO, then the rules in the options block's order.
     std::vector<RoomField> options;

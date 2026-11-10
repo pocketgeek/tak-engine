@@ -1,6 +1,7 @@
 #include "util/virtualpath.h"
 #include "client/mapfilter.h"
 #include "client/gameview.h"
+#include "net/crypto.h"
 #include "net/matchconfig.h"
 #include "client/startmarkers.h"
 #include <cctype>
@@ -13,6 +14,19 @@
 // class body in gameview.h so editing a body recompiles only this translation
 // unit. Trivial getters, ctors, static, template, constexpr and default-arg
 // methods stay inline in the header. Grouping is by name heuristic.
+
+namespace {
+// "<player>'s Game": the name the CREATE window offers, built as the server builds it for a
+// game created without one (printable ASCII only, cut to net::kRoomNameMax bytes).
+std::string defaultGameName(const std::string& player) {
+    std::string name;
+    for (unsigned char ch : player) if (ch >= 0x20 && ch <= 0x7e) name += char(ch);
+    if (name.empty()) name = "Player";
+    name += "'s Game";
+    if (name.size() > tak::net::kRoomNameMax) name.resize(tak::net::kRoomNameMax);
+    return name;
+}
+}  // namespace
 
     bool GameView::inLobbyPhase() const {
         if (!mp_ || mpSetupDone_) return false;
@@ -100,7 +114,10 @@
         }
         // A room-first session has no game list: its room is on its way, or could not open.
         else if (singlePlayer_ || lanHost_) drawRoomOpening(winW, winH);
-        else drawBrowser(winW, winH);
+        else {
+            drawBrowser(winW, winH);
+            if (!roomShotPath_.empty()) roomShotCapture();   // TAK_ROOM_SCRIPT shot:, as drawn
+        }
     }
 
     void GameView::drawRoomOpening(int winW, int winH) {
@@ -139,6 +156,8 @@
         mp_->leaveGame();
         mpReadied_ = false; mpStarted_ = false;
         lanLeavePrompt_ = false;
+        tak::crypto::wipe(roomPass_);   // the room's password goes with the room
+        roomPassShown_ = false;
         // Whatever room comes next (this one again too) is seen afresh: nothing it shows
         // first is a change.
         roomSeenSeq_ = 0;
@@ -187,12 +206,15 @@
                 if (!g.running) { lanWaitingStart_ = true; continue; }
                 roomKind_ = RoomKind::Multiplayer; rememberRoom_ = lobbyAutoMode_ == 0;
                 mp_->spectate(g.id, joinPass_);
+                tak::crypto::wipe(joinPass_);
                 lanJoinSent_ = true;
                 return;
             }
             if (g.running) { started = true; continue; }
             roomKind_ = RoomKind::Multiplayer; rememberRoom_ = lobbyAutoMode_ == 0;
             mp_->joinGame(g.id, joinPass_);
+            roomPassAsked_ = joinPass_;   // the room shows it behind SHOW / HIDE (roomPasswordStep)
+            tak::crypto::wipe(joinPass_);
             lanJoinSent_ = true;
             return;
         }
@@ -202,19 +224,22 @@
     }
 
     void GameView::drawBrowser(int winW, int winH) {
-        (void)winH;
         // keep the list fresh without needing a manual refresh
         if (SDL_GetTicks64() - mpListMs_ > 1000) { mp_->listGames(); mpListMs_ = SDL_GetTicks64(); }
+        // Under the CREATE window or a password window nothing of the list lights up.
+        const bool window = browserWin_.kind != BrowserWindow::Kind::None;
+        lobbyModal_ = window;
         float x = 60, y = 80, w = winW - 120.0f;
         blockText("GAMES", x, y, 2.2f, {200, 205, 220, 255});
         lbBtn(x + w - 200, y - 6, 95, 26, "REFRESH", true, [this] { mp_->listGames(); });
-        // CREATE opens a room straight away, from the multiplayer remembered settings, named
-        // "<account>'s Game" by the server (the host renames it in the room).
-        lbBtn(x + w - 100, y - 6, 100, 26, "CREATE", !roomCreateSent_, [this] { createRoomFromPrefs(); });
+        // CREATE asks the game's name and password (its window), then opens the room from
+        // the multiplayer remembered settings.
+        lbBtn(x + w - 100, y - 6, 100, 26, "CREATE", true, [this] { openCreateWindow(); });
         y += 34;
-        // column header
+        // column header (the NAME column holds "<a 16-character name>'s Game" whole)
+        constexpr float kNameW = 264, kMapX = 280;
         blockText("NAME", x + 8, y, 1.6f, {130, 135, 150, 255});
-        blockText("MAP", x + 220, y, 1.6f, {130, 135, 150, 255});
+        blockText("MAP", x + kMapX, y, 1.6f, {130, 135, 150, 255});
         blockText("PLAYERS", x + w - 200, y, 1.6f, {130, 135, 150, 255});
         y += 20;
         const auto& games = mp_->games();
@@ -225,12 +250,14 @@
             bool hot = lbHot(row) && !g.running;
             SDL_SetRenderDrawColor(ren_, hot ? 46 : 30, hot ? 52 : 34, hot ? 72 : 44, 255);
             SDL_RenderFillRectF(ren_, &row);
-            blockText(tak::uiTextFit(g.name, 1.8f, 204), x + 8, y + 8, 1.8f, {225, 228, 236, 255});   // up to 32 bytes
-            blockText(mapTitle(g.mapId), x + 220, y + 8, 1.6f, {180, 185, 195, 255});
+            // A name is up to 32 bytes: shrunk (on its baseline) before it is cut.
+            const float namePx = tak::uiTextFitPx(g.name, 1.8f, kNameW, 1.4f);
+            blockText(tak::uiTextFit(g.name, namePx, kNameW), x + 8, y + 8 + 7 * (1.8f - namePx), namePx, {225, 228, 236, 255});
+            blockText(tak::uiTextFit(mapTitle(g.mapId), 1.6f, w - 262 - kMapX), x + kMapX, y + 8, 1.6f, {180, 185, 195, 255});
             char pc[32]; std::snprintf(pc, sizeof pc, "%d/%d", g.players, g.capacity);
             blockText(pc, x + w - 200, y + 8, 1.8f, {200, 205, 215, 255});
-            if (g.passworded)
-                blockText("LOCK", x + w - (g.running ? 232 : 120), y + 8, 1.6f, {230, 200, 120, 255});
+            if (g.passworded)   // (a live game's: left of its player count, clear of LIVE and WATCH)
+                blockText("LOCK", x + w - (g.running ? 252 : 120), y + 8, 1.6f, {230, 200, 120, 255});
             if (g.running) {
                 // A running game can't be joined, but it can be watched live -- unless
                 // its host turned ALLOW SPECTATORS off. Then the button says so (muted
@@ -238,29 +265,243 @@
                 // refusal puts the reason on the CANNOT JOIN line below.
                 blockText("LIVE", x + w - 158, y + 8, 1.6f, {230, 140, 120, 255});
                 lbBtn(x + w - 96, y + 3, 92, 24, g.allowSpectators ? "WATCH" : "NO WATCH", true,
-                      [this, id = g.id] {
-                          roomKind_ = RoomKind::Multiplayer; rememberRoom_ = lobbyAutoMode_ == 0;
-                          mp_->spectate(id, joinPass_);
-                      },
+                      [this, id = g.id] { browserGameClick(id, true); },
                       g.allowSpectators ? SDL_Color{60, 66, 86, 255} : SDL_Color{86, 52, 52, 255});
             } else {
-                lobbyHots_.push_back({row, [this, id = g.id] {
-                    roomKind_ = RoomKind::Multiplayer; rememberRoom_ = lobbyAutoMode_ == 0;
-                    mp_->joinGame(id, joinPass_);
-                }});
+                lobbyHots_.push_back({row, [this, id = g.id] { browserGameClick(id, false); }});
             }
             y += 34;
         }
-        // Why the server turned the last JOIN / WATCH away (wrong password, game full,
-        // spectators not allowed...) -- until the next request clears it.
-        if (!mp_->joinError().empty()) {
-            // The server's reason in its own case (as the CONNECT dialog shows server text).
-            const std::string why = "CANNOT JOIN: " + mp_->joinError();
-            blockText(tak::uiTextFit(why, 1.6f, winW - 2 * x), x, winH - 98.0f, 1.6f, {255, 130, 110, 255});
-        }
-        // password entry for locked games
-        lbField(x, winH - 70.0f, 200, "PASSWORD (FOR LOCKED GAMES)", joinPass_, 3);
+        if (const std::string why = browserLine(); !why.empty())
+            blockText(tak::uiTextFit(why, 1.6f, winW - 2 * x - 140), x, winH - 31.0f, 1.6f, {255, 130, 110, 255});
         lbBtn(winW - 140.0f, winH - 40.0f, 120, 30, "BACK", true, [this] { menuRequested_ = true; });
+        lobbyModal_ = false;
+        if (window) drawBrowserWindow(winW, winH);
+    }
+
+    // Why the server turned the last JOIN / WATCH away (game full, spectators not
+    // allowed...), in its own case (as the CONNECT dialog shows server text) -- until the
+    // next request clears it. A refusal a window showed (a wrong password) is not repeated
+    // here. A request that got no answer says so too, unless a window is there to say it.
+    std::string GameView::browserLine() const {
+        if (!mp_->joinError().empty() && !browserLineQuiet_) return "CANNOT JOIN: " + mp_->joinError();
+        const bool window = browserWin_.kind != BrowserWindow::Kind::None;
+        return roomRequestOut() && !browserBusy() && !window ? "NO ANSWER FROM THE SERVER" : "";
+    }
+
+    bool GameView::browserRequestFree() {
+        if (!roomRequestOut()) return true;
+        if (browserBusy()) return false;
+        // No answer is coming: LeaveGame lets go of whatever the server granted it meanwhile.
+        mp_->leaveGame();
+        roomCreateSent_ = roomJoinSent_ = false;
+        tak::crypto::wipe(roomPassAsked_);
+        return true;
+    }
+
+    bool GameView::browserJoin(uint32_t id, const std::string& password, bool watch) {
+        if (!browserRequestFree()) { roomActError_ = "the server has not answered the last request yet"; return false; }
+        roomKind_ = RoomKind::Multiplayer; rememberRoom_ = lobbyAutoMode_ == 0;
+        if (watch) mp_->spectate(id, password);
+        else mp_->joinGame(id, password);
+        // A game joined shows its password in the room (roomPasswordStep); one watched has no room.
+        tak::crypto::wipe(roomPassAsked_);
+        if (!watch) roomPassAsked_ = password;
+        roomJoinSent_ = true; roomRequestMs_ = SDL_GetTicks64();
+        browserLineQuiet_ = false;
+        return true;
+    }
+
+    // A locked game asks its password first. A live game with ALLOW SPECTATORS off is asked
+    // for as it is: the server refuses it before it reads a password, and says why.
+    void GameView::browserGameClick(uint32_t id, bool watch) {
+        const auto& games = mp_->games();
+        const auto game = std::find_if(games.begin(), games.end(), [&](const tak::net::GameInfo& g) { return g.id == id; });
+        if (game == games.end()) { roomActError_ = "the game is no longer listed"; return; }
+        if (game->passworded && (!watch || game->allowSpectators)) openPasswordWindow(*game, watch);
+        else browserJoin(id, "", watch);
+    }
+
+    void GameView::openCreateWindow() {
+        if (!mp_ || mp_->state() != tak::net::MpClient::State::Lobby) { roomActError_ = "not in the game list"; return; }
+        closeBrowserWindow();
+        auto& w = browserWin_;
+        w.kind = BrowserWindow::Kind::Create;
+        // "<account>'s Game" (on a server without accounts: the name this client plays under),
+        // filled in, with the caret at its end.
+        w.name = w.defaultName = defaultGameName(mp_->account().empty() ? localName_ : mp_->account());
+        lbFocus(w.focus = 11);
+    }
+
+    void GameView::openPasswordWindow(const tak::net::GameInfo& game, bool watch) {
+        closeBrowserWindow();
+        auto& w = browserWin_;
+        w.kind = watch ? BrowserWindow::Kind::Watch : BrowserWindow::Kind::Join;
+        w.gameId = game.id; w.gameName = game.name;
+        lbFocus(w.focus = 12);
+    }
+
+    void GameView::closeBrowserWindow() {
+        auto& w = browserWin_;
+        if (w.kind == BrowserWindow::Kind::None) return;
+        if (lbField_ == 11 || lbField_ == 12) lbFocus(0);
+        tak::crypto::wipe(w.password);
+        w = {};
+    }
+
+    const char* GameView::browserWindowGone() const {
+        const auto& w = browserWin_;
+        if (w.kind != BrowserWindow::Kind::Join && w.kind != BrowserWindow::Kind::Watch) return nullptr;
+        for (const auto& g : mp_->games())
+            if (g.id == w.gameId) return w.kind == BrowserWindow::Kind::Join && g.running ? "THE GAME HAS STARTED" : nullptr;
+        return "THE GAME HAS CLOSED";
+    }
+
+    // No request still waiting for its answer; and for a password window, a password to send
+    // and its game still there to ask into.
+    bool GameView::browserWindowReady() const {
+        const auto& w = browserWin_;
+        if (w.kind == BrowserWindow::Kind::None || browserBusy()) return false;
+        return w.kind == BrowserWindow::Kind::Create || (!w.password.empty() && !browserWindowGone());
+    }
+
+    void GameView::browserWindowCommit() {
+        auto& w = browserWin_;
+        if (!browserWindowReady()) {
+            const char* gone = browserBusy() ? nullptr : browserWindowGone();
+            roomActError_ = browserBusy() ? "the server has not answered the last request yet"
+                          : gone ? gone : "a locked game needs its password";
+            return;
+        }
+        w.error.clear();
+        if (lbField_ == 11 || lbField_ == 12) w.focus = lbField_;
+        if (w.kind == BrowserWindow::Kind::Create) {
+            // The name without the spaces around it; a blank one creates the game under the
+            // default name.
+            roomStartName_ = w.name;
+            roomStartName_.erase(0, roomStartName_.find_first_not_of(' '));
+            roomStartName_.erase(roomStartName_.find_last_not_of(' ') + 1);
+            if (roomStartName_.empty()) roomStartName_ = w.defaultName;
+            roomStartPass_ = w.password;
+            roomActError_.clear();
+            if (browserRequestFree()) createRoomFromPrefs();
+            w.asked = roomCreateSent_;
+            // Nothing went out: no map could be built here.
+            if (!w.asked) w.error = "CANNOT OPEN A GAME: " + roomActError_;
+            browserLineQuiet_ = false;
+        } else {
+            w.asked = browserJoin(w.gameId, w.password, w.kind == BrowserWindow::Kind::Watch);
+        }
+        if (w.asked) lbFocus(0);   // the fields are greyed until the answer
+    }
+
+    void GameView::browserStep() {
+        auto& w = browserWin_;
+        if (mp_->state() != tak::net::MpClient::State::Lobby) {
+            // In the room or the watched game, or the connection is over: the window goes.
+            roomJoinSent_ = false;
+            closeBrowserWindow();
+            return;
+        }
+        if (!mp_->joinError().empty()) roomJoinSent_ = false;   // refused (mpAutoStep clears roomCreateSent_)
+        if (w.kind == BrowserWindow::Kind::None) return;
+        if (w.asked && !roomRequestOut()) {
+            // Refused: the window says why, with the text there to change and send again.
+            w.asked = false;
+            w.error = (w.kind == BrowserWindow::Kind::Create ? "CANNOT OPEN A GAME: " : "CANNOT JOIN: ") + mp_->joinError();
+            browserLineQuiet_ = true;
+            lbFocus(w.focus);
+        } else if (w.asked && !browserBusy() && w.error.empty()) {
+            w.error = "NO ANSWER FROM THE SERVER";
+            lbFocus(w.focus);
+        }
+        // A game that closed or started under its window takes no more typing.
+        if (!(w.asked && browserBusy()) && browserWindowGone() && (lbField_ == 11 || lbField_ == 12)) lbFocus(0);
+    }
+
+    // The CREATE window, or a locked game's password window: over the game list, which is
+    // dimmed and takes no clicks (the look of the LAN leave prompt).
+    void GameView::drawBrowserWindow(int winW, int winH) {
+        using Kind = BrowserWindow::Kind;
+        const auto& w = browserWin_;
+        lobbyHots_.clear();
+        SDL_FRect dim{0, 0, float(winW), float(winH)};
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 160); SDL_RenderFillRectF(ren_, &dim);
+        const bool create = w.kind == Kind::Create;
+        const float pw = 520, ph = create ? 240 : 176, px = (winW - pw) / 2, py = (winH - ph) / 2;
+        SDL_FRect panel{px, py, pw, ph};
+        SDL_SetRenderDrawColor(ren_, 28, 30, 40, 250); SDL_RenderFillRectF(ren_, &panel);
+        SDL_SetRenderDrawColor(ren_, 190, 160, 110, 255); SDL_RenderDrawRectF(ren_, &panel);
+        const float fx = px + 24, fw = pw - 48;
+        // While its own request waits for the answer the fields are greyed; so they are once
+        // the game closed, or started under a JOIN.
+        const bool waiting = w.asked && browserBusy();
+        const char* gone = waiting ? nullptr : browserWindowGone();
+        const bool typing = !waiting && !gone;
+        const std::string head = create ? std::string("CREATE A GAME") : tak::uiTextFit("PASSWORD FOR " + w.gameName, 1.8f, fw);
+        blockText(head, fx, py + 20, 1.8f, {225, 215, 170, 255});
+        // A password field with its SHOW / HIDE beside it: one pip per character until SHOW.
+        const auto passwordField = [&](float y, const char* label) {
+            const float tw = 58;
+            lbField(fx, y, fw - tw - 8, label, w.password, 12, typing, w.showPassword ? FieldText::Shown : FieldText::Hidden);
+            lbBtn(fx + fw - tw, y + 14, tw, 22, w.showPassword ? "HIDE" : "SHOW", typing,
+                  [this] { browserWin_.showPassword = !browserWin_.showPassword; }, {60, 66, 86, 255}, 1.5f);
+        };
+        float y = py + 36;
+        if (create) {
+            lbField(fx, y + 14, fw, "GAME NAME", w.name, 11, typing);
+            passwordField(y + 62, "PASSWORD (OPTIONAL)");
+            y += 110;
+        } else {
+            passwordField(y, "");
+            y += 48;
+        }
+        // One line under the fields: the wait, why the game can no longer be asked into, or
+        // the last answer (a refusal in the server's own words; a long one takes two rows).
+        constexpr SDL_Color kWait{200, 200, 210, 255}, kWarn{255, 130, 110, 255};
+        if (waiting)
+            blockText(create ? "OPENING THE GAME..." : w.kind == Kind::Watch ? "OPENING..." : "JOINING...", fx, y, 1.6f, kWait);
+        else if (gone) blockText(gone, fx, y, 1.6f, kWarn);
+        else if (!w.error.empty()) {
+            auto rows = tak::uiTextWrap(w.error, 1.6f, fw);
+            for (size_t k = 2; k < rows.size(); ++k) rows[1] += " " + rows[k];
+            blockText(rows[0], fx, y, 1.6f, kWarn);
+            if (rows.size() > 1) blockText(tak::uiTextFit(rows[1], 1.6f, fw), fx, y + 16, 1.6f, kWarn);
+        }
+        const float by = py + ph - 46;
+        if (gone) {
+            lbBtn(px + pw / 2 - 60, by, 120, 30, "CANCEL", true, [this] { closeBrowserWindow(); });
+        } else {
+            lbBtn(px + pw / 2 - 140, by, 120, 30, create ? "CREATE" : w.kind == Kind::Watch ? "WATCH" : "JOIN",
+                  browserWindowReady(), [this] { browserWindowCommit(); }, {70, 110, 70, 255});
+            lbBtn(px + pw / 2 + 20, by, 120, 30, "CANCEL", true, [this] { closeBrowserWindow(); });
+        }
+    }
+
+    // Enter is the window's JOIN / WATCH / CREATE, Esc its CANCEL, Tab the CREATE window's
+    // other field. A click reaches the window's own widgets only, and one that misses them
+    // (or lands on SHOW / HIDE) leaves the caret where it is. Typing and Backspace go on to
+    // lobbyInput's fields.
+    bool GameView::browserWindowInput(const SDL_Event& e) {
+        if (e.type == SDL_KEYDOWN) {
+            const auto key = e.key.keysym.sym;
+            if (key != SDLK_ESCAPE && key != SDLK_RETURN && key != SDLK_KP_ENTER && key != SDLK_TAB) return false;
+            if (e.key.repeat) return true;   // a held key acts once
+            if (key == SDLK_ESCAPE) closeBrowserWindow();
+            else if (key == SDLK_TAB) {
+                if (browserWin_.kind == BrowserWindow::Kind::Create && lbField_) lbFocus(lbField_ == 11 ? 12 : 11);
+            } else if (browserWindowReady()) browserWindowCommit();
+            return true;
+        }
+        if (e.type == SDL_MOUSEBUTTONDOWN) {
+            mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
+            float mx, my; lobbyMouse(mx, my);
+            if (e.button.button == SDL_BUTTON_LEFT)
+                for (auto& hot : lobbyHots_)
+                    if (ptIn(hot.rect, mx, my) && hot.action) { hot.action(); break; }
+            return true;
+        }
+        return false;
     }
 
     void GameView::buildMapList(tak::LoadScreen* progress) {
@@ -1183,7 +1424,6 @@
         if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
             if (genSlider_ >= 0 || lbField_ == 5) applyGenParams();
             genSlider_ = -1; mapDrag_ = false;
-            roomFieldBlur();   // an edited room name or password is sent
         }
         // The full-window map view: BACK (its only button) or Esc closes it; nothing
         // else reaches the lobby under it.
@@ -1198,8 +1438,10 @@
             }
             return;
         }
-        // The CHANGE MAP panel, then the room's own keys (its name and password fields, the
-        // MAP SCENARIO confirm); what they leave falls through to the handlers below.
+        // A window over the game list (CREATE's, a locked game's password).
+        if (browserWin_.kind != BrowserWindow::Kind::None && browserWindowInput(e)) return;
+        // The CHANGE MAP panel, then the room's own keys (the MAP SCENARIO confirm); what
+        // they leave falls through to the handlers below.
         if (picker_.open && pickerInput(e)) return;   // gameview_mappicker.cpp
         if (roomInput(e)) return;                     // gameview_room.cpp
         // The mods screen: Esc (no field being typed in) goes back to the room, as DONE.
@@ -1227,7 +1469,7 @@
                    (e.button.button == SDL_BUTTON_LEFT || e.button.button == SDL_BUTTON_RIGHT)) {
             mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
             const bool forward = e.button.button == SDL_BUTTON_LEFT;
-            if (forward) { if (lbField_ == 5) applyGenParams(); roomFieldBlur(); lbField_ = 0; SDL_StopTextInput(); }
+            if (forward) { if (lbField_ == 5) applyGenParams(); lbField_ = 0; SDL_StopTextInput(); }
             float mx, my; lobbyMouse(mx, my);
             if (forward && ptIn(mapThumbRect_, mx, my)) { mapDrag_ = true; return; }   // grab the thumb
             for (int gi = 0; gi < 9; ++gi)   // grab a density slider
@@ -1240,14 +1482,13 @@
                 }
         } else if (e.type == SDL_TEXTINPUT && lbField_) {
             std::string* f = lbFieldBuf();
-            // The room's name and password (fields 9 and 10) take printable ASCII up to the
-            // server's limits.
-            const size_t cap = lbField_ == 9 ? tak::net::kRoomNameMax : lbField_ == 10 ? tak::net::kRoomPasswordMax : 24;
+            // A new game's name and a game's password (fields 11 and 12, the browser's
+            // windows) take printable ASCII up to the server's limits.
+            const size_t cap = lbField_ == 11 ? tak::net::kRoomNameMax : lbField_ == 12 ? tak::net::kRoomPasswordMax : 24;
             if (f && f->size() < cap) {
-                if (lbField_ == 9 || lbField_ == 10) {
+                if (lbField_ == 11 || lbField_ == 12) {
                     for (unsigned char c : std::string(e.text.text))
                         if (f->size() < cap && c >= 0x20 && c <= 0x7e) *f += char(c);
-                    (lbField_ == 9 ? roomNameEdited_ : roomPassEdited_) = true;
                 } else if (lbField_ == 5) {
                     for (unsigned char c : std::string(e.text.text))
                         if (f->size() < 24 && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
@@ -1261,8 +1502,6 @@
             if (e.key.keysym.sym == SDLK_BACKSPACE) {
                 std::string* f = lbFieldBuf();
                 if (f && !f->empty()) f->pop_back();
-                if (lbField_ == 9) roomNameEdited_ = true;
-                if (lbField_ == 10) roomPassEdited_ = true;
                 if (lbField_ == 6) mapScroll_ = 0;
                 if (lbField_ == 7) modScroll_[0] = 0;
                 if (lbField_ == 8) modScroll_[1] = 0;
