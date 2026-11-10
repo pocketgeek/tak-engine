@@ -1,6 +1,42 @@
 # README and user-guide screenshots
 
-**Retaken for 0.9.24** (2026-11-08): by a Debug `-O2` build of `main` at `9b47f6dc` with the
+**Retaken for the game room without a create screen** (2026-11-10, protocol 323): the
+seven pictures that showed a create screen or the old room, by a Debug `-O2` build of
+the `lobby/int` branch at `00a8494a` (no capture patch: the debug `TAK_MENU_PICK`,
+`TAK_ROOM_SCRIPT`, `TAK_SHOT_CLICKS` and `TAK_SHOT_SIZES` hooks drive everything).
+Script `cap.py`, job list `jobs.json`, profile base `base-settings.ini` and encoder
+`encode.py` in `~/tak-tmp/scratch/lobby-merge-shots/`; offscreen GL, a fresh scratch
+profile and settings file per shot (`TAK_SETTINGS_FILE`) with the hardware cursor on,
+so no pointer is drawn. The remembered map and rules are now `spRoom.*` keys
+(`spRoom.map`, `spRoom.crusades`, ...): `lastMap` and `gameCreate.*` are no longer
+read. The PLAY THE MACHINE door opens the room at once; `TAK_ROOM_SCRIPT` seats the
+AIs, `TAK_SHOT_CLICKS` clicks sides, CHANGE MAP..., a panel tab or the panel's MAP
+SCENARIO, waits, then moves the pointer to a corner. Installs as for 0.9.23 (the
+0.9.1 `inst`; the 0.9.0 `instM` for House Rules, `instP0` with no packs, `instP` with
+only click). JPEG `subsampling=0`, quality 88 (root) and 86 (`guide/`, `quick/`,
+`cartographer/`).
+
+- `lobby.jpg`: the CHANGE MAP panel (EXISTING MAP) over a single-player room on Ulasem
+  Arena; 1600 x 900, not cropped.
+- `lobby-scenario.jpg`: the panel on King of the Hill (`spRoom.map`), its MAP SCENARIO
+  clicked ON; 1600 x 900 scaled to 1280 x 720.
+- `guide/random-map-lobby.jpg`: the panel's RANDOM MAP tab, the same scene as before
+  (Aramon, Mainland, 4 players, 16 x 12, Scattered Mana High, seed 2026) seeded as the
+  remembered recipe `spRoom.generator =
+  ~gen1~0a00ea0700000000000000000280010480608060800003603040`; 1600 x 900.
+- `room.jpg`: Ulasem Arena, `spRoom.crusades`, `spRoom.doubleSight` and
+  `spRoom.pathfindingMode = 4`, Alternate Cursors and Classic Sounds ticked
+  (`mods.cosmeticPack`), `TAK_ROOM_SCRIPT=ai:1;ai:2;ai:3`, the AIs' sides clicked to
+  Taros, Veruna and Zhon; 1600 x 900.
+- `guide/room-mods-power-codes.jpg`: `instM`, `spRoom.powerCodes = 1`, Classic Sounds
+  and Big Battles (`spRoom.gamePack`) ticked, two AIs (Taros, Veruna), GAME MODS
+  VERIFIED; 1600 x 900.
+- `quick/lobby-move-here.jpg`: `instP0`, no remembered map (so Athri Cay), one AI;
+  1600 x 900 cropped to (40, 80, 1580, 830) and scaled to 72%.
+- `cartographer/test-lobby.jpg`: `--play-map` on the 0.9.0 `Cartographer Test.kmp`
+  (King of the Hill), `instP`, 1024 x 768 cropped to the room (0, 96, 1024, 672).
+
+**Earlier: retaken for 0.9.24** (2026-11-08): by a Debug `-O2` build of `main` at `9b47f6dc` with the
 0.9.24 version line, the 0.9.23 in-game capture hooks and the 0.9.0 Cartographer capture
 driver (`capdrv`) in a worktree (not committed); scripts in
 `~/tak-tmp/scratch/release-0924/shots/`, offscreen GL, scratch profiles and installs as for
@@ -563,9 +599,9 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 | `hud.jpg` | Aramon player in a local-server game, about 10 s in. **Stress-test start**: Normal AI opponent, 250-unit cap. **Scripted orders**: 45 units of eight types (Archers, Swordsmen, Knights, Catapults, Mage Archers, Cannoneers, Horsemen, Rolling Towers) were made formation 1 and selected, so the information bar shows the portrait strip (one portrait per type with its count), FORMATION 1 and 45 SELECTED, and the selected units show `1F` in solid green. Stats panel on, 1.15× zoom; its VID row reads 117 MB with the default graphics settings, and its CLOCK row is the capture machine's wall clock. Rendered by the 0.9.0 build |
 | `naval.jpg` | **Development scene, spawned.** Cairbray Coast Landing, 10 s in. Veruna Flagship, Men of War, Trebuchet Ships and Harpoon Ships fight Creon Iron Clads, Stern Wheelers and Submersibles. Nothing is selected, so the information bar is empty. 1.6× zoom, fog off. Rendered by the 0.9.0 build |
 | `generated.jpg` | Generated Aramon Riverlands map "Silverford" (generator version 10, seed 13, 512 × 512 cells, four players, Scattered Mana Medium, Plateaus 96, Mountains 48, Towns 64). Four AIs, eleven game minutes in. Spectator view of the lake shore at 1×, with an AI's lodestone on a neutral scattered mana spot among standing stones and a plateau rim at the lower left. Rendered by the 0.9.24 build (see "Retaken for 0.9.24") |
-| `lobby.jpg` | Single-player create screen with Ulasem Arena selected (the title from the map's translate table, in the list and on the MAP line): the preview numbers the map's eight start positions and reads 20 X 20 8 PLAYER, MAP SCENARIO under it is greyed (THIS MAP HAS NO SCENARIO), and POWER CODES: OFF is among the options. Retail pathfinding, other options at their defaults. Rendered by the 0.9.0 build, 1600 × 1000 (see *Lobby captures* below) |
-| `lobby-scenario.jpg` | Single-player create screen on King of the Hill with **MAP SCENARIO** turned on: the gold **S** marks the maps with a playable scenario in the list, the lines under the button say what the scenario changes, Monarch Expendable and Start Locations are greyed, and the preview numbers the four start positions. 1024 × 768, cropped to the lobby panel; the map row and the button were clicked with `TAK_SHOT_CLICKS`, then the pointer moved off the panel. Rendered by the 0.9.0 build. Used only by the user guide |
-| `room.jpg` | Single-player room on Ulasem Arena with three Normal AIs (Taros, Veruna, Zhon) added by clicks, Crusades and Double Sight on, Legion pathfinding and both example cosmetic packs ticked (placeholder folders in the scratch install); under the COSMETIC MODS heading ALWAYS ON: click (the always-enabled pack folder), then the pack names, the GAME MODS list below (no game pack ticked and no always-enabled game pack, so no GAME MODS VERIFIED line). The open rows 5 to 8 each have a **MOVE HERE** button. The match rules end with MAP SCENARIO: OFF. The map at the top of the right column marks starts 1 to 4 in the colours of the four seated players. The AI names are the lobby's own random picks. Rendered by the 0.9.0 build, 1600 × 1000; the CREATE screen's toggles, slot types, sides and pack boxes were clicked with `TAK_SHOT_CLICKS`, then the pointer moved off the panel |
+| `lobby.jpg` | The CHANGE MAP panel over a single-player room, opened with **CHANGE MAP...** in a room whose remembered map is Ulasem Arena: the EXISTING MAP tab, the list sorted by name with Ulasem Arena selected and scrolled into view (the title from the map's translate table), the preview numbering the map's eight start positions above 20 X 20 8 PLAYER, MAP SCENARIO: OFF greyed (THIS MAP HAS NO SCENARIO), CANCEL and PICK; the room's slots and rules dimmed at the left. Rendered by the `lobby/int` debug build (2026-11-10), 1600 × 900 (see *Lobby captures* below) |
+| `lobby-scenario.jpg` | The CHANGE MAP panel over a single-player room on King of the Hill, with the panel's **MAP SCENARIO** clicked ON: the gold **S** marks the maps with a playable scenario in the list, the lines under the button say what the scenario changes (UNITS PLACED FOR 1-4, NEEDS SEATS 1-4, BUILDS 6 UNIT TYPES, ENDS BY SCENARIO RULES), and the preview numbers the four start positions. 1600 × 900 scaled to 1280 × 720; CHANGE MAP... and the button were clicked with `TAK_SHOT_CLICKS`, then the pointer moved off the panel. Rendered by the `lobby/int` debug build (2026-11-10). Used only by the user guide |
+| `room.jpg` | Single-player room on Ulasem Arena, opened by the PLAY THE MACHINE door from remembered settings with Crusades, Double Sight and Legion pathfinding on and both example cosmetic packs ticked (placeholder folders in the scratch install). Three Normal AIs seated by `TAK_ROOM_SCRIPT`, their sides clicked to Taros, Veruna and Zhon (the AI names are the room's own random picks). The host's row has **WATCH**, the open rows 5 to 8 each have **MOVE HERE**, the match rules are buttons under START and LEAVE (MAP SCENARIO: OFF greyed: the map has no scenario), the map at the top of the right column marks starts 1 to 4 in the colours of the four seated players, and under it are **CHANGE MAP...** and the MODS line (click, Alternate Cursors +1) with **MODS...**. Rendered by the `lobby/int` debug build (2026-11-10), 1600 × 900 |
 | `campaign.jpg` | Book of Darien campaign picker with a fresh profile, chapter 1. The CHAPTER heading and numeral are retail lettering; the chapter title and the always-on mods note (click, the always-enabled pack folder, in dark ink on the parchment) are in the UI font. No Opponent AI line: missions always play the Retail AI. Rendered by the 0.9.0 build, 1600 × 1000, with `TAK_SHOT_CAMPAIGN=0` |
 | `streaming.jpg` | Retaken for 0.9.17 (Options-scale layout). Streaming setup with no key or broadcast: a large centred YOUTUBE STREAMING title, KEY NOT SET with **Paste**, the **Remember Key** row (off; the Secret Service is available), resolution, frame rate 60, bitrate 6000 Kbps with **Recommended**, encoder Automatic, the **Save a Local Copy** row (off, the default; MP4 IN THE VIDEOS FOLDER), Start Streaming, the status OFF with its counters, and **Back** at the bottom right. Rendered by the 0.9.17 build at 1600 × 1000 (`TAK_SHOT_STREAM=1`), not cropped, with the debug `TAK_CREDSTORE=test` store so no real key could appear |
 | `diplomacy.jpg` | Built-in input-test fixture (the debug `TAK_DIPLOMACY_TEST` harness, `--testbuild`) after gifting, 1600 × 1000, in a profile with voice chat on (capture-only hooks: the fixture keeps a voice engine that is on, so the sliders draw live, and its CHAT and VOICE columns are set as a game starts). CHAT and VOICE tick you and ALLY only (your own VOICE box greyed); ENEMY and DEFEATED are unticked; the SPECTATORS line's boxes are off. VOLUME has sliders for the two other humans, left by the fixture at 50% (ALLY) and 25% (DEFEATED), and none for the computer player (ENEMY). Retaken for 0.9.22 |
@@ -594,10 +630,10 @@ replace them. The unchanged views contain no version text.
 | `benchmark.jpg` | From the 0.9.0 build. Benchmark run (Absurd), 55 s in; the BENCHMARKING badge counts down the remaining time (0:05 of 60 s): armies meet at the edge of a sandy clearing, with health bars for every side; scaled from 1920 × 1080 |
 | `scorecard.jpg` | From the 0.9.0 build. F4 scorecard over a benchmark battle (Absurd), 55 s in, at 1.1× zoom: eight AI players with kills, losses and score; captured at 1920 × 1080 (so the BENCHMARKING badge clears the Score column) and scaled |
 | `voice-chat.jpg` | Retaken for 0.9.22 (MICROPHONE row, MIC GAIN). The Voice Chat page opened from the menu (capture-only hook), 1600 × 900, cropped to the panel (832 × 696). The capture profile with `voiceEnabled = 1`; every other voice setting is at its default: TALK MODE PUSH TO TALK, PUSH TO TALK on SPACE, MICROPHONE ON, SYSTEM DEFAULT microphone at MIC GAIN 100%, ACTIVATION LEVEL 15 (greyed out under Push to Talk), SAME AS GAME OUTPUT at 100. No voice engine runs under `--shot`, so MIC LEVEL is empty |
-| `random-map-lobby.jpg` | Single-player create screen with **Generate Random Map** clicked, then SIZE clicked once (12 × 12), PLAYERS twice (4) and the SCATTERED MANA slider set to HIGH (`TAK_SHOT_CLICKS`, see *Lobby captures*). The preview reads MANA: 57 and SCATTERED: 33 NEUTRAL. Captured live at 1600 × 1000 with `TAK_SHOT_SIZES` by the 0.9.0 build, cropped to 1500 × 900 (from x 100), not scaled. The seed is the lobby's own random one |
+| `random-map-lobby.jpg` | The CHANGE MAP panel's **RANDOM MAP** tab over a single-player room, opened on the remembered recipe (Aramon, Mainland, 4 players, 16 × 12, Scattered Mana High, seed 2026, the other sliders at their defaults): MAP NAME (OPTIONAL) empty, the nine sliders in two columns, RE-ROLL SEED, the preview with four numbered starts and 16 x 12 4 PLAYER, CANCEL and PICK. Rendered by the `lobby/int` debug build (2026-11-10), 1600 × 900, not cropped or scaled |
 | `chat-box.jpg` | Recaptured by the 0.9.0 build. The in-game chat box at its defaults (Chat Position Centered, Chat Scale 100%) sitting above the build row and its TRAINING Horseman (10) line, on Ulasem Arena, 1600 × 900, cropped to the box, the row and the information bar (1240 × 340, not scaled). **Selection still life** (`--testbuild`, `TAK_SELPORTRAITS=arakeep:1`): a Barracks selected, with a Horseman queue of ten started by the capture patch; the information bar's Horseman gauge follows the new unit's health. Four chat lines put into the box by the capture patch with fixed names (Ludwin, Aldric, Kirenna, Pat) in their player colours, and *on my way* being typed after SAY: |
 | `options-interface.jpg` | Retaken for 0.9.17. Options screen in a 1600 × 1100 window scrolled to the end (`TAK_CAP_OPTIONS=40`), cropped to the Interface section (824 × 452): MODERN UI FONT ON, F4 SCORECARD SCALE and UI SCALE 100%, HEALTH BARS Damaged, STATS PANEL ON, BUILD MENU Center, BUILD MENU SCALE 100%, CHAT POSITION Centered and CHAT SCALE 100% (Health Bars, Build Menu and Chat Position are dropdowns); a fresh profile whose only setting is `fullscreen = 0`, all defaults |
-| `room-mods-power-codes.jpg` | Recaptured by the 0.9.0 build. Single-player room on Ulasem Arena, 1600 × 1000: POWER CODES clicked on in the create screen, two Normal AIs; under the COSMETIC MODS heading ALWAYS ON: click, then the packs (Classic Sounds ticked, Alternate Cursors not); under the GAME MODS heading ALWAYS ON: House Rules (an always-enabled game pack in the scratch install), then Big Battles ticked, so GAME MODS VERIFIED shows; the match rules read POWER CODES: ON, and MAP SCENARIO: OFF is a rules line. Clicked with `TAK_SHOT_CLICKS` |
+| `room-mods-power-codes.jpg` | Recaptured by the `lobby/int` debug build (2026-11-10). Single-player room on Ulasem Arena, 1600 × 900: POWER CODES: ON from the remembered settings, two Normal AIs (Taros, Veruna); the MODS line names click and House Rules (the always-enabled cosmetic and game packs of the scratch install, in green), then Classic Sounds and +1 (Big Battles, the ticked game pack), with **MODS...** and GAME MODS VERIFIED under it; MAP SCENARIO: OFF ends the rules. Seated by `TAK_ROOM_SCRIPT`, sides clicked with `TAK_SHOT_CLICKS` |
 | `build-line.jpg` | New in 0.8.9, retaken by the 0.9.0 build. A Shift-drag wall line in progress: the committed debug `TAK_BUILDLINE_SHOT=560,0,2` fixture (`--testbuild`, Ulasem Arena) selects Elsin, chooses the Aramon wall, holds Shift, presses the left button, drags 560 px east and turns the mouse wheel up two notches, so the preview shows nine wall sites two cells apart and the **GAP 2** label by the pointer. 1.5× zoom, fog off; 1600 × 900, scaled |
 | `disconnect-wait.jpg` | Recaptured for the retail fog of war (2026-10-29; second entry), by the 0.9.0 procedure. Two humans on Inner Circle through a local `takserver --local --no-auth --seed 1` at the default 8 s stall threshold (data: a copy of the retail archives); the second client (Brannoc, headless) was stopped with `SIGSTOP` 40 s in, and the first (Aldric, 1600 × 900, scaled) was captured about 4 s after the banner appeared: the game is paused and reads WAITING FOR Brannoc 19, and the ground outside Elsin's sight lies under Aramon's white mist (a first stop's countdown starts at 22, as the 8 silent seconds are already spent). Nothing is selected. Capture script `~/tak-tmp/scratch/release-090/front/shots/dw.sh` |
 | `game-browser.jpg` | New in 0.9.0. The online game browser of a client signed in as *aldric* to a private loopback `takserver --local` with a scratch account file (every name registered on first sign-in), never the public server. Four headless debug clients on the same server made the games (their names and the password set by the capture-only patch): *Friday Night Skirmish* (Ulasem Arena, 1/8, open), *Clan Practice* (King of the Hill, 1/4, password, so LOCK), *Evening Ladder* (Inner Circle, a host against one server AI, started, so 2/4 LIVE with WATCH) and *Newcomers Welcome* (Ladron's Tarn, 1/8). REFRESH and CREATE at the top, the empty PASSWORD (FOR LOCKED GAMES) field and BACK at the bottom; hardware cursor on, so no pointer is drawn. 1600 × 900, scaled. Capture script `~/tak-tmp/scratch/release-090/front/shots/browser.sh`. Rendered by the 0.9.0 build |
@@ -682,7 +718,11 @@ composed, so no browser cell or tree is a placeholder.
   room reads ALWAYS ON: click. On 2026-10-24 it was recaptured by the 0.9.0
   client the same way (protocol 294), from the snapshot that F5 on King of the
   Hill wrote for the stand-in client (*Cartographer Test*), with only the
-  click pack in the scratch install.
+  click pack in the scratch install. On 2026-11-10 it was recaptured from the
+  same snapshot and install by the `lobby/int` debug client (protocol 323), for
+  the single-player room `--play-map` now opens (no CHANGE MAP..., QUIT for
+  LEAVE, the rules as greyed or live buttons), at 1024 × 768 cropped to the room
+  (1024 × 576).
 - **Markers and composites.** `window-annotated.jpg` has numbered markers drawn
   on a copy of the capture with Pillow. `random-generator.jpg`,
   `symmetry-stamp.jpg`, `terrain-clipboard.jpg` and `features-select.jpg` put two
@@ -751,7 +791,7 @@ composed, so no browser cell or tree is a placeholder.
 | `open-map.jpg` | Open Map after opening King of the Hill and saving *Twin Rivers*, so two Recent rows lead the list (Twin Rivers first, the latest). Dialog crop |
 | `save-as.jpg` | Save As for the new map *Twin Rivers*. Dialog crop |
 | `test-map.jpg` | King of the Hill after F5: the TEST MAP message, with TEST RUNNING on the toolbar, whole window |
-| `test-lobby.jpg` | The game's private lobby for that King of the Hill snapshot (retaken by the 0.9.0 debug client; before that by the 0.8.14 client for the always-enabled pack folders, by the 0.8.9 client for the room's rules and the 0.8.8 client for the UI font and the mods lists): seats 2 to 4 open, tagged NEEDED BY SCENARIO and each with a MOVE HERE button, the map preview numbering the four starts, ALWAYS ON: click under the COSMETIC MODS heading with no packs in either the COSMETIC MODS or the GAME MODS list (so no GAME MODS VERIFIED line), START greyed, and MAP SCENARIO: ON (TEST MAP) as a rules line at the others' size with the scenario details under both columns; 1024 × 768 cropped to the lobby panel |
+| `test-lobby.jpg` | The game's single-player room for that King of the Hill snapshot (`--play-map`; retaken by the `lobby/int` debug client on 2026-11-10; before that by the 0.9.0, 0.8.14, 0.8.9 and 0.8.8 clients): PLAY THE MACHINE, the map name (test, a number and a fingerprint) running on past the right edge, seat 1 with WATCH, seats 2 to 4 open, tagged NEEDED BY SCENARIO and each with a MOVE HERE button, START greyed beside QUIT, the rules with START LOCATIONS: FIXED and MONARCH EXPENDABLE: SCENARIO greyed and MAP SCENARIO: ON (TEST MAP) with the scenario details under both columns, the map preview numbering the four starts with no CHANGE MAP... under it, and MODS: click; 1024 × 768 cropped to the room (1024 × 576) |
 | `menus.jpg` | Composite: the FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP menus, each opened over Ulasem Arena and cropped to the menu (with only its own title). From 0.9.0 FILE has New AI mod... and Open AI mod..., VIEW ends with Show blocked cells (B) and SCENARIO with AI Profiles... (A) |
 | `ai-profiles.jpg` | *AiTest* (Ulasem Arena's terrain), Scenario → AI Profiles, DEFAULT AI tab: the map's own profile *aitest* started Empty, then NO FLYERS after its confirmation, so every flying unit reads BUILD OFF and LIMIT 0; TAK ENGINE AI (`ai/takengine.txt`) is tagged `map *` from an earlier edit, and PREVIEW LEVEL reads HARD. Crop of the window |
 | `ai-group-rules.jpg` | Ulasem Arena, AI Profiles, DEFAULT AI tab in the GROUP RULES view: own profile *ulasem arena*, one rule WEIGHT ARA 50 % covering 32 units, the Archer set individually (80 %) and shown as skipped. Crop of the window |
@@ -770,6 +810,8 @@ by the 0.9.0 build, with the capture patch plus press, move and release entries
 for `TAK_SHOT_CLICKS` (for the drag); `build-line.jpg` (new in 0.8.9) uses the
 committed `TAK_BUILDLINE_SHOT` fixture. The game pictures are development scenes on
 Ulasem Arena, local server, 1600 × 900 at 1× zoom, cropped and scaled.
+`lobby-move-here.jpg` was retaken on 2026-11-10 for the game room without a create
+screen (see the top of this file).
 
 | Image | Scene |
 | --- | --- |
@@ -779,7 +821,7 @@ Ulasem Arena, local server, 1600 × 900 at 1× zoom, cropped and scaled.
 | `command-panel.jpg` | A Mage Builder's command panel at 200%, labelled MOVE (M), PATROL (P), ATTACK (A), GUARD (G), HEAL (H), CLEAR and STOP (S). Which icon is which was checked by arming each key and seeing which button darkened (0.8.7) |
 | `build-placement.jpg` | **Spawned** Mage Builder selected, its build menu along the bottom, the Barracks icon chosen and the Barracks ghost with its label under the pointer. 80% |
 | `build-line.jpg` | Two Shift-drag wall lines by Elsin, side by side: left, a tight diagonal of ten walls corner to corner (`TAK_BUILDLINE_SHOT=300,220,0`); right, a straight line of five walls three cells apart with the **GAP 3** label (`TAK_BUILDLINE_SHOT=360,0,3`). `--testbuild`, 1280 × 960, hardware cursor on; the same crop of each, joined and scaled to 85% |
-| `lobby-move-here.jpg` | Single-player room opened from the menu with the default map (Athri Cay), 1600 × 900, by the 0.9.0 build: the player in slot 1, a Normal AI in slot 2, MOVE HERE on open slots 3 to 5, slots 6 to 8 closed, the preview numbering starts 1 to 5, and the COSMETIC MODS and GAME MODS lists (no packs in the scratch install). 72% |
+| `lobby-move-here.jpg` | Single-player room opened from the menu with the default map (Athri Cay), retaken by the `lobby/int` debug build (2026-11-10), 1600 × 900: the player in slot 1 with WATCH, a Normal AI in slot 2 (seated by `TAK_ROOM_SCRIPT`), MOVE HERE on open slots 3 to 5, slots 6 to 8 closed, the match rules, the preview numbering starts 1 to 5, CHANGE MAP... and MODS: NONE (no packs in the scratch install). Cropped to (40, 80, 1580, 830), 72% |
 
 ## Capture settings
 
@@ -799,15 +841,18 @@ number of game seconds. Interactive scenes (the HUD, side shots and replay) rend
 live and capture after a wall-clock wait, so their FPS reading is real. Screenshot
 timing is not a performance measurement.
 
-**Lobby captures** (`lobby.jpg`, `lobby-scenario.jpg` and
-`guide/random-map-lobby.jpg` from 0.8.9; `room.jpg` and
-`guide/room-mods-power-codes.jpg` from 0.8.14)
+**Lobby captures** (`lobby.jpg`, `lobby-scenario.jpg`, `guide/random-map-lobby.jpg`,
+`room.jpg`, `guide/room-mods-power-codes.jpg` and `quick/lobby-move-here.jpg`, since
+2026-11-10 all of the game room and its CHANGE MAP panel)
 launch the debug client's menu with `TAK_MENU_PICK=singleplayer` (the
-single-player door, with `TAK_NODOORVID=1` skipping the door video), the profile's
-`lastMap` naming the map, and the hardware cursor on so no pointer is drawn.
-`TAK_SHOT_CLICKS` clicks through the screens (CREATE, slot types and sides, pack
-boxes, the MAP SCENARIO button) and `TAK_SHOT_SIZES` captures the live window. The
-data folder is a scratch copy of the retail install (links to its archives and
+single-player door, with `TAK_NODOORVID=1` skipping the door video), which opens the
+room at once from the profile's single-player settings: `spRoom.map` names the map
+(`spRoom.generator` the RANDOM MAP tab's recipe), the other `spRoom.*` keys set the
+rules, `mods.cosmeticPack` and `spRoom.gamePack` tick packs, and the hardware cursor
+is on so no pointer is drawn. `TAK_ROOM_SCRIPT` seats the AIs (`ai:1;ai:2`),
+`TAK_SHOT_CLICKS` clicks the rest (the AIs' sides, CHANGE MAP..., a panel tab, the
+panel's MAP SCENARIO) with waits between, and `TAK_SHOT_SIZES` captures the live
+window. The data folder is a scratch copy of the retail install (links to its archives and
 `Maps`, an empty `MapCache`) whose `mods/` holds the always-enabled cosmetic
 pack *click* (`mods/cosmetic/always_enabled/click/click.hpi`), the cosmetic packs *Alternate
 Cursors* and *Classic Sounds* and the game pack *Big Battles* (placeholder

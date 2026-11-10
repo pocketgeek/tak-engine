@@ -292,19 +292,26 @@ setting says, and any allies and opponents play on.
 
 ## Your first skirmish
 
-1. Click the **Single-Player** door.
-2. In the game setup screen, pick a **map**. The preview shows its layout, its
-   numbered start positions and how many players it supports. **Name**, **Players** and
-   **Size** sort the list, and typing in **Filter** beside them keeps only the maps
-   whose name contains the text (upper or lower case alike). You can also choose
-   **Generate Random Map**. Click the preview (it says **CLICK** under the pointer) to see the whole map, its ground,
-   trees and rocks, filling the window; **Back** or **Esc** returns. The preview in
-   the game room opens the same view, for every player in the room; the game still
-   starts for you if the host starts it while you are looking.
-3. Set the match rules (all explained in [Match options](#match-options)). The
-   defaults are fine for a first game.
-4. Click **Create**. In the lobby, choose your **side**, **colour** and **team**.
-   The lobby's map numbers each start position and colours it for the player who
+1. Click the **Single-Player** door. The game room opens straight away, with you in
+   slot 1, on the map and rules you played last time (the first time, Athri Cay with
+   the default rules). The map is at the right, numbered at each start position.
+2. To play another map, click **Change map...** under it. A panel opens over the
+   room. Its **Existing map** tab lists your maps with how many players each takes
+   and its size: **Name**, **Players** and **Size** sort the list, and typing in
+   **Filter** beside them keeps only the maps whose name contains the text (upper
+   or lower case alike). Click a map to see its layout, its numbered start
+   positions and how many players it supports in the preview, then click **Pick**
+   (or double-click the map). **Cancel** or **Esc** keeps the room's map. The
+   **Random map** tab makes a new map instead (see [Random maps](#random-maps)).
+   Click a preview (it says **CLICK** under the pointer) to see the whole map, its
+   ground, trees and rocks, filling the window; **Back** or **Esc** returns. The
+   preview in the game room opens the same view, for every player in the room; the
+   game still starts for you if the host starts it while you are looking.
+3. Set the match rules: the buttons under the slots. Click one for its next choice,
+   right-click for the one before (all explained in
+   [Match options](#match-options)). The defaults are fine for a first game.
+4. Choose your **side**, **colour** and **team** in your slot.
+   The room's map numbers each start position and colours it for the player who
    starts there. With **Random** start locations the markers stay dark, because
    nobody knows who starts where until the game begins.
    To start somewhere else, click **Move here** on an open slot: you take that
@@ -315,9 +322,11 @@ setting says, and any allies and opponents play on.
    the slot. **Easy** is a good first opponent.
 6. Click **Start**.
 
-![The game setup screen with the map list, a map preview with numbered start positions and the match options](img/lobby.jpg)
+**Leave** takes you back to the title screen.
 
-*The game setup screen: pick a map, check its preview and player count, and set the match rules.*
+![The CHANGE MAP panel over a single-player room: the EXISTING MAP and RANDOM MAP tabs, the map list sorted by name with Ulasem Arena selected (8P 20x20), the NAME, PLAYERS and SIZE sort buttons and the FILTER box, the preview with eight numbered starts, 20 x 20 8 PLAYER, MAP SCENARIO: OFF greyed with THIS MAP HAS NO SCENARIO, and CANCEL and PICK at the bottom; the room's slots and rules show dimmed at the left](img/lobby.jpg)
+
+*Change map... in the game room: pick a map, check its preview and player count, and click Pick.*
 
 The game opens centred on your **Monarch**. Your first steps:
 
@@ -330,13 +339,14 @@ The game opens centred on your **Monarch**. Your first steps:
 
 ### Match options
 
-These are chosen on the game setup screen. The lobby shows them, but only the
-creator can change them. **Allow spectators** is the one the host can still
-change in the room, until the game starts.
+These are set in the game room, until the game starts. The host's room shows them
+as buttons under the slots: click one for its next choice, right-click for the one
+before. Everyone else sees them as plain text. A button that another option decides
+(Watch, Map scenario) is greyed.
 
 | Option | What it does |
 | --- | --- |
-| **Map** | A shipped, downloaded or generated map. |
+| **Map** | A shipped, downloaded or generated map, chosen with **Change map...** under the room's map (see [Your first skirmish](#your-first-skirmish)). A map with fewer start positions than the human players seated in the room is greyed in the list, its player count in red, and the line beside **Pick** says why. AIs never rule a map out: those seated past the new map's start positions are removed, and the room says how many (*2 AI PLAYERS LEFT: THE MAP HAS 2 STARTS*); before you pick, the line beside **Pick** names their seats. A player seated past them is moved to a seat the new map has (*YOU MOVED TO SEAT 2: ...*). |
 | **Crusades** | **Off** uses the standard unit balance. **On** uses the alternative *Crusades* balance from the final retail patch. Unit costs and stats differ, and a few Iron Plague units (the Trapdoor Spider, Heligrin, Cult of Lokken Ship, Sea Serpent, Mummy and the second Lokken unit; the Taros monarch is unaffected) do not exist, as in the original game. Build menus are the standard ones, without those units. |
 | **Double Sight/Radar** | Doubles every unit's sight and radar range in skirmish and multiplayer. Weapon range is unchanged, and campaign missions are never affected. |
 | **Monarch Expendable** | **Off** (the original rule): losing your Monarch loses the game. **On**: the Monarch is an ordinary unit and you lose only when everything is gone. |
@@ -345,15 +355,21 @@ change in the room, until the game starts.
 | **Unit cap** | The most units each player may have alive: 250, 500, 1,000 or 2,000 (the default and the most the game allows). Production pauses at the cap. |
 | **Allow speed change** | Lets the host change game speed during the match, from −9 (0.1×) to +10 (2×). |
 | **Pathfinding** | **Retail** (the default) or **Legion**. Campaigns always use Retail. See [Pathfinding](#pathfinding-retail-and-legion). |
-| **Allow spectators** | Multiplayer only. **On** (the default): anyone in the browser can **Watch** the game once it starts. **Off**: the server turns every watcher away. Players, AIs and reconnecting players are not affected. The host can change it in the room by clicking it, until the game starts; then it is fixed. See [Spectating](#spectating). |
-| **Spectate (Watch AIs)** | Single-player only: fill every slot with AIs and watch. While it is on, **Fog of war** shows **Full Vision** and **Power codes** shows **Off**, and neither can be changed; turning Spectate off brings back your own choices for both. |
-| **Power codes** | **Off** (the default) or **On**. On lets every player in the game type the original game's cheat codes in the chat box, such as **+ATM** and **+NowISee**. See [Power codes](#power-codes). Always off in campaigns. It cannot be changed in the room. |
-| **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. The button is under the map preview; maps marked with a gold **S** in the list have a scenario. It is greyed, with the reason, for maps without a playable one, including maps whose scenario gives you, player 1, nothing to command (*PLAYER 1 GETS NO ARMY*: many downloaded maps place only scenery or wildlife). A map that needs a unit type your install lacks is offered if your install has a game mod pack (one you could tick in the room, or an always-enabled one), in single player and multiplayer alike, with the warning *PACK NEEDED:* and the unit, in case a pack supplies it. It starts **Off** and turns off again when you pick another map, and the lines under it say what turning it on changes. While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. It cannot be changed in the room. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
+| **Allow spectators** | Multiplayer only. **On** (the default): anyone in the browser can **Watch** the game once it starts. **Off**: the server turns every watcher away. Players, AIs and reconnecting players are not affected. It is fixed once the game starts. See [Spectating](#spectating). |
+| **Watch** | Single-player only: the **Watch** button on your own slot. You leave your slot and watch the AIs play; if fewer than two AIs are seated, every open slot gets one, of a random side. While you watch, **Fog of war** shows **Full Vision** and **Power codes** shows **Off** (neither can be changed), and the room says *WATCHING THE AIS*. Every open or AI slot shows **Sit here**: click it to play again in that slot (an AI there leaves), with your own choices for both back. |
+| **Power codes** | **Off** (the default) or **On**. On lets every player in the game type the original game's cheat codes in the chat box, such as **+ATM** and **+NowISee**. See [Power codes](#power-codes). Always off in campaigns. |
+| **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. It is among the room's rules, and under the preview in **Change map...**; maps marked with a gold **S** in the list have a scenario. In the panel it is greyed, with the reason, for maps without a playable one, including maps whose scenario gives you, player 1, nothing to command (*PLAYER 1 GETS NO ARMY*: many downloaded maps place only scenery or wildlife). A map that needs a unit type your install lacks is offered if your install has a game mod pack (one you could tick in the room, or an always-enabled one), in single player and multiplayer alike, with the warning *PACK NEEDED:* and the unit, in case a pack supplies it. It starts **Off** for each map you select, and the lines under it say what turning it on changes. In the room it can be clicked once the map has been checked; when turning it on or off would remove AIs or move a player, the first click only says what the second will do (*CLICK AGAIN: ...*). While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
 
-All of these except **Allow spectators** are set on the game setup screen
-only: the room shows them read-only. Your choices are remembered for next time
-(the map and its sorting, the game name and the random map settings too),
-except passwords, Spectate and Map scenario.
+**Remembered settings.** Single player and multiplayer each remember their own
+settings: the rules, the map (or the random map settings), how the map list is
+sorted, and the game mod packs you ticked. The **Single-Player** door opens its room with
+the single-player ones; **Create** in the game browser and a **Local server** game
+open theirs with the multiplayer ones. A rule is remembered when you click it, a
+map once the room has changed to it. What you change while you host a room is
+remembered; the game's name and password, Watch and Map scenario are not, and
+neither is anything in a campaign or a `--play-map` test game. If the remembered
+map is no longer installed, or its random map can no longer be made, the room opens
+on another map and says why.
 
 ### AI difficulty
 
@@ -521,7 +537,8 @@ The Retail AI always plays the campaign's computer opponents: see
 
 ### Random maps
 
-**Generate Random Map** opens the generator:
+In the game room, **Change map...** and then the **Random map** tab open the
+generator; **Pick** plays the map it shows:
 
 - **Map type**: Mainland, Lakes or Islands, or a themed layout per world:
   Aramon Riverlands, Taros Maze, Veruna Ports, Zhon Clearings or Creon Highlands.
@@ -566,16 +583,16 @@ The Retail AI always plays the campaign's computer opponents: see
   its file name; a short recipe code beside it in the map list keeps maps with
   the same name apart. Left blank, the map is named after its settings.
 
-The name and the generator settings, seed included, are remembered for next
-time.
+Once the room plays the map you picked, its name and settings, seed included, are
+remembered for next time (separately for single player and multiplayer), and the
+tab opens on them again.
 
 Every player gets a flat base area, clear routes for armies and three home mana
 spots. Every mana spot the generator places has ruins around it. Scattered spots are always reachable from some start, never
 inside a base, and are spread evenly but not mirrored. Islands maps need ships
-or flyers to reach other players. The preview updates when you release a slider;
-in the game room the map settings list the Scattered
-Mana level beside the map seed, and the Plateaus, Mountains and Towns amounts
-below it. When the game starts, the map is saved on
+or flyers to reach other players. The preview updates when you release a slider.
+In the game room, a random map's settings, its seed among them, appear in a box
+when the pointer is on the map. When the game starts, the map is saved on
 every player's computer and on the server, so it appears in the map list later.
 See [random map generation](random-map-generation.md) for the rules it follows.
 
@@ -584,10 +601,10 @@ settings); for any other the game asks you to generate a new map. A
 generated map you have saved as a `.kmp` always plays, whatever made it.
 Rebuilding a map from its recipe needs the same game data.
 
-![The single-player screen with Generate Random Map open: Type Aramon, Layout Mainland and Players 4, then Width 16 and Height 12 on one row, the Forests, Rocks, Extra Mana, Scattered Mana (at High), Water, Hills, Plateaus, Mountains and Towns sliders in two columns and Re-roll Seed. The preview shows the wide 16 × 12 map with four numbered starts](img/guide/random-map-lobby.jpg)
+![The CHANGE MAP panel's RANDOM MAP tab over a single-player room: the MAP NAME (OPTIONAL) box, Type Aramon, Layout Mainland and Players 4, then Width 16 and Height 12 on one row, the Forests, Rocks, Extra Mana, Scattered Mana (at High), Water, Hills, Plateaus, Mountains and Towns sliders in two columns and Re-roll Seed. The preview shows the wide 16 × 12 map with four numbered starts, and CANCEL and PICK are at the bottom](img/guide/random-map-lobby.jpg)
 
-*The random map settings in the single-player lobby, with Scattered Mana at
-High, on a wide 16 × 12 map: Width and Height are set separately.*
+*The Random map tab of Change map..., with Scattered Mana at High, on a wide
+16 × 12 map: Width and Height are set separately.*
 
 ![A wooded lake shore on a generated Aramon Riverlands map, with a lodestone among standing-stone ruins in a clearing and a rocky plateau rim at the lower left](img/generated.jpg)
 
@@ -659,22 +676,24 @@ building, as in the original game; scenario games keep their own rules.
 
 #### Scenario games
 
-A game created with **Map scenario** on plays the map's own scenario instead.
+A game played with **Map scenario** on plays the map's own scenario instead.
+Turn it on in the room's rules, or under the preview when you pick the map with
+**Change map...**.
 The map's placed units replace the starting Monarchs (a scenario with rules but
 no placed units keeps them), and only the unit types on its Use Only list, if it
 has one, can be built. The scenario's own Victory and Defeat rules decide who
 wins: losing your Monarch or every unit does not knock you out. A scenario
-without such rules never ends by itself; the create screen warns *NO VICTORY
+without such rules never ends by itself; **Change map...** warns *NO VICTORY
 RULES: ENDLESS*, and the game ends when the players leave. Every seat the
 scenario gives units or rules to must be filled before the game can start.
 
-![The single-player setup screen with King of the Hill selected and MAP SCENARIO: ON under the preview; the lines under it read UNITS PLACED FOR 1-4, NEEDS SEATS 1-4, BUILDS 6 UNIT TYPES and ENDS BY SCENARIO RULES, a gold S marks the scenario maps in the list, and Monarch Expendable and Start Locations are greyed](img/lobby-scenario.jpg)
+![The CHANGE MAP panel with King of the Hill selected in the list (S 4P 4x4) and MAP SCENARIO: ON under its preview; the lines under it read UNITS PLACED FOR 1-4, NEEDS SEATS 1-4, BUILDS 6 UNIT TYPES and ENDS BY SCENARIO RULES, and a gold S marks the other scenario maps in the list](img/lobby-scenario.jpg)
 
-*King of the Hill with **Map scenario** turned on.*
+*King of the Hill with **Map scenario** turned on, before **Pick**.*
 
 Some things to know before you play one:
 
-- **You are player 1.** The player who creates the game always takes seat 1,
+- **You are player 1.** The player who opens the game room always takes seat 1,
   and players who join take the lowest open seat. If the scenario gives seat 1
   nothing to command, the option is greyed. Close the seats the scenario does
   not need before others join, so that they land in seats that have units.
@@ -1551,7 +1570,7 @@ Everyone in the game sees and hears emotes.
 ### Power codes
 
 Power codes are the original game's cheat codes. They work only in a game
-created with **Power codes: On** (see [Match options](#match-options)), in
+played with **Power codes: On** (see [Match options](#match-options)), in
 single player or multiplayer. They never work in a campaign, and not while you
 watch a game or a replay.
 
@@ -1661,9 +1680,9 @@ just like its first move.
 
 ## Pathfinding: Retail and Legion
 
-The game creator chooses how units find their way, in **Pathfinding** on the
-game setup screen (click it to switch between the two). Everyone in the match
-uses the same choice; the room shows it read-only, and the choice is remembered
+The host chooses how units find their way, in **Pathfinding** among the game
+room's rules (click it to switch between the two). Everyone in the match
+uses the same choice; the other players see it read-only, and the choice is remembered
 for your next game. Campaigns always use Retail. A saved
 choice of Retail+, Flowfield or Cooperative (experimental modes that were
 removed before release) becomes Retail.
@@ -2273,12 +2292,12 @@ player's game stays in step.
 - **Single player** needs no server setup: the game starts a private server on
   your own computer by itself.
 - **Online with friends:** everyone signs in to the same server and one of you
-  creates a game, with a password if you want to keep it private; the others
-  join it from the game browser. The list opens on the official TAK Engine server,
+  creates a game and gives it a password in the room if you want to keep it
+  private; the others join it from the game browser. The list opens on the official TAK Engine server,
   `tak.pgnet.us` (marked **DEFAULT**); servers you have used before are listed
   under it.
 - **On your own network:** pick **LOCAL SERVER** and click **START/CONNECT**. The
-  game starts a server on your computer and opens your game's setup, named
+  game starts a server on your computer and opens your game room, named
   *Name's Game* after you. Players on the same network see it listed under
   **LOCAL SERVER** once you are in the room, and join with just a name. See
   [Local server](#local-server).
@@ -2310,12 +2329,31 @@ host's game mods are sent automatically.
    encrypted (TLS) first and then unencrypted; with `tls://` or `tcp://` only that
    is tried, and if it fails the reason is shown in red.
 4. In the game browser, click a game to join it, or click **CREATE** to make
-   one. A game marked **LOCK** needs its password: type it in **PASSWORD (FOR
-   LOCKED GAMES)** at the bottom before you click the game. A game marked
-   **LIVE** has started; **WATCH** spectates it (see [Spectating](#spectating)).
+   one: your game room opens straight away, named after you (*Name's Game*), on
+   the map and rules you last used in multiplayer. A game marked **LOCK** needs
+   its password: type it in **PASSWORD (FOR LOCKED GAMES)** at the bottom before
+   you click the game. A game marked **LIVE** has started; **WATCH** spectates it
+   (see [Spectating](#spectating)).
 5. In the room, choose your side, colour and team, then click **Ready**. The host
    starts the game when everyone is ready. To take a different seat, click
    **Move here** on any open slot (see [Start locations](#match-options)).
+   **Leave** takes you back to the game browser.
+
+**The host's changes clear Ready.** If the host changes the map, a rule, the game
+mods or the seats (an AI, a closed seat, a kick) after you clicked **Ready**, you
+are not ready any more: what changed flashes, the room says so (*HOST CHANGED FOG
+OF WAR -- READY AGAIN*), the chat keeps a line about it, and the button reads
+**Ready** again. Check the change and click it again. A new game name or password
+does not clear it, and nothing another player does clears yours. The host sees
+*PLAYERS MUST READY AGAIN*, and **Start** waits for them.
+
+**Name and password.** A game you create is listed at once, named after you and
+with no password. The host's room has two boxes above the slots: the game's name
+and its password (empty: *NO PASSWORD*). Type in one and press **Enter**, or click
+elsewhere, to change it; **Esc** puts back what was there. A name is up to 32
+characters. The game list follows the change, and a password does not affect the
+players already in the room. To keep a game private, type its password as soon as
+the room opens. The others see the name and *LOCKED* when it has a password.
 
 After a game, **Game Select** on the results screen takes you straight back to
 that server's game list. Your password is never kept: on a server with TLS, which
@@ -2328,18 +2366,17 @@ again.
 
 *The game browser on a server.*
 
-![A game room with player and AI slots, a MOVE HERE button on each open slot, the map with start markers 1 to 4 in the seated players' colours, mod pack choices and the read-only match rules](img/room.jpg)
+![A single-player game room: you in slot 1 with a WATCH button, Normal AIs for Taros, Veruna and Zhon in slots 2 to 4, MOVE HERE on the open slots 5 to 8, START and LEAVE, the match rules as buttons with CRUSADES: ON, DOUBLE SIGHT/RADAR: ON and PATHFINDING: LEGION, and at the right the map with start markers 1 to 4 in the seated players' colours, CHANGE MAP... under it and the MODS line with the MODS... button](img/room.jpg)
 
-*A game room, here for a single-player game: player and AI slots, **Move here** on the open slots, the map with each start marked in the colour of the player who starts there, mod packs and the read-only match rules.*
+*A game room, here for a single-player game: player and AI slots, **Move here** on the open slots, the match rules, the map with each start marked in the colour of the player who starts there, **Change map...** and the mods.*
 
-The host can open and close empty slots, add AIs and kick players (a slot with a player in it cannot be turned into an AI or closed; kick the player first). Any seated player, the host included, can move to an open slot with **Move here** until the game starts; closed, AI and taken slots cannot be moved to, and campaign missions keep their seats. Match options are
-set when the game is created, except **Allow spectators**, which the host can
-click in the room's rules to turn on or off until the game starts. It lights up
-under the host's pointer; for everyone else it is read-only. See
-[Match options](#match-options).
+The host can open and close empty slots, add AIs and kick players (a slot with a player in it cannot be turned into an AI or closed; kick the player first). Any seated player, the host included, can move to an open slot with **Move here** until the game starts; closed, AI and taken slots cannot be moved to, and campaign missions keep their seats. The host
+also picks the map (**Change map...**) and sets every match option in the room
+until the game starts; the rules light up under the host's pointer, and for
+everyone else they are read-only. See [Match options](#match-options). A
+campaign mission's room keeps its map and rules.
 
-The last line of the rules' right column (under **SPECTATE** in single player,
-**ALLOW SPECTATORS** in multiplayer) says whether the game plays the map's
+**MAP SCENARIO** among the rules says whether the game plays the map's
 scenario (**MAP SCENARIO: ON** or **OFF**); if it does, the lines under the
 rules say what it changes and which seats it needs.
 Each empty seat it needs is tagged **NEEDED BY SCENARIO**, and **Start** stays
@@ -2362,10 +2399,11 @@ Server** if the game needs you to sign in again, and after a local-server game).
 **LOCAL SERVER** in **CONNECT TO SERVER** hosts a game on your own computer for
 players on the same network, with no accounts. Type a **player name** and, if you
 want the game locked, a **GAME PASSWORD (OPTIONAL)**, then click **START/CONNECT**:
-the game starts a server on your computer and opens the game setup with the game
-named *Name's Game* and your password already filled in (other game names are at most
-16 characters). When you click **CREATE**,
-it is announced on your network about once a second until it starts.
+the game starts a server on your computer and opens your game room straight away,
+with the game named *Name's Game* (locked with your password, if you typed one), on the map and
+rules you last used in multiplayer. You can rename it or change its password in
+the room (see [Joining a game](#joining-a-game)). From then on it is announced on
+your network about once a second until it starts.
 
 Everyone else on the network sees it listed under **LOCAL SERVER** with its map and
 seats (**LAN 2/8**, or **LOCK 2/8** when it has a password). They pick it, type a
@@ -2379,9 +2417,8 @@ works and goes straight into the room too.
 
 The game lives on your computer, so leaving closes it for everyone. **LEAVE** in the
 room asks first when others are in it (*LEAVE WILL CLOSE THE GAME FOR 2 PLAYERS*),
-then closes it and takes you back to the game setup; **BACK** there, quitting the
-game or closing the window stops the server and returns you to **CONNECT TO
-SERVER**. The other players see *the host closed the game*, and their **BACK** goes
+then closes it, stops the server and returns you to **CONNECT TO SERVER**, as
+quitting the game or closing the window does. The other players see *the host closed the game*, and their **BACK** goes
 to **CONNECT TO SERVER** as well. In a game already started, they are told the same
 and leave it from the game menu (Esc).
 
@@ -2461,7 +2498,7 @@ numbers and the **F4** board.
   **Tab**, chat and voice chat work as for a player.
 
 Only the host can pause a game or change its speed, so a spectator's **Pause** key
-does nothing. In **Spectate (Watch AIs)** you are the host, and both work.
+does nothing. When you **Watch** the AIs in single player you are the host, and both work.
 
 The host decides whether a game can be watched with **Allow spectators** (on by
 default). When it is off, the browser shows a red **No watch** button instead of
@@ -2477,8 +2514,8 @@ nobody who is already watching is removed.
 | On (default) | **Watch** | Allowed |
 | Off | **No watch** (red) | Refused, with the reason |
 
-In single-player, **Spectate (Watch AIs)** is separate and always available: it is
-your own game.
+In single-player, **Watch** on your own slot is separate and always available: it is
+your own game (see [Match options](#match-options)).
 
 ### Disconnects
 
@@ -2900,8 +2937,9 @@ inside a pack is skipped), or its animation art would change game timing (for
 example the frame timing of a storm effect), it is left out of that game and the
 game's chat says so.
 
-In the game room, **MODS** under the map lists what is always on and what is
-ticked; **MODS...** opens the mods screen, with **Cosmetic** and **Game** packs
+In the game room, the **MODS:** line under the map names the packs in play, the
+always-enabled ones first, then the ticked cosmetic and game packs, with **+N** for
+those that do not fit on the line; **MODS...** opens the mods screen, with **Cosmetic** and **Game** packs
 side by side, each with a **Filter** box and a scrolling list of tick boxes (the
 always-enabled packs at the top, locked on). Tick the packs you want there (up to
 64 of each kind, counting the always-enabled ones); **Done** or **Esc** returns to
@@ -2909,7 +2947,7 @@ the room. Only the host ticks game packs; everyone else sees the host's choice. 
 then ticked ones, each in alphabetical order of their folder names; later packs
 win when they change the same file. Game packs load first, then cosmetic packs.
 
-![A single-player room with Power Codes: On among the match rules; under the map, the MODS summary reads ALWAYS ON: click, House Rules, COSMETIC: Classic Sounds and GAME: Big Battles, with the MODS... button and GAME MODS VERIFIED under it](img/guide/room-mods-power-codes.jpg)
+![A single-player room with two Normal AIs and POWER CODES: ON among the match rules; under the map and its CHANGE MAP... button, the MODS line reads click, House Rules, Classic Sounds +1 (the always-enabled packs in green), with the MODS... button and GAME MODS VERIFIED under it](img/guide/room-mods-power-codes.jpg)
 
 ![The MODS screen: COSMETIC MODS and GAME MODS side by side, each with 2 / 64 ON and a FILTER box; click and House Rules are marked ALWAYS ON at the top, Classic Sounds and Big Battles are ticked and Alternate Cursors is not](img/guide/mods-screen.jpg)
 
@@ -2918,7 +2956,8 @@ win when they change the same file. Game packs load first, then cosmetic packs.
   are never sent to the server or to other players, and players in one game may
   use different ones.
 - **Game packs** work the same in single player and multiplayer: the host ticks
-  them in the room (there is no setup-screen switch for them). They and the
+  them in the room. Single player and multiplayer remember their own ticks, as
+  they do their rules (see [Match options](#match-options)). They and the
   host's always-enabled game packs are sent to the server and to every player
   automatically, and everyone checks they have the same package before the game
   starts; the room shows the transfer's progress, then **GAME MODS VERIFIED**
@@ -3059,7 +3098,7 @@ Cartographer can add placed units, named **regions**, trigger **rules**
 (**T**, with ready-made objective templates) and a **Use Only** unit list to a
 map. **Scenario content runs in a test game** (Test Map, the game's
 `--play-map` option, or the test copy that a test leaves in the map list) **and
-in any game created with [Map scenario](#match-options) on**; with that option
+in any game played with [Map scenario](#match-options) on**; with that option
 off your saved map plays as a normal skirmish map.
 **Scenario → Check map** (**C**) lists problems such as cut-off
 starts, missing mana and wrong rule values. See
@@ -3071,7 +3110,8 @@ which units the computer players build on the map (see
 ### Testing a map
 
 Press **F5** (**Test Map**) to open the current map, unsaved changes included,
-in the game's private lobby. Seat the players your map needs and start; close
+in a single-player game room on that map (it has no **Change map...**, and
+**Quit** in place of **Leave**). Seat the players your map needs and start; close
 the game to return to the editor. A map with scenario content can start with
 one player; an ordinary map needs two. The game can also open a Cartographer map
 directly with `--play-map` (see [Command line](#command-line)). See
@@ -3276,6 +3316,14 @@ See [When voice chat does not work](#when-voice-chat-does-not-work). Voice chat
 is off by default, works only in multiplayer, and on macOS and Windows needs
 the system's permission to use the microphone.
 
+### The game room does not open
+
+The **Single-Player** door and a local server game show *OPENING THE GAME...*
+until the room is ready. If it cannot be made, the screen says *CANNOT OPEN A GAME*
+and why, and **Back to menu** (**Back** for a local server game) returns. A
+remembered map that is missing does not stop it: the room opens on another map and
+says why. **Create** in a game browser reports a refusal under the game list.
+
 ### I cannot join a multiplayer game
 
 - Check that you and the server run versions with the **same protocol** (see
@@ -3317,8 +3365,8 @@ Released builds keep the command line deliberately small:
 | Option | Effect |
 | --- | --- |
 | `--data <folder>` | Use this game-data folder. Optional: without it, the game uses the saved folder or asks. |
-| `--play-map <map.kmp>` | Open a Cartographer map snapshot in a private game lobby. |
-| `--game-mod <pack>` | With `--play-map` only: tick this one game pack (`mods/game/<pack>`) in that lobby, for this run. Your own ticks stay saved. Your always-enabled game packs apply too, as in every room you host; naming one of them ticks nothing more. Cartographer's **TEST IN GAME...** uses it. |
+| `--play-map <map.kmp>` | Open a Cartographer map snapshot in a single-player game room that keeps that map (no **Change map...**, nothing remembered; **Quit** ends the game). |
+| `--game-mod <pack>` | With `--play-map` only: tick this one game pack (`mods/game/<pack>`) in that room, for this run. Your own ticks stay saved. Your always-enabled game packs apply too, as in every room you host; naming one of them ticks nothing more. Cartographer's **TEST IN GAME...** uses it. |
 | `--version` | Print the version and exit. |
 | `--help` | List these options and exit. |
 

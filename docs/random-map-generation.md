@@ -10,8 +10,9 @@ three at zero the map has none of those kits.
 Only version 10 is a valid recipe: an ID with any other version, or a payload
 that is not exactly the 26 fixed bytes plus a title of at most 24, is malformed.
 A server refuses a game room for a malformed ID ("unknown random-map recipe ...;
-generate a new map"), and nothing builds or saves a map from one; the game setup
-screen ignores a remembered one and starts from the default settings. A saved
+generate a new map"), and nothing builds or saves a map from one; a game room
+whose remembered map is such a recipe opens on another map and says why, and the
+CHANGE MAP panel's RANDOM MAP tab starts from the default settings instead. A saved
 generated `.kmp` is an ordinary map and plays from its saved terrain whatever
 recipe it records. Clients and servers must run the same engine version.
 
@@ -41,7 +42,7 @@ recipe it records. Clients and servers must run the same engine version.
   water is disabled, and Plateaus does not apply. Creon mountains may stand on
   the highlands.
 
-In the game setup screen each biome offers its own themed fourth layout.
+In the game room's CHANGE MAP panel (RANDOM MAP) each biome offers its own themed fourth layout.
 Cartographer lists the themed layouts by faction; selecting one sets its biome.
 
 Width and height are set separately, each 8, 12, 16, 20, 24, 32, 40, 48, 56 or 64 sections
@@ -185,13 +186,14 @@ needed it. At the defaults it held 679 plain and 245 mountain plateaus; Mountain
 255 raised 705 mountain plateaus beside 536 plain ones, Mountains 0 kept 723 plain
 plateaus, and Plateaus 0 left only the 245 mountain plateaus.
 
-**Controls.** The game setup screen shows the nine sliders in two columns: Forests,
+**Controls.** The CHANGE MAP panel's RANDOM MAP tab shows the nine sliders in two columns: Forests,
 Rocks, Extra Mana, Scattered Mana, Water, Hills (Highlands on Creon Highlands),
 Plateaus, Mountains and Towns (Villages on Zhon). Plateaus reads AUTO on Maze and
 Highlands; Mountains reads NONE on Veruna. Defaults: Plateaus 96, Mountains 48,
 Towns 64 of 255: on a 24×24 two-player map about three plain plateaus (one beside
 each start), one or two mountain plateaus and two or three towns. The game
-room lists the three amounts under the map seed; Cartographer's generator dialog has
+room lists the three amounts with the map seed in the recipe box over its map
+preview (and the full-window map); Cartographer's generator dialog has
 PLATEAUS, MOUNTAINS and TOWNS fields (0–255).
 
 The version-6 relief audit excludes Veruna grass-covered Breaker pieces from

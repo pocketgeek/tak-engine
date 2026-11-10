@@ -61,7 +61,7 @@ nothing. A custom type that names no unit of the active balance is skipped, as
 retail's resolve loop does (a standard-balance scenario played with CRUSADES on);
 a *placement* of such a unit is refused with a message naming it.
 `src/sim/scenarioinfo.cpp` reads the same files without building a world, for
-the create screens, the room and the server's START checks.
+the game room and its CHANGE MAP panel, and for the server's START checks.
 Messages are filtered for the local viewer without changing that state.
 The rule state is part of the lockstep simulation, so every client and the
 server must run the same engine version.
@@ -107,9 +107,10 @@ without terminal rules can remain a sandbox instead of ending automatically.
 Cartographer's **Test Map (F5)** saves a temporary KMP and launches
 `takclient --data <install> --play-map <snapshot.kmp>`. This documented production
 handoff validates the snapshot through the normal map-package whitelist, caches
-its verified revision with that opt-in section, and opens a private local-server lobby.
+its verified revision with that opt-in section, and opens a private local-server
+single-player room that keeps that map.
 Ordinary retail maps and normal exports play their scenario only in a room
-created with MAP SCENARIO on; otherwise they keep their skirmish setup even when
+with MAP SCENARIO on; otherwise they keep their skirmish setup even when
 they contain CRT companions. Cached Test Map snapshots retain the opt-in. It does not enable
 any standalone/debug simulation. The editing session stays open. Temporary source
 files are removed when the editor observes game exit; closing the editor first

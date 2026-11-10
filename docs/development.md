@@ -329,6 +329,16 @@ against one AI and exits.
 The `--mpai` harness (with its own `takserver`, `--server` and `--serverport`)
 needs neither.
 
+`TAK_ROOM_SCRIPT` drives a debug client's game room through the members its buttons
+call, in any launch mode: a `;`-separated list of steps such as `create` (the game
+browser's CREATE), `ai:<slot>`, `map:<id>` (CHANGE MAP and PICK; `map!:<id>` expects a
+refusal), `opt:<rule>=<value>`, `scenario:<0|1>`, `watch`, `sit:<slot>`,
+`name:<text>`, `pass:<text>`, `wait:humans=<n>` or `wait:ready=<n>`, `ready`, `leave`,
+`start` and `shot:<png>`. Each step waits for its own result and ends the run with
+the reason if it does not come within 10 s (30 s for `wait`). With
+`TAK_MENU_PICK=singleplayer` it drives the room the PLAY THE MACHINE door opens;
+`tools/room_flow_test.py` uses both.
+
 Game speed follows the original's −9..+10 levels (0.1× to 2×). For testing, a
 debug client run with `TAK_FAST_SPEED=1` keeps stepping past +10 in 0.5× steps up
 to 8×; only a debug `takserver` that is a test or private loopback server (such

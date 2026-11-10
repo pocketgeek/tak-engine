@@ -40,19 +40,21 @@ expansion adds the Creon side and its campaign.
 
 *The main menu. The doors open Single-Player, Multiplayer and Campaign.*
 
-1. Click the **Single-Player** door.
-2. Pick a map. The preview shows its start positions and how many players it
-   takes. The default match rules are fine for a first game.
-3. Click **CREATE**.
-4. In the room, click an **OPEN** slot's type to make it an **AI** (click again
+1. Click the **Single-Player** door. The game room opens at once, on the map and
+   rules you played last time.
+2. For another map, click **CHANGE MAP...** under the map, pick one in the list
+   (the preview shows its start positions and how many players it takes) and
+   click **PICK**. The match rules are the buttons under the slots; the defaults
+   are fine for a first game.
+3. Click an **OPEN** slot's type to make it an **AI** (click again
    for CLOSED; right-click steps back). Click its difficulty, side, colour or
    team to change them. **Easy** is a good first opponent.
-5. Click **START**.
-6. The game opens on your Monarch. Select it (**Ctrl+M**), build a lodestone on
+4. Click **START**.
+5. The game opens on your Monarch. Select it (**Ctrl+M**), build a lodestone on
    a mana spot, then a production building, and train a builder and some troops.
    Zhon has no production buildings: its Monarch conjures a Beast Handler
    instead.
-7. Keep your Monarch alive: losing it loses the game, unless *Monarch
+6. Keep your Monarch alive: losing it loses the game, unless *Monarch
    Expendable* is on.
 
 [Your first skirmish](user-guide.md#your-first-skirmish) in the user guide goes
@@ -67,11 +69,13 @@ further.
    is first, marked **DEFAULT**), or **CUSTOM...** to type an address.
 3. Type an account name and a password, then click **CONNECT**. A name the
    server has not seen before is registered as you sign in.
-4. In the game list, click a game to join it, or click **CREATE** to make one.
-   For a game marked **LOCK**, type its password in the field at the bottom
-   first. A running game shows **WATCH** instead, to spectate it.
+4. In the game list, click a game to join it, or click **CREATE** to open your
+   own room at once (type a password in the room to lock it). For a game marked
+   **LOCK**, type its password in the field at the bottom first. A running game
+   shows **WATCH** instead, to spectate it.
 5. In the room, pick your side, colour and team and click **READY**. The host
-   starts the game when everyone is ready.
+   starts the game when everyone is ready. When the host changes the map or a
+   rule, click **READY** again.
 
 Missing maps and the host's game mods download by themselves. You need no open
 ports; only the server does. More in [Multiplayer](user-guide.md#multiplayer).
@@ -277,7 +281,7 @@ There is no ordinary screenshot key. *MAKE POSTER* can be rebound in
 
 #### Power codes
 
-Only in a game created with **Power Codes** on (single player or multiplayer;
+Only in a game with **Power Codes** on (single player or multiplayer;
 never in campaigns). Press **Enter**, type the code, press
 **Enter**; capitals do not matter. Every player sees the code typed.
 
@@ -298,14 +302,17 @@ More in the user guide's [Power codes](user-guide.md#power-codes).
 
 | Control | Does |
 | --- | --- |
-| Left-click a setting | Next choice. Right-click: previous choice. |
+| Left-click a setting | Next choice. Right-click: previous choice. The host's rules are the buttons under the slots. |
 | A slot's type (host) | OPEN → AI → CLOSED. |
+| **CHANGE MAP...** (host) | Pick another map, or make a random one, in a panel over the room; **PICK** plays it, **CANCEL** keeps the room's. |
 | **MOVE HERE** | Take that open slot, keeping your side, colour and team; your old slot opens. With *Start Locations: By Slot*, slot N starts at position N. |
-| **READY** (multiplayer) | Mark yourself ready; the host can START when everyone is. |
+| **WATCH** (single player) | Leave your slot and watch the AIs; **SIT HERE** on a slot plays again. |
+| **READY** (multiplayer) | Mark yourself ready; the host can START when everyone is. A change by the host clears it. |
+| Name and password boxes (multiplayer host) | Rename the game or lock it; **Enter** keeps the change. |
 
-![A single-player room: you in slot 1, a Normal AI in slot 2, MOVE HERE buttons on open slots 3 to 5, and the map with numbered starts](img/quick/lobby-move-here.jpg)
+![A single-player room: you in slot 1 with WATCH, a Normal AI in slot 2, MOVE HERE buttons on open slots 3 to 5, the match rules, and the map with numbered starts and CHANGE MAP... under it](img/quick/lobby-move-here.jpg)
 
-*A single-player room: **MOVE HERE** on each open slot.*
+*A single-player room: **MOVE HERE** on each open slot, **CHANGE MAP...** under the map.*
 
 For everything else (economy, sides, Legion pathfinding, multiplayer, voice
 chat), see the [user guide](user-guide.md).

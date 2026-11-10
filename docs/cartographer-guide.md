@@ -67,11 +67,11 @@ multiplayer games.
 > **Scenario content plays when a game asks for it.** Placed units, trigger
 > rules and the Use Only unit list run when you open the map with **Test Map
 > (F5)** or the game's `--play-map` option, and in any skirmish or multiplayer
-> game created with **MAP SCENARIO** turned on. That button sits under the map
-> preview and can be turned on when the map's scenario has placed units or
-> rules. It starts off: chosen with it off, your `.kmp` plays as a normal
-> skirmish map (its terrain, features and start positions, a Monarch for every
-> player). The test copy that Test Map and `--play-map` leave in the map list
+> game played with **MAP SCENARIO** turned on. That option is among the game
+> room's rules and under the map preview in its **CHANGE MAP...** panel, and can
+> be turned on when the map's scenario has placed units or rules. It starts off:
+> chosen with it off, your `.kmp` plays as a normal skirmish map (its terrain,
+> features and start positions, a Monarch for every player). The test copy that Test Map and `--play-map` leave in the map list
 > (with a fingerprint in brackets after its name) always plays the scenario of a
 > map that has one. See [When scenarios run](#when-scenarios-run).
 
@@ -270,12 +270,12 @@ Start from a map with start positions, for example the one from the
 4. **Limit the units (optional).** Press **U** for Use Only units and tick the
    types players may build. ([Use Only units](#use-only-units))
 5. **Check and test.** Press **C** for Check Map and fix what it lists, then
-   **F5** to play the scenario in a private lobby; seat every player the scenario
-   needs. ([Checking your map](#checking-your-map),
+   **F5** to play the scenario in a private game room; seat every player the
+   scenario needs. ([Checking your map](#checking-your-map),
    [Testing](#testing-a-map-in-the-game))
-6. **Save and play.** Press **Ctrl+S**. In the game, pick the map on the skirmish
-   or multiplayer create screen and turn **MAP SCENARIO** on under the map
-   preview. ([Sharing a scenario](#sharing-a-scenario))
+6. **Save and play.** Press **Ctrl+S**. In the game room, click **CHANGE
+   MAP...**, select the map, turn **MAP SCENARIO** on under its preview and
+   click **PICK**. ([Sharing a scenario](#sharing-a-scenario))
 
 ### Make an AI mod in 5 steps
 
@@ -297,7 +297,7 @@ map. It needs no map.
 5. **Test and play.** **TEST IN GAME...** picks a map and opens a private lobby
    with the pack ticked; seat computer players at the levels you changed
    (**RETAIL** for the DEFAULT AI). To play with it later, the host ticks the
-   pack under GAME MODS in the room.
+   pack with **MODS...** in the game room.
 
 ---
 
@@ -775,7 +775,7 @@ The **UNITS** tool places units on the map: buildings, armies, Monarchs, ships,
 and special objects such as the flags in *King of the Hill*.
 
 > Placed units belong to the map's **scenario**. They appear in a scenario game
-> (Test Map, **F5**, or a game created with **MAP SCENARIO** on), and then they
+> (Test Map, **F5**, or a game played with **MAP SCENARIO** on), and then they
 > **replace the usual starting Monarchs**. In a game with MAP SCENARIO off,
 > placed units are not used. See [Scenario maps](#scenario-maps).
 
@@ -1169,16 +1169,17 @@ such as "hold the hill for five minutes to win".
 >
 > - a test game, opened with **Test Map (F5)** in Cartographer or with the
 >   game's `--play-map` option (see [Sharing a scenario](#sharing-a-scenario));
-> - a skirmish or multiplayer game created with **MAP SCENARIO: ON**. The button
->   sits under the map preview on the game's create screens. It is offered for
+> - a skirmish or multiplayer game played with **MAP SCENARIO: ON**. The button
+>   sits under the map preview in the game room's **CHANGE MAP...** panel, and
+>   the host can also turn it on or off among the room's rules. It is offered for
 >   every map whose scenario has placed units or rules, the shipped scripted maps
 >   such as *King of the Hill* included, and the lines under it say what the
->   scenario changes. It starts off and turns off again whenever another map is
->   picked, so a map chosen with it off plays as a plain skirmish map. It is
+>   scenario changes. It starts off for every map you select, so a map picked
+>   with it off plays as a plain skirmish map. It is
 >   greyed, with the reason, for a map without a playable scenario: one with no
 >   scenario, an empty one, one that needs a placed unit type this
 >   install lacks, or one whose placed units give Player 1 nothing to command
->   (*PLAYER 1 GETS NO ARMY*). Player 1 is the player who creates the game, and
+>   (*PLAYER 1 GETS NO ARMY*). Player 1 is the player who opens the game room, and
 >   placed units replace every Monarch, so Player 1 needs a placed unit that can
 >   fight, build or move (animals, villagers, monsters and unarmed buildings such
 >   as lodestones do not count) or a rule that creates units for it. Many
@@ -1218,7 +1219,7 @@ In a scenario game:
   *SCENARIO*: the scenario decides how the game ends.
 - A **Use Only** entry that names no unit type installed stops a test game from
   starting (*Unknown authored Use Only unit*), so a typo is caught. In a game
-  created with MAP SCENARIO such an entry is left out instead: maps made for the
+  played with MAP SCENARIO such an entry is left out instead: maps made for the
   original game often list units that no install has.
 - A map with scenario content can be started with only one player; other maps
   need two, as in any skirmish.
@@ -1835,19 +1836,24 @@ changes**, and starts the game with it.
 
 *After F5 on King of the Hill. The toolbar button reads TEST RUNNING until the game closes.*
 
-The game opens a **private lobby** for the map, as for a single-player game:
+The game opens a **private game room** for the map: the single-player room, PLAY
+THE MACHINE, kept on your map. It has no **CHANGE MAP...** button, its **LEAVE**
+button reads **QUIT**, and nothing you set in it is remembered for your other
+games:
 
-![The game's lobby, TA:KINGDOMS MULTIPLAYER, for map TEST followed by a number and a fingerprint, SINGLE PLAYER: seat 1 HUMAN PLAYER, seats 2 to 4 OPEN, tagged NEEDED BY SCENARIO and each with a MOVE HERE button, seats 5 to 8 CLOSED, START greyed, the map preview with starts 1 to 4, and the match rules ending with MAP SCENARIO: ON (TEST MAP), followed under the two columns by PLACED UNITS REPLACE MONARCHS, NEEDS SEATS 1-4, ONLY 6 UNIT TYPES CAN BE BUILT and ENDS ONLY BY THE SCENARIO'S RULES](img/cartographer/test-lobby.jpg)
+![The game's single-player room, PLAY THE MACHINE, for map test followed by a number and a fingerprint (the name runs on past the edge): seat 1 HUMAN PLAYER with a WATCH button, seats 2 to 4 OPEN, tagged NEEDED BY SCENARIO and each with a MOVE HERE button, seats 5 to 8 CLOSED, START greyed beside QUIT, the match rules with START LOCATIONS: FIXED and MONARCH EXPENDABLE: SCENARIO greyed and MAP SCENARIO: ON (TEST MAP), followed under the two columns by PLACED UNITS REPLACE MONARCHS, NEEDS SEATS 1-4, ONLY 6 UNIT TYPES CAN BE BUILT and ENDS ONLY BY THE SCENARIO'S RULES, and the map preview with starts 1 to 4 and no CHANGE MAP button under it](img/cartographer/test-lobby.jpg)
 
-*The game's lobby for a Test Map of King of the Hill. Its scenario needs four players, so seats 2 to 4 are tagged and START waits for them.*
+*The game's room for a Test Map of King of the Hill. Its scenario needs four players, so seats 2 to 4 are tagged and START waits for them.*
 
-1. Fill the seats your map needs, as in any lobby: set the other open seats to
-   computer players (or close the ones you do not need). For a scenario, the
-   lobby tags every seat that owns placed units or has rules *NEEDED BY
+1. Fill the seats your map needs, as in any game room: set the other open seats
+   to computer players (or close the ones you do not need). For a scenario, the
+   room tags every seat that owns placed units or has rules *NEEDED BY
    SCENARIO*, and **START** stays greyed until each of them is filled.
-2. Click **READY**, then **START**.
-3. Play. Close the game window when you are done; Cartographer is still open
-   with your map, unchanged and with the same save folder.
+2. Set the rules if you want to (a test copy always plays its scenario), then
+   click **START**.
+3. Play. Close the game window when you are done (or click **QUIT** in the room);
+   Cartographer is still open with your map, unchanged and with the same save
+   folder.
 
 Notes:
 
@@ -2020,7 +2026,7 @@ not sent; Check Map says so.
 #### Sharing a scenario
 
 To play your scenario, players put the `.kmp` in their game's `Maps` folder,
-pick it on the skirmish or multiplayer create screen and turn **MAP SCENARIO**
+pick it with **CHANGE MAP...** in the game room and turn **MAP SCENARIO**
 on (see [When scenarios run](#when-scenarios-run)). In multiplayer only the host
 needs it: the host's copy, scenario files included, is sent to everyone and
 checked before the game starts, so every player plays exactly the same
@@ -2228,10 +2234,11 @@ Open your copy with **File → Open** (it is in the Recent list), then **Save As
 under a new name.
 
 **My placed units, rules or Use Only list do nothing in a skirmish.**
-Turn on **MAP SCENARIO** under the map preview when you create the game: a map
-chosen with it off plays as a plain skirmish map. If the button is greyed, the
-reason is written under it (a map whose only content is a Use Only list has no
-scenario). See [When scenarios run](#when-scenarios-run).
+Turn on **MAP SCENARIO** in the game room's rules, or under the map preview when
+you pick the map with **CHANGE MAP...**: a map played with it off plays as a plain
+skirmish map. If the button in **CHANGE MAP...** is greyed, the reason is written
+under it (a map whose only content is a Use Only list has no scenario). See
+[When scenarios run](#when-scenarios-run).
 
 **The game says "Seat player N in the lobby to play this scenario".**
 Player N owns placed units or has rules. Seat a human or computer player in seat
@@ -2304,7 +2311,7 @@ Start Cartographer from its shortcut and choose **Recover**. See
   objectives and simply play with the units they are given; a computer player
   in a seat that has no units does nothing. The lobby warns about such a seat
   (*NO PLACED UNITS: PLAYER N*).
-- **You start in seat 1, but can move.** The player who creates the game takes
+- **You start in seat 1, but can move.** The player who opens the game room takes
   seat 1, and players who join take the lowest open seat. In the lobby of an
   ordinary game, any seated player (the host too) can press **MOVE HERE** on an
   open seat to take it; the seat moves with the player's side, colour, team and

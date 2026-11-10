@@ -200,8 +200,8 @@ agreed:
   ticked `mods/game/<pack>` folders are packaged and transferred (see
   [Per-room game mods](#per-room-game-mods)); every player mounts that verified
   package at game start so its registry matches the referee's. Every host
-  sends 1, single player and multiplayer alike (there is no create-screen GAME
-  MODS toggle); 0 comes only from a debug `--mods` launch and means no package
+  sends 1, single player and multiplayer alike (the room has no GAME MODS
+  toggle); 0 comes only from a debug `--mods` launch and means no package
   and no game packs at all. Campaign missions are forced to 0.
 - **Cosmetic mods are per player and never travel.** Each client lays on top of
   the room's package its own always-enabled `mods/cosmetic/always_enabled/<pack>`
@@ -688,7 +688,8 @@ interface before the server exists.
 - **Server browser** (new screen or `--server <addr>` entry): game list with
   name, map, players/capacity, lobby/running state, lock icon; create-game
   dialog (name, password, map picker showing start-position capacity,
-  options).
+  options). *(superseded in protocol 323: CREATE opens a room at once and the
+  host picks the map and options in it; see [Room editing](#room-editing-protocol-323))*
 - **Lobby screen:** slot rows (name/AI/closed, faction, color swatch, team
   number, ready check, ping), chat, host controls (add AI, kick, close slot,
   start). Players edit their own row; host edits any.
@@ -855,8 +856,8 @@ every lobby/start/spectate snapshot carry it. The server validates the value,
 adopts it from the host's option updates in a skirmish or Benchmark lobby and
 keeps it once the game runs; both clients and the referee apply it through
 shared match setup. Campaign missions are always Retail, and
-campaign playback forces Retail whatever a header supplies. The lobby reports the
-selected mode without changing it.
+campaign playback forces Retail whatever a header supplies. The host sets it
+among the room's rules; every other client shows it read-only.
 
 The wire byte, the replay header and the saved room settings' `pathfindingMode` use
 the identities `0=Retail` and `4=Legion`; `1`, `2` and `3` name no mode. A
@@ -1004,6 +1005,31 @@ unready nobody.
   answers a host's offer of the package it has already verified with that
   package's offer, and ignores an offer of a map the room no longer plays. A host
   offer refused for a busy server is offered again after 2, 4 and 8 s.
+- **The client's room** (`src/client/gameview_room.cpp`,
+  `gameview_mappicker.cpp`, `roomchanges.{h,cpp}`). There is no create screen:
+  Play the Machine, the browser's CREATE and a LOCAL SERVER host's
+  START/CONNECT send `CreateGame` at once (`GameView::createRoomFromPrefs`) from
+  the remembered set of the room's kind, `Settings::spRoom` or `mpRoom` (rules,
+  map or random-map recipe, map sort, game-mod packs; separate since protocol
+  323, no migration of the old `gameCreate.*` keys). A remembered map that
+  cannot be built falls back to the launch's map, then to the generator's
+  default recipe, and the room says why. Only the host's own clicks are written
+  back, one field at a time, and a map only when the server accepts it; never
+  the name, password, watching or MAP SCENARIO, and never from a harness, a
+  `--play-map` room, a mission or a Benchmark. The left column's options block
+  sends `SetGameOptions` (cells for MAP SCENARIO send `SetRoomMap`), the name
+  and password boxes `SetRoomInfo`, and the CHANGE MAP panel's PICK
+  `SetRoomMap` with the capacity `seatsFor` gives the map (start positions,
+  widened for its scenario). The panel greys a map with fewer seats than the
+  room's seated humans and warns which AIs a PICK removes (`planCapacity`). A
+  guest diffs each new `LobbyState` against the last (`roomChanges`, with the
+  server's `changeBits`), flashes the changed cells and seats and shows one
+  note (`HOST CHANGED FOG OF WAR -- READY AGAIN`); multiplayer also adds a
+  SYSTEM chat line. Single player's WATCH is `MoveSeat` 0xFF, after which the
+  client seats random-race AIs in the open seats when fewer than two are seated.
+  A `--play-map` room keeps its map (no CHANGE MAP, LEAVE reads QUIT); mission
+  and Benchmark rooms are read-only. Debug builds drive the room through the
+  same members with `TAK_ROOM_SCRIPT` (`tools/room_flow_test.py`).
 
 AI seats carry their level in `SlotInfo.aiLevel`: 0-4 our Defensive, Easy,
 Normal, Hard and Absurd, 5 Absurdly Defensive (every peer derives its double
