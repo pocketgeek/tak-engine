@@ -190,10 +190,8 @@ files or `.hpi`, `.ufo` and `.kmp` archives:
 | `mods/game/always_enabled/<pack>/` | Game packs applied in every game you host. Never in campaigns. |
 
 Files placed directly in `mods/`, `mods/cosmetic/`, `mods/game/` or an
-`always_enabled/` folder are never loaded. **Coming from 0.8.13 or earlier?**
-Move each `.hpi` that sat directly in `mods/cosmetic/` into its own folder, for
-example `mods/cosmetic/always_enabled/click/click.hpi`. Load order, limits and
-AI profiles in mods: [Mods](docs/user-guide.md#mods).
+`always_enabled/` folder are never loaded. Load order, limits and AI profiles in
+mods: [Mods](docs/user-guide.md#mods).
 
 ## Hosting a server
 

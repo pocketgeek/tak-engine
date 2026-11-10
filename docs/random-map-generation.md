@@ -8,14 +8,13 @@ and before the title, and assembles the retail terrain kits described below. Wit
 all three at zero a version-10 map is byte-identical to the version-9 map of the
 same settings (checked on 75 recipes covering every world and layout).
 
-Older recipes are not regenerated: a version-8 or version-9 ID still decodes, keeping
-its version, and the generator refuses it with "Random-map recipe version N is no
-longer supported ...; generate a new map". The game setup screen and Cartographer
-upgrade a remembered recipe when it is edited; Cartographer's Regenerate explains
-that the map came from an older generator. Previously saved `.kmp` maps remain
-ordinary playable maps. Clients and servers must run the same engine version
-(protocol 319 introduced version 10 and 320 its seam-free ramps; see the
-[CHANGELOG](../CHANGELOG.md)).
+Only version 10 is a valid recipe: an ID with any other version, or a payload
+that is not exactly the 26 fixed bytes plus a title of at most 24, is malformed.
+A server refuses a game room for a malformed ID ("unknown random-map recipe ...;
+generate a new map"), and nothing builds or saves a map from one; the game setup
+screen ignores a remembered one and starts from the default settings. A saved
+generated `.kmp` is an ordinary map and plays from its saved terrain whatever
+recipe it records. Clients and servers must run the same engine version.
 
 ## Layout and placement
 
@@ -349,9 +348,8 @@ The lobby distributes generated-map recipes, not independently chosen random see
 Once the match starts, the host, every client (including spectators), and the server
 save a reusable `Maps/Generated-<recipe SHA-256>.kmp` in their per-user folder (the
 client's beside `settings.ini`, the server's `--map-cache-dir` or, without one,
-`TAKengine/takserver` in its per-user folder), never in the game data
-folder; maps saved in a data folder's `Maps/` by versions before 0.9.5 stay listed there. The archive
-contains the terrain, starting positions, original recipe, and retail tile artwork.
+`TAKengine/takserver` in its per-user folder), never in the game data folder. The
+archive contains the terrain, starting positions, original recipe, and retail tile artwork.
 Repeated starts of the same recipe reuse that file. Previewing/canceling does not save
 it. Saved maps appear in the map picker in subsequent games.
 
@@ -366,7 +364,6 @@ remain selectable, with a short fingerprint in the name to distinguish versions.
   eight players; regenerating their recipes produced identical maps.
 - GCC Release and Clang ASAN produced identical hashes for all 105 roster maps.
 - The version-3 synthetic golden was `9258a896baaf4285` in that audit.
-  Regenerating those legacy recipes is unsupported in current builds.
 - Thirteen focused tests passed in each of Release, optimized Debug, and ASAN,
   including generated naval production, map transfer, Cartographer generation,
   AI behavior, and results-screen texture cleanup.
@@ -374,13 +371,13 @@ remain selectable, with a short fingerprint in the name to distinguish versions.
   peer, referee, and late spectator (`b471a5694f12d9e5`). Host, peer, and server
   each saved the generated map for later selection.
 
-Lakes water can reach map edges. Older recipe generation is unsupported.
+Lakes water can reach map edges.
 Optional map names travel in the recipe,
 are limited to 24 ASCII letters/digits/spaces/hyphens/underscores, and are used
 for the saved map title and filename. The filename retains a recipe hash to avoid
 collisions. Named maps also include a 16-digit recipe hash in their internal
 map name and browser entry, so duplicate titles stay independently selectable.
-Earlier named archives are repaired when that recipe is saved again. Slider previews regenerate on release, not during dragging.
+Slider previews regenerate on release, not during dragging.
 
 The focused `mapgen_themes` test exercises all five themes, 2–8 players and
 three seeds (including maximum scenery density), checking deterministic output

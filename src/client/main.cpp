@@ -755,12 +755,6 @@ int main(int argc, char** argv) {
         }
         vfs = tak::hpi::mountRetailRoot(tak::u8path(dataRoot));
         gInstallRoot = dataRoot;   // the loading screen reads Movies/Gui from here
-        // The legacy overrides/ folder is left exactly as it is, just no longer read.
-        static bool legacyNoted = false;
-        if (!legacyNoted && tak::hpi::hasLegacyOverridesDir(tak::u8path(dataRoot))) {
-            legacyNoted = true;
-            std::fprintf(stderr, "overrides/ is no longer read; put packs in mods/cosmetic or mods/game\n");
-        }
     }
     std::shared_ptr<tak::ScenarioTraceLog> playtestTrace;
     if (!playMap.empty()) {

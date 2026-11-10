@@ -210,7 +210,7 @@ agreed:
   Campaign missions are forced to 0.
 - **Cosmetic mods are per player and never travel.** Each client lays on top of
   the room's package its own always-enabled `mods/cosmetic/always_enabled/<pack>`
-  folders (every room; `mods/cosmetic/*.hpi` archives are no longer read) and its
+  folders (every room) and its
   ticked `mods/cosmetic/<pack>` folders (every room but a campaign one), through the cosmetic keep-filter (`!affectsGameplay`, no `features/`, no
   `ai/`). That filter strips everything `gameplayHash` reads, so the Loaded hash
   is unchanged by them. The handshake mount, the referee data and map packages
@@ -225,8 +225,6 @@ agreed:
   mid-game desync. *(The pure-relay mode without `--data`, which had no referee
   hash and fell back to a client `StateHash` cross-check, has been removed:
   `takserver` refuses to start without `--data`.)*
-- The old `overrides/` folder is never read. A client that finds one logs one
-  line at startup and leaves it untouched.
 
 ### Determinism contract (explicit)
 

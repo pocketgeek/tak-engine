@@ -1359,6 +1359,11 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
             uint8_t priv = r.u8();       // private (single-player): hidden from the list
             if (!r.ok || r.p!=r.end || name.size()>128 || pass.size()>128 || mapId.size()>4096 || mission.size()>256) return;
+            // A random map is built from its id at START: refuse one this build cannot make.
+            if (mission.empty() && tak::mapgen::isGeneratedMapId(mapId)) {
+                try { tak::mapgen::parseMapId(mapId); }
+                catch (const std::exception& e) { sendReject(c, e.what()); return; }
+            }
             if(!(testWork_ || (loopbackOnly_ && !requireAuth_)) && (o.stressTest || o.benchmark || !mission.empty())) {
                 sendReject(c,"public servers do not accept benchmark, stress or campaign mission requests");return;
             }

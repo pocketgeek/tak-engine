@@ -112,12 +112,6 @@ void syntheticMaps() {
     }
     check(tak::mapgen::extraManaRounds(0)==0 && tak::mapgen::extraManaRounds(128)==3 &&
           tak::mapgen::extraManaRounds(255)==6,"extra mana endpoints/default changed");
-    for(uint16_t version:{7,8,9}) {
-        tak::mapgen::Params old;old.formatVer=version;bool refused=false;
-        try {tak::mapgen::generate(old,vfs);}
-        catch(const std::runtime_error& e) {refused=std::string(e.what()).find("generate a new map")!=std::string::npos;}
-        check(refused,"obsolete map recipe silently regenerated with different rules");
-    }
     for(int players=2;players<=8;++players) {
         tak::mapgen::Params p;p.players=players;p.seed=0xfedcba9876543210ULL;
         p.waterDensity=p.reliefDensity=0;p.treeDensity=p.rockDensity=p.manaDensity=255;
@@ -221,15 +215,27 @@ int main(int argc,char** argv) {
             check(d.treeDensity==p.treeDensity&&d.rockDensity==p.rockDensity&&d.layout==p.layout,"density/layout codec mismatch");
             check(d.plateauDensity==p.plateauDensity&&d.mountainDensity==p.mountainDensity&&d.townDensity==p.townDensity,"kit codec mismatch");
         }
-        // Older recipes keep their version on decode, so generate() refuses them
-        // instead of silently building a different map from the same seed.
-        for(const auto& [old,version]:std::array<std::pair<const char*,int>,3>{{
-                {"~gen1~080001000000000000000100030003020000ff608003",8},
-                {"~gen1~09000100000000000000038001800108ffffffffff0004",9},
-                {"~gen1~0700010000000000000001000300030200",7}}})
-            check(decodeMapId(old).formatVer==version,"older recipe lost its version");
-        // A high-bit seed, invalid input and legacy identifiers must not wrap
-        // dimensions or allow a new layout to reinterpret an old seed.
+        // Only the current recipe version with its exact payload is well formed. An id
+        // of another version (v7-v9 shapes, a v11 number) or length, or with a non-hex
+        // digit, decodes to the defaults, and parseMapId refuses it instead of building
+        // a different map from the same seed.
+        const std::string current=encodeMapId(Params{});
+        check(encodeMapId(parseMapId(current))==current,"the current recipe was refused");
+        std::string otherVersion=current;otherVersion.replace(6,4,"0b00");
+        std::string badDigit=current;badDigit.back()='g';
+        for(const std::string& other:{std::string("~gen1~080001000000000000000100030003020000ff608003"),
+                                      std::string("~gen1~09000100000000000000038001800108ffffffffff0004"),
+                                      std::string("~gen1~0700010000000000000001000300030200"),
+                                      otherVersion,current.substr(0,current.size()-2),current+std::string(50,'4'),
+                                      current+"4",badDigit,std::string("~gen1~")}) {
+            check(encodeMapId(decodeMapId(other))==encodeMapId(Params{}),"a malformed recipe did not decode to the defaults");
+            bool refused=false;
+            try {parseMapId(other);}
+            catch(const std::runtime_error& e) {refused=std::string(e.what()).find("generate a new map")!=std::string::npos;}
+            check(refused,"a malformed recipe was accepted");
+        }
+        // A high-bit seed and invalid input must not wrap dimensions or allow a new
+        // layout to reinterpret a seed.
         for(int layout=Maze;layout<kLayouts;++layout) {
             Params p;p.layout=layout;p.name="Themed";
             const auto d=decodeMapId(encodeMapId(p));

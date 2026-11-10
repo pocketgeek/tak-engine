@@ -50,7 +50,8 @@ struct Sender {
 void saveCache(const std::filesystem::path& root, const Package& package,uint64_t quota=0);
 std::shared_ptr<Package> loadCache(const std::filesystem::path& root, const std::string& digest, size_t maxBytes=kMaxBytes, size_t expected=0, tak::StopToken stop = {});
 // A reusable .kmp, including stock tile artwork and authored start positions.
-// Called on game start, not while previewing or creating a room.
+// Called on game start, not while previewing or creating a room. Empty for an id
+// that is not a "~gen1~" recipe; throws for one mapgen::parseMapId refuses.
 std::filesystem::path saveGenerated(const std::filesystem::path& root,
                                     const hpi::Vfs& vfs, const std::string& recipe,uint64_t quota=0);
 }

@@ -13,7 +13,7 @@ def main():
         def install(name):
             target=root/name;target.mkdir()
             for f in a.data.resolve().iterdir():
-                if f.name.lower() in ('overrides','mods','modcache','overridecache','mapcache'):continue
+                if f.name.lower() in ('mods','modcache','mapcache'):continue
                 (target/f.name).symlink_to(f,target_is_directory=f.is_dir())
             return target
         host,peer,referee=[install(n) for n in ('host','peer','server')]
@@ -32,7 +32,5 @@ def main():
             for data in (host,peer,referee):
                 for name in ('ModCache','MapCache'):
                     assert not (data/name).exists(),data/name
-            assert not (referee/'mods').exists() and not (referee/'overrides').exists()
-            # The host's legacy overrides/ pack is still there, untouched.
-            assert (host/'overrides'/'Gamma'/'units'/'araking.fbi').is_file()
+            assert not (referee/'mods').exists()
 if __name__=='__main__':main()
