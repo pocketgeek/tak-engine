@@ -220,8 +220,8 @@ private:
     void dropViewport(const Control& c, int nOpts, float& y0, float& itemH, float& viewH);
 
     // True when every setting DEFAULTS would reset already equals its default value
-    // (playerName / accountName / lastMap are preserved by DEFAULTS, so they're
-    // excluded).
+    // (playerName / accountName / the remembered room sets are preserved by DEFAULTS,
+    // so they're excluded).
     // "At defaults" and "what DEFAULTS does" are the same question, so they share one
     // definition -- see tak::preferenceDefaults. They used to be two hand-maintained
     // lists that kept drifting apart.

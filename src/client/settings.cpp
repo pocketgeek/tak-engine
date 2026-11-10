@@ -53,12 +53,67 @@ DiskDataFolder& diskDataFolder() { static DiskDataFolder d; return d; }
 // setLaunchGameModPacks: this run's own pack selection, never saved over the player's.
 std::optional<std::vector<std::string>>& launchGameModPacks() { static std::optional<std::vector<std::string>> p; return p; }
 
-// One mods.gamePack / mods.cosmeticPack value (hex of the pack name) into `names`.
+// One spRoom.gamePack / mpRoom.gamePack / mods.cosmeticPack value (hex of the pack name)
+// into `names`.
 void readPackValue(const std::string& val, std::vector<std::string>& names) {
     std::string name;bool valid=val.size()%2==0 && val.size()<=256;
     auto digit=[](char c){return c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:-1;};
     for(size_t i=0;valid && i<val.size();i+=2){int a=digit(val[i]),b=digit(val[i+1]);if(a<0 || b<0)valid=false;else name+=char(a*16+b);}
     if(valid && !name.empty() && name.find_first_of("/\\\r\n") == name.npos && name.find('\0')==name.npos && names.size()<64 && std::find(names.begin(),names.end(),name)==names.end())names.push_back(name);
+}
+// One "<key> = <hex of the pack name>" line per pack (readPackValue reads them back).
+void writePackLines(std::ostream& o, const std::string& key, const std::vector<std::string>& names) {
+    static constexpr char hex[]="0123456789abcdef";
+    for(const auto& name:names){o<<key<<" = ";for(unsigned char c:name)o<<hex[c>>4]<<hex[c&15];o<<"\n";}
+}
+
+bool boolValue(const std::string& val) { return val == "1" || val == "true" || val == "on"; }
+int intValue(const std::string& val, int lo, int hi) { return clampv(std::atoi(val.c_str()), lo, hi); }
+// Exactly one stable mode byte; anything else falls back to Retail.
+sim::PathfindingMode pathModeValue(const std::string& val) {
+    return val.size() == 1 && val[0] >= '0' && sim::validPathfindingMode(uint8_t(val[0] - '0'))
+        ? sim::PathfindingMode(val[0] - '0') : sim::PathfindingMode::Retail;
+}
+
+// One spRoom.<field> / mpRoom.<field> value into its set. Unknown fields are skipped, as
+// every unknown key is.
+void parseRoomPref(RoomPrefs& p, const std::string& field, const std::string& val) {
+    if      (field == "crusades")          p.crusades = boolValue(val);
+    else if (field == "doubleSight")       p.doubleSight = boolValue(val);
+    else if (field == "speedUnlock")       p.speedUnlock = boolValue(val);
+    else if (field == "monarchExpendable") p.monarchExpendable = boolValue(val);
+    else if (field == "allowSpectators")   p.allowSpectators = boolValue(val);
+    else if (field == "powerCodes")        p.powerCodes = boolValue(val);
+    else if (field == "pathfindingMode")   p.pathfindingMode = pathModeValue(val);
+    else if (field == "unitCap")           p.unitCap = intValue(val, 250, 2000);
+    else if (field == "fog")               p.fog = intValue(val, 0, 2);
+    else if (field == "randomStarts")      p.randomStarts = intValue(val, 0, 2);
+    else if (field == "map")               p.map = val;
+    else if (field == "generated")         p.generated = boolValue(val);
+    else if (field == "generator")         p.generator = val;
+    else if (field == "mapSort")           p.mapSort = intValue(val, 0, 2);
+    else if (field == "mapSortDir")        p.mapSortDir = intValue(val, -1, 1) < 0 ? -1 : 1;
+    else if (field == "gamePack")          readPackValue(val, p.gamePacks);
+}
+
+// Every field of one set, as "<prefix>.<field> = <value>" lines.
+void writeRoomPrefs(std::ostream& o, const std::string& prefix, const RoomPrefs& p) {
+    o << prefix << ".crusades = " << p.crusades << "\n";
+    o << prefix << ".doubleSight = " << p.doubleSight << "\n";
+    o << prefix << ".speedUnlock = " << p.speedUnlock << "\n";
+    o << prefix << ".monarchExpendable = " << p.monarchExpendable << "\n";
+    o << prefix << ".allowSpectators = " << p.allowSpectators << "\n";
+    o << prefix << ".powerCodes = " << p.powerCodes << "\n";
+    o << prefix << ".pathfindingMode = " << int(p.pathfindingMode) << "\n";
+    o << prefix << ".unitCap = " << p.unitCap << "\n";
+    o << prefix << ".fog = " << p.fog << "\n";
+    o << prefix << ".randomStarts = " << p.randomStarts << "\n";
+    o << prefix << ".map = " << p.map << "\n";
+    o << prefix << ".generated = " << p.generated << "\n";
+    o << prefix << ".generator = " << p.generator << "\n";
+    o << prefix << ".mapSort = " << p.mapSort << "\n";
+    o << prefix << ".mapSortDir = " << p.mapSortDir << "\n";
+    writePackLines(o, prefix + ".gamePack", p.gamePacks);
 }
 
 }  // namespace
@@ -102,14 +157,10 @@ Settings loadSettings(bool* fileFound) {
         std::string key, val;
         if (!splitLine(line, key, val)) continue;
 
-        auto asInt   = [&](int lo, int hi) { return clampv(std::atoi(val.c_str()), lo, hi); };
+        auto asInt   = [&](int lo, int hi) { return intValue(val, lo, hi); };
         auto asFloat = [&](float lo, float hi) { return clampv(float(std::atof(val.c_str())), lo, hi); };
-        auto asBool  = [&] { return val == "1" || val == "true" || val == "on"; };
-        // Exactly one stable mode byte; anything else falls back to Retail.
-        auto asPathMode = [&] {
-            return val.size() == 1 && val[0] >= '0' && sim::validPathfindingMode(uint8_t(val[0] - '0'))
-                ? sim::PathfindingMode(val[0] - '0') : sim::PathfindingMode::Retail;
-        };
+        auto asBool  = [&] { return boolValue(val); };
+        auto asPathMode = [&] { return pathModeValue(val); };
 
         // customMusic.track<n> = hex of the file's path (any character a path may hold).
         if (key.rfind("customMusic.track", 0) == 0) {
@@ -124,8 +175,15 @@ Settings loadSettings(bool* fileFound) {
             if (valid && !path.empty() && path.find('\0') == path.npos) s.customMusicTracks[track] = path;
             continue;
         }
-        if(key=="mods.gamePack" || key=="mods.cosmeticPack") {
-            readPackValue(val,key=="mods.gamePack"?s.gameModPacks:s.cosmeticModPacks);
+        // The single-player and multiplayer room sets. The keys they replaced
+        // (gameCreate.*, lastMap, mods.gamePack) are not read: both sets start at their
+        // defaults, and those keys go with the next save, as every unknown key does.
+        if (key.rfind("spRoom.", 0) == 0 || key.rfind("mpRoom.", 0) == 0) {
+            parseRoomPref(key[0] == 's' ? s.spRoom : s.mpRoom, key.substr(7), val);
+            continue;
+        }
+        if(key=="mods.cosmeticPack") {
+            readPackValue(val,s.cosmeticModPacks);
             continue;
         }
         if      (key == "fullscreen")      s.fullscreen = asBool();
@@ -214,24 +272,8 @@ Settings loadSettings(bool* fileFound) {
         else if (key == "voiceMicVolume")  s.voiceMicVolume = asInt(0, 400);   // MIC GAIN %
         else if (key == "voiceMicEnabled") s.voiceMicEnabled = asBool();
         else if (key == "voiceOutputVolume") s.voiceOutputVolume = asInt(0, 100);
-        else if (key == "gameCreate.crusades") s.gameCreate.crusades = asBool();
-        else if (key == "gameCreate.pathfindingMode") s.gameCreate.pathfindingMode = asPathMode();
         else if (key == "benchmarkPathfinding") s.benchmarkPathfinding = asPathMode();
         else if (key == "benchmarkSpeed")  { const int v = asInt(0, 1000); s.benchmarkSpeed = v >= 100 ? 100 : v > 0 ? 10 : 0; }   // NORMAL, +10 or +100
-        else if (key == "gameCreate.doubleSight") s.gameCreate.doubleSight = asBool();
-        else if (key == "gameCreate.speedUnlock") s.gameCreate.speedUnlock = asBool();
-        else if (key == "gameCreate.monarchExpendable") s.gameCreate.monarchExpendable = asBool();
-        else if (key == "gameCreate.randomStarts") s.gameCreate.randomStarts = asInt(0, 2);
-        else if (key == "gameCreate.allowSpectators") s.gameCreate.allowSpectators = asBool();
-        else if (key == "gameCreate.powerCodes") s.gameCreate.powerCodes = asBool();
-        else if (key == "gameCreate.generated") s.gameCreate.generated = asBool();
-        else if (key == "gameCreate.unitCap") s.gameCreate.unitCap = asInt(250, 2000);
-        else if (key == "gameCreate.fog") s.gameCreate.fog = asInt(0, 2);
-        else if (key == "gameCreate.mapSort") s.gameCreate.mapSort = asInt(0, 2);
-        else if (key == "gameCreate.mapSortDir") s.gameCreate.mapSortDir = (asInt(-1, 1) < 0 ? -1 : 1);
-        else if (key == "gameCreate.name") s.gameCreate.name = val;
-        else if (key == "gameCreate.generator") s.gameCreate.generator = val;
-        else if (key == "lastMap")         s.lastMap = val;
         else if (key == "knownServers") {  // comma-joined, most recent first
             std::stringstream ks(val);
             std::string tok;
@@ -331,30 +373,11 @@ std::string serializeSettings(const Settings& s) {
     o << "voiceMicVolume = " << std::clamp(s.voiceMicVolume, 0, 400) << "\n";
     o << "voiceMicEnabled = " << (s.voiceMicEnabled ? 1 : 0) << "\n";
     o << "voiceOutputVolume = " << std::clamp(s.voiceOutputVolume, 0, 100) << "\n";
-    o << "gameCreate.crusades = " << s.gameCreate.crusades << "\n";
-    o << "gameCreate.pathfindingMode = " << int(s.gameCreate.pathfindingMode) << "\n";
     o << "benchmarkPathfinding = " << int(s.benchmarkPathfinding) << "\n";
     o << "benchmarkSpeed = " << s.benchmarkSpeed << "\n";
-    o << "gameCreate.doubleSight = " << s.gameCreate.doubleSight << "\n";
-    o << "gameCreate.speedUnlock = " << s.gameCreate.speedUnlock << "\n";
-    o << "gameCreate.monarchExpendable = " << s.gameCreate.monarchExpendable << "\n";
-    o << "gameCreate.randomStarts = " << s.gameCreate.randomStarts << "\n";
-    o << "gameCreate.allowSpectators = " << s.gameCreate.allowSpectators << "\n";
-    o << "gameCreate.powerCodes = " << s.gameCreate.powerCodes << "\n";
-    o << "gameCreate.generated = " << s.gameCreate.generated << "\n";
-    o << "gameCreate.unitCap = " << s.gameCreate.unitCap << "\n";
-    o << "gameCreate.fog = " << s.gameCreate.fog << "\n";
-    o << "gameCreate.mapSort = " << s.gameCreate.mapSort << "\n";
-    o << "gameCreate.mapSortDir = " << s.gameCreate.mapSortDir << "\n";
-    o << "gameCreate.name = " << s.gameCreate.name << "\n";
-    o << "gameCreate.generator = " << s.gameCreate.generator << "\n";
-    auto writePacks=[&](const char* key,const std::vector<std::string>& names){
-        static constexpr char hex[]="0123456789abcdef";
-        for(const auto& name:names){o<<key<<" = ";for(unsigned char c:name)o<<hex[c>>4]<<hex[c&15];o<<"\n";}
-    };
-    writePacks("mods.gamePack",s.gameModPacks);
-    writePacks("mods.cosmeticPack",s.cosmeticModPacks);
-    o << "lastMap = " << s.lastMap << "\n";
+    writeRoomPrefs(o, "spRoom", s.spRoom);
+    writeRoomPrefs(o, "mpRoom", s.mpRoom);
+    writePackLines(o, "mods.cosmeticPack", s.cosmeticModPacks);
     if (!s.knownServers.empty()) {
         o << "knownServers = ";
         for (size_t i = 0; i < s.knownServers.size(); ++i)
@@ -380,7 +403,7 @@ bool saveSettings(const Settings& s) {
     Settings out = s;
     auto& seen = diskDataFolder();
     auto& launch = launchGameModPacks();
-    if (launch && s.gameModPacks != *launch) launch.reset();   // the player's own ticks now
+    if (launch && s.spRoom.gamePacks != *launch) launch.reset();   // the player's own ticks now
     const bool keepDataFolder = seen.known && s.dataDir == seen.dir && s.dataManifest == seen.manifest;
     if (keepDataFolder || launch) {
         // Unchanged by this process since it last read or wrote the file, so the file's
@@ -388,12 +411,12 @@ bool saveSettings(const Settings& s) {
         // A launch-only pack selection likewise leaves the file's ticks as they are.
         std::ifstream in(path);
         std::string line, key, val;
-        if (launch) out.gameModPacks.clear();
+        if (launch) out.spRoom.gamePacks.clear();
         while (in && std::getline(in, line))
             if (splitLine(line, key, val)) {
                 if (keepDataFolder && key == "dataDir") out.dataDir = val;
                 else if (keepDataFolder && key == "dataManifest") out.dataManifest = val;
-                else if (launch && key == "mods.gamePack") readPackValue(val, out.gameModPacks);
+                else if (launch && key == "spRoom.gamePack") readPackValue(val, out.spRoom.gamePacks);
             }
     }
     const std::string text = serializeSettings(out);

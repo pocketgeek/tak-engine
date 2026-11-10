@@ -24,6 +24,7 @@
 #ifdef TAK_SETTINGS_FILE_TEST
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <random>
 #endif
 
@@ -120,27 +121,34 @@ int main() {
     flips("streamFps", [](Settings& s) { s.streamFps = 30; });
     flips("streamCpuEncoder", [](Settings& s) { s.streamCpuEncoder = true; });
     flips("streamLocalCopy", [](Settings& s) { s.streamLocalCopy = !s.streamLocalCopy; });
-    flips("gameCreate.crusades", [](Settings& s) { s.gameCreate.crusades = !s.gameCreate.crusades; });
-    flips("gameCreate.pathfindingMode", [](Settings& s) { s.gameCreate.pathfindingMode = tak::sim::PathfindingMode::Legion; });
     flips("benchmarkPathfinding", [](Settings& s) { s.benchmarkPathfinding = tak::sim::PathfindingMode::Legion; });
     flips("benchmarkSpeed",  [](Settings& s) { s.benchmarkSpeed = 0; });
-    flips("gameCreate.doubleSight", [](Settings& s) { s.gameCreate.doubleSight = !s.gameCreate.doubleSight; });
-    flips("gameCreate.speedUnlock", [](Settings& s) { s.gameCreate.speedUnlock = !s.gameCreate.speedUnlock; });
-    flips("gameCreate.monarchExpendable", [](Settings& s) { s.gameCreate.monarchExpendable = !s.gameCreate.monarchExpendable; });
-    flips("gameCreate.randomStarts", [](Settings& s) { s.gameCreate.randomStarts = (s.gameCreate.randomStarts + 1) % 3; });
-    flips("gameCreate.randomStarts 2", [](Settings& s) { s.gameCreate.randomStarts = 2; });
-    flips("gameCreate.allowSpectators", [](Settings& s) { s.gameCreate.allowSpectators = !s.gameCreate.allowSpectators; });
-    flips("gameCreate.powerCodes", [](Settings& s) { s.gameCreate.powerCodes = !s.gameCreate.powerCodes; });
-    flips("gameCreate.generated", [](Settings& s) { s.gameCreate.generated = !s.gameCreate.generated; });
-    flips("gameCreate.unitCap", [](Settings& s) { ++s.gameCreate.unitCap; });
-    flips("gameCreate.fog", [](Settings& s) { ++s.gameCreate.fog; });
-    flips("gameCreate.mapSort", [](Settings& s) { ++s.gameCreate.mapSort; });
-    flips("gameCreate.mapSortDir", [](Settings& s) { ++s.gameCreate.mapSortDir; });
-    flips("gameCreate.name", [](Settings& s) { s.gameCreate.name = "test"; });
-    flips("gameCreate.generator", [](Settings& s) { s.gameCreate.generator = "test"; });
-    flips("gameModPacks", [](Settings& s){s.gameModPacks={"Pack A"};});
+    // The remembered room sets: every field of the single-player and of the multiplayer one.
+    for (auto set : {&Settings::spRoom, &Settings::mpRoom}) {
+        const std::string pre = set == &Settings::spRoom ? "spRoom." : "mpRoom.";
+        auto room = [&](const char* field, auto mutate) {
+            flips((pre + field).c_str(), [&](Settings& s) { mutate(s.*set); });
+        };
+        using tak::RoomPrefs;
+        room("crusades",          [](RoomPrefs& p) { p.crusades = !p.crusades; });
+        room("doubleSight",       [](RoomPrefs& p) { p.doubleSight = !p.doubleSight; });
+        room("speedUnlock",       [](RoomPrefs& p) { p.speedUnlock = !p.speedUnlock; });
+        room("monarchExpendable", [](RoomPrefs& p) { p.monarchExpendable = !p.monarchExpendable; });
+        room("allowSpectators",   [](RoomPrefs& p) { p.allowSpectators = !p.allowSpectators; });
+        room("powerCodes",        [](RoomPrefs& p) { p.powerCodes = !p.powerCodes; });
+        room("pathfindingMode",   [](RoomPrefs& p) { p.pathfindingMode = tak::sim::PathfindingMode::Legion; });
+        room("unitCap",           [](RoomPrefs& p) { p.unitCap = 500; });
+        room("fog",               [](RoomPrefs& p) { p.fog = 2; });
+        room("randomStarts",      [](RoomPrefs& p) { p.randomStarts = (p.randomStarts + 1) % 3; });
+        room("randomStarts 2",    [](RoomPrefs& p) { p.randomStarts = 2; });
+        room("map",               [](RoomPrefs& p) { p.map = "Inner Circle"; });
+        room("generated",         [](RoomPrefs& p) { p.generated = !p.generated; });
+        room("generator",         [](RoomPrefs& p) { p.generator = "test"; });
+        room("mapSort",           [](RoomPrefs& p) { ++p.mapSort; });
+        room("mapSortDir",        [](RoomPrefs& p) { p.mapSortDir = -1; });
+        room("gamePacks",         [](RoomPrefs& p) { p.gamePacks = {"Pack A"}; });
+    }
     flips("cosmeticModPacks", [](Settings& s){s.cosmeticModPacks={"Pack B"};});
-    flips("lastMap",         [](Settings& s) { s.lastMap = "Inner Circle"; });
     flips("dataDir",         [](Settings& s) { s.dataDir = "/somewhere/else"; });
     flips("dataManifest",    [](Settings& s) { s.dataManifest = "deadbeef"; });
 
@@ -195,9 +203,12 @@ int main() {
         cur.streamResolution = 2;
         cur.streamFps = 30;
         cur.streamCpuEncoder = true;
-        cur.lastMap = "Inner Circle";
-        cur.gameCreate.crusades = true;
-        cur.gameCreate.generator = "saved recipe";
+        cur.spRoom.map = "Inner Circle";
+        cur.spRoom.crusades = true;
+        cur.spRoom.gamePacks = {"Pack A"};
+        cur.mpRoom.generator = "saved recipe";
+        cur.mpRoom.generated = true;
+        cur.mpRoom.gamePacks = {"Pack B"};
         cur.benchmarkPathfinding = tak::sim::PathfindingMode::Legion;
         cur.benchmarkSpeed = 0;
         cur.hotkeys["selectAll"] = "ctrl+a";
@@ -225,7 +236,6 @@ int main() {
         cur.uiFont = 1;
 
         const Settings d = tak::preferenceDefaults(cur);
-        if (!(d.gameCreate == cur.gameCreate)) ++g_fail;
         auto keep = [&](const char* what, bool ok) {
             std::printf("  keeps %-18s %s\n", what, ok ? "ok" : "FAIL (destroyed by DEFAULTS)");
             if (!ok) ++g_fail;
@@ -249,7 +259,8 @@ int main() {
         keep("streamResolution",  d.streamResolution == 2);
         keep("streamFps",         d.streamFps == 30);
         keep("streamCpuEncoder",  d.streamCpuEncoder);
-        keep("lastMap",           d.lastMap == cur.lastMap);
+        keep("spRoom",            d.spRoom == cur.spRoom && d.spRoom.map == "Inner Circle");
+        keep("mpRoom",            d.mpRoom == cur.mpRoom && d.mpRoom.gamePacks == std::vector<std::string>{"Pack B"});
         keep("hotkeys",           d.hotkeys == cur.hotkeys);
         keep("voice chat",        d.voiceEnabled && d.voiceMicDevice == "a-mic" && !d.voiceOutputSameAsGame &&
                                   d.voiceOutputDevice == "headset" && d.voiceMicVolume == 40 &&
@@ -710,7 +721,8 @@ int main() {
         check("benchPath: save", tak::saveSettings(saved));
         const Settings loaded = tak::loadSettings();
         check("benchPath: Legion kept", loaded.benchmarkPathfinding == Mode::Legion);
-        check("benchPath: lobby alone", loaded.gameCreate.pathfindingMode == Mode::Retail);
+        check("benchPath: lobby alone", loaded.spRoom.pathfindingMode == Mode::Retail &&
+                                        loaded.mpRoom.pathfindingMode == Mode::Retail);
         check("benchPath: 4 is Legion", modeFrom("benchmarkPathfinding = 4\n") == Mode::Legion);
         check("benchPath: 0 is Retail", modeFrom("benchmarkPathfinding = 0\n") == Mode::Retail);
         check("benchPath: 3 -> Retail", modeFrom("benchmarkPathfinding = 3\n") == Mode::Retail);
@@ -840,6 +852,126 @@ int main() {
         check("fps: 30 ok", loadFrom("streamFps = 30\n").streamFps == 30);
         check("fps: 45 snaps", loadFrom("streamFps = 45\n").streamFps == 60);
         check("fps: junk snaps", loadFrom("streamFps = x\n").streamFps == 60);
+    }
+    // The remembered room sets: single player (spRoom.<field>) and multiplayer
+    // (mpRoom.<field>), one key per field, each set saved and read on its own. The keys
+    // they replaced (gameCreate.*, lastMap, mods.gamePack) are not read, and the next save
+    // drops them.
+    {
+        using Mode = tak::sim::PathfindingMode;
+        using tak::RoomPrefs;
+        using Packs = std::vector<std::string>;
+        auto check = [&](const char* what, bool ok) {
+            std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++g_fail;
+        };
+        const auto path = std::filesystem::temp_directory_path() /
+                          ("settings_test_rooms_" + std::to_string(std::random_device{}()) + ".ini");
+        tak::setSettingsPath(path.string());
+        auto loadFrom = [&](const std::string& body) { { std::ofstream(path) << body; } return tak::loadSettings(); };
+        auto fileText = [&] { std::ifstream in(path); return std::string(std::istreambuf_iterator<char>(in), {}); };
+        auto hex = [](const std::string& name) {
+            static constexpr char digits[] = "0123456789abcdef";
+            std::string out;
+            for (unsigned char c : name) { out += digits[c >> 4]; out += digits[c & 15]; }
+            return out;
+        };
+        auto count = [](const std::string& text, const std::string& what) {
+            int n = 0;
+            for (size_t at = text.find(what); at != std::string::npos; at = text.find(what, at + 1)) ++n;
+            return n;
+        };
+
+        // Every field, in both sets, with values that differ between the sets.
+        RoomPrefs sp;
+        sp.crusades = sp.doubleSight = sp.speedUnlock = sp.monarchExpendable = sp.powerCodes = true;
+        sp.allowSpectators = false;
+        sp.pathfindingMode = Mode::Legion;
+        sp.unitCap = 500; sp.fog = 2; sp.randomStarts = 2;
+        sp.map = "Inner Circle"; sp.generated = true; sp.generator = "~gen1~saved recipe";
+        sp.mapSort = 2; sp.mapSortDir = -1;
+        sp.gamePacks = {"My AI", "Accents-\xc3\xa9"};
+        RoomPrefs mp;
+        mp.unitCap = 1000; mp.fog = 0; mp.randomStarts = 1; mp.map = "Athri Cay"; mp.mapSort = 1;
+        mp.gamePacks = {"Textures"};
+        Settings a;
+        a.spRoom = sp; a.mpRoom = mp;
+        check("rooms: save", tak::saveSettings(a));
+        const Settings b = tak::loadSettings();
+        check("rooms: sp round trip", b.spRoom == sp);
+        check("rooms: mp round trip", b.mpRoom == mp);
+        check("rooms: file round trip", b == a);
+        check("rooms: prefsFor", &a.prefsFor(true) == &a.spRoom && &a.prefsFor(false) == &a.mpRoom);
+        const std::string text = fileText();
+        check("rooms: own keys", text.find("\nspRoom.crusades = 1\n") != std::string::npos &&
+                                 text.find("\nmpRoom.crusades = 0\n") != std::string::npos &&
+                                 text.find("\nspRoom.map = Inner Circle\n") != std::string::npos &&
+                                 text.find("\nmpRoom.unitCap = 1000\n") != std::string::npos);
+        check("rooms: a pack a line", count(text, "\nspRoom.gamePack = ") == 2 && count(text, "\nmpRoom.gamePack = ") == 1 &&
+                                      text.find("\nspRoom.gamePack = " + hex("My AI") + "\n") != std::string::npos);
+        check("rooms: no old keys", text.find("gameCreate.") == std::string::npos &&
+                                    text.find("lastMap") == std::string::npos &&
+                                    text.find("mods.gamePack") == std::string::npos);
+
+        // Independence: changing one set leaves the other as it was, across save and reload.
+        Settings c = b;
+        c.spRoom.crusades = false;
+        c.spRoom.gamePacks = {"Other"};
+        check("rooms: sp change", tak::saveSettings(c));
+        const Settings c2 = tak::loadSettings();
+        check("rooms: mp untouched", c2.mpRoom == mp && !c2.spRoom.crusades && c2.spRoom.gamePacks == Packs{"Other"});
+        Settings d = b;
+        d.mpRoom.crusades = true;
+        d.mpRoom.gamePacks.clear();
+        check("rooms: mp change", tak::saveSettings(d));
+        const Settings d2 = tak::loadSettings();
+        check("rooms: sp untouched", d2.spRoom == sp && d2.mpRoom.crusades && d2.mpRoom.gamePacks.empty());
+
+        // Each key keeps today's validation: clamps, -1/1, a mode byte, a well-formed pack.
+        const Settings v = loadFrom("spRoom.unitCap = 99999\nmpRoom.unitCap = 7\nspRoom.fog = 9\n"
+                                    "mpRoom.randomStarts = -4\nspRoom.mapSort = 5\nspRoom.mapSortDir = -7\n"
+                                    "mpRoom.mapSortDir = 0\nspRoom.pathfindingMode = 4\nmpRoom.pathfindingMode = 3\n"
+                                    "spRoom.generated = on\nmpRoom.powerCodes = yes\n"
+                                    "spRoom.gamePack = zz\nmpRoom.gamePack = 2f61\n");
+        check("rooms: unitCap clamped", v.spRoom.unitCap == 2000 && v.mpRoom.unitCap == 250);
+        check("rooms: 0..2 clamped", v.spRoom.fog == 2 && v.mpRoom.randomStarts == 0 && v.spRoom.mapSort == 2);
+        check("rooms: sort dir", v.spRoom.mapSortDir == -1 && v.mpRoom.mapSortDir == 1);
+        check("rooms: path mode", v.spRoom.pathfindingMode == Mode::Legion && v.mpRoom.pathfindingMode == Mode::Retail);
+        check("rooms: bools", v.spRoom.generated && !v.mpRoom.powerCodes);
+        check("rooms: bad packs", v.spRoom.gamePacks.empty() && v.mpRoom.gamePacks.empty());
+        const Settings u = loadFrom("spRoom.crusades = 1\nspRoom.bogus = 3\nmpRoom. = 1\nmpRoom = 1\n");
+        check("rooms: unknown skipped", u.spRoom.crusades && u.mpRoom == RoomPrefs{});
+
+        // No migration: a file with only the old keys loads both sets at their defaults
+        // (no game packs ticked), and the next save drops those keys.
+        const Settings old = loadFrom("gameCreate.crusades = true\ngameCreate.unitCap = 500\n"
+                                      "gameCreate.name = Friday\nlastMap = Inner Circle\n"
+                                      "mods.gamePack = " + hex("My AI") + "\n"
+                                      "mods.cosmeticPack = " + hex("Skin") + "\n");
+        check("old keys: defaults", old.spRoom == RoomPrefs{} && old.mpRoom == RoomPrefs{});
+        check("old keys: cosmetic kept", old.cosmeticModPacks == Packs{"Skin"});
+        check("old keys: save", tak::saveSettings(old));
+        const std::string dropped = fileText();
+        check("old keys: dropped", dropped.find("gameCreate.") == std::string::npos &&
+                                   dropped.find("lastMap") == std::string::npos &&
+                                   dropped.find("mods.gamePack") == std::string::npos &&
+                                   dropped.find("\nmods.cosmeticPack = " + hex("Skin") + "\n") != std::string::npos);
+
+        // A launch-only selection (--game-mod: a --play-map room is single player) keeps the
+        // file's spRoom.gamePack lines while it applies; the multiplayer set saves as usual.
+        check("launch: player's ticks", tak::saveSettings(a));
+        Settings run = a;
+        run.spRoom.gamePacks = {"Test Pack"};
+        tak::setLaunchGameModPacks(run.spRoom.gamePacks);
+        run.mpRoom.crusades = true;
+        run.mpRoom.gamePacks = {"Net Pack"};
+        check("launch: save", tak::saveSettings(run));
+        const Settings back = tak::loadSettings();
+        check("launch: sp file kept", back.spRoom.gamePacks == sp.gamePacks);
+        check("launch: mp saved", back.mpRoom.crusades && back.mpRoom.gamePacks == Packs{"Net Pack"});
+        tak::setLaunchGameModPacks(std::nullopt);
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
     }
 #endif
 

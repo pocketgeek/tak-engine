@@ -797,8 +797,9 @@ int main(int argc, char** argv) {
             tak::errorBox("Cannot test game mod", why);
             std::fprintf(stderr, "Test in game: %s\n", why.c_str()); SDL_Quit(); return 1;
         }
-        settings.gameModPacks = alreadyAlways ? std::vector<std::string>{} : std::vector<std::string>{playGameMod};
-        tak::setLaunchGameModPacks(settings.gameModPacks);
+        // --play-map opens a single-player room: the single-player set holds the run's packs.
+        settings.spRoom.gamePacks = alreadyAlways ? std::vector<std::string>{} : std::vector<std::string>{playGameMod};
+        tak::setLaunchGameModPacks(settings.spRoom.gamePacks);
         if (alreadyAlways)
             std::fprintf(stderr, "Test in game: game mod %s is already always enabled; no pack ticked for this run\n", playGameMod.c_str());
         else
@@ -1478,7 +1479,9 @@ int main(int argc, char** argv) {
         mp = std::make_unique<tak::net::MpClient>();
         mp->setMapRoot(tak::u8path(dataRoot));
         mp->setGameModsAllowed(modUse.game);   // debug --mods none|cosmetic: no game packs at all
-        mp->setGameModPacks(settings.gameModPacks);
+        // The ticks of this launch's room kind: single player for the menu's Play the
+        // Machine, a CLI game and --play-map (mode 7), multiplayer otherwise.
+        mp->setGameModPacks(settings.prefsFor(menuInteractive || mpAutoMode == 7 || !playMap.empty()).gamePacks);
         if (playerName.empty()) playerName = settings.playerName;
         if (playerName.empty()) playerName = "player";
         // Hello carries the PURE-RETAIL gameplay fingerprint (no mods), so the

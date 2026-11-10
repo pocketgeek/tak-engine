@@ -2,7 +2,7 @@
 
 // User-adjustable Options, persisted to a per-user config file. These are ALL
 // local display / input / audio preferences, plus defaults for creating a game.
-// GameCreate only seeds a new room: the authoritative rules live in
+// RoomPrefs only seed a new room: the authoritative rules live in
 // GameOptions/MatchConfig and never read these preferences during a match.
 // Never include this header from src/sim, src/net, or src/server.
 
@@ -179,32 +179,43 @@ struct Settings {
     int streamFps = 60;
     // ENCODER: false = AUTOMATIC (default), true = CPU (libx264).
     bool streamCpuEncoder = false;
-    struct GameCreate {
+    // The rules a new room starts with, its map and its game-mod packs: one set for single
+    // player (Play the Machine, spRoom.*) and one for multiplayer (online CREATE and a LOCAL
+    // SERVER game, mpRoom.*). The host's changes in a room update the set of that room's kind.
+    // They only seed a room: the authoritative rules live in GameOptions/MatchConfig.
+    struct RoomPrefs {
         bool crusades = false, doubleSight = false, speedUnlock = false;
         bool monarchExpendable = false;
-        bool allowSpectators = true;   // multiplayer ALLOW SPECTATORS (on, as every room was before it)
-        bool powerCodes = false;       // POWER CODES (net::GameOptions::powerCodes), off as in retail
-        bool generated = false;
+        bool allowSpectators = true;   // multiplayer only (single player rooms are private)
+        bool powerCodes = false;       // off, as in retail
         sim::PathfindingMode pathfindingMode = sim::PathfindingMode::Retail;
-        int unitCap = 2000, fog = 1;
-        // START LOCATIONS, net::GameOptions::randomStarts: 0 FIXED, 1 RANDOM, 2 BY SLOT.
-        int randomStarts = 0;
+        int unitCap = 2000, fog = 1;   // fog: 0 NOT EXPLORED, 1 EXPLORED, 2 FULL VISION
+        int randomStarts = 0;          // 0 FIXED, 1 RANDOM, 2 BY SLOT
+        std::string map;               // the last installed map picked ("" = the launch's default)
+        bool generated = false;        // the last pick was the generator's
+        std::string generator;         // its recipe ("~gen1~..."), also what RANDOM opens on
         int mapSort = 0, mapSortDir = 1;
-        std::string name = "game", generator;
-        friend bool operator==(const GameCreate&, const GameCreate&) = default;
-    } gameCreate;
+        // Ticked mods/game/<pack> packs, by folder name (applied in every non-campaign room
+        // this player hosts, sent to every player). Saved as repeated <set>.gamePack lines.
+        // A name an always-enabled pack (mods/game/always_enabled/) also uses is kept but
+        // has no effect while that pack is there.
+        std::vector<std::string> gamePacks;
+        friend bool operator==(const RoomPrefs&, const RoomPrefs&) = default;
+    };
+    RoomPrefs spRoom, mpRoom;
+    // The set a room of this kind starts from and its host's changes update.
+    RoomPrefs& prefsFor(bool singlePlayer) { return singlePlayer ? spRoom : mpRoom; }
+    const RoomPrefs& prefsFor(bool singlePlayer) const { return singlePlayer ? spRoom : mpRoom; }
     // Settings -> Benchmark's PATHFINDING pick, the last one used. Its own key, so a
-    // benchmark never changes what the game-create screen offers (gameCreate.pathfindingMode).
+    // benchmark never changes what a room starts with (spRoom/mpRoom.pathfindingMode).
     sim::PathfindingMode benchmarkPathfinding = sim::PathfindingMode::Retail;
     // Settings -> Benchmark's SPEED pick: the run's game-speed level, 0 (NORMAL), 10 (+10) or 100 (+100).
     int benchmarkSpeed = 10;
-    // Ticked mod packs, by folder name: mods/game/<pack> (applied in every non-campaign
-    // room this player hosts, sent to every player) and mods/cosmetic/<pack> (every
-    // player's own, never sent anywhere). Saved as mods.gamePack / mods.cosmeticPack.
-    // A name an always-enabled pack (mods/<kind>/always_enabled/) also uses is kept
-    // but has no effect while that pack is there.
-    std::vector<std::string> gameModPacks, cosmeticModPacks;
-    std::string lastMap;           // last map picked in the create/SP lobby (remembered)
+    // Ticked mods/cosmetic/<pack> packs, by folder name: one list for the player (every
+    // player's own, never sent anywhere, so they cannot change a game). Saved as
+    // mods.cosmeticPack. A name an always-enabled pack (mods/cosmetic/always_enabled/)
+    // also uses is kept but has no effect while that pack is there.
+    std::vector<std::string> cosmeticModPacks;
     // Servers that connected successfully (most recent first, capped at
     // kMaxKnownServers). The menu's CONNECT dropdown lists these under the default
     // server and CUSTOM, scrolling.
@@ -268,8 +279,7 @@ struct Settings {
             && a.streamBitrate == b.streamBitrate
             && a.streamResolution == b.streamResolution && a.streamFps == b.streamFps
             && a.streamCpuEncoder == b.streamCpuEncoder
-            && a.gameModPacks == b.gameModPacks && a.cosmeticModPacks == b.cosmeticModPacks
-            && a.lastMap == b.lastMap && a.gameCreate == b.gameCreate
+            && a.spRoom == b.spRoom && a.mpRoom == b.mpRoom && a.cosmeticModPacks == b.cosmeticModPacks
             && a.benchmarkPathfinding == b.benchmarkPathfinding && a.benchmarkSpeed == b.benchmarkSpeed
             && a.dataDir == b.dataDir && a.dataManifest == b.dataManifest
             && a.knownServers == b.knownServers
@@ -289,6 +299,7 @@ struct Settings {
     }
     friend bool operator!=(const Settings& a, const Settings& b) { return !(a == b); }
 };
+using RoomPrefs = Settings::RoomPrefs;
 
 // The config file path: settings.ini in the per-user folder (util/prefpath.h). Empty only
 // if there is no such folder.
@@ -320,11 +331,12 @@ Settings loadSettings(bool* fileFound = nullptr);
 // by the game's next save of anything (an Options change, a won campaign mission).
 bool saveSettings(const Settings&);
 // A launch-only game-mod selection (takclient --game-mod, Cartographer's TEST IN GAME):
-// this run's Settings::gameModPacks holds `packs`, the room's mods for the test. While a
-// save still holds exactly them, the file keeps the player's own ticks (as the file has
-// them then); once the player changes the ticks, the new ticks are saved as usual and
-// the launch selection is over. An empty list is a selection too (a --game-mod pack that
-// is already always enabled ticks nothing for the run); nullopt ends it.
+// this run's Settings::spRoom.gamePacks holds `packs`, the room's mods for the test (a
+// --play-map room is a single-player room). While a save still holds exactly them, the
+// file keeps the player's own spRoom.gamePack ticks (as the file has them then); once the
+// player changes the ticks, the new ticks are saved as usual and the launch selection is
+// over. An empty list is a selection too (a --game-mod pack that is already always
+// enabled ticks nothing for the run); nullopt ends it.
 void setLaunchGameModPacks(std::optional<std::vector<std::string>> packs);
 // Change ONLY the data folder in the file (read, set dataDir + dataManifest, write):
 // what Options and Cartographer's Preferences call on a valid pick, so nothing else
@@ -340,7 +352,8 @@ std::string serializeSettings(const Settings&);
 //     Resetting an options screen must never delete those.
 //   * CONFIGURATION -- the data root and its manifest. Resetting preferences must not
 //     send someone back to the data-dir picker.
-//   * Identity and things with their own reset UI -- name, account, last map, hotkeys,
+//   * Identity and things with their own reset UI -- name, account, the remembered room
+//     sets (spRoom/mpRoom, changed in the rooms themselves), hotkeys,
 //     and the streaming panel's Remember Key (a stored key sits behind that flag; only
 //     unticking it there deletes the key, so DEFAULTS must not orphan it) and its Save
 //     A Local Copy, Resolution, Frame Rate, Bitrate and Encoder, which also live only on
@@ -360,11 +373,11 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.streamResolution = cur.streamResolution;
     d.streamFps = cur.streamFps;
     d.streamCpuEncoder = cur.streamCpuEncoder;
-    d.lastMap = cur.lastMap;
-    d.gameCreate = cur.gameCreate;
+    d.spRoom = cur.spRoom;
+    d.mpRoom = cur.mpRoom;
     d.benchmarkPathfinding = cur.benchmarkPathfinding;
     d.benchmarkSpeed = cur.benchmarkSpeed;
-    d.gameModPacks=cur.gameModPacks;d.cosmeticModPacks=cur.cosmeticModPacks;
+    d.cosmeticModPacks = cur.cosmeticModPacks;
     d.hotkeys = cur.hotkeys;                      // reset from the Hotkeys screen
     d.dataDir = cur.dataDir;
     d.dataManifest = cur.dataManifest;

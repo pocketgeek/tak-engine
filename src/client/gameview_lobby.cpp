@@ -587,7 +587,9 @@ float createOptionPx(float maxW) {
     void GameView::saveCreatePreferences() {
         if (!settings_ || !createPrefApplied_ || lobbyScreen_ != LobbyScreen::Create ||
             (mp_ && mp_->state() != tak::net::MpClient::State::Lobby)) return;
-        auto pref = settings_->gameCreate;
+        // The set of this room's kind: single player and multiplayer remember separately.
+        auto& set = settings_->prefsFor(singlePlayer_);
+        auto pref = set;
         pref.crusades = createCrusades_;
         pref.doubleSight = createDoubleSight_;
         pref.pathfindingMode = createPathfindingMode_;
@@ -598,12 +600,11 @@ float createOptionPx(float maxW) {
         pref.powerCodes = createPowerCodes_;
         pref.unitCap = createUnitCap_;
         pref.fog = createFog_;
-        if (!lanHost_) pref.name = createName_;   // a LOCAL SERVER game is always named for its host
         pref.generated = tak::mapgen::isGeneratedMapId(mpMapId_);
         pref.generator = tak::mapgen::encodeMapId(genParams_);
         pref.mapSort = mapSort_; pref.mapSortDir = mapSortDir_;
-        if (pref == settings_->gameCreate) return;
-        settings_->gameCreate = std::move(pref);
+        if (pref == set) return;
+        set = std::move(pref);
         saveSettings(*settings_);
     }
 
@@ -638,7 +639,7 @@ float createOptionPx(float maxW) {
     void GameView::drawCreate(int winW, int winH) {
         (void)winW; (void)winH;
         if (!createPrefApplied_ && settings_) {
-            const auto& pref = settings_->gameCreate;
+            const auto& pref = settings_->prefsFor(singlePlayer_);   // this room kind's own set
             createCrusades_ = pref.crusades;
             createDoubleSight_ = pref.doubleSight;
             createPathfindingMode_ = pref.pathfindingMode;
@@ -651,7 +652,6 @@ float createOptionPx(float maxW) {
             createUnitCap_ = pref.unitCap == 250 || pref.unitCap == 500 || pref.unitCap == 1000 || pref.unitCap == 2000
                 ? uint16_t(pref.unitCap) : 2000;
             createFog_ = uint8_t(pref.fog);
-            if (!lanHost_) createName_ = pref.name.substr(0, 16);   // a LOCAL SERVER game keeps its host's name
             mapSort_ = pref.mapSort; mapSortDir_ = pref.mapSortDir;
             if (!mapList_.empty()) sortMapList();
             // The remembered recipe, unless it is one this build cannot make.
@@ -753,7 +753,7 @@ float createOptionPx(float maxW) {
             // ones are sent to every player. The server turns this off for missions.
             o.gameMods = 1;
             mp_->setGameModsAllowed(mods_.game);
-            mp_->setGameModPacks(settings_ ? settings_->gameModPacks : std::vector<std::string>{});
+            mp_->setGameModPacks(settings_ ? settings_->prefsFor(singlePlayer_).gamePacks : std::vector<std::string>{});
             o.doubleSight = createDoubleSight_ ? 1 : 0;
             o.pathfindingMode = createPathfindingMode_;
             o.speedUnlock = createSpeedUnlock_ ? 1 : 0;
@@ -794,9 +794,9 @@ float createOptionPx(float maxW) {
         // the chosen map's start-position count.
         if (mapList_.empty() && !mapListScanned_) buildMapList();
         // Adopt the remembered map once (persisted across launches), and scroll to it.
-        if (!mapPrefApplied_ && settings_ && !settings_->lastMap.empty()) {
+        if (!mapPrefApplied_ && settings_ && !settings_->prefsFor(singlePlayer_).map.empty()) {
             for (int i = 0; i < int(mapList_.size()); ++i)
-                if (mapList_[size_t(i)].name == settings_->lastMap) {
+                if (mapList_[size_t(i)].name == settings_->prefsFor(singlePlayer_).map) {
                     mpMapId_ = mapList_[size_t(i)].name;
                     mapPath_ = mapList_[size_t(i)].path;
                     mapScroll_ = std::max(0, i - 3);
@@ -922,7 +922,7 @@ float createOptionPx(float maxW) {
                 blockText("S", infoX - 14, row.y + (rowH - 11) / 2, 1.5f, {230, 200, 120, 255});
             lobbyHots_.push_back({row, [this, nm, pth] {
                 mpMapId_ = nm; mapPath_ = pth;
-                if (settings_) { settings_->lastMap = nm; saveSettings(*settings_); }  // remember it
+                if (settings_) { settings_->prefsFor(singlePlayer_).map = nm; saveSettings(*settings_); }  // remember it
             }});
         }
         // Scrollbar: track + a proportional, draggable thumb (also wheel-scrollable).
@@ -1252,12 +1252,13 @@ float createOptionPx(float maxW) {
                    if (settings_) {
                        // A saved tick hidden by a same-named always-enabled pack is kept (it
                        // applies again once that pack leaves always_enabled/).
-                       for (const auto& n : settings_->gameModPacks)
+                       auto& packs = settings_->prefsFor(singlePlayer_).gamePacks;   // this room kind's ticks
+                       for (const auto& n : packs)
                            if (std::find(selection.begin(), selection.end(), n) == selection.end() &&
                                std::any_of(alwaysGame.begin(), alwaysGame.end(), [&](const std::string& a) {
                                    return tak::hpi::MountSet::key(a) == tak::hpi::MountSet::key(n); }))
                                selection.push_back(n);
-                       settings_->gameModPacks = std::move(selection); saveSettings(*settings_);
+                       packs = std::move(selection); saveSettings(*settings_);
                    }
                });
         if (const auto status = mp_->roomModStatus(); gameOn && !status.empty())

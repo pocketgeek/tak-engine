@@ -3238,10 +3238,11 @@
         if(mp_) vfs_=mp_->modVfs(cosmetic,mods_.cosmetic,&skipped);
         else {
             // Debug local harnesses (no server): this launch's own always-enabled and
-            // ticked game packs, as a room it hosted would apply; none in a mission.
+            // ticked game packs (the single-player set), as a room it hosted would apply;
+            // none in a mission.
             const auto root=tak::u8path(installRoot_);
             const bool gamePacks=mods_.game && missionStem_.empty();
-            auto game=gamePacks && settings_?settings_->gameModPacks:std::vector<std::string>{};
+            auto game=gamePacks && settings_?settings_->spRoom.gamePacks:std::vector<std::string>{};
             const auto have=tak::hpi::modPacks(root,tak::hpi::ModKind::Game);
             std::erase_if(game,[&](const auto& n){return !std::binary_search(have.begin(),have.end(),n);});
             if(gamePacks)for(const auto& name:tak::hpi::alwaysEnabledPacks(root,tak::hpi::ModKind::Game))game.push_back(name);

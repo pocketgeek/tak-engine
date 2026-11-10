@@ -16,7 +16,8 @@ int main() {
         const auto path=fs::path(tak::settingsPath());
         if(path.string().find(root.string()+"/")!=0)throw std::runtime_error("settings not isolated");
         tak::Settings s;
-        s.gameModPacks={"Sound Pack #1","Textures", "Accents-é"};
+        s.spRoom.gamePacks={"Sound Pack #1","Textures", "Accents-é"};
+        s.mpRoom.gamePacks={"Net Rules"};
         s.cosmeticModPacks={"My local art"};
         using PathMode=tak::sim::PathfindingMode;
         // Stable identities: 1-3 belonged to the removed Flowfield,
@@ -33,90 +34,106 @@ int main() {
            std::string(tak::sim::pathfindingModeName(PathMode::Retail))!="Retail" ||
            std::string(tak::sim::pathfindingModeName(PathMode::Legion))!="Legion")
             throw std::runtime_error("pathfinder choice order or display name missing");
-        if(s.gameCreate.pathfindingMode!=PathMode::Retail)
-            throw std::runtime_error("new create preferences must default to Retail");
-        s.gameCreate.pathfindingMode=PathMode::Legion;
+        if(s.spRoom.pathfindingMode!=PathMode::Retail || s.mpRoom.pathfindingMode!=PathMode::Retail)
+            throw std::runtime_error("new room preferences must default to Retail");
+        s.spRoom.pathfindingMode=PathMode::Legion;
         s.uiScale=0.5f;s.scorecardScale=1.75f;
         if(!tak::saveSettings(s))throw std::runtime_error("save failed");
         const auto loaded=tak::loadSettings();
-        if(loaded.gameModPacks!=s.gameModPacks || loaded.cosmeticModPacks!=s.cosmeticModPacks)
+        if(loaded.spRoom.gamePacks!=s.spRoom.gamePacks || loaded.mpRoom.gamePacks!=s.mpRoom.gamePacks ||
+           loaded.cosmeticModPacks!=s.cosmeticModPacks)
             throw std::runtime_error("mod selections did not survive save/load");
-        {   // Written under the mods.* keys, one line per pack.
+        {   // Game packs under each room set's key, cosmetic packs under mods.*, one line per pack.
             std::ifstream saved(path);std::string text((std::istreambuf_iterator<char>(saved)),{});
-            if(text.find("mods.gamePack = ")==text.npos || text.find("mods.cosmeticPack = ")==text.npos)
-                throw std::runtime_error("mod selections not written under the mods.* keys");
+            if(text.find("spRoom.gamePack = ")==text.npos || text.find("mpRoom.gamePack = ")==text.npos ||
+               text.find("mods.cosmeticPack = ")==text.npos || text.find("mods.gamePack")!=text.npos)
+                throw std::runtime_error("mod selections not written under the spRoom/mpRoom.gamePack and mods.cosmeticPack keys");
         }
         {   // takclient --game-mod (Cartographer's TEST IN GAME): a launch-only selection never
             // replaces the player's saved ticks, until the player changes the ticks themselves.
             if(!tak::saveSettings(s))throw std::runtime_error("save failed");   // the player's ticks on disk
-            auto run=s;run.gameModPacks={"My AI"};
-            tak::setLaunchGameModPacks(run.gameModPacks);
+            // The test room is a single-player room: the selection is the spRoom packs.
+            auto run=s;run.spRoom.gamePacks={"My AI"};
+            tak::setLaunchGameModPacks(run.spRoom.gamePacks);
             run.uiScale=0.75f;
             if(!tak::saveSettings(run))throw std::runtime_error("save failed");
             auto back=tak::loadSettings();
-            if(back.gameModPacks!=s.gameModPacks || back.uiScale!=0.75f)
+            if(back.spRoom.gamePacks!=s.spRoom.gamePacks || back.uiScale!=0.75f)
                 throw std::runtime_error("a launch-only game mod selection was saved over the player's ticks (or blocked the save)");
-            run.gameModPacks={"My AI","Textures"};   // the player ticks another pack in that room
-            if(!tak::saveSettings(run) || tak::loadSettings().gameModPacks!=run.gameModPacks)
+            if(back.mpRoom.gamePacks!=s.mpRoom.gamePacks)
+                throw std::runtime_error("a launch-only game mod selection changed the multiplayer ticks");
+            run.spRoom.gamePacks={"My AI","Textures"};   // the player ticks another pack in that room
+            if(!tak::saveSettings(run) || tak::loadSettings().spRoom.gamePacks!=run.spRoom.gamePacks)
                 throw std::runtime_error("the player's own new ticks were not saved");
-            run.gameModPacks={"My AI"};   // the launch selection ended with that change
-            if(!tak::saveSettings(run) || tak::loadSettings().gameModPacks!=run.gameModPacks)
+            run.spRoom.gamePacks={"My AI"};   // the launch selection ended with that change
+            if(!tak::saveSettings(run) || tak::loadSettings().spRoom.gamePacks!=run.spRoom.gamePacks)
                 throw std::runtime_error("a launch selection outlived the player's own change");
             tak::setLaunchGameModPacks(std::nullopt);
             if(!tak::saveSettings(s))throw std::runtime_error("save failed");
             // An EMPTY launch selection (--game-mod naming an always-enabled pack: nothing
             // ticked for the run) still keeps the player's saved ticks.
-            auto none=s;none.gameModPacks={};
-            tak::setLaunchGameModPacks(none.gameModPacks);
-            none.lastMap="Somewhere";
-            if(!tak::saveSettings(none) || tak::loadSettings().gameModPacks!=s.gameModPacks)
+            auto none=s;none.spRoom.gamePacks={};
+            tak::setLaunchGameModPacks(none.spRoom.gamePacks);
+            none.spRoom.map="Somewhere";
+            if(!tak::saveSettings(none) || tak::loadSettings().spRoom.gamePacks!=s.spRoom.gamePacks)
                 throw std::runtime_error("an empty launch-only selection was saved over the player's ticks");
             tak::setLaunchGameModPacks(std::nullopt);
             if(!tak::saveSettings(s))throw std::runtime_error("save failed");
         }
         if(loaded.uiScale!=0.5f || loaded.scorecardScale!=1.75f)
             throw std::runtime_error("independent scorecard scale did not persist");
-        if(loaded.gameCreate.pathfindingMode!=PathMode::Legion)
-            throw std::runtime_error("Legion create preference did not persist");
-        auto retail=s;retail.gameCreate.pathfindingMode=PathMode::Retail;
-        if(retail==s || !tak::saveSettings(retail) || tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Retail)
-            throw std::runtime_error("Retail create preference did not persist independently");
-        std::ofstream(path)<<"gameCreate.pathfindingMode = 4\n";
-        if(tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Legion)
-            throw std::runtime_error("saved value 4 did not load as Legion");
-        // 1, 2 and 3 name no pathfinding mode: they load as Retail.
-        for(const char* removed:{"1","2","3"}) {
-            std::ofstream(path)<<"gameCreate.pathfindingMode = "<<removed<<"\n";
-            if(tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Retail)
-                throw std::runtime_error("a pathfinding preference that names no mode did not fall back to Retail");
+        if(loaded.spRoom.pathfindingMode!=PathMode::Legion || loaded.mpRoom.pathfindingMode!=PathMode::Retail)
+            throw std::runtime_error("Legion single-player preference did not persist on its own");
+        auto retail=s;retail.spRoom.pathfindingMode=PathMode::Retail;retail.mpRoom.pathfindingMode=PathMode::Legion;
+        if(retail==s || !tak::saveSettings(retail) || tak::loadSettings().spRoom.pathfindingMode!=PathMode::Retail ||
+           tak::loadSettings().mpRoom.pathfindingMode!=PathMode::Legion)
+            throw std::runtime_error("Retail and Legion room preferences did not persist independently");
+        // Both sets read the pathfinder the same way.
+        for(const char* set:{"spRoom","mpRoom"}) {
+            auto mode=[&](const char* value) {
+                std::ofstream(path)<<set<<".pathfindingMode = "<<value<<"\n";
+                const auto back=tak::loadSettings();
+                return std::string(set)=="spRoom" ? back.spRoom.pathfindingMode : back.mpRoom.pathfindingMode;
+            };
+            if(mode("4")!=PathMode::Legion)
+                throw std::runtime_error(std::string(set)+": saved value 4 did not load as Legion");
+            // 1, 2 and 3 name no pathfinding mode: they load as Retail.
+            for(const char* removed:{"1","2","3"})
+                if(mode(removed)!=PathMode::Retail)
+                    throw std::runtime_error("a pathfinding preference that names no mode did not fall back to Retail");
+            for(const char* value:{"", "0", "-1", "5", "255", "256", "04", "4 4", "flowfield", "cooperative", "legion", "1oops", "2oops", "4oops"})
+                if(mode(value)!=PathMode::Retail)
+                    throw std::runtime_error("unknown pathfinding preference must fall back to Retail");
         }
-        auto modeChanged=s;modeChanged.gameCreate.pathfindingMode=PathMode::Retail;
+        auto modeChanged=s;modeChanged.spRoom.pathfindingMode=PathMode::Retail;
         if(modeChanged==s)throw std::runtime_error("pathfinding preference changes not detected");
-        std::ofstream(path)<<"gameCreate.crusades = true\ngameCreate.doubleSight = true\ngameCreate.unitCap = 2000\n";
-        if(tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Retail)
-            throw std::runtime_error("create preferences without a pathfinding row must load as Retail");
-        for(const char* value:{"", "0", "-1", "5", "255", "256", "04", "4 4", "flowfield", "cooperative", "legion", "1oops", "2oops", "4oops"}) {
-            std::ofstream(path)<<"gameCreate.pathfindingMode = "<<value<<"\n";
-            if(tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Retail)
-                throw std::runtime_error("unknown pathfinding preference must fall back to Retail");
-        }
-        if(!tak::saveSettings(modeChanged) || tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Retail)
-            throw std::runtime_error("Retail create preference did not persist");
+        std::ofstream(path)<<"spRoom.crusades = true\nspRoom.doubleSight = true\nmpRoom.unitCap = 2000\n";
+        if(tak::loadSettings().spRoom.pathfindingMode!=PathMode::Retail || tak::loadSettings().mpRoom.pathfindingMode!=PathMode::Retail)
+            throw std::runtime_error("room preferences without a pathfinding row must load as Retail");
+        // The old key is not read: no migration.
+        std::ofstream(path)<<"gameCreate.pathfindingMode = 4\n";
+        if(tak::loadSettings().spRoom.pathfindingMode!=PathMode::Retail || tak::loadSettings().mpRoom.pathfindingMode!=PathMode::Retail)
+            throw std::runtime_error("gameCreate.pathfindingMode must not be migrated");
+        if(!tak::saveSettings(modeChanged) || tak::loadSettings().spRoom.pathfindingMode!=PathMode::Retail)
+            throw std::runtime_error("Retail room preference did not persist");
         // START LOCATIONS: 0 FIXED, 1 RANDOM, 2 BY SLOT; absent, out of range or not a
         // number reads as the nearest choice or FIXED (true/on are not numbers: FIXED).
-        struct StartsCase { const char* text; int expected; };
+        struct StartsCase { const char* text; int sp, mp; };
         for(const StartsCase& c:std::initializer_list<StartsCase>{
-                {"gameCreate.randomStarts = 0\n",0},{"gameCreate.randomStarts = 1\n",1},
-                {"gameCreate.randomStarts = 2\n",2},{"gameCreate.randomStarts = 7\n",2},
-                {"gameCreate.randomStarts = true\n",0},{"gameCreate.randomStarts = on\n",0},
-                {"gameCreate.crusades = 1\n",0}}) {
+                {"spRoom.randomStarts = 0\n",0,0},{"spRoom.randomStarts = 1\n",1,0},
+                {"spRoom.randomStarts = 2\n",2,0},{"spRoom.randomStarts = 7\n",2,0},
+                {"mpRoom.randomStarts = 1\n",0,1},{"mpRoom.randomStarts = 2\nspRoom.randomStarts = 1\n",1,2},
+                {"spRoom.randomStarts = true\n",0,0},{"mpRoom.randomStarts = on\n",0,0},
+                {"spRoom.crusades = 1\n",0,0},{"gameCreate.randomStarts = 2\n",0,0}}) {
             std::ofstream(path)<<c.text;
-            if(tak::loadSettings().gameCreate.randomStarts!=c.expected)
+            const auto back=tak::loadSettings();
+            if(back.spRoom.randomStarts!=c.sp || back.mpRoom.randomStarts!=c.mp)
                 throw std::runtime_error(std::string("start locations preference not read: ")+c.text);
         }
         for(int mode:{2,1,0}) {
-            auto starts=s;starts.gameCreate.randomStarts=mode;
-            if(!tak::saveSettings(starts) || tak::loadSettings().gameCreate.randomStarts!=mode)
+            auto starts=s;starts.spRoom.randomStarts=mode;starts.mpRoom.randomStarts=(mode+1)%3;
+            if(!tak::saveSettings(starts) || tak::loadSettings().spRoom.randomStarts!=mode ||
+               tak::loadSettings().mpRoom.randomStarts!=(mode+1)%3)
                 throw std::runtime_error("start locations preference did not persist: "+std::to_string(mode));
         }
         auto changed=s;changed.scorecardScale=1.0f;
