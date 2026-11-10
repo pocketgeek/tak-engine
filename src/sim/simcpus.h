@@ -19,6 +19,9 @@ struct CpuTopology : SimPool::Cpus {
     // (performance cores' first). threads() entries.
     std::vector<int> order;
     bool canPin=true;   // false where the system lets no program pin a thread (macOS)
+    // true: the system's own answer (Linux sysfs, the Windows API, macOS sysctl). false:
+    // that could not be read, and this is the fallback of plain cores.
+    bool known=false;
 };
 
 // The CPUs this process may use (its affinity mask on Linux and Windows), read anew on
@@ -46,9 +49,12 @@ std::string cpuListText(const std::vector<int>& cpus);   // "1,3,5,6,7"
 // simulation's threads have none; nothing when `cpus` is empty.
 std::string pinnedText(const std::string& cpus,unsigned unpinned);
 
+// Whether this process may use CPU `cpu` (its affinity mask), so a thread can be pinned
+// to it; never where the system cannot pin.
+bool usableCpu(int cpu);
 // Pin the calling thread to one CPU. False, and the thread is left as it was, for an
-// id this process may not use, where the system cannot pin, and when the call fails
-// (logged once): pinning never stops a game.
+// id this process may not use (usableCpu), where the system cannot pin, and when the
+// call fails (logged once): pinning never stops a game.
 bool pinThisThread(int cpu);
 // Give the calling thread every CPU the process may use again. A new thread starts on
 // its creator's CPUs (Linux), so a thread started by a pinned one calls this unless it

@@ -87,6 +87,8 @@ static void checkCpus() {
     roots.push_back(fakeSysfs("capacity",cpus,nullptr,nullptr));
     check(is(readLinuxCpus(roots.back(),{}),2,2,0,"2,3,0,1"),"cpu_capacity: the big cores first",4);
     check(is(readLinuxCpus(roots.back()/"nothing-here",{3,5,9}),3,0,0,"3,5,9"),"unreadable sysfs: every usable CPU is a core",3);
+    check(mixed.known && readLinuxCpus(roots.back(),{}).known && !readLinuxCpus(roots.back()/"nothing-here",{3,5,9}).known,
+          "a tree that was read is known; the fallback of plain cores is not",0);
     for (const fs::path& root:roots) { std::error_code ec;fs::remove_all(root.parent_path(),ec); }
     std::vector<int> list;
     check(parseCpuList("1,3,5-7",list) && cpuListText(list)=="1,3,5,6,7" && parseCpuList("4",list) && list==std::vector<int>{4} &&

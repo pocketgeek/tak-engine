@@ -350,8 +350,10 @@ second threads of hyperthreaded cores. Anything else is refused at startup.
 Each running game takes the next CPUs of the list in turn, one for each of its
 threads (the first for its room thread), and games are moved up the list as
 earlier ones end. A thread past the end of the list is not pinned, and neither
-is one whose CPU number the server may not use. With pinning, the log line
-names each running game's CPUs, for example
+is one whose CPU number the server may not use (a mistyped number, or one
+outside the service's cpuset): the server names those numbers once at startup,
+`--sim-cpus: this server may not use cpus 0,1; ...`, and leaves them out of the
+log lines. With pinning, the log line names each running game's CPUs, for example
 `sim threads: 2 (4 over 2 games) pinned to cpus 1,3 / 5,7`. Like
 `--sim-threads`, it never changes a game's outcome. macOS does not let a program
 pin threads: there the option is ignored. A player's own single-player server

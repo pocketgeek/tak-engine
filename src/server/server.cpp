@@ -475,7 +475,8 @@ public:
     // --sim-cpus: the CPUs the games' simulation threads are pinned to, in order
     // (empty, the default: nothing is pinned). Each running game takes the next
     // `share` of them in turn (gameCpus): its worker thread, then its pool's
-    // workers; a thread past the end of the list is not pinned. Scheduling only.
+    // workers; a thread past the end of the list is not pinned, and neither is one
+    // whose place holds -1 (a CPU the server may not use). Scheduling only.
     void setSimCpus(std::vector<int> cpus) { simCpus_ = std::move(cpus); }
     void setNoAuth() { requireAuth_ = false; }
 #ifndef NDEBUG
@@ -567,7 +568,8 @@ private:
         std::string cpus;
         unsigned unpinned = 0;
         for (size_t game = 0; game < running && !simCpus_.empty(); ++game) {
-            const std::vector<int> own = gameCpus(game, simShareLogged_);
+            std::vector<int> own = gameCpus(game, simShareLogged_);
+            std::erase(own, -1);   // a CPU the server may not use: its thread is not pinned
             cpus += (game ? " / " : "") + (own.empty() ? std::string("none") : tak::sim::cpuListText(own));
             unpinned += simShareLogged_ - unsigned(own.size());
         }
@@ -4051,6 +4053,19 @@ static int serverMain(int argc, char** argv) {
             } else if (!simCpus.empty() && !tak::sim::detectCpus().canPin) {
                 std::fprintf(stderr, "takserver: this system does not let a program pin threads; --sim-cpus is ignored\n");
                 simCpus.clear();
+            } else {
+                // A number this server may not use (mistyped, outside its cpuset) is
+                // said here, once. It keeps its place in the list, as -1: the thread
+                // of that place is not pinned, and the log lines leave it out.
+                std::vector<int> outside;
+                for (int& cpu : simCpus) {
+                    if (tak::sim::usableCpu(cpu)) continue;
+                    if (std::find(outside.begin(), outside.end(), cpu) == outside.end()) outside.push_back(cpu);
+                    cpu = -1;
+                }
+                if (!outside.empty())
+                    std::fprintf(stderr, "takserver: --sim-cpus: this server may not use cpus %s; a thread given one of them is not pinned\n",
+                                 tak::sim::cpuListText(outside).c_str());
             }
         }
         else if (!std::strcmp(argv[i], "--no-auth")) noAuth = true;

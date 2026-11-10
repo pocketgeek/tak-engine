@@ -16,7 +16,8 @@ either way.
 numbers and ranges are accepted, anything else is refused with its usage error. A server that
 pins nothing logs the lines above; one given a list hands each running game the next CPUs of it,
 one per thread, and its lines name them (`pinned to cpus 4,5 / 6,7`), with `none` for a game past
-the end of the list and the count of threads left unpinned.
+the end of the list and the count of threads left unpinned. A CPU number the server may not use is
+accepted, named once at startup and left out of those lines: its thread counts as not pinned.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -70,6 +71,10 @@ def cli_checks(binary, root):
     for value in ('junk', '', 'Auto', '1,,2', '3-1', '-1', '1-', '1, 2', '2.5', '70000'):
         r = cli(binary, root, '--sim-cpus', value)
         assert r.returncode == 1 and CPUS_USAGE in r.stderr and b'--data' not in r.stderr and not r.stdout, (value, r)
+    # A CPU the server may not use is said at startup (macOS pins nothing: the option is ignored).
+    r = cli(binary, root, '--sim-cpus', '65535,65535')
+    said = b'--sim-cpus is ignored\n' if sys.platform == 'darwin' else b'--sim-cpus: this server may not use cpus 65535; '
+    assert r.returncode == 1 and said in r.stderr and b'--data <retail-install-dir> is required' in r.stderr, r
     r = cli(binary, root, '--sim-cpus')   # no value
     assert r.returncode == 1 and b'unknown option or missing value: --sim-cpus' in r.stderr, r
     r = cli(binary, root, '--help')
@@ -145,6 +150,8 @@ def server_checks(binary, data):
         mine = sorted(os.sched_getaffinity(0))[:4] if hasattr(os, 'sched_getaffinity') else [0, 1, 2, 3]
         pins = len(mine) == 4 and cpus >= 4 and sys.platform != 'darwin'   # macOS pins no thread
         pinned = pool.submit(several_games, binary, data, 4, '--sim-cpus', ','.join(map(str, mine)), after=5) if pins else None
+        # One CPU it may use and one it may not: the second thread is not pinned.
+        outside = pool.submit(one_game, binary, data, '--sim-threads', '2', '--sim-cpus', '%d,65535' % mine[0]) if pins else None
         auto, auto_seed = default.result()
         assert len(auto) == 1 and re.fullmatch(r'sim threads: \d+ \(auto: .*\)', auto[0]), auto
         # Every usable CPU thread, unless a debug server inherited TAK_SIM_WORKERS (which overrides auto, and only auto).
@@ -176,6 +183,8 @@ def server_checks(binary, data):
                                % (a, b, c, d)], started
             assert after == ['sim threads: 2 (4 over 2 games) pinned to cpus %d,%d / %d,%d' % (a, b, c, d),
                              'sim threads: 4 (4 over 1 game) pinned to cpus %d,%d,%d,%d' % (a, b, c, d)], after
+            lines, _ = outside.result()
+            assert lines == ['sim threads: 2 (2 over 1 game) pinned to cpus %d; 1 thread not pinned' % a], lines
 
 
 def main():

@@ -15,8 +15,9 @@ struct TickInput {
     // share of takserver --sim-threads at submission); 0 leaves the World's width.
     unsigned simThreads=0;
     // takserver --sim-cpus: this game's CPUs at submission, by slot (its worker
-    // thread, then its pool's workers; a slot past the end is not pinned). simPin
-    // false: the server pins nothing, and no thread's CPUs are touched.
+    // thread, then its pool's workers; a slot past the end, or one holding -1, is
+    // not pinned). simPin false: the server pins nothing, and no thread's CPUs are
+    // touched.
     bool simPin=false;
     std::vector<int> simCpus;
     // Who reads the referee's hash: seated humans' desync reports (every

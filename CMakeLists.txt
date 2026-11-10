@@ -1606,7 +1606,8 @@ target_link_libraries(jpeg_encode_test PRIVATE tak-formats)
 add_test(NAME jpeg_encode COMMAND jpeg_encode_test)
 # The CPU detection behind SIMULATION THREADS (sim/simcpus.h) on the machine it runs on:
 # prints what it found and pins the calling thread to the first CPU (macOS: checks that
-# it reports it cannot). CI runs it on Linux, macOS and Windows.
+# it reports it cannot). The system's own answer is required: the fallback of plain
+# cores fails. CI runs it on Linux, macOS and Windows.
 add_executable(cpu_topology_test tools/cpu_topology_test.cpp)
 target_link_libraries(cpu_topology_test PRIVATE tak-formats)
 add_test(NAME cpu_topology COMMAND cpu_topology_test)
@@ -3848,7 +3849,8 @@ if(Python3_Interpreter_FOUND)
   # share of the total: every usable thread for auto, the machine's most for a bigger count)
   # and several running games share the total, never fewer than 2 threads each.
   # --sim-cpus <list|auto|none>: junk is a usage error, and with a list each running game's
-  # line names the CPUs of its turn.
+  # line names the CPUs of its turn; a number the server may not use is said at startup
+  # and left out of the line.
   if(TAK_TEST_DATA)
     add_test(NAME server_sim_threads COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_sim_threads_test.py" --server "$<TARGET_FILE:takserver>"

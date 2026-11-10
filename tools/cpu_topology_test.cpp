@@ -2,8 +2,11 @@
 // Prints what it found, checks that the counts and the hand-out order agree, and pins the
 // calling thread to the first CPU of the order: the call must not fail. Where the system
 // pins no thread (macOS) it checks that the detection says so and that a pin is refused.
-// The Linux reader's rules are pinned on fixture trees by tools/simpool_test.cpp; this is
-// the one place the Windows and macOS code runs (CI's standalone checks).
+// The answer must be the system's own (CpuTopology::known) and count every CPU thread the
+// process may use: a reader that fell back to plain cores fails here, not in a player's
+// Options. The Linux reader's rules are pinned on fixture trees by tools/simpool_test.cpp;
+// this is the one place the Windows and macOS code runs (CI's standalone checks, which
+// also run it directly so that the log shows what a runner's CPUs were read as).
 #include "sim/simcpus.h"
 
 #include <algorithm>
@@ -18,10 +21,15 @@ static void check(bool ok,const char* what) {
 
 int main() {
     const CpuTopology cpus=detectCpus();
-    std::printf("performance cores %u, efficiency cores %u, hyperthreads %u: %u threads; can pin: %s\n",
-                cpus.perf,cpus.eff,cpus.smt,cpus.threads(),cpus.canPin ? "yes" : "no");
+    std::printf("performance cores %u, efficiency cores %u, hyperthreads %u: %u threads; can pin: %s; read from the system: %s\n",
+                cpus.perf,cpus.eff,cpus.smt,cpus.threads(),cpus.canPin ? "yes" : "no",cpus.known ? "yes" : "no (plain cores assumed)");
     std::printf("hand-out order: %s\n",cpuListText(cpus.order).c_str());
     std::printf("AUTO: %u threads; SimPool::usableCpus(): %u\n",SimPool::autoThreads(cpus),SimPool::usableCpus());
+#if defined(__linux__) || defined(_WIN32) || defined(__APPLE__)
+    // The systems with a reader of their own: its fallback is a failure here.
+    check(cpus.known,"the CPUs were read from the system, not assumed to be plain cores");
+    check(cpus.threads()==SimPool::usableCpus(),"every CPU thread the process may use is counted, and no other");
+#endif
     check(cpus.perf>=1 && cpus.threads()>=1,"at least one core");
     check(cpus.order.size()==cpus.threads(),"one entry of the order for every thread");
     std::vector<int> ids=cpus.order;

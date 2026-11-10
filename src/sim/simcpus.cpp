@@ -63,10 +63,12 @@ CpuTopology ordered(std::vector<Core> cores) {
     for (const bool perf:{true,false})
         for (const Core& c:cores) if (c.perf==perf) t.order.insert(t.order.end(),c.cpus.begin()+1,c.cpus.end());
     t.smt=unsigned(t.order.size())-t.perf-t.eff;
+    t.known=true;
     return t;
 }
 
-// Every CPU a plain core of its own: what is left when nothing better can be read.
+// Every CPU a plain core of its own: what is left when nothing better can be read
+// (CpuTopology::known stays false).
 CpuTopology plainCpus(std::vector<int> ids) {
     CpuTopology t;
     if (ids.empty()) ids.push_back(0);
@@ -157,7 +159,7 @@ CpuTopology nativeCpus() {
         perf=value("hw.physicalcpu");logical=value("hw.logicalcpu");
     }
     CpuTopology t=plainCpus(perf && logical>=perf+eff ? logical : std::thread::hardware_concurrency());
-    if (perf && logical>=perf+eff) { t.perf=perf;t.eff=eff;t.smt=logical-perf-eff; }
+    if (perf && logical>=perf+eff) { t.perf=perf;t.eff=eff;t.smt=logical-perf-eff;t.known=true; }
     t.canPin=false;
     return t;
 #else
@@ -255,19 +257,30 @@ CpuTopology detectCpus() {
     return t;
 }
 
-bool pinThisThread(int cpu) {
+bool usableCpu(int cpu) {
 #if defined(__linux__)
-    cpu_set_t all,one;
-    if (cpu<0 || cpu>=CPU_SETSIZE || (processCpus(all) && !CPU_ISSET(cpu,&all))) return false;
+    cpu_set_t all;
+    return cpu>=0 && cpu<CPU_SETSIZE && (!processCpus(all) || CPU_ISSET(cpu,&all));
+#elif defined(_WIN32)
+    const DWORD_PTR all=processCpus();
+    return cpu>=0 && cpu<int(sizeof(DWORD_PTR)*8) && (!all || (all>>cpu&1));
+#else
+    (void)cpu;
+    return false;
+#endif
+}
+
+bool pinThisThread(int cpu) {
+    if (!usableCpu(cpu)) return false;
+#if defined(__linux__)
+    cpu_set_t one;
     CPU_ZERO(&one);
     CPU_SET(cpu,&one);
     if (pthread_setaffinity_np(pthread_self(),sizeof(one),&one)!=0) { pinFailed(cpu);return false; }
 #elif defined(_WIN32)
-    const DWORD_PTR all=processCpus();
-    if (cpu<0 || cpu>=int(sizeof(DWORD_PTR)*8) || (all && !(all>>cpu&1))) return false;
     if (!SetThreadAffinityMask(GetCurrentThread(),DWORD_PTR(1)<<cpu)) { pinFailed(cpu);return false; }
 #else
-    (void)cpu;(void)pinFailed;
+    (void)pinFailed;
     return false;
 #endif
     gPinned.store(true,std::memory_order_relaxed);
