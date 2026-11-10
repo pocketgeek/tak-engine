@@ -9,6 +9,10 @@ done" per step and "room script: finished", and the server its room lines. A scr
 cannot finish prints why and ends the client. TAK_QUIT_TICK ends a game that started.
 
   1  single player (CLI game room): an AI seated, START; the game plays to the quit tick.
+  2  single player WATCH: the host leaves its seat, AIs fill the room, START; the host plays
+     the game as a spectator.
+  4  multiplayer unready: a guest READY, the host changes FOG OF WAR, the server clears the
+     guest's READY (the guest is told so), the guest readies again and the host STARTs.
 
 Debug builds only (TAK_ROOM_SCRIPT, TAK_QUIT_TICK and the CLI game are debug hooks).
 
@@ -19,9 +23,11 @@ import argparse
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 
 QUIT_TICK = 60   # a started game plays this far, then the client quits
 
@@ -81,7 +87,90 @@ def case_single_player(args, root):
         raise AssertionError('%s\n%s' % (e, log[-4000:]))
 
 
-CASES = {1: case_single_player}
+def case_watch(args, root):
+    """Single player WATCH: the host watches, AIs fill the room, START as a spectator."""
+    home, env = profile(root, 'case2', 'watch;start')
+    code, log = run_client(args.client, ['game', 'Athri Cay', '--data', args.data], env, home)
+    try:
+        script_ran(log, ['watch', 'start'])
+        assert re.search(r'client \d+ now watches game \d+', log), 'the server never had the host watching'
+        started = re.search(r'game \d+ starting with (\d+) players', log)
+        assert started and int(started[1]) >= 2, 'the AIs did not fill the room'
+        assert code == 0, 'the client exited %d' % code
+        played = re.search(r'replay: wrote .*\((\d+) ticks\)', log)
+        assert played and int(played[1]) >= QUIT_TICK, 'the watched game did not play to the quit tick'
+    except AssertionError as e:
+        raise AssertionError('%s\n%s' % (e, log[-4000:]))
+
+
+def free_port():
+    with socket.socket() as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
+
+
+def case_unready(args, root):
+    """Multiplayer: the host's rule change clears a READY guest; it readies again; START."""
+    port = free_port()
+    shome, senv = profile(root, 'case4-server', '')
+    slog_path = shome / 'server.log'
+    slog = open(slog_path, 'w')
+    server = subprocess.Popen([args.server, '--port', str(port), '--data', args.data, '--local', '--seed', '1', '--no-auth'],
+                              stdout=slog, stderr=subprocess.STDOUT, env=senv, cwd=shome)
+    clients = []
+    try:
+        deadline = time.monotonic() + 90
+        while 'listening' not in slog_path.read_text(errors='replace'):
+            assert time.monotonic() < deadline and server.poll() is None, \
+                'the server never listened:\n' + slog_path.read_text(errors='replace')[-3000:]
+            time.sleep(0.1)
+        net = ['game', 'Athri Cay', '--data', args.data, '--server', '127.0.0.1', '--serverport', str(port)]
+        # Windowed clients (the room draws, and tells), driven by the harness modes: the host
+        # (1) waits for nine READY (never) instead of starting itself, so its script STARTs;
+        # the guest (2) joins, readies, and readies again when its READY is cleared.
+        hhome, henv = profile(root, 'case4-host', 'wait:ready=2;opt:fog=2;wait:ready=2;start',
+                              {'TAK_MPAUTO': '1', 'TAK_MP_WAIT': '9'})
+        ghome, genv = profile(root, 'case4-guest', '', {'TAK_MPAUTO': '2'})
+        for name, home, env in (('host', hhome, henv), ('guest', ghome, genv)):
+            log = open(home / 'client.log', 'w')
+            clients.append((name, home, subprocess.Popen([args.client] + net + ['--winsize', '960', '540'], cwd=home,
+                                                         env=env, stdout=log, stderr=subprocess.STDOUT), log))
+        logs = {}
+        for name, home, proc, log in clients:
+            try:
+                code = proc.wait(180)
+            except subprocess.TimeoutExpired:
+                proc.kill(); proc.wait()
+                code = 'still running after 180 s'
+            log.close()
+            logs[name] = (code, (home / 'client.log').read_text(errors='replace'))
+        server.kill(); server.wait(); slog.close()
+        slog_text = slog_path.read_text(errors='replace')
+        try:
+            script_ran(logs['host'][1], ['wait:ready=2', 'opt:fog=2', 'wait:ready=2', 'start'])
+            assert re.search(r'game \d+: host changed the rules \(fog[^;]*; rev \d+, 1 unreadied\)', slog_text), \
+                'the fog change did not unready the guest'
+            assert 'room note: HOST CHANGED FOG OF WAR -- READY AGAIN' in logs['guest'][1], 'the guest was not told'
+            assert 'room note: PLAYERS MUST READY AGAIN' in logs['host'][1], 'the host was not told'
+            assert re.search(r'game \d+ starting with 2 players', slog_text), 'the game did not start'
+            for name, (code, log) in logs.items():
+                assert code == 0, 'the %s exited %s' % (name, code)
+                played = re.search(r'replay: wrote .*\((\d+) ticks\)', log)
+                assert played and int(played[1]) >= QUIT_TICK, 'the %s did not play to the quit tick' % name
+        except AssertionError as e:
+            raise AssertionError('%s\nhost:\n%s\nguest:\n%s\nserver:\n%s' % (
+                e, logs['host'][1][-2500:], logs['guest'][1][-2500:], slog_text[-2500:]))
+    finally:
+        for _, _, proc, log in clients:
+            if proc.poll() is None:
+                proc.kill(); proc.wait()
+            log.close()
+        if server.poll() is None:
+            server.kill(); server.wait()
+        slog.close()
+
+
+CASES = {1: case_single_player, 2: case_watch, 4: case_unready}
 
 
 def main():
