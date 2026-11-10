@@ -39,6 +39,7 @@ Each case runs on its own and every failure is reported:
               flips, changes during an upload, START races); no upload deadline in the log
 """
 import argparse
+import collections
 import contextlib
 import hashlib
 from pathlib import Path
@@ -50,7 +51,7 @@ import traceback
 
 import server_net as auth
 from server_net import MAX_SLOTS, OPTIONS_BYTES, BufferedPeer as Peer
-from server_public_test import login, server
+from server_public_test import login as sign_in, server
 from map_cache_readonly_test import install
 
 CRUSADES, MODS, SPEED, CAP, STARTS, FOG, PATH, SPECTATORS, SCENARIO, CODES = 0, 2, 3, 5, 13, 11, 15, 16, 17, 18
@@ -82,6 +83,27 @@ def room_of(r):
     out['bits'], out['serial'] = r.num('<B'), r.num('<I')
     out['slots'] = [(tuple(r.num('<B') for _ in range(6)), r.field()) for _ in range(MAX_SLOTS)]
     return out
+
+
+# Every sign-in on the public server is an account write, and the server takes 16 a second
+# (a registration only while fewer than 8 were taken) before it drops one for "login write
+# budget". The cases sign in 27 times, 16 of them within one second on a quiet machine.
+SIGN_INS_PER_SECOND = 6
+_signed_in = collections.deque(maxlen=SIGN_INS_PER_SECOND)
+
+
+def login(port, h, name):
+    """A signed-in connection to the public server, paced: a sign-in starts at least 1.1 s
+    after the one SIGN_INS_PER_SECOND before it ended, so no second of the server's holds
+    more than SIGN_INS_PER_SECOND, however fast the cases run."""
+    if len(_signed_in) == _signed_in.maxlen:
+        wait = _signed_in[0] + 1.1 - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+    try:
+        return sign_in(port, h, name)
+    finally:
+        _signed_in.append(time.monotonic())
 
 
 def local_peer(port, h, name):
