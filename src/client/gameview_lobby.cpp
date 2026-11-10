@@ -283,18 +283,21 @@ std::string defaultGameName(const std::string& player) {
     // allowed...), in its own case (as the CONNECT dialog shows server text) -- until the
     // next request clears it. A refusal a window showed (a wrong password) is not repeated
     // here. A request that got no answer says so too, unless a window is there to say it.
+    // One that CANCEL took back has nothing to say either way.
     std::string GameView::browserLine() const {
         if (!mp_->joinError().empty() && !browserLineQuiet_) return "CANNOT JOIN: " + mp_->joinError();
         const bool window = browserWin_.kind != BrowserWindow::Kind::None;
-        return roomRequestOut() && !browserBusy() && !window ? "NO ANSWER FROM THE SERVER" : "";
+        return roomRequestOut() && !browserBusy() && !window && !browserRecalled_ ? "NO ANSWER FROM THE SERVER" : "";
     }
 
     bool GameView::browserRequestFree() {
         if (!roomRequestOut()) return true;
         if (browserBusy()) return false;
-        // No answer is coming: LeaveGame lets go of whatever the server granted it meanwhile.
+        // No answer is coming: LeaveGame lets go of whatever the server granted it meanwhile,
+        // and a yes that still arrives opens no room unless the next request has gone.
         mp_->leaveGame();
         roomCreateSent_ = roomJoinSent_ = false;
+        browserRecalled_ = true;
         tak::crypto::wipe(roomPassAsked_);
         return true;
     }
@@ -304,6 +307,7 @@ std::string defaultGameName(const std::string& player) {
         roomKind_ = RoomKind::Multiplayer; rememberRoom_ = lobbyAutoMode_ == 0;
         if (watch) mp_->spectate(id, password);
         else mp_->joinGame(id, password);
+        browserRecalled_ = false;   // a room is wanted again
         // A game joined shows its password in the room (roomPasswordStep); one watched has no room.
         tak::crypto::wipe(roomPassAsked_);
         if (!watch) roomPassAsked_ = password;
@@ -349,6 +353,19 @@ std::string defaultGameName(const std::string& player) {
         w = {};
     }
 
+    // CANCEL and Esc. While the window's own JoinGame or CreateGame is still unanswered they
+    // take it back: the password that went with it is wiped, a yes on its way opens no room
+    // (browserStep leaves it) and a no is not news. The request stays the one the browser
+    // waits on, so its answer is never taken for the next one's. A WATCH stays as it is.
+    void GameView::cancelBrowserWindow() {
+        const auto& w = browserWin_;
+        if (w.asked && roomRequestOut() && w.kind != BrowserWindow::Kind::Watch) {
+            browserRecalled_ = browserLineQuiet_ = true;
+            tak::crypto::wipe(roomPassAsked_);
+        }
+        closeBrowserWindow();
+    }
+
     const char* GameView::browserWindowGone() const {
         const auto& w = browserWin_;
         if (w.kind != BrowserWindow::Kind::Join && w.kind != BrowserWindow::Kind::Watch) return nullptr;
@@ -388,6 +405,7 @@ std::string defaultGameName(const std::string& player) {
             w.asked = roomCreateSent_;
             // Nothing went out: no map could be built here.
             if (!w.asked) w.error = "CANNOT OPEN A GAME: " + roomActError_;
+            else browserRecalled_ = false;   // a room is wanted again
             browserLineQuiet_ = false;
         } else {
             w.asked = browserJoin(w.gameId, w.password, w.kind == BrowserWindow::Kind::Watch);
@@ -396,10 +414,24 @@ std::string defaultGameName(const std::string& player) {
     }
 
     void GameView::browserStep() {
+        using S = tak::net::MpClient::State;
         auto& w = browserWin_;
-        if (mp_->state() != tak::net::MpClient::State::Lobby) {
+        // A room the game list's player is not in: one opened for a request that was taken
+        // back or given up (its yes was already on its way), or one a refusal arrives in --
+        // the first of two requests opened it late, the second let go of it (LeaveGame, after
+        // NO ANSWER) and was then turned away. A JoinResult refusal answers only this
+        // client's own CreateGame, JoinGame or Spectate, and a yes clears it, so the test is
+        // exact. Left at once: the list is back, and its line says the refusal.
+        if (mp_->state() == S::InRoom && !singlePlayer_ && !lanHost_ && !mp_->lanServer() &&
+            (browserRecalled_ || !mp_->joinError().empty())) {
+            roomCreateSent_ = roomJoinSent_ = false;
+            roomOpenNote_.clear();   // (CREATE's note for a room nobody saw is not the next room's)
+            leaveRoom();
+        }
+        if (mp_->state() != S::Lobby) {
             // In the room or the watched game, or the connection is over: the window goes.
             roomJoinSent_ = false;
+            browserRecalled_ = false;
             closeBrowserWindow();
             return;
         }
@@ -456,12 +488,15 @@ std::string defaultGameName(const std::string& player) {
             passwordField(y, "");
             y += 48;
         }
-        // One line under the fields: the wait, why the game can no longer be asked into, or
-        // the last answer (a refusal in the server's own words; a long one takes two rows).
+        // One line under the fields: the wait, why the game can no longer be asked into, an
+        // earlier request the server has yet to answer (one CANCEL took back, a game's row:
+        // why the button is grey), or the last answer (a refusal in the server's own words; a
+        // long one takes two rows).
         constexpr SDL_Color kWait{200, 200, 210, 255}, kWarn{255, 130, 110, 255};
         if (waiting)
             blockText(create ? "OPENING THE GAME..." : w.kind == Kind::Watch ? "OPENING..." : "JOINING...", fx, y, 1.6f, kWait);
         else if (gone) blockText(gone, fx, y, 1.6f, kWarn);
+        else if (browserBusy()) blockText("WAITING FOR THE SERVER...", fx, y, 1.6f, kWait);
         else if (!w.error.empty()) {
             auto rows = tak::uiTextWrap(w.error, 1.6f, fw);
             for (size_t k = 2; k < rows.size(); ++k) rows[1] += " " + rows[k];
@@ -470,24 +505,27 @@ std::string defaultGameName(const std::string& player) {
         }
         const float by = py + ph - 46;
         if (gone) {
-            lbBtn(px + pw / 2 - 60, by, 120, 30, "CANCEL", true, [this] { closeBrowserWindow(); });
+            lbBtn(px + pw / 2 - 60, by, 120, 30, "CANCEL", true, [this] { cancelBrowserWindow(); });
         } else {
+            // (Side by side, both labels on their caps: JOIN's J has a tail.)
             lbBtn(px + pw / 2 - 140, by, 120, 30, create ? "CREATE" : w.kind == Kind::Watch ? "WATCH" : "JOIN",
-                  browserWindowReady(), [this] { browserWindowCommit(); }, {70, 110, 70, 255});
-            lbBtn(px + pw / 2 + 20, by, 120, 30, "CANCEL", true, [this] { closeBrowserWindow(); });
+                  browserWindowReady(), [this] { browserWindowCommit(); }, {70, 110, 70, 255}, kBtnLabelPx, true);
+            lbBtn(px + pw / 2 + 20, by, 120, 30, "CANCEL", true, [this] { cancelBrowserWindow(); }, {60, 66, 86, 255},
+                  kBtnLabelPx, true);
         }
     }
 
     // Enter is the window's JOIN / WATCH / CREATE, Esc its CANCEL, Tab the CREATE window's
     // other field. A click reaches the window's own widgets only, and one that misses them
-    // (or lands on SHOW / HIDE) leaves the caret where it is. Typing and Backspace go on to
-    // lobbyInput's fields.
+    // (or lands on SHOW / HIDE) leaves the caret where it is. The rest of the double click
+    // that opened the window is no click in it: its CANCEL lies over the list's rows.
+    // Typing and Backspace go on to lobbyInput's fields.
     bool GameView::browserWindowInput(const SDL_Event& e) {
         if (e.type == SDL_KEYDOWN) {
             const auto key = e.key.keysym.sym;
             if (key != SDLK_ESCAPE && key != SDLK_RETURN && key != SDLK_KP_ENTER && key != SDLK_TAB) return false;
             if (e.key.repeat) return true;   // a held key acts once
-            if (key == SDLK_ESCAPE) closeBrowserWindow();
+            if (key == SDLK_ESCAPE) cancelBrowserWindow();
             else if (key == SDLK_TAB) {
                 if (browserWin_.kind == BrowserWindow::Kind::Create && lbField_) lbFocus(lbField_ == 11 ? 12 : 11);
             } else if (browserWindowReady()) browserWindowCommit();
@@ -495,6 +533,8 @@ std::string defaultGameName(const std::string& player) {
         }
         if (e.type == SDL_MOUSEBUTTONDOWN) {
             mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
+            if (browserWin_.fresh && e.button.clicks > 1) return true;
+            browserWin_.fresh = false;
             float mx, my; lobbyMouse(mx, my);
             if (e.button.button == SDL_BUTTON_LEFT)
                 for (auto& hot : lobbyHots_)
@@ -1515,7 +1555,7 @@ std::string defaultGameName(const std::string& player) {
     }
 
     void GameView::lbBtn(float x, float y, float w, float h, const std::string& label, bool enabled,
-               std::function<void()> action, SDL_Color base, float labelPx) {
+               std::function<void()> action, SDL_Color base, float labelPx, bool capsCentred) {
         SDL_FRect r{x, y, w, h};
         bool hot = enabled && lbHot(r);
         SDL_Color c = enabled ? (hot ? SDL_Color{90, 110, 150, 255} : base)
@@ -1528,12 +1568,14 @@ std::string defaultGameName(const std::string& player) {
         // "START LOCATIONS: BY SLOT" inside their box), measured, with 6 px clear each side.
         // Height too: a label with descenders (a mod pack's "Big Battles") keeps its ink
         // 2 px inside the border, and centres caps plus descenders; caps-only labels
-        // centre their caps as always.
+        // centre their caps as always. A capital's tail (J, Q) counts as a descender
+        // unless capsCentred.
         float px = tak::uiTextFitPx(label, labelPx, w - 12.0f);
-        if (const float ink = 7 * px + tak::uiTextInkDescent(label, px); ink > h - 4)
+        if (const float ink = 7 * px + (capsCentred ? 0 : tak::uiTextInkDescent(label, px)); ink > h - 4)
             px *= (h - 4) / ink;
         float tw = blockWidth(label, px);
-        blockText(label, x + (w - tw) / 2, y + (h - 7 * px - tak::uiTextInkDescent(label, px)) / 2, px,
+        const float tail = capsCentred ? 0 : tak::uiTextInkDescent(label, px);
+        blockText(label, x + (w - tw) / 2, y + (h - 7 * px - tail) / 2, px,
                   enabled ? SDL_Color{225, 230, 240, 255} : SDL_Color{110, 115, 125, 255});
         if (enabled && action) lobbyHots_.push_back({r, std::move(action)});
     }

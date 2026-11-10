@@ -1005,14 +1005,28 @@ unready nobody.
   server's refusal (`CANNOT JOIN: wrong password`) with the text kept, NO ANSWER
   FROM THE SERVER after 10 s (the next request first gives the stale one up with
   `LeaveGame`), THE GAME HAS CLOSED / STARTED when the list no longer offers
-  it. CANCEL closes a window without recalling a request still on its way: its
-  answer is then the browser's, as for a game with no password. An unlocked
+  it. CANCEL or Esc while a window's own `JoinGame` or `CreateGame` is still
+  unanswered takes it back (`browserRecalled_`): the password that went with it
+  is wiped, the request stays the one the browser waits on (so its answer is
+  never taken for the next one's; a window opened meanwhile says WAITING FOR THE
+  SERVER... beside its greyed button), a refusal is not shown, and a room the
+  server opens for it is left at once with `LeaveGame`. So is a room a given-up
+  request opens before the next one has gone, and a room a refusal arrives in:
+  the first of two requests opened it late, the retry let go of it and was then
+  turned away, so the server no longer has the client there (`browserStep`; a
+  `JoinResult` refusal answers only the client's own `CreateGame`, `JoinGame`
+  or `Spectate`, and a yes clears it). A `Spectate` cannot be taken back: its
+  yes is `GameStarting` with the game's history behind it, so the game opens.
+  The second press of a double click on a locked game's row is not a click in
+  the window it opened (CANCEL lies over the list's rows). An unlocked
   game is joined at once and its refusal stays on the browser's CANNOT JOIN
   line, which also says NO ANSWER FROM THE SERVER for a request no window is
   waiting on. In every multiplayer room the name line is static, for the host
   as for a guest: the name, then LOCKED, or, when this client's player typed
   the password (the CREATE or password window, or CONNECT TO SERVER for a LAN
-  game), PASSWORD with eight pips and the same SHOW / HIDE. That copy is kept
+  game), PASSWORD with eight pips and the same SHOW / HIDE (the name is laid
+  out the same either way; a shown password has the room it leaves, shrinks,
+  then is cut with "..."). That copy is kept
   only while in the room (`roomPass_`, wiped on leaving); the password never
   appears in a log. A shown password is drawn in the MODERN face in either UI
   FONT (`GameView::ExactText`): CLASSIC draws capitals only, and a password

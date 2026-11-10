@@ -308,7 +308,8 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
         // behind SHOW / HIDE (this client's player typed it: roomPass_) or LOCKED. Both were
         // set when the game was made (the browser's CREATE window, or CONNECT TO SERVER for a
         // LOCAL SERVER) and nobody changes them here. The line keeps to the slot table's
-        // width: the name shrinks before it is cut, and so does a shown password.
+        // width: the name shrinks before it is cut, the same with the password hidden or
+        // shown, and a shown password has the room the name leaves.
         if (!singlePlayer_) {
             constexpr float kTagPx = 1.4f, kGap = 12, kToggleW = 46;
             constexpr float kPipsW = 8 * 6 * kTagPx;   // hidden: always eight pips, whatever its length
@@ -317,25 +318,17 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
             const float tagW = blockWidth(tag, kTagPx);
             // What follows the name, less the password itself: the tag, and the toggle.
             const float fixedW = !room.passworded ? 0 : known ? kGap + tagW + 6 + 8 + kToggleW : kGap + tagW;
-            float nameW = rowW - fixedW - (known ? kPipsW : 0);
-            float passW = kPipsW, passPx = kTagPx;
-            if (known && roomPassShown_) {
-                // Shown: in the room the name leaves, at the tag's size or smaller. A password
-                // too long for that takes room from the name (which keeps kNameMin) before it
-                // is cut: SHOW is pressed to read it.
-                constexpr float kNameMin = 140;
-                const float nameNow = std::min(blockWidth(room.name, tak::uiTextFitPx(room.name, 2.2f, nameW, 1.6f)), nameW);
-                passW = rowW - fixedW - nameNow;
-                const ExactText exact;   // the password's own widths
-                if (const float whole = blockWidth(roomPass_, 1.1f) + 1; whole > passW && nameNow > kNameMin) {
-                    passW = std::min(whole, rowW - fixedW - kNameMin);
-                    nameW = rowW - fixedW - passW;
-                }
-                passPx = tak::uiTextFitPx(roomPass_, kTagPx, passW, 1.1f);
-            }
+            const float nameW = rowW - fixedW - (known ? kPipsW : 0);
             const float namePx = tak::uiTextFitPx(room.name, 2.2f, nameW, 1.6f);
             const std::string name = tak::uiTextFit(room.name, namePx, nameW);
             blockText(name, x, 54 + 7 * (2.2f - namePx), namePx, {210, 210, 220, 255});   // on the 2.2 baseline
+            float passW = kPipsW, passPx = kTagPx;
+            if (known && roomPassShown_) {
+                // Shown: at the tag's size or smaller, then cut.
+                passW = rowW - fixedW - blockWidth(name, namePx);
+                const ExactText exact;   // the password's own widths
+                passPx = tak::uiTextFitPx(roomPass_, kTagPx, passW, 1.1f);
+            }
             float tx = x + blockWidth(name, namePx) + kGap;
             if (room.passworded) {
                 blockText(tag, tx, 58, kTagPx, kAmber);

@@ -4175,9 +4175,11 @@ private:
     // box -- never larger: a list of names (the room's mod packs) passes the size of the
     // text around it rather than the 2.0 of a caps command button.
     static constexpr float kBtnLabelPx = 2.0f;
+    // capsCentred: for a button beside another, the label sits on its caps whatever its
+    // letters (a J's or a Q's tail would lift JOIN above the CANCEL next to it).
     void lbBtn(float x, float y, float w, float h, const std::string& label, bool enabled,
                std::function<void()> action, SDL_Color base = {60, 66, 86, 255},
-               float labelPx = kBtnLabelPx);
+               float labelPx = kBtnLabelPx, bool capsCentred = false);
     // Only selectors accept right-click; ordinary actions stay left-click only.
     void lbCycle(float x, float y, float w, float h, const std::string& label, bool enabled,
                  std::function<void(int)> cycle, float labelPx = kBtnLabelPx) {
@@ -4225,7 +4227,7 @@ private:
     // The password that went with the CreateGame or JoinGame on its way, as this client's
     // player typed it (the CREATE window, a password window, CONNECT TO SERVER for a LAN
     // game); in the room it becomes the room's (roomPass_). Wiped when the request is
-    // refused or given up.
+    // refused, given up or taken back.
     std::string roomPassAsked_;
     // A click on a game's row (watch: its WATCH button): asks the server at once, or opens
     // the password window when the game is locked.
@@ -4234,6 +4236,8 @@ private:
     // (JOIN, or WATCH on a live game): modal over the game list, one at a time. The request
     // a window sends is answered in it: the room or the watched game opens and the window
     // goes, or its line says why not and the text stays to be changed and sent again.
+    // CANCEL (and Esc) while that answer is still on its way takes a JoinGame or CreateGame
+    // back (browserRecalled_).
     struct BrowserWindow {
         enum class Kind : uint8_t { None, Create, Join, Watch };
         Kind kind = Kind::None;
@@ -4246,18 +4250,28 @@ private:
         int focus = 0;              // the field the caret returns to after an answer
         bool asked = false;         // this window's request is the one unanswered
         std::string error;          // the red line: the server's refusal, or no answer
+        bool fresh = true;          // no press has reached it yet (browserWindowInput: a double click on a row)
     } browserWin_;
-    bool browserLineQuiet_ = false;   // a window showed the last refusal: not on the browser's line too
+    bool browserLineQuiet_ = false;   // a window showed the last refusal (or took the request back): not on the browser's line too
+    // CANCEL or Esc took back the JoinGame or CreateGame its window was waiting on (or NO
+    // ANSWER gave one up): until the next request has gone this client wants no room, and
+    // one the server opens (the yes was already on its way; a table of that room after it)
+    // is left at once (browserStep). A WATCH cannot be taken back: its yes is the game
+    // itself (GameStarting, with its history behind it), which opens.
+    bool browserRecalled_ = false;
     std::string browserLine() const;  // the browser's red line: the last refusal, or no answer
     void openCreateWindow();          // CREATE
     void openPasswordWindow(const tak::net::GameInfo& game, bool watch);
-    void closeBrowserWindow();        // CANCEL, Esc, or the browser moving on; the password is wiped
+    void closeBrowserWindow();        // the window goes (the browser moved on); its typed password is wiped
+    void cancelBrowserWindow();       // CANCEL, Esc: closed, and a request of its own still unanswered is taken back
     bool browserWindowReady() const;  // its JOIN / WATCH / CREATE is live
     void browserWindowCommit();       // JOIN / WATCH / CREATE (and Enter)
     // Why a password window's game can no longer be asked into (it closed, or started under
     // a JOIN), or null.
     const char* browserWindowGone() const;
-    void browserStep();               // mpAutoStep: the answer to the browser's request, or none in time
+    // mpAutoStep: the answer to the browser's request, or none in time; and out of a room
+    // that is not this client's to be in (taken back, or let go of by a retry then refused).
+    void browserStep();
     void drawBrowserWindow(int winW, int winH);
     // lobbyInput's keys and clicks while a window is open: true when it used the event.
     bool browserWindowInput(const SDL_Event& e);

@@ -187,7 +187,7 @@
         buildLineWheelMs_ = 0;
         buildLineTrail_ = {};
         poster_.reset();
-        // A room field (SAY, a password) focused when the host started is let go: the game
+        // A room field (SAY) focused when the host started is let go: the game
         // has no such field, and its text input would otherwise hold push to talk off.
         if (lbField_) { lbField_ = 0; SDL_StopTextInput(); }
         resultParticipants_.reset();
@@ -1458,6 +1458,7 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
         if (st == S::InRoom || st == S::Done) roomAutoCreate_ = roomCreateSent_ = false;
         else if (roomCreateSent_ && !mp_->joinError().empty()) roomAutoCreate_ = roomCreateSent_ = false;
         browserStep();   // the game browser's own request, and the window that waits on it
+        st = mp_->state();   // (it leaves a room this client is not to be in)
         roomPasswordStep();   // the password typed for a room: its own while in it, then wiped
         if (st == S::Done) {
             if (beginReconnect()) return true;

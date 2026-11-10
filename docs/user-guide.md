@@ -2357,10 +2357,13 @@ name can be up to 32 characters (leave it blank for *Name's Game*), and an empty
 password makes a game anyone on the server can join. A password is hidden as you
 type it, here and in a locked game's password window: **SHOW** beside the field
 shows what you typed and **HIDE** hides it again. **Tab** moves between the two
-fields and **Esc** closes a window. If the server refuses (a wrong password, a
-full game), the window says why and keeps what you typed, so you can correct it
-and try again; it also says when the server does not answer, and when the game
-has closed or started in the meantime.
+fields and **Esc** closes a window, as **CANCEL** does. If the server refuses (a
+wrong password, a full game), the window says why and keeps what you typed, so you
+can correct it and try again; it also says when the server does not answer, and
+when the game has closed or started in the meantime. **CANCEL** while the server
+has not yet answered a **JOIN** or a **CREATE** takes the request back: you stay
+in the game list. (A **WATCH** already sent cannot be taken back; if the server
+lets you in, the game opens.)
 
 In the room, the game's name stands above the slots for everyone. When the game
 has a password, the players who typed it (the host who created the game, and
@@ -3336,7 +3339,10 @@ The **Single-Player** door and a local server game show *OPENING THE GAME...*
 until the room is ready. If it cannot be made, the screen says *CANNOT OPEN A GAME*
 and why, and **Back to menu** (**Back** for a local server game) returns. A
 remembered map that is missing does not stop it: the room opens on another map and
-says why. **Create** in a game browser reports a refusal under the game list.
+says why. In a game browser, the **CREATE** window says why a game could not be
+opened and keeps what you typed. A server that has no room for another game ends
+the connection instead: the *DISCONNECTED* screen says why (*server game capacity
+reached*), and **Back to menu** returns.
 
 ### I cannot join a multiplayer game
 

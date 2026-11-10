@@ -32,9 +32,11 @@ cannot finish prints why and ends the client. TAK_QUIT_TICK ends a game that sta
      cell (the note says what the next does); the second removes them, and the room says so.
   11 the CREATE window and the password window: CREATE with a name and a password opens that
      room, locked; a second player's game list has it locked (its row asks the password), a
-     wrong password is refused in the window and the right one, sent from the same window,
-     gets in; the room's password starts hidden for the host and for the guest, and SHOW
-     shows it (the log says which, never the password).
+     wrong password is refused in the window, which stays open (its SHOW is pressed there),
+     and the right one, sent from the same window, gets in; the room's password starts
+     hidden for the host and for the guest, SHOW shows it, and it is hidden again in the
+     room entered next (the guest leaves and joins again). No log has either password: the
+     clients say only which way SHOW / HIDE went, and the server nothing.
 
 Debug builds only (TAK_ROOM_SCRIPT, TAK_QUIT_TICK and the CLI game are debug hooks).
 
@@ -98,7 +100,7 @@ def script_ran(log, steps):
     for step in steps:
         found = log.find('room script: %s: done' % step, at)
         assert found >= 0, 'step %r never finished' % step
-        at = found
+        at = found + 1   # a step given twice finished twice
     assert 'room script: finished' in log, 'the script did not finish'
 
 
@@ -348,9 +350,10 @@ def case_windows(args, root):
     """The CREATE window and the password window: a named, locked game; a wrong password, then the right one."""
     server, port, slog_path = account_server(args, root, 'case11-server')
     host = None
+    right, wrong = 'oak-Xq7.leaf', 'acorn-Zk4.cup'   # found in a log only if a log has them
     try:
         # The host: CREATE's window with a name and a password, then SHOW and HIDE in the room.
-        hsteps = ['create:Friday Night:oak', 'showpass:1', 'showpass:0', 'wait:humans=2']
+        hsteps = ['create:Friday Night:' + right, 'showpass:1', 'showpass:0', 'wait:humans=2']
         hhome, henv = profile(root, 'case11-host', ';'.join(hsteps),
                               {'TAK_MENU_PICK': 'connect:alice:alicepass1@tcp://127.0.0.1:%d' % port})
         hlog_path = hhome / 'client.log'
@@ -358,8 +361,12 @@ def case_windows(args, root):
             host = subprocess.Popen([args.client, 'menu', '--data', args.data, '--winsize', '960', '540'], cwd=hhome,
                                     env=henv, stdout=out, stderr=subprocess.STDOUT)
         wait_for(hlog_path, 'room script: showpass:0: done', host)
-        # The guest: the game's row with no password, a wrong one, the right one; then SHOW.
-        gsteps = ['join!:Friday Night', 'join!:Friday Night:acorn', 'join:Friday Night:oak', 'showpass:1']
+        # The guest: the game's row with no password, then a wrong one; SHOW in the window the
+        # refusal left open (no window: the step fails); the right one from it; SHOW in the
+        # room. Then out (after READY's round trip, so no table of the room is still on its
+        # way), in again, and SHOW again: it prints only if that room opened hidden.
+        gsteps = ['join!:Friday Night', 'join!:Friday Night:' + wrong, 'showpass:1', 'join:Friday Night:' + right,
+                  'showpass:1', 'ready', 'leave', 'join:Friday Night:' + right, 'showpass:1']
         ghome, genv = profile(root, 'case11-guest', ';'.join(gsteps),
                               {'TAK_MENU_PICK': 'connect:bob:bobpass12@tcp://127.0.0.1:%d' % port})
         glog = run_until(args.client, ['menu', '--data', args.data], genv, ghome, 'room script: finished')
@@ -370,23 +377,27 @@ def case_windows(args, root):
             script_ran(glog, gsteps)
             assert re.search(r"client \d+ created game \d+ 'Friday Night' on ", slog_text), \
                 'CREATE did not open a game under the name typed'
-            for who, log in (('host', hlog), ('guest', glog)):
-                assert re.search(r"room: game \d+ 'Friday Night' \(password set\)", log), \
+            for who, log, rooms in (('host', hlog, 1), ('guest', glog, 2)):
+                assert len(re.findall(r"room: game \d+ 'Friday Night' \(password set\)", log)) == rooms, \
                     "the %s's room is not Friday Night, locked" % who
-                # Hidden when the room opens: SHOW changed the line (it tells only a change).
-                assert log.count('room: password shown') == 1, "the %s's password did not start hidden, then show" % who
-                assert not any('oak' in line for line in log.splitlines() if line.startswith('room: ')), \
-                    "the %s's room logged the password" % who
+                # Hidden whenever a room opens: each SHOW changed the line (it tells only a change).
+                assert log.count('room: password shown') == rooms, \
+                    "the %s's password did not start hidden in each room, then show" % who
+                # Only the script's own lines name its steps; nothing else has a password.
+                told = [line for line in log.splitlines()
+                        if not line.startswith('room script: ') and (right in line or wrong in line)]
+                assert not told, "the %s's client logged a password: %r" % (who, told)
+            assert right not in slog_text and wrong not in slog_text, 'the server logged a password'
             assert hlog.find('room: password hidden') > hlog.find('room: password shown'), 'HIDE did not hide it again'
             # The second player's list has the game locked: its row asks the password before anything is sent.
             assert 'room script: join!:Friday Night: refused: a locked game needs its password' in glog, \
                 "the locked game's row did not open the password window"
-            assert 'room script: join!:Friday Night:acorn: refused: CANNOT JOIN: wrong password' in glog, \
+            assert 'room script: join!:Friday Night:%s: refused: CANNOT JOIN: wrong password' % wrong in glog, \
                 'the wrong password was not refused in the window'
             assert glog.find("room: game") > glog.find('refused: CANNOT JOIN: wrong password'), \
                 'the guest was in the room before the right password'
-            assert len(re.findall(r'client \d+ joined game \d+ at slot 1', slog_text)) == 1, \
-                'the server did not seat the guest once'
+            assert len(re.findall(r'client \d+ joined game \d+ at slot 1', slog_text)) == 2, \
+                'the server did not seat the guest once for each join'
         except AssertionError as e:
             raise AssertionError('%s\nhost:\n%s\nguest:\n%s\nserver:\n%s' % (e, hlog[-2500:], glog[-2500:], slog_text[-2500:]))
     finally:
