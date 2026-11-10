@@ -462,6 +462,13 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
                                                      size_t(startCount), tak::sim::StartMode::BySlot);
             }
         }
+        // MOVE HERE is live only where a seat decides where, or as whom, its player starts:
+        // under BY SLOT (slot N opens at the map's start N), and in a scenario whose seats
+        // have armies or rules of their own. Under FIXED and RANDOM a seat picks no start
+        // (the occupied seats take the starts in order, or by the match's shuffle), so the
+        // button is greyed and says what would light it while the pointer is on it.
+        const bool seatPicks = tak::net::normalizeStartMode(room.opts.randomStarts) == tak::net::kStartsBySlot || needSeats != 0;
+        SDL_FRect moveTipAt{};   // the greyed MOVE HERE under the pointer, if any
         // slot table
         const char* typeName[4] = {"OPEN", "HUMAN", "AI", "CLOSED"};
         // Each column's start in the row: type, name, AI level, side, colour, team, READY.
@@ -579,15 +586,17 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
             if (host && s.type == 1 && !mine) {
                 lbBtn(x + row.w - 54, y + 3, 50, 22, "KICK", edit, [this, i] { mp_->kick(i); });
             }
-            // Any seated player may take an OPEN seat (Msg::MoveSeat): the seat is the
-            // start under BY SLOT, and the order under FIXED. Open seats are always
-            // inside the map's capacity (the server closes the rest). Not in a campaign
-            // mission, whose seats are given.
+            // Any seated player may take an OPEN seat (Msg::MoveSeat) where the seat picks
+            // the start (seatPicks, above). Open seats are always inside the map's capacity
+            // (the server closes the rest). Not in a campaign mission, whose seats are given.
             // The seat buttons share MOVE HERE's label size.
             const float seatPx = tak::uiTextFitPx("MOVE HERE", kBtnLabelPx, 90 - 12.0f);
-            if (room.mission.empty() && room.mySlot >= 0 && s.type == 0)
-                lbBtn(x + row.w - 94, y + 3, 90, 22, "MOVE HERE", !host || edit, [this, i] { mp_->moveSeat(i); },
-                      {60, 66, 86, 255}, seatPx);
+            if (room.mission.empty() && room.mySlot >= 0 && s.type == 0) {
+                const SDL_FRect move{x + row.w - 94, y + 3, 90, 22};
+                lbBtn(move.x, move.y, move.w, move.h, "MOVE HERE", seatPicks && (!host || edit),
+                      [this, i] { mp_->moveSeat(i); }, {60, 66, 86, 255}, seatPx);
+                if (!seatPicks && lbHot(move)) moveTipAt = move;
+            }
             // Single player: WATCH on the host's own row leaves the seat to watch the AIs;
             // while watching, SIT HERE on an OPEN or AI row takes that seat back.
             if (singlePlayer_ && mine && host && room.mission.empty() && !room.opts.benchmark)
@@ -595,6 +604,15 @@ void seedChosen(tak::net::GameOptions& chosen, bool& set, const tak::net::RoomVi
             if (watching && (s.type == 0 || s.type == 2) && i < room.capacity)
                 lbBtn(x + row.w - 94, y + 3, 90, 22, "SIT HERE", edit, [this, i] { roomSitHere(i); }, {60, 66, 86, 255}, seatPx);
             y += 30;   // slot row pitch: 8 rows must leave room for the option toggles below
+        }
+        if (moveTipAt.w > 0) {   // beside the greyed button, inside its own row
+            const char* tip = "ONLY WITH START LOCATIONS: BY SLOT";
+            constexpr float kTipPx = 1.3f;
+            const float tw = blockWidth(tip, kTipPx) + 12;
+            const SDL_FRect box{moveTipAt.x - 4 - tw, moveTipAt.y, tw, moveTipAt.h};
+            SDL_SetRenderDrawColor(ren_, 12, 14, 20, 240); SDL_RenderFillRectF(ren_, &box);
+            SDL_SetRenderDrawColor(ren_, 90, 100, 130, 255); SDL_RenderDrawRectF(ren_, &box);
+            blockText(tip, box.x + 6, box.y + (box.h - 7 * kTipPx) / 2, kTipPx, {225, 215, 160, 255});
         }
     }
 

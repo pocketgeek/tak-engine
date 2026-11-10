@@ -305,14 +305,14 @@ More in the user guide's [Power codes](user-guide.md#power-codes).
 | Left-click a setting | Next choice. Right-click: previous choice. The host's rules are the buttons under the slots. |
 | A slot's type (host) | OPEN → AI → CLOSED. |
 | **CHANGE MAP...** (host) | Pick another map, or make a random one, in a panel over the room; **PICK** plays it, **CANCEL** keeps the room's. |
-| **MOVE HERE** | Take that open slot, keeping your side, colour and team; your old slot opens. With *Start Locations: By Slot*, slot N starts at position N. |
+| **MOVE HERE** | With *Start Locations: By Slot* (slot N starts at position N): take that open slot, keeping your side, colour and team; your old slot opens. Greyed with *Fixed* and *Random*, where a slot does not pick a start. |
 | **WATCH** (single player) | Leave your slot and watch the AIs; **SIT HERE** on a slot plays again. |
 | **READY** (multiplayer) | Mark yourself ready; the host can START when everyone is. A change by the host clears it. |
 | Name and password boxes (multiplayer host) | Rename the game or lock it; **Enter** keeps the change. |
 
-![A single-player room: you in slot 1 with WATCH, a Normal AI in slot 2, MOVE HERE buttons on open slots 3 to 5, the match rules, and the map with numbered starts and CHANGE MAP... under it](img/quick/lobby-move-here.jpg)
+![A single-player room with START LOCATIONS: BY SLOT: you in slot 1 with WATCH, a Normal AI in slot 2, MOVE HERE buttons on open slots 3 to 5, the match rules, and the map with numbered starts and CHANGE MAP... under it](img/quick/lobby-move-here.jpg)
 
-*A single-player room: **MOVE HERE** on each open slot, **CHANGE MAP...** under the map.*
+*A single-player room with **Start Locations: By Slot**: **MOVE HERE** on each open slot, **CHANGE MAP...** under the map.*
 
 For everything else (economy, sides, Legion pathfinding, multiplayer, voice
 chat), see the [user guide](user-guide.md).

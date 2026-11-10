@@ -314,10 +314,11 @@ setting says, and any allies and opponents play on.
    The room's map numbers each start position and colours it for the player who
    starts there. With **Random** start locations the markers stay dark, because
    nobody knows who starts where until the game begins.
-   To start somewhere else, click **Move here** on an open slot: you take that
-   slot with your side, colour and team, and your old slot opens. With **By slot**
-   start locations slot N starts at position N, so this picks your start; with
-   **Fixed** it changes your place in the order.
+   To pick your own start, set **Start locations** to **By slot**: slot N then
+   starts at position N, and **Move here** on an open slot takes that slot with
+   your side, colour and team (your old slot opens). With **Fixed** and **Random**
+   a slot does not pick a start, so **Move here** is greyed; pointing at it says
+   *ONLY WITH START LOCATIONS: BY SLOT*.
 5. Set each other slot to an AI, choose its side and **difficulty**, or close
    the slot. **Easy** is a good first opponent.
 6. Click **Start**.
@@ -351,7 +352,7 @@ before. Everyone else sees them as plain text. A button that another option deci
 | **Double Sight/Radar** | Doubles every unit's sight and radar range in skirmish and multiplayer. Weapon range is unchanged, and campaign missions are never affected. |
 | **Monarch Expendable** | **Off** (the original rule): losing your Monarch loses the game. **On**: the Monarch is an ordinary unit and you lose only when everything is gone. |
 | **Fog of war** | **Not Explored**: the map starts hidden. **Explored**: the map starts revealed, under the mist, and enemies are hidden outside your sight. **Full Vision**: no fog. Terrain you have seen stays visible under the mist after your units leave; enemy units outside your current sight are not shown and cannot be targeted. See [Fog of war](#fog-of-war). |
-| **Start locations** | **Fixed** gives the occupied slots the map's start positions in order, top slot first. Empty slots are skipped, as in the original game: a player in slot 1 and an AI in slot 8 start at positions 1 and 2. **Random** shuffles them. **By slot** always starts slot N at the map's position N, empty slots or not: slots 1 and 8 start at positions 1 and 8. It is not in the original game. In the room, a player picks a slot, and so a start, with **Move here**. A room normally opens one slot per position; a slot without a position of its own takes the lowest position that no occupied slot has by number, or a spot near the map centre, and the room shows which under the player's name. |
+| **Start locations** | **Fixed** gives the occupied slots the map's start positions in order, top slot first. Empty slots are skipped, as in the original game: a player in slot 1 and an AI in slot 8 start at positions 1 and 2. **Random** shuffles them. **By slot** always starts slot N at the map's position N, empty slots or not: slots 1 and 8 start at positions 1 and 8. It is not in the original game. With it, a player picks a slot, and so a start, with **Move here**; with **Fixed** and **Random** that button is greyed, because a slot picks no start there. A room normally opens one slot per position; a slot without a position of its own takes the lowest position that no occupied slot has by number, or a spot near the map centre, and the room shows which under the player's name. |
 | **Unit cap** | The most units each player may have alive: 250, 500, 1,000 or 2,000 (the default and the most the game allows). Production pauses at the cap. |
 | **Allow speed change** | Lets the host change game speed during the match, from −9 (0.1×) to +10 (2×). |
 | **Pathfinding** | **Retail** (the default) or **Legion**. Campaigns always use Retail. See [Pathfinding](#pathfinding-retail-and-legion). |
@@ -2335,8 +2336,9 @@ host's game mods are sent automatically.
    you click the game. A game marked **LIVE** has started; **WATCH** spectates it
    (see [Spectating](#spectating)).
 5. In the room, choose your side, colour and team, then click **Ready**. The host
-   starts the game when everyone is ready. To take a different seat, click
-   **Move here** on any open slot (see [Start locations](#match-options)).
+   starts the game when everyone is ready. With **By slot** start locations,
+   **Move here** on an open slot takes that seat and its start (see
+   [Start locations](#match-options)).
    **Leave** takes you back to the game browser.
 
 **The host's changes clear Ready.** If the host changes the map, a rule, the game
@@ -2366,11 +2368,11 @@ again.
 
 *The game browser on a server.*
 
-![A single-player game room: you in slot 1 with a WATCH button, Normal AIs for Taros, Veruna and Zhon in slots 2 to 4, MOVE HERE on the open slots 5 to 8, START and LEAVE, the match rules as buttons with CRUSADES: ON, DOUBLE SIGHT/RADAR: ON and PATHFINDING: LEGION, and at the right the map with start markers 1 to 4 in the seated players' colours, CHANGE MAP... under it and the MODS line with the MODS... button](img/room.jpg)
+![A single-player game room: you in slot 1 with a WATCH button, Normal AIs for Taros, Veruna and Zhon in slots 2 to 4, MOVE HERE greyed on the open slots 5 to 8 (START LOCATIONS: FIXED), START and LEAVE, the match rules as buttons with CRUSADES: ON, DOUBLE SIGHT/RADAR: ON and PATHFINDING: LEGION, and at the right the map with start markers 1 to 4 in the seated players' colours, CHANGE MAP... under it and the MODS line with the MODS... button](img/room.jpg)
 
-*A game room, here for a single-player game: player and AI slots, **Move here** on the open slots, the match rules, the map with each start marked in the colour of the player who starts there, **Change map...** and the mods.*
+*A game room, here for a single-player game: player and AI slots, **Move here** on the open slots (greyed unless start locations are **By slot**), the match rules, the map with each start marked in the colour of the player who starts there, **Change map...** and the mods.*
 
-The host can open and close empty slots, add AIs and kick players (a slot with a player in it cannot be turned into an AI or closed; kick the player first). Any seated player, the host included, can move to an open slot with **Move here** until the game starts; closed, AI and taken slots cannot be moved to, and campaign missions keep their seats. The host
+The host can open and close empty slots, add AIs and kick players (a slot with a player in it cannot be turned into an AI or closed; kick the player first). With **By slot** start locations, or in a scenario game whose seats have their own armies, any seated player, the host included, can move to an open slot with **Move here** until the game starts; closed, AI and taken slots cannot be moved to, and campaign missions keep their seats. With **Fixed** or **Random** start locations the button is greyed. The host
 also picks the map (**Change map...**) and sets every match option in the room
 until the game starts; the rules light up under the host's pointer, and for
 everyone else they are read-only. See [Match options](#match-options). A

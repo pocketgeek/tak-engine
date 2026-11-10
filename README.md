@@ -76,7 +76,7 @@ Details in the [CHANGELOG](CHANGELOG.md#0924).
     </td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/img/room.jpg"><img src="docs/img/room.jpg" alt="Game room with AI slots, MOVE HERE buttons on the open slots, start markers in the players' colours and the mods summary"></a><br><sub>A game room: seats, start positions and mods</sub>
+    <td width="50%"><a href="docs/img/room.jpg"><img src="docs/img/room.jpg" alt="Game room with AI slots, greyed MOVE HERE buttons on the open slots, start markers in the players' colours and the mods summary"></a><br><sub>A game room: seats, start positions and mods</sub>
     </td>
     <td width="50%"><a href="docs/img/campaign.jpg"><img src="docs/img/campaign.jpg" alt="The Book of Darien campaign book"></a><br><sub>The campaign book</sub>
     </td>

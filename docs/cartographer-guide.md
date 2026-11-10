@@ -2312,10 +2312,11 @@ Start Cartographer from its shortcut and choose **Recover**. See
   in a seat that has no units does nothing. The lobby warns about such a seat
   (*NO PLACED UNITS: PLAYER N*).
 - **You start in seat 1, but can move.** The player who opens the game room takes
-  seat 1, and players who join take the lowest open seat. In the lobby of an
-  ordinary game, any seated player (the host too) can press **MOVE HERE** on an
-  open seat to take it; the seat moves with the player's side, colour, team and
-  ready state. Moving is refused once the game is running and in campaign
+  seat 1, and players who join take the lowest open seat. In the room of a
+  scenario game whose seats have units or rules of their own, any seated player
+  (the host too) can press **MOVE HERE** on an open seat to take it; the seat
+  moves with the player's side, colour, team and ready state. (In an ordinary
+  game the button is live only with **Start locations: By slot**.) Moving is refused once the game is running and in campaign
   missions. Close the seats your scenario does not need before
   others join, so that they land in seats that have units.
 - **No height brush.** Heights come with terrain sections; there is no tool for
