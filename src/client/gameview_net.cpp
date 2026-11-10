@@ -3,33 +3,41 @@
 #include "client/gameview.h"
 #include "net/matchconfig.h"
 #include "campaign/campaign.h"
+#include "util/u8path.h"
+#include <filesystem>
 
 // Out-of-line GameView method definitions (net concern), split from the
 // class body in gameview.h so editing a body recompiles only this translation
 // unit. Trivial getters, ctors, static, template, constexpr and default-arg
 // methods stay inline in the header. Grouping is by name heuristic.
 
-    uint8_t GameView::mpCapacity(bool mapScenario) const {
+    uint8_t GameView::mpCapacity(bool mapScenario) const { return capacityFor(mpMapId_, mapPath_, mapScenario); }
+
+    uint8_t GameView::capacityFor(const std::string& mapId, const std::string& path, bool mapScenario) const {
         // A generated map's capacity is the player count baked into its "~gen1~" id.
         // The lobby sets mpMapId_; the headless "game" flow only has mapPath_ -- honour
         // either, since sim::parseStartPositions can't parse a synthetic id.
-        const std::string& gid = tak::mapgen::isGeneratedMapId(mpMapId_) ? mpMapId_ : mapPath_;
+        const std::string& gid = tak::mapgen::isGeneratedMapId(mapId) ? mapId : path;
         if (tak::mapgen::isGeneratedMapId(gid))
             return uint8_t(std::clamp<int>(tak::mapgen::decodeMapId(gid).players, 2, tak::net::kMaxSlots));
-        int n = int(parseStartPositions().size());
+        const int n = int(tak::sim::parseStartPositions(vfs_, path).size());
         // Capacity is available seats, not a minimum player count. A room that plays
         // its map's scenario opens every seat that scenario needs (its placement owners
         // and the rule banks that do something), which can lie past the start positions;
         // the verified lobby may still start a solo scenario without filling the rest.
-        auto path=mapPath_;
+        auto scenarioPath=path;
         tak::hpi::Vfs scenarioData(&vfs_);
-        if(const auto cached=vfs_.cachedMap(path)) {
-            path=cached->first;scenarioData.setMapFiles(cached->second);
+        if(const auto cached=vfs_.cachedMap(scenarioPath)) {
+            scenarioPath=cached->first;scenarioData.setMapFiles(cached->second);
         }
-        const auto scenario=tak::sim::inspectScenario(scenarioData,path);
-        if(scenario.active(mapScenario))
+        return seatsFor(n, tak::sim::inspectScenario(scenarioData,scenarioPath), mapScenario);
+    }
+
+    uint8_t GameView::seatsFor(int starts, const tak::sim::ScenarioInfo& s, bool scenarioOn) {
+        int n = starts;
+        if(s.active(scenarioOn))
             for(int i=0;i<tak::net::kMaxSlots;++i)
-                if(scenario.requiredSeats()>>i & 1)n=std::max(n,i+1);
+                if(s.requiredSeats()>>i & 1)n=std::max(n,i+1);
         return uint8_t(std::clamp(n < 2 ? 2 : n, 2, tak::net::kMaxSlots));
     }
 
@@ -1458,6 +1466,8 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
             if (netError_.empty()) netError_ = "create game failed: " + mp_->createError();
             return false;
         }
+        // TAK_ROOM_SCRIPT (debug builds): room actions, after this mode's own seating step.
+        if (!roomScriptStep(autoMode)) return false;
         if (st == S::Lobby && (autoMode == 1 || autoMode == 4 || autoMode == 7 || autoMode == 8)) {
             if (const char* be = tak::devEnv("TAK_BENCH")) {   // headless: benchmark run
                 int lv = std::atoi(be);                        // TAK_BENCH=<level 1..6>, default High
@@ -1698,6 +1708,211 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
             return mpStep();
         }
         return true;
+    }
+
+namespace {
+// TAK_ROOM_SCRIPT's opt: rules, by the name a step gives them, and the room's value of each.
+struct RoomScriptRule { const char* name; tak::RoomField field; };
+constexpr RoomScriptRule kRoomScriptRules[] = {
+    {"crusades", tak::RoomField::Crusades}, {"doubleSight", tak::RoomField::DoubleSight},
+    {"unitCap", tak::RoomField::UnitCap}, {"monarchExpendable", tak::RoomField::Monarch},
+    {"speedUnlock", tak::RoomField::SpeedUnlock}, {"fog", tak::RoomField::Fog},
+    {"randomStarts", tak::RoomField::StartLocations}, {"pathfinding", tak::RoomField::Pathfinding},
+    {"powerCodes", tak::RoomField::PowerCodes}, {"allowSpectators", tak::RoomField::AllowSpectators}};
+int roomRuleValue(const tak::net::GameOptions& o, tak::RoomField field) {
+    switch (field) {
+    case tak::RoomField::Crusades: return o.crusades;
+    case tak::RoomField::DoubleSight: return o.doubleSight;
+    case tak::RoomField::UnitCap: return o.unitCap;
+    case tak::RoomField::Monarch: return o.monarchExpendable;
+    case tak::RoomField::SpeedUnlock: return o.speedUnlock;
+    case tak::RoomField::Fog: return o.fogExplored;
+    case tak::RoomField::StartLocations: return o.randomStarts;
+    case tak::RoomField::Pathfinding: return int(o.pathfindingMode);
+    case tak::RoomField::PowerCodes: return o.powerCodes;
+    case tak::RoomField::AllowSpectators: return o.allowSpectators;
+    default: return -1;
+    }
+}
+}  // namespace
+
+    // The browser's CREATE and the doors that open a room straight away: not built yet (the
+    // create screen still makes the rooms).
+    void GameView::createRoomFromPrefs() { roomActError_ = kNotImplemented; }
+
+    bool GameView::roomScriptStep(int autoMode) {
+        using S = tak::net::MpClient::State;
+        if (!roomScriptRead_) {
+            roomScriptRead_ = true;
+            const char* script = tak::devEnv("TAK_ROOM_SCRIPT");
+            const std::string all = script ? script : "";
+            for (size_t at = 0; at < all.size();) {
+                const size_t end = std::min(all.find(';', at), all.size());
+                const std::string item = all.substr(at, end - at);
+                at = end + 1;
+                if (item.empty()) continue;
+                const size_t colon = item.find(':');
+                roomScript_.push_back({item, item.substr(0, colon),
+                                       colon == std::string::npos ? std::string() : item.substr(colon + 1)});
+            }
+        }
+        if (roomScriptAt_ >= roomScript_.size()) return true;
+        const RoomScriptStep step = roomScript_[roomScriptAt_];
+        const S st = mp_->state();
+        const uint64_t now = SDL_GetTicks64();
+        const auto fail = [&](const std::string& why) {
+            netError_ = "room script: " + step.text + ": " + why;
+            std::fprintf(stderr, "%s\n", netError_.c_str());
+            roomScriptAt_ = roomScript_.size();
+            quitRequested_ = true;   // an interactive client ends too
+            return false;
+        };
+        // create acts in the browser; every other step in the room, once this mode has seated
+        // its player. The step's limit runs from when it can act.
+        if (!roomScriptActed_) {
+            const bool due = step.verb == "create" ? st == S::Lobby
+                                                   : st == S::InRoom && (autoMode == 0 || mpReadied_);
+            if (!due) { roomScriptDueMs_ = 0; return true; }
+        }
+        if (!roomScriptDueMs_) roomScriptDueMs_ = now;
+        // Act once through the member the button calls; a room action that did nothing says why.
+        const auto act = [&](auto&& action) {
+            roomActError_.clear();
+            action();
+            roomScriptActed_ = true;
+            return roomActError_;
+        };
+        const auto slotArg = [&](int& slot) {
+            slot = std::atoi(step.arg.c_str());
+            return !step.arg.empty() && slot >= 0 && slot < tak::net::kMaxSlots;
+        };
+        const auto& room = mp_->room();
+        std::string refused;   // the action did nothing: why
+        bool done = false;
+        int slot = -1;
+        if (step.verb == "create") {
+            if (!roomScriptActed_) refused = act([&] { createRoomFromPrefs(); });
+            done = st == S::InRoom;
+        } else if (step.verb == "ai") {
+            if (!slotArg(slot)) return fail("no slot '" + step.arg + "'");
+            if (!roomScriptActed_) refused = act([&] { roomSetSlotType(slot, 2); });
+            done = room.slots[slot].type == 2;
+        } else if (step.verb == "map" || step.verb == "map!") {
+            // map!: the change must be refused (here, or by the server).
+            const bool wantRefusal = step.verb == "map!";
+            if (!roomScriptActed_) {
+                refused = act([&] {
+                    openMapPicker();
+                    if (roomActError_.empty()) pickerSelect(step.arg);
+                    if (roomActError_.empty()) pickerPick();
+                });
+                roomScriptSerial_ = picker_.pickSerial;   // 0: PICK had nothing to send
+                if (wantRefusal && !refused.empty() && refused != kNotImplemented) {
+                    std::fprintf(stderr, "room script: %s: refused here: %s\n", step.text.c_str(), refused.c_str());
+                    refused.clear();
+                    done = true;
+                }
+            }
+            // Then the server's answer to that PICK, and the new map verified.
+            const auto& answer = mp_->roomMapAnswer();
+            using A = tak::net::MpClient::RoomMapAnswer;
+            if (!done && refused.empty() && !roomScriptSerial_) {
+                if (wantRefusal) return fail("nothing was sent to refuse");
+                done = room.mapsReady;
+            } else if (!done && refused.empty() && answer.serial == roomScriptSerial_) {
+                if (answer.kind == A::TimedOut) return fail("the server did not answer");
+                if (answer.kind == A::Refused && !wantRefusal) return fail("refused: " + answer.why);
+                if (answer.kind == A::Accepted && wantRefusal) return fail("the server accepted it");
+                done = answer.kind == A::Refused || room.mapsReady;
+            }
+        } else if (step.verb == "opt") {
+            const size_t eq = step.arg.find('=');
+            const std::string name = step.arg.substr(0, eq);
+            const auto rule = std::find_if(std::begin(kRoomScriptRules), std::end(kRoomScriptRules),
+                                           [&](const RoomScriptRule& r) { return name == r.name; });
+            if (eq == std::string::npos || rule == std::end(kRoomScriptRules)) return fail("no rule '" + name + "'");
+            const int value = std::atoi(step.arg.c_str() + eq + 1);
+            if (!roomScriptActed_) refused = act([&] { roomRuleCommit(rule->field, value); });
+            done = roomRuleValue(room.opts, rule->field) == value;
+        } else if (step.verb == "scenario") {
+            const bool on = std::atoi(step.arg.c_str()) != 0;
+            // A click toggles the cell, so only a room in the other state is clicked. One that
+            // would remove or move players arms the cell first: the second click confirms.
+            if (!roomScriptActed_ && (room.opts.mapScenario != 0) != on)
+                refused = act([&] {
+                    roomScenarioClick();
+                    if (roomActError_.empty() && scenarioArmUntil_ > SDL_GetTicks64()) roomScenarioClick();
+                });
+            done = (room.opts.mapScenario != 0) == on;
+        } else if (step.verb == "watch") {
+            if (!roomScriptActed_) refused = act([&] { roomWatch(); });
+            done = mp_->isSpectator();
+        } else if (step.verb == "sit") {
+            if (!slotArg(slot)) return fail("no slot '" + step.arg + "'");
+            if (!roomScriptActed_) refused = act([&] { roomSitHere(slot); });
+            done = room.mySlot == slot;
+        } else if (step.verb == "name") {
+            if (!roomScriptActed_)
+                refused = act([&] { roomNameDraft_ = step.arg; roomNameEdited_ = true; roomFieldCommit(9); });
+            done = room.name == step.arg;
+        } else if (step.verb == "pass") {
+            if (!roomScriptActed_)
+                refused = act([&] { roomPassDraft_ = step.arg; roomPassEdited_ = true; roomFieldCommit(10); });
+            done = room.passworded == !step.arg.empty();
+        } else if (step.verb == "wait") {
+            // wait:humans=N (seated human players), wait:ready=N (of them, READY).
+            const size_t eq = step.arg.find('=');
+            const std::string what = step.arg.substr(0, eq);
+            if (eq == std::string::npos || (what != "humans" && what != "ready")) return fail("no count '" + what + "'");
+            int count = 0;
+            for (const auto& s : room.slots) count += s.type == 1 && (what == "humans" || s.ready);
+            roomScriptActed_ = true;
+            done = count >= std::atoi(step.arg.c_str() + eq + 1);
+        } else if (step.verb == "start") {
+            // START once it is enabled, as a player would press it.
+            if (!roomScriptActed_ && roomCanStart(roomFrame(int(kLobbyW)))) {
+                refused = act([&] { roomStart(); });
+                mpStarted_ = true;   // a refusal ends the run (above), as for the auto-start modes
+            }
+            if (roomScriptActed_ && !mp_->startError().empty()) return fail("start refused: " + mp_->startError());
+            done = roomScriptActed_ && (st == S::Starting || st == S::InGame);
+        } else if (step.verb == "shot") {
+            if (!roomScriptActed_) { roomShotPath_ = step.arg; roomScriptActed_ = true; }
+            std::error_code ec;
+            done = roomShotPath_.empty() && std::filesystem::exists(tak::u8path(step.arg), ec);
+        } else {
+            return fail("unknown step");
+        }
+        if (!refused.empty()) return fail(refused);
+        if (done) {
+            std::fprintf(stderr, "room script: %s: done\n", step.text.c_str());
+            ++roomScriptAt_;
+            roomScriptActed_ = false; roomScriptSerial_ = 0; roomScriptDueMs_ = 0;
+            if (roomScriptAt_ == roomScript_.size()) std::fprintf(stderr, "room script: finished\n");
+            return true;
+        }
+        const uint64_t limit = step.verb == "wait" ? 30000 : 10000;
+        if (now - roomScriptDueMs_ > limit) return fail("not done after " + std::to_string(limit / 1000) + " s");
+        return true;
+    }
+
+    // TAK_ROOM_SCRIPT shot: the whole window as the room drew it, out of the lobby's
+    // viewport and scale for the read (put back for anything drawn after).
+    void GameView::roomShotCapture() {
+        SDL_RenderSetViewport(ren_, nullptr);
+        SDL_RenderSetScale(ren_, 1.0f, 1.0f);
+        int w = 0, h = 0;
+        SDL_GetRendererOutputSize(ren_, &w, &h);
+        std::vector<uint8_t> px(size_t(std::max(w, 0)) * size_t(std::max(h, 0)) * 4);
+        const SDL_Rect area{0, 0, w, h};
+        if (w > 0 && h > 0 && SDL_RenderReadPixels(ren_, &area, SDL_PIXELFORMAT_RGBA32, px.data(), w * 4) == 0) {
+            tak::png::write(roomShotPath_, w, h, px);
+            std::fprintf(stderr, "room script: wrote %s\n", roomShotPath_.c_str());
+        }
+        roomShotPath_.clear();
+        const SDL_Rect vp{int(lobbyOffX_), int(lobbyOffY_), int(kLobbyW), int(kLobbyH)};
+        SDL_RenderSetScale(ren_, lobbyScale_, lobbyScale_);
+        SDL_RenderSetViewport(ren_, &vp);
     }
 
     const std::vector<uint8_t>* GameView::kingdomPalette(const std::string& kingdom) {

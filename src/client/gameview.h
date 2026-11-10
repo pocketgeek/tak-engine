@@ -105,6 +105,7 @@
 #include "client/voice.h"
 #include "client/voiceptt.h"
 #include "client/settings.h"
+#include "client/roomchanges.h"   // RoomField: what a room change lights
 #include "client/artscale.h"
 #include "client/dev.h"
 #include "client/appquit.h"
@@ -289,7 +290,14 @@ public:
     // no map data, so a creating client tells it how many slots the map supports.
     // A room that plays its map's scenario (`mapScenario`: the room's MAP SCENARIO
     // option; a Test Map copy always does) also opens every seat the scenario needs.
-    uint8_t mpCapacity(bool mapScenario = false) const;
+    uint8_t mpCapacity(bool mapScenario = false) const;   // capacityFor(mpMapId_, mapPath_, ...)
+    // A generated map's player count, else seatsFor(start positions, the map's scenario facts,
+    // mapScenario) read from the local install or a MapCache copy. For picker candidates and
+    // the harness; the room's own map uses its verified package instead.
+    uint8_t capacityFor(const std::string& mapId, const std::string& path, bool mapScenario) const;
+    // The seats a map gives a room: its start positions, widened to every seat its scenario
+    // needs when it plays one (scenario.active(on): a Test Map copy always does). 2..8.
+    static uint8_t seatsFor(int starts, const tak::sim::ScenarioInfo& s, bool scenarioOn);
     // MAP SCENARIO facts of an installed map (sim::inspectScenario with this client's
     // registry). A MapCache entry's companions live in its archive, not the plain VFS.
     tak::sim::ScenarioInfo mapScenarioInfo(const std::string& path) const;
@@ -2704,7 +2712,9 @@ private:
     bool spSpectate_ = false;      // SP: watch the AIs (host takes no slot)
     bool specAutoSeated_ = false;  // SP spectate: one-shot -- fill every open slot with a random-race AI
     bool externalLobbyMusic_ = false;   // front-end owns the lobby BGM -> suppress ours
-    int lbField_ = 0;   // active text field: 1=createName 2=createPass 3=joinPass 4=chat
+    // active text field: 1=createName 2=createPass 3=joinPass 4=chat 5=random map name 6=map
+    // filter 7/8=mod filters 9=room name 10=room password (lbFieldBuf)
+    int lbField_ = 0;
     float lobbyScale_ = 2.0f;               // lobby fit scale (set in render)
     float lobbyOffX_ = 0, lobbyOffY_ = 0;   // lobby centre offset (logical units; set in render)
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
@@ -2748,6 +2758,7 @@ private:
         std::string name, path;
         std::string title;          // what to SHOW: mapTitleFor(name, missionname)
         int players = 0;            // numplayers (else the StartPos count)
+        int starts = 0;             // StartPos count (sim::parseStartPositions): the seats it gives (seatsFor)
         int sizeW = 0, sizeH = 0;   // "size = W x H" (0 if the .ota omits it)
         tak::sim::ScenarioInfo scenario;   // read only when the .ota declares one (or is a Test Map copy)
         int area() const { return sizeW * sizeH; }
@@ -4259,7 +4270,152 @@ private:
 
     void drawCreate(int winW, int winH);
 
+    // ==================== the game room ====================
+    // drawRoom (gameview_room.cpp) draws the left column -- the name, the slot table, the
+    // controls and the rules -- and drawRoomColumn (gameview_lobby.cpp) the right one: the
+    // map, its preview, the mods line and the chat. roomStep runs the room's per-frame
+    // reactions, while MODS is open too. The CHANGE MAP panel is gameview_mappicker.cpp.
+    // A room action that does nothing says why in roomActError_ (a TAK_ROOM_SCRIPT verb then
+    // fails at once); one that is not built yet says kNotImplemented.
     void drawRoom(int winW, int winH);
+    using RoomField = tak::RoomField;
+    static constexpr const char* kNotImplemented = "not implemented";
+    std::string roomActError_;
+    // One frame of the room: its layout and the facts the slot table, the rules and START read.
+    struct RoomFrame {
+        float x = 40, y = 54;               // the slot table's left edge and top (multiplayer: under the name)
+        float rowW = 0;                     // its width, up to kRoomEdge short of the right column
+        float colX = 0, colW = kRoomColW;   // the right column
+        bool host = false;
+        bool roomMap = false;               // not a campaign mission: the room shows its map
+        bool fileMap = false;               // ... and it is an installed or received one (not generated)
+        // MAP SCENARIO (259): the room plays its map's scenario (the option is on, or a Test Map
+        // copy) as the verified package says it can, and the seats that scenario needs; the
+        // room's own MAP SCENARIO line reads ON from the option alone, before verification.
+        bool scenarioOn = false, scenarioShown = false;
+        uint8_t needSeats = 0;
+        bool needHuman = false;             // a multiplayer room with fewer than two human players
+    };
+    RoomFrame roomFrame(int winW);   // refreshes scenarioLobby_ for the room's package
+    void drawRoomSlots(const RoomFrame& f, float& y);   // the slot table from y; y ends under it
+    void drawRoomRules(const RoomFrame& f, float y);    // the rules under the controls, then MAP SCENARIO's details
+    void drawRoomColumn(const RoomFrame& f, int winH);
+    bool roomCanStart(const RoomFrame& f) const;        // START is enabled
+    void roomStart();                                   // START
+    void roomSetSlotType(int slot, uint8_t type);       // the host's slot type cell: OPEN, AI or CLOSED
+    // The room's per-frame reactions (drawLobby, while InRoom, before the room or MODS
+    // draws): the single-player host's own READY, the spectate auto-seat, the CHANGE MAP
+    // panel's answer (pickerStep).
+    void roomStep();
+    // The browser's CREATE, and a door that opens a room straight away: a room from the room
+    // kind's remembered set.
+    void createRoomFromPrefs();
+
+    // ---- room editing (gameview_room.cpp): the host, in its room's lobby ----
+    // Which remembered set (Settings::spRoom / mpRoom) the host's changes update, and whether
+    // this session writes them at all (not a --play-map run, a harness or a guest).
+    enum class RoomKind : uint8_t { None, SinglePlayer, Multiplayer };
+    RoomKind roomKind_ = RoomKind::None;
+    bool rememberRoom_ = false;
+    std::string roomForcedMap_;   // --play-map: the room's map, fixed (no CHANGE MAP; LEAVE reads QUIT)
+    // Write one thing back to the room kind's set, when this host may: an option cell's
+    // chosen value (RoomField::Map: the accepted map; Mods: the game packs).
+    void rememberRoomPrefs(RoomField field);
+    void rememberRoomSort();   // the CHANGE MAP panel's sort
+    // The name and password fields (lobby fields 9 and 10, a multiplayer host): the drafts,
+    // and whether each was typed in since its last commit.
+    std::string roomNameDraft_, roomPassDraft_;
+    bool roomNameEdited_ = false, roomPassEdited_ = false;
+    void roomFieldCommit(int field);   // send field 9's or 10's edit (setRoomInfo); a blank name reverts
+    void roomFieldBlur();              // a mouse-down or focus loss: commit an edited field
+    // lobbyInput's room keys (Enter and Esc in fields 9/10, the MAP SCENARIO confirm): true
+    // when it used the event.
+    bool roomInput(const SDL_Event& e);
+    // The options block: one cell per rule, clickable for the host, plain text for guests.
+    struct RoomRule {
+        RoomField field;
+        std::string label;            // "CRUSADES: ON"
+        bool live = false;            // this viewer may click it now
+        bool dim = false;             // a rule forces it (WATCH, MAP SCENARIO)
+        std::function<void(int)> cycle;
+    };
+    std::vector<RoomRule> roomRules(const tak::net::RoomView& room, bool host);
+    void drawRoomRules(const std::vector<RoomRule>& rules, float x, float y, float colW, float pitch);
+    // The host's own choices (seeded from the remembered set at create, from room.opts on
+    // becoming host), and what the block shows until the server answers a click.
+    tak::net::GameOptions roomChosen_;
+    bool roomChosenSet_ = false;
+    std::optional<tak::net::GameOptions> roomOptsDraft_;
+    uint64_t roomOptsDraftMs_ = 0;
+    // room.opts with the block's fields from roomChosen_, then WATCH's and MAP SCENARIO's overrides.
+    tak::net::GameOptions roomEffective() const;
+    void roomRuleCommit(RoomField field, int value);   // an options cell's click: that rule's new value
+    // The MAP SCENARIO cell: a click that would remove or move players only arms it
+    // (scenarioArmUntil_; the note says what the next click does).
+    void roomScenarioClick();
+    uint64_t scenarioArmUntil_ = 0;
+    // WATCH (single player): the host leaves its seat and watches the AIs; SIT HERE takes one.
+    void roomWatch();
+    void roomSitHere(int slot);
+    uint64_t watchFillAt_ = 0;   // lobbySeq() at the WATCH click: the AI fill waits for a newer LobbyState
+    bool roomWatching_ = false;  // the host was watching at the last roomStep
+    // The change display: the room as last seen, each line's flash, the note line.
+    tak::net::RoomView roomSeen_;
+    uint64_t roomSeenSeq_ = 0;   // lobbySeq() of roomSeen_ (0: none yet in this room)
+    uint64_t roomFlashUntil_[size_t(RoomField::kCount)] = {};
+    uint64_t roomSeatFlashUntil_[tak::net::kMaxSlots] = {};
+    std::string roomNote_;       // amber, under the controls
+    uint64_t roomNoteUntil_ = 0;
+    std::string roomRefusal_;    // red: a map change or rename refused while the panel was closed
+    uint64_t roomRefusalUntil_ = 0;
+    // A pulsing fill behind `rect` while `field` flashes; drawn before the line it lights.
+    void drawRoomFlash(RoomField field, const SDL_FRect& rect);
+
+    // ---- map picker: the CHANGE MAP panel over the room (gameview_mappicker.cpp) ----
+    struct MapPick { std::string id, path; };   // one tab's candidate
+    struct MapPicker {
+        bool open = false, random = false;     // RANDOM tab
+        MapPick file;                          // EXISTING tab's candidate (empty = none)
+        MapPick gen;                           // RANDOM tab's candidate (encodeMapId(genParams_))
+        bool scenario = false;                 // EXISTING: the MAP SCENARIO choice for file.path
+        std::string scenarioFor;               // the path it belongs to
+        tak::sim::ScenarioInfo scenarioInfo;   // file.path's facts (mapScenarioInfo)
+        std::string message;                   // footer: a refusal or a time-out
+        uint32_t pickSerial = 0;               // the SetRoomMap this panel waits for
+    } picker_;
+    void openMapPicker();                     // CHANGE MAP...
+    void closeMapPicker();                    // CANCEL, Esc, or the room moving on
+    void drawMapPicker(int winW, int winH);   // over the room (drawLobby)
+    // Esc with no field active closes the panel; anything else falls through to lobbyInput's
+    // own handlers, where only the panel's widgets are registered while it is drawn.
+    bool pickerInput(const SDL_Event& e);
+    void pickerSelect(const std::string& id);   // make `id` its tab's candidate (a list row, the generator)
+    void pickerPick();                          // PICK
+    void pickerStep();                          // roomStep: the PICK's answer, the panel's auto-close
+    bool pickerScanPending_ = false;   // READING MAPS... is on screen; buildMapList runs next frame
+    bool lobbyModal_ = false;          // the panel (or the LAN leave prompt) is over the room: nothing under it lights up
+    SDL_Point roomPreviewSize_{0, 0};  // the room preview's mapPreviewW_/H_, while the panel owns those
+    // The map list, generator and preview the create screen and the panel share.
+    void drawMapListBox(const SDL_FRect& area, MapPick& sel);
+    void drawGeneratorControls(float x, float y);
+    void drawPickPreview(const SDL_FRect& box, const std::string& id, const std::string& path, bool withScenario);
+
+    // ---- TAK_ROOM_SCRIPT (debug builds; gameview_net.cpp) ----
+    // A ';'-separated list of room actions, run by mpAutoStep in any autoMode after the
+    // mode's own seating step: create (in the browser), ai:<slot>, map:<id> (map!:<id> expects
+    // a refusal), opt:<rule>=<value>, scenario:<0|1>, watch, sit:<slot>, name:<text>,
+    // pass:<text>, wait:humans=<n>, wait:ready=<n>, start, shot:<png>. Each calls the member
+    // its button calls and ends on its own test, within 10 s (a wait 30 s) or the run fails.
+    struct RoomScriptStep { std::string text, verb, arg; };
+    std::vector<RoomScriptStep> roomScript_;
+    bool roomScriptRead_ = false;
+    size_t roomScriptAt_ = 0;
+    uint64_t roomScriptDueMs_ = 0;   // when the current step became due: its limit runs from here
+    bool roomScriptActed_ = false;
+    uint32_t roomScriptSerial_ = 0;  // map: the SetRoomMap it waits for
+    bool roomScriptStep(int autoMode);   // false: the script failed (netError_ says why; the client quits)
+    std::string roomShotPath_;   // shot: the PNG the next room frame writes
+    void roomShotCapture();
 
     // The room's map scenario facts, read once per verified package (MAP SCENARIO, 259).
     std::weak_ptr<const tak::net::maps::Package> scenarioLobbyPackage_;

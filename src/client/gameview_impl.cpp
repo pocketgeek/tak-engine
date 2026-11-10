@@ -4221,6 +4221,8 @@
             case 6: return &mapFilter_;
             case 7: return &cosmeticModFilter_;
             case 8: return &gameModFilter_;
+            case 9: return &roomNameDraft_;
+            case 10: return &roomPassDraft_;
             default: return nullptr;
         }
     }
