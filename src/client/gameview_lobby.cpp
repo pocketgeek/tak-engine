@@ -1335,16 +1335,17 @@ float createOptionPx(float maxW) {
             std::vector<std::pair<std::string,SDL_Color>> names;
             for(const auto& n:alwaysCosmeticMods_)names.emplace_back(n,kAlways);
             if(gameOn && host)for(const auto& n:alwaysGame)names.emplace_back(n,kAlways);
-            std::string note;   // the line under: the game mods' status, or what they wait for
+            std::vector<std::string> notes;   // the lines under: what the game mods wait for, their status
             if(gameRoom) {
                 if(settings_)for(const auto& n:settings_->cosmeticModPacks)
                     if(std::find(availableCosmeticMods_.begin(),availableCosmeticMods_.end(),n)!=availableCosmeticMods_.end())
                         names.emplace_back(n,kCosmetic);
-                if(!gameOn)names.emplace_back("GAME OFF (HOST)",kDim);
+                // Game mods off is not a pack name: it leads the line, so no +N hides it.
+                if(!gameOn)names.insert(names.begin(),{"GAME OFF (HOST)",kDim});
                 else if(host)for(const auto& n:mp_->gameModPacks())names.emplace_back(n,kGame);
-                else if(!mp_->modPackage())note="GAME MODS: WAITING FOR THE HOST";
+                else if(!mp_->modPackage())notes.push_back("GAME MODS: WAITING FOR THE HOST");
                 else for(const auto& n:splitNames(mp_->modPackage()->mapPath))names.emplace_back(n,kGame);
-                if(const auto status=mp_->roomModStatus();gameOn && !status.empty())note=status;
+                if(const auto status=mp_->roomModStatus();gameOn && !status.empty())notes.push_back(status);
             }
             constexpr float kPx=1.3f,kBtnW=64;
             const float py=roomMap ? pv.y+pv.h+6 : 87;
@@ -1371,7 +1372,7 @@ float createOptionPx(float maxW) {
             if(gameRoom)lbBtn(colX+colW-kBtnW,py-4,kBtnW,18,"MODS...",true,[this]{modsScreen_=true;lbField_=0;SDL_StopTextInput();},
                               {60,66,86,255},kPx);
             float below=py+20;
-            if(!note.empty()){blockText(tak::uiTextFit(note,1.1f,colW-4),colX+4,below-2,1.1f,{205,190,135,255});below+=12;}
+            for(const auto& note:notes){blockText(tak::uiTextFit(note,1.1f,colW-4),colX+4,below-2,1.1f,{205,190,135,255});below+=12;}
             modBottom=below+2;
         }
         // SP spectate ("watch the AIs"): the instant the host lands in the room, fill
@@ -1722,17 +1723,19 @@ float createOptionPx(float maxW) {
             lbBtn(chx + chw - 62, inputY, 56, 24, "SEND", !chatDraft_.empty(), [this] {
                 mp_->chat(chatDraft_); chatDraft_.clear(); chatScroll_ = 0; });
         }
-        // A generated map's recipe, under the pointer on its preview: a box in the lower
-        // half of the preview, clear of the CLICK band, or hung under it (over the mods
-        // and the chat) when the preview is too short to hold it.
+        // A generated map's recipe, under the pointer on its preview: a box as wide as the
+        // column (a tall map's preview is narrow) in the lower half of the preview, clear
+        // of the CLICK band, or hung under it (over the mods and the chat) when the preview
+        // is too short to hold it -- never past the bottom of the screen.
         if (roomMap && lbHot(pv) && !genPreviewPending_ && mapPreviewTex_) {
-            const auto lines = packItems(genRecipeItems(room.mapId), 1.1f, pv.w - 12);
+            const auto lines = packItems(genRecipeItems(room.mapId), 1.1f, colW - 12);
             if (!lines.empty()) {
                 constexpr float kPitch = 13;
                 const float h = float(lines.size()) * kPitch + 8;
                 const bool inside = pv.h / 2 + 14 + h <= pv.h;
-                const SDL_FRect bx{pv.x, inside ? pv.y + pv.h - h : pv.y + pv.h + 1, pv.w, h};
-                SDL_SetRenderDrawColor(ren_, 12, 14, 20, inside ? 210 : 255); SDL_RenderFillRectF(ren_, &bx);
+                const float by = inside ? pv.y + pv.h - h : std::max(pv.y, std::min(pv.y + pv.h + 1, float(winH) - 4 - h));
+                const SDL_FRect bx{colX, by, colW, h};
+                SDL_SetRenderDrawColor(ren_, 12, 14, 20, inside ? 235 : 255); SDL_RenderFillRectF(ren_, &bx);
                 SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &bx);
                 for (size_t k = 0; k < lines.size(); ++k)
                     blockText(lines[k], bx.x + 6, bx.y + 5 + float(k) * kPitch, 1.1f, {205, 210, 225, 255});
