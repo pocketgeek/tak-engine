@@ -5,16 +5,19 @@ Each run is a menu Benchmark on a scratch profile, ended early with a full run's
 (TAK_BENCH_STOP_TICK, as benchmark_pathfinding does). TAK_BENCH_CLICKS then works the
 pointer on the results screen with real mouse events, and TAK_BENCH_REPORT prints the
 button and the note under it whenever either changes: BENCHSAVE (LIVE or GREYED, and
-the label) and BENCHNOTE (PLAIN or WARNING, and the text as drawn).
+the label, both as the button was drawn) and BENCHNOTE (PLAIN or WARNING, and the text
+as drawn).
 
 A click saves one picture into the profile's `benchmarks` folder (made on first use): a
 JPEG of the window's size, colour at full resolution, complete, with no temporary file
 left beside it. The button then reads SAVED, greyed, and a second click saves nothing.
 A click on the panel beside the button does not leave the screen. In a folder that
 cannot be written the note is a warning, no file appears and the button stays live:
-the same button saves once the folder can be written. Both buttons and the note must
-be inside the window, at the smallest size too. The settings file is named outright
-(SDL_GetPrefPath ignores XDG_* on macOS and Windows); the pictures go beside it.
+the same button saves once the folder can be written. That folder already holds a file
+of every name the save could take, and of its -2: the picture goes in as -3 and none of
+them is written over. Both buttons and the note must be inside the window, at the
+smallest size too. The settings file is named outright (SDL_GetPrefPath ignores XDG_*
+on macOS and Windows); the pictures go beside it.
 
 usage: benchmark_save_test.py <takclient> <retail-install>
 """
@@ -97,6 +100,21 @@ def pictures(home):
     return sorted(os.listdir(folder)) if os.path.isdir(folder) else []
 
 
+def taken(folder, seconds):
+    """A file in `folder` of every name a save in the next `seconds` could take (the
+    client names a picture for the local second it is saved in), and of its -2;
+    {name: its bytes}."""
+    old = {}
+    now = int(time.time())
+    for second in range(now - 2, now + seconds):
+        stamp = time.strftime("benchmark-%Y-%m-%d-%H%M%S", time.localtime(second))
+        for name in (stamp + ".jpg", stamp + "-2.jpg"):
+            old[name] = ("here before the save: " + name).encode()
+            with open(os.path.join(folder, name), "wb") as f:
+                f.write(old[name])
+    return old
+
+
 def jpeg(path, name, size, log):
     """`path` is a whole JPEG of `size`, its three planes all at that size (4:4:4)."""
     with open(path, "rb") as f:
@@ -137,34 +155,47 @@ with tempfile.TemporaryDirectory(prefix="tak-bench-save-") as root:
                                               (note[2].startswith("SAVED: ...") and note[2].endswith(os.sep + files[0]))):
         fail("save: the note must read SAVED: and the picture's path, cut only from its start, got %s" % (note,), log)
 
-    # The smallest window, and a folder that cannot be written: a warning and no file,
-    # until the folder is opened up and the same button is clicked again.
+    # The smallest window, and a folder that cannot be written, where every name the save
+    # could take is a file already: a warning and no new file, until the folder is opened
+    # up and the same button is clicked again. That picture is the -3, and the files that
+    # were there are as they were. (The waits below give up after 240 seconds.)
     size = (640, 480)
-    folder = os.path.join(root, "readonly", "benchmarks")
+    folder = os.path.join(root, "taken", "benchmarks")
     os.makedirs(folder)
+    old = taken(folder, 300)
     os.chmod(folder, 0o555)
     if os.access(folder, os.W_OK):
         print("SKIP: this user writes in a read-only folder; the failed save is not checked")
+        proc, path, home = start(root, "taken", size, "save;save")
     else:
         go = os.path.join(root, "go")
-        proc, path, home = start(root, "readonly", size, "save;until:%s;save;save" % go)
+        proc, path, home = start(root, "taken", size, "save;until:%s;save;save" % go)
         deadline = time.time() + 120
         while "WARNING COULD NOT SAVE: " not in read(path):
             if proc.poll() is not None or time.time() > deadline:
                 proc.kill()
-                fail("readonly: a save into a read-only folder must show COULD NOT SAVE", read(path))
+                fail("taken: a save into a read-only folder must show COULD NOT SAVE", read(path))
             time.sleep(0.05)
         log = read(path)
-        seen = states(log, "readonly", size)
-        if pictures(home) or button(seen) != [("LIVE", "SAVE AS JPG")]:
-            fail("readonly: a failed save must leave no file and a live SAVE AS JPG, got %s and %s" % (pictures(home), seen), log)
+        seen = states(log, "taken", size)
+        new = [f for f in pictures(home) if f not in old]
+        if new or button(seen) != [("LIVE", "SAVE AS JPG")]:
+            fail("taken: a failed save must leave no file and a live SAVE AS JPG, got %s and %s" % (new, seen), log)
         os.chmod(folder, 0o755)
         open(go, "w").close()
-        log = finish(proc, path, "readonly")
-        seen = states(log, "readonly", size)
-        files = pictures(home)
-        if len(files) != 1 or button(seen) != [("LIVE", "SAVE AS JPG"), ("GREYED", "SAVED")] or \
-                seen[-1][:2] != ("NOTE", "PLAIN") or not seen[-1][2].endswith(os.sep + files[0]):
-            fail("readonly: once the folder can be written the same button must save one picture, got %s and %s" % (files, seen), log)
-        jpeg(os.path.join(folder, files[0]), "readonly", size, log)
+    log = finish(proc, path, "taken")
+    seen = states(log, "taken", size)
+    for name, was in sorted(old.items()):
+        with open(os.path.join(folder, name), "rb") as f:
+            if f.read() != was:
+                fail("taken: the save wrote over %s, which was there before it" % name, log)
+    new = [f for f in pictures(home) if f not in old]
+    third = re.fullmatch(r"(benchmark-\d{4}-\d\d-\d\d-\d{6})-3\.jpg", new[0]) if len(new) == 1 else None
+    if not third or third[1] + ".jpg" not in old or third[1] + "-2.jpg" not in old:
+        fail("taken: beside a benchmark-<date>-<time>.jpg and its -2 the save must add that name's -3 and nothing else, got %s"
+             % new, log)
+    if button(seen) != [("LIVE", "SAVE AS JPG"), ("GREYED", "SAVED")] or \
+            seen[-1][:2] != ("NOTE", "PLAIN") or not seen[-1][2].endswith(os.sep + new[0]):
+        fail("taken: once the folder can be written the same button must save one picture, got %s and %s" % (new, seen), log)
+    jpeg(os.path.join(folder, new[0]), "taken", size, log)
 print("PASS: SAVE AS JPG saves the Benchmark results once")

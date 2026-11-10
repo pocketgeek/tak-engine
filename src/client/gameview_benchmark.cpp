@@ -308,9 +308,15 @@
         const SDL_FRect save{px0 + (panelW - 2 * dw - gap) * 0.5f, y, dw, dh};
         const SDL_FRect done{save.x + dw + gap, y, dw, dh};
         benchSaveRect_ = save; benchDoneRect_ = done; benchPanelRect_ = panel;
+#ifndef NDEBUG
+        std::string saveDrawn;   // TAK_BENCH_REPORT: SAVE AS JPG as button() last drew it
+#endif
         // `live` false is the greyed button (Options' colours for one); `hover` false
         // leaves the pointer's highlight off, for the picture.
         auto button = [&](const SDL_FRect& r, const char* label, bool live, bool hover) {
+#ifndef NDEBUG
+            if (&r == &save) saveDrawn = std::string(live ? "LIVE " : "GREYED ") + label;
+#endif
             const bool hot = live && hover && mouseX_ >= r.x && mouseX_ <= r.x + r.w && mouseY_ >= r.y && mouseY_ <= r.y + r.h;
             if (live) SDL_SetRenderDrawColor(ren_, hot ? 90 : 60, hot ? 110 : 66, hot ? 150 : 86, 255);
             else SDL_SetRenderDrawColor(ren_, 34, 38, 46, 255);
@@ -345,7 +351,8 @@
 #ifndef NDEBUG
         // TAK_BENCH_REPORT: the list and the buttons where they were drawn, for
         // benchmark_pathfinding and benchmark_save; SAVE AS JPG and the note under it
-        // again whenever either changes.
+        // again whenever either changes. LIVE or GREYED and the label are what button()
+        // drew this frame (saveDrawn), not a second reading of benchSaved_.
         static bool reported = false;
         if (tak::devFlag("TAK_BENCH_REPORT")) {
             if (!reported) {
@@ -354,8 +361,8 @@
                 std::printf("BENCHDONE %d %d %.1f %.1f %.1f %.1f\n", winW, winH, done.x, done.y, done.w, done.h);
             }
             char at[160];
-            std::snprintf(at, sizeof at, "BENCHSAVE %d %d %.1f %.1f %.1f %.1f %s %s\n", winW, winH, save.x, save.y, save.w,
-                          save.h, benchSaved_ ? "GREYED" : "LIVE", benchSaved_ ? "SAVED" : "SAVE AS JPG");
+            std::snprintf(at, sizeof at, "BENCHSAVE %d %d %.1f %.1f %.1f %.1f %s\n", winW, winH, save.x, save.y, save.w,
+                          save.h, saveDrawn.c_str());
             std::string line = at;
             if (!note.empty()) {
                 const float nw = blockWidth(note, notePx);

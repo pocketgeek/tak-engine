@@ -3229,7 +3229,8 @@ if(TAK_BUILD_CLIENT)
         set_tests_properties(benchmark_pathfinding PROPERTIES TIMEOUT 300)
         # The Benchmark results' SAVE AS JPG, clicked where it is drawn: one JPEG of the
         # window's size in the profile's benchmarks folder and a greyed SAVED button; a
-        # folder that cannot be written says so, leaves no file and keeps the button live.
+        # folder that cannot be written says so, leaves no file and keeps the button live;
+        # a name that is taken, and its -2, are left as they were (the picture is the -3).
         add_test(NAME benchmark_save COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tools/benchmark_save_test.py" "$<TARGET_FILE:takclient>" "${TAK_TEST_DATA}")
         set_tests_properties(benchmark_save PROPERTIES TIMEOUT 300)

@@ -3224,10 +3224,11 @@ the number it came to), so runs that differ only in that can be told apart.
 whole window as shown, without the pointer. It goes in a `benchmarks` folder in
 your per-user folder (see [Where files are kept](#where-files-are-kept)), named
 for the date and time, like `benchmark-2026-11-10-143059.jpg`, and a line under
-the buttons shows the full path. A results screen is saved once: the button then
+the buttons shows where it went (the start of a long path is cut, so the file's
+name stays readable). A results screen is saved once: the button then
 reads **Saved** and is greyed until you leave the screen. If the picture could
 not be saved, the line says why and the button stays ready to try again.
-**Done** or **Esc** returns to the menu.
+**Done**, **Esc** or a click outside the panel returns to the menu.
 
 The Benchmark always plays the original game with **no mods**: it leaves out
 every cosmetic and game mod pack, ticked or in `always_enabled`, so results
