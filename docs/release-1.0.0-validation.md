@@ -94,9 +94,12 @@ On `368bb3a7`, built on each host:
   FFmpeg, no password store over SSH). `cpu_topology_test`: 8 performance and 12 efficiency
   cores, pinning works.
 - **macOS** (MacBook Neo, Apple Clang): Debug `-O2` quick suite 617 / 618. The failure,
-  `streaming_rtmps`, came with macOS 27.2.1, which installed itself during the run: the
-  RTMPS upload stalls with a TLS error, and a test binary built from earlier code on
-  9 November fails the same way on that machine now (see Known limits).
+  `streaming_rtmps` (the RTMPS upload stalled with TLS error -9806 on macOS 27.2.1, which
+  installed itself during the run), came from that machine's stale local FFmpeg, built
+  with Apple's SecureTransport before the macOS build moved to OpenSSL; -9806 is a
+  SecureTransport code. The shipped 1.0.0 app carries OpenSSL 3.5.8. With FFmpeg rebuilt
+  by the current `tools/build-ffmpeg-bink.sh`, `streaming_rtmps` passes three times out of
+  three on macOS 27.2.1.
   `cpu_topology_test`: 2 performance and 4 efficiency cores, pinning not available.
 - **Gates** (Retail and Legion, 60 s and 300 s): both hosts give exactly the Linux hashes.
 
@@ -143,10 +146,6 @@ owner asked; `gh release list` lists only 1.0.0. Their tags are kept: `git ls-re
 
 ## Known limits
 
-- **RTMPS streaming on macOS 27.** Streaming to YouTube's secure ingest stalls on
-  macOS 27.2.1 (the TLS connection drops after a few frames). It is not a 1.0.0 change:
-  earlier builds fail the same way on that system. macOS 14 and 15 are unaffected as far
-  as CI shows.
 - **Legion baseline drift.** The seven fixtures named above carry 133 keys that moved with
   0.9.24's deep firing rings and were never retaken in `tools/scenarios/baseline.json`;
   the ctest Legion checks pass.
