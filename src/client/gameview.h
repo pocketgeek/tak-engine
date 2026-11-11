@@ -277,7 +277,7 @@ public:
     // before this view's World ticks: a change in Options is for the next game opened.
     // localServer: the session runs on a local server this client started, which was
     // given the other half (sim::SimPool::sessionThreads); any other session's
-    // simulation gets them all. pin: PIN THREADS TO CORES (Settings::simPin) as this
+    // simulation gets them all. pin: PIN SIMULATION THREADS (Settings::simPin) as this
     // launch applies it: each of the simulation's threads takes its CPU of the hand-out
     // (sim::SimPool::handOut; the local server was given the others), the sim worker
     // thread the first; a thread without one is not pinned, and neither is the main

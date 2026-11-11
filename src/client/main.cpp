@@ -1457,11 +1457,12 @@ int main(int argc, char** argv) {
         lobbyLoading->step(menuMultiplayer ? "Connecting..." : "Starting...",5);
     }
 
-    // PIN THREADS TO CORES (Options > GAME), for this session and its local server. The
-    // headless debug harness pins nothing unless TAK_SIM_PIN=1 (a suite runs many of them
-    // at once, and they would share the same cores); TAK_SIM_PIN=0 stops a debug build
-    // pinning at all, which is how ctest runs every test.
-    const bool simPin = settings.simPin && tak::devFlag("TAK_SIM_PIN", mpHeadless == 0);
+    // PIN SIMULATION THREADS (Options > GAME, OFF by default), for this session and its
+    // local server: the setting decides, in every kind of session. TAK_SIM_PIN=0 stops a
+    // debug build pinning whatever the setting says, which is how ctest runs every test
+    // (a suite runs many clients at once, and they would share the same cores); no
+    // variable turns pinning on.
+    const bool simPin = settings.simPin && tak::devFlag("TAK_SIM_PIN", true);
     std::string serverBin;
     if (mode == "game" && serverHost.empty() && !mpHeadless && !localHarness) {
         // Single-player: auto-launch a private local server and play a 1-v-AI game

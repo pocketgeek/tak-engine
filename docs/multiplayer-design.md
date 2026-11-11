@@ -882,7 +882,8 @@ CPUs of the list in turn, its worker thread the first and its pool's workers the
 rest, re-pinned the same way, between ticks, whenever the turn or the share
 changes; a thread past the end of the list is not pinned. A client that starts a
 local server passes it the CPUs of its own hand-out that it did not take
-(`SimPool::handOut`). A slow
+(`SimPool::handOut`) when the player's **Pin simulation threads** is on, and
+`none` while it is off, the default. A slow
 tick no longer holds up the network loop or another
 room's ticks, although games still compete for CPU and memory bandwidth. Map
 startup and replay file writes remain synchronous work on the main thread.

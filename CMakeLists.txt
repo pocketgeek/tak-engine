@@ -4221,9 +4221,11 @@ function(tak_isolate_test_profiles)
       continue()
     endif()
     set(tak_profile "${TAK_TEST_PROFILES}/${tak_test}")
-    # TAK_SIM_PIN=0: a debug client pins no simulation thread (PIN THREADS TO CORES is ON by
-    # default): the clients of a parallel run would all pin to the same first cores. A
-    # test of the pinning sets it to 1 itself.
+    # TAK_SIM_PIN=0: a debug client pins no simulation thread, whatever its settings file
+    # says (PIN SIMULATION THREADS is OFF by default, but a profile the isolation does
+    # not reach may have it ON): the clients of a parallel run would all pin to the same
+    # first cores. A test of the pinning turns the setting ON in its own settings file
+    # and sets this to 1 itself.
     set(tak_defaults "XDG_DATA_HOME=${tak_profile}/data" "XDG_CONFIG_HOME=${tak_profile}/config"
                      "XDG_CACHE_HOME=${TAK_TEST_PROFILES}/cache" "TAK_SIM_PIN=0")
     if(UNIX AND NOT APPLE)

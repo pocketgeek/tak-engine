@@ -167,13 +167,14 @@ struct Settings {
     // uses them all (sim::SimPool::sessionThreads). Scheduling only: it never changes a
     // state hash or a replay. Latched when a game session opens. Persisted as simThreads.
     int   simThreads = 0;
-    // PIN THREADS TO CORES (Options > GAME): each simulation thread is pinned to a CPU
-    // of its own, performance cores first, then efficiency cores, then hyperthreads,
-    // dealt alternately to the game and its local server (sim::SimPool::handOut;
-    // takserver --sim-cpus); threads beyond the computer's are not pinned. Off: the
-    // system places every thread. macOS pins nothing either way (the row is greyed and
-    // this is kept). Scheduling only; latched with simThreads. Persisted as simPin.
-    bool  simPin = true;
+    // PIN SIMULATION THREADS (Options > GAME), OFF by default: the system places every
+    // thread. On: each simulation thread is pinned to a CPU of its own, performance
+    // cores first, then efficiency cores, then hyperthreads, dealt alternately to the
+    // game and its local server (sim::SimPool::handOut; takserver --sim-cpus); threads
+    // beyond the computer's are not pinned. macOS pins nothing either way (the row is
+    // greyed and this is kept). Scheduling only; latched with simThreads. Persisted as
+    // simPin.
+    bool  simPin = false;
 
     // ---- misc ----
     std::string playerName;        // default name for new local / unauthenticated multiplayer games

@@ -519,10 +519,10 @@ void OptionsScreen::build(int channels) {
     // threads than the computer has. A saved count above the top shows and runs as the
     // top. The lines under it say what the computer has and what the choice comes to: a
     // game with its own local server gives half to each, any other game uses it all
-    // (sim::SimPool::sessionThreads). PIN THREADS TO CORES pins each of those threads to a
-    // CPU of its own (sim::SimPool::handOut); greyed, and read as OFF, where the system
-    // pins no thread (macOS). Neither changes a game's outcome; a session latches both as
-    // it opens (GameView, and the local server it starts).
+    // (sim::SimPool::sessionThreads). PIN SIMULATION THREADS, OFF by default, pins each of
+    // those threads to a CPU of its own (sim::SimPool::handOut); greyed, and read as OFF,
+    // where the system pins no thread (macOS). Neither changes a game's outcome; a session
+    // latches both as it opens (GameView, and the local server it starts).
     section("PERFORMANCE");
     {
         const sim::CpuTopology cpus = sim::detectCpus();
@@ -565,7 +565,7 @@ void OptionsScreen::build(int channels) {
                     std::to_string(sim::SimPool::sessionThreads(s_.simThreads, cpus, false).game) + ")."};
         }});
         const bool canPin = cpus.canPin;
-        toggle("PIN THREADS TO CORES", [this, canPin] { return s_.simPin && canPin ? 1.0f : 0.0f; },
+        toggle("PIN SIMULATION THREADS", [this, canPin] { return s_.simPin && canPin ? 1.0f : 0.0f; },
                [this](float v) { s_.simPin = v > 0.5f; });
         ctls_.back().enabled = [canPin] { return canPin; };
         ctls_.back().help = [canPin] {
@@ -574,7 +574,7 @@ void OptionsScreen::build(int channels) {
                 "KEEPS EACH SIMULATION THREAD ON A CPU CORE OF ITS OWN. OFF LETS THE SYSTEM MOVE THEM.",
                 "IT NEVER CHANGES A GAME'S OUTCOME. APPLIES FROM THE NEXT GAME YOU OPEN."};
         };
-        ctls_.push_back({Control::Info, "PIN THREADS TO CORES INFO", 0, 0, {}, {}, {}, {}, [this, canPin, threads, split] {
+        ctls_.push_back({Control::Info, "PIN SIMULATION THREADS INFO", 0, 0, {}, {}, {}, {}, [this, canPin, threads, split] {
             if (!canPin) return std::vector<std::string>{"MACOS DOES NOT LET A GAME PIN THREADS, SO THE SYSTEM PLACES THEM."};
             if (!s_.simPin) return std::vector<std::string>{"THREADS ARE NOT PINNED: THE SYSTEM PLACES THEM."};
             return std::vector<std::string>{

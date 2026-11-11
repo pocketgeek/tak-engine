@@ -15,9 +15,10 @@
 //     reaches (red above the computer's threads), with lines under it that say what the
 //     computer has and what the choice comes to; saved when let go, and the GAME page's
 //     DEFAULTS is live only while it is off AUTO;
-//   - PIN THREADS TO CORES under it is ON by default and saved at once; the line under it
-//     follows it, OFF hands no CPU to any thread, DEFAULTS turns it back ON, and where the
-//     system cannot pin (macOS) the row is greyed, reads OFF and keeps the stored choice;
+//   - PIN SIMULATION THREADS under it is OFF by default, which hands no CPU to any thread;
+//     a click turns it ON, saved at once, the line under it follows it, DEFAULTS turns it
+//     back OFF, and where the system cannot pin (macOS) the row is greyed, reads OFF and
+//     keeps the stored choice;
 //   - the Controls hint line has a band of its own: at every window size it lies below the
 //     rows' viewport (never over a row, scrolled or not) and above the footer buttons.
 //     TAK_LAYOUT_SHOT_DIR=<dir> also writes each case as a BMP, and the GAME page with
@@ -244,43 +245,43 @@ static void shoot(SDL_Renderer* ren, OptionsScreen& o, const std::string& path) 
     }
 }
 
-// PIN THREADS TO CORES, on the GAME page `o` at its defaults: ON, under the slider's
-// lines; a click turns it OFF and saves at once, the line under it follows, OFF hands no
-// CPU to any thread (sim::SimPool::handOut), and DEFAULTS turns it back ON.
+// PIN SIMULATION THREADS, on the GAME page `o` at its defaults: OFF, under the slider's
+// lines, and OFF hands no CPU to any thread (sim::SimPool::handOut); a click turns it ON
+// and saves at once, the line under it follows, and DEFAULTS turns it back OFF.
 static void testPinToggle(OptionsScreen& o, Settings& s, int& saves, const sim::CpuTopology& topology) {
-    const SDL_FRect* r = bring(o, "PIN THREADS TO CORES");
+    const SDL_FRect* r = bring(o, "PIN SIMULATION THREADS");
     const SDL_FRect* info = o.rowRect("SIMULATION THREADS INFO");
-    const SDL_FRect* line = o.rowRect("PIN THREADS TO CORES INFO");
-    if (!r || !info || !line) { check(false, "the PIN THREADS TO CORES row and its line are there"); return; }
+    const SDL_FRect* line = o.rowRect("PIN SIMULATION THREADS INFO");
+    if (!r || !info || !line) { check(false, "the PIN SIMULATION THREADS row and its line are there"); return; }
     check(r->y >= info->y + info->h && line->y >= r->y + r->h, "the toggle is under the slider's lines, its own line under it");
     if (!topology.canPin) return;   // macOS: greyed (the debug-build case below)
     const int before = saves;
-    check(s.simPin && o.rowEnabled("PIN THREADS TO CORES") && o.rowOn("PIN THREADS TO CORES"), "it is ON by default");
-    const std::string pinned = joined(o.rowLines("PIN THREADS TO CORES INFO"));
+    check(!s.simPin && o.rowEnabled("PIN SIMULATION THREADS") && !o.rowOn("PIN SIMULATION THREADS"), "it is OFF by default");
+    check(joined(o.rowLines("PIN SIMULATION THREADS INFO")).find("THREADS ARE NOT PINNED: THE SYSTEM PLACES THEM.") != std::string::npos,
+          "OFF: the line says threads are not pinned");
+    check(joined(o.rowHelp("PIN SIMULATION THREADS")).find("APPLIES FROM THE NEXT GAME YOU OPEN.") != std::string::npos,
+          "its help says it applies from the next game opened");
+    const auto session = sim::SimPool::sessionThreads(s.simThreads, topology, true);
+    const auto off = sim::SimPool::handOut(topology.order, session, true, s.simPin);
+    check(off.game.empty() && off.server.empty(), "OFF reaches the hand-out as nothing pinned");
+    click(o, *r);
+    check(s.simPin && o.rowOn("PIN SIMULATION THREADS") && saves == before + 1 && loadSettings().simPin, "a click turns it ON, saved at once");
+    const std::string pinned = joined(o.rowLines("PIN SIMULATION THREADS INFO"));
     check(pinned.find("EACH THREAD IS PINNED TO ITS OWN CORE: ") != std::string::npos &&
           pinned.find(topology.eff ? "PERFORMANCE CORES FIRST, THEN EFFICIENCY CORES, THEN HYPERTHREADS." : "CORES FIRST, THEN HYPERTHREADS.") !=
               std::string::npos &&
           pinned.find("THREADS BEYOND THE COMPUTER'S " + std::to_string(topology.threads()) + " ARE NOT PINNED.") != std::string::npos,
           "ON: the line says each thread is pinned, in which order, and that threads beyond the computer's are not");
     bool fits = true;
-    for (const std::string& l : o.rowLines("PIN THREADS TO CORES INFO")) fits = fits && uiTextWidth(l, 1.3f) <= line->w;
+    for (const std::string& l : o.rowLines("PIN SIMULATION THREADS INFO")) fits = fits && uiTextWidth(l, 1.3f) <= line->w;
     check(fits, "its line fits the row");
-    check(joined(o.rowHelp("PIN THREADS TO CORES")).find("APPLIES FROM THE NEXT GAME YOU OPEN.") != std::string::npos,
-          "its help says it applies from the next game opened");
-    const auto session = sim::SimPool::sessionThreads(s.simThreads, topology, true);
     check(!sim::SimPool::handOut(topology.order, session, true, s.simPin).game.empty(), "ON hands the game its CPUs");
-    click(o, *r);
-    check(!s.simPin && !o.rowOn("PIN THREADS TO CORES") && saves == before + 1 && !loadSettings().simPin, "a click turns it OFF, saved at once");
-    check(joined(o.rowLines("PIN THREADS TO CORES INFO")).find("THREADS ARE NOT PINNED: THE SYSTEM PLACES THEM.") != std::string::npos,
-          "OFF: the line says threads are not pinned");
-    const auto off = sim::SimPool::handOut(topology.order, session, true, s.simPin);
-    check(off.game.empty() && off.server.empty(), "OFF reaches the hand-out as nothing pinned");
     check(o.rowBand("SIMULATION THREADS") == 0, "the slider keeps its colours");
     click(o, o.defaultsRect());
-    check(o.defaultsYesRect().w > 0, "OFF, DEFAULTS is live");
+    check(o.defaultsYesRect().w > 0, "ON, DEFAULTS is live");
     click(o, o.defaultsYesRect());
-    check(s.simPin && s.simThreads == 0 && saves == before + 2 && loadSettings().simPin && o.rowOn("PIN THREADS TO CORES"),
-          "DEFAULTS turns it back ON");
+    check(!s.simPin && s.simThreads == 0 && saves == before + 2 && !loadSettings().simPin && !o.rowOn("PIN SIMULATION THREADS"),
+          "DEFAULTS turns it back OFF");
 }
 
 // SIMULATION THREADS: the GAME page's slider (PERFORMANCE, after PLAYER and GAME DATA).
@@ -288,7 +289,7 @@ static void testPinToggle(OptionsScreen& o, Settings& s, int& saves, const sim::
 // process may use (sim::detectCpus: 1 on a one-CPU test machine, where the slider has
 // AUTO, 1 and 2). Its colour is the kind of CPU the count reaches (sim::SimPool::band),
 // red above N; the lines under it say what the computer has and what the choice comes
-// to with a local server (half each) and without (all of it). PIN THREADS TO CORES is
+// to with a local server (half each) and without (all of it). PIN SIMULATION THREADS is
 // the toggle under those.
 static void testSimThreads(SDL_Renderer* ren) {
     std::printf("SIMULATION THREADS\n");
@@ -297,7 +298,7 @@ static void testSimThreads(SDL_Renderer* ren) {
     const int most = int(sim::SimPool::maxChoice(unsigned(cpus)));
     Settings s = loadSettings();
     s.simThreads = 0;
-    s.simPin = true;
+    s.simPin = false;
     check(saveSettings(s), "the profile starts at AUTO");
     const std::string name = s.playerName;
     int saves = 0, changes = 0;
@@ -410,22 +411,26 @@ static void testSimThreads(SDL_Renderer* ren) {
 #ifndef NDEBUG
     {
         // A system that cannot pin (macOS; here a debug build's TAK_CPU_NOPIN): the row is
-        // greyed, reads OFF, takes no click and keeps the stored choice, and says why.
+        // greyed, reads OFF, takes no click and keeps the stored choice (ON here), and says why.
         putEnv("TAK_CPU_NOPIN", "1");
+        s.simPin = true;
+        check(saveSettings(s), "the stored choice is ON");
         OptionsScreen o(ren, s, [&] { ++changes; }, save, 2, {}, {}, {}, OptionsPage::Game);
         o.render(W, H);
         const int savesBefore = saves;
-        if (const SDL_FRect* r = bring(o, "PIN THREADS TO CORES")) {
-            check(s.simPin && !o.rowEnabled("PIN THREADS TO CORES") && !o.rowOn("PIN THREADS TO CORES"),
+        if (const SDL_FRect* r = bring(o, "PIN SIMULATION THREADS")) {
+            check(s.simPin && !o.rowEnabled("PIN SIMULATION THREADS") && !o.rowOn("PIN SIMULATION THREADS"),
                   "where the system cannot pin, the row is greyed and reads OFF");
             click(o, *r);
             check(s.simPin && saves == savesBefore && loadSettings().simPin, "a click there changes nothing");
-            check(joined(o.rowHelp("PIN THREADS TO CORES")).find("MACOS DOES NOT LET A GAME PIN THREADS") != std::string::npos &&
-                  joined(o.rowLines("PIN THREADS TO CORES INFO")).find("MACOS DOES NOT LET A GAME PIN THREADS, SO THE SYSTEM PLACES THEM.") !=
+            check(joined(o.rowHelp("PIN SIMULATION THREADS")).find("MACOS DOES NOT LET A GAME PIN THREADS") != std::string::npos &&
+                  joined(o.rowLines("PIN SIMULATION THREADS INFO")).find("MACOS DOES NOT LET A GAME PIN THREADS, SO THE SYSTEM PLACES THEM.") !=
                       std::string::npos, "its help and the line under it say macOS does not let a game pin threads");
             if (const char* dir = std::getenv("TAK_LAYOUT_SHOT_DIR")) shoot(ren, o, std::string(dir) + "/game-pin-cannot.bmp");
-        } else check(false, "the PIN THREADS TO CORES row is there");
+        } else check(false, "the PIN SIMULATION THREADS row is there");
         putEnv("TAK_CPU_NOPIN", "0");
+        s.simPin = false;
+        check(saveSettings(s), "the profile is back at OFF");
     }
 #endif
     // A profile from a bigger machine: a saved count above this machine's 2N is shown (and

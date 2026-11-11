@@ -97,7 +97,7 @@ public:
     // entries of `order` (CpuTopology::order), dealt alternately to the game and
     // its local server, game first, so each gets as equal a share of every kind
     // of CPU as there is; with no local server the game takes them all. A thread
-    // past the end of its list is not pinned. `pin` false (PIN THREADS TO CORES
+    // past the end of its list is not pinned. `pin` false (PIN SIMULATION THREADS
     // off, a system that cannot pin): nothing is.
     struct HandOut { std::vector<int> game,server; };
     static HandOut handOut(const std::vector<int>& order,const Session& session,bool localServer,bool pin=true);

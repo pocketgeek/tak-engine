@@ -238,7 +238,7 @@ int main() {
         cur.gpuMemoryLimit = 768;
         cur.uiFont = 1;
         cur.simThreads = 6;
-        cur.simPin = false;
+        cur.simPin = true;
 
         const Settings d = tak::preferenceDefaults(cur);
         auto keep = [&](const char* what, bool ok) {
@@ -306,7 +306,7 @@ int main() {
         reset("gpuMemoryLimit",   d.gpuMemoryLimit == fresh.gpuMemoryLimit && d.gpuMemoryLimit == 1280);
         reset("uiFont",           d.uiFont == fresh.uiFont && d.uiFont == 0);
         reset("simThreads",       d.simThreads == fresh.simThreads && d.simThreads == 0);   // AUTO
-        reset("simPin",           d.simPin == fresh.simPin && d.simPin);                    // ON
+        reset("simPin",           d.simPin == fresh.simPin && !d.simPin);                   // OFF
 
         // The GRAPHICS, UI and GAME pages' DEFAULTS together reset exactly what the old
         // single Options DEFAULTS did: a field on no page would make this differ.
@@ -326,12 +326,12 @@ int main() {
                              tak::gameDefaults(all).uiScale == all.uiScale && tak::gameDefaults(all).playerName == all.playerName &&
                              tak::gameDefaults(all).mouseZoom == all.mouseZoom && tak::uiDefaults(all).mouseZoom != all.mouseZoom &&
                              // SIMULATION THREADS is the GAME page's: its DEFAULTS alone puts it back to AUTO,
-                             // and PIN THREADS TO CORES back ON.
+                             // and PIN SIMULATION THREADS back OFF.
                              all.simThreads == 6 && tak::gameDefaults(all).simThreads == 0 &&
                              tak::graphicsDefaults(all).simThreads == 6 && tak::uiDefaults(all).simThreads == 6 &&
                              tak::audioDefaults(all).simThreads == 6 && tak::voiceDefaults(all).simThreads == 6 &&
-                             !all.simPin && tak::gameDefaults(all).simPin && !tak::graphicsDefaults(all).simPin &&
-                             !tak::uiDefaults(all).simPin && !tak::audioDefaults(all).simPin && !tak::voiceDefaults(all).simPin;
+                             all.simPin && !tak::gameDefaults(all).simPin && tak::graphicsDefaults(all).simPin &&
+                             tak::uiDefaults(all).simPin && tak::audioDefaults(all).simPin && tak::voiceDefaults(all).simPin;
             std::printf("  %-23s %s\n", "each page its own", own ? "ok" : "FAIL");
             if (!own) ++g_fail;
         }
@@ -906,16 +906,16 @@ int main() {
         check("sim threads: 1 as used", SimPool::configured(loadFrom("simThreads = 1\n").simThreads, cpus) == 1);
         check("sim threads: 128 as used", SimPool::configured(loadFrom("simThreads = 128\n").simThreads, cpus) == top &&
                                           top == 2 * std::min(cpus.threads(), SimPool::kMaxThreads));
-        // PIN THREADS TO CORES: ON unless the file says 0, saved as 1 / 0; OFF reaches the
+        // PIN SIMULATION THREADS: OFF unless the file says 1, saved as 1 / 0; OFF reaches the
         // hand-out (SimPool::handOut) as no CPU for any thread, the game's or its server's.
-        check("sim pin: default on", Settings{}.simPin && loadFrom("masterVol = 7\n").simPin);
+        check("sim pin: default off", !Settings{}.simPin && !loadFrom("masterVol = 7\n").simPin);
         check("sim pin: read", !loadFrom("simPin = 0\n").simPin && loadFrom("simPin = 1\n").simPin);
         {
             Settings ts{};
-            check("sim pin: saved on", tak::serializeSettings(ts).find("\nsimPin = 1\n") != std::string::npos);
-            ts.simPin = false;
-            check("sim pin: saved off", tak::serializeSettings(ts).find("\nsimPin = 0\n") != std::string::npos &&
-                                        !loadFrom(tak::serializeSettings(ts)).simPin);
+            check("sim pin: saved off", tak::serializeSettings(ts).find("\nsimPin = 0\n") != std::string::npos);
+            ts.simPin = true;
+            check("sim pin: saved on", tak::serializeSettings(ts).find("\nsimPin = 1\n") != std::string::npos &&
+                                       loadFrom(tak::serializeSettings(ts)).simPin);
         }
         const SimPool::Session local = SimPool::sessionThreads(0, cpus, true);
         const auto on = SimPool::handOut(cpus.order, local, true, loadFrom("simPin = 1\n").simPin);

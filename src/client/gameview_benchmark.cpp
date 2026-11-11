@@ -198,6 +198,9 @@
             else std::snprintf(b, sizeof b, "SIM THREADS CLIENT %u  (%s)", simSession_.game, set);
             settings.push_back(b);
         }
+        // PIN SIMULATION THREADS as this run latched it: ON only if its threads really
+        // were pinned (the setting on, and a system that can pin).
+        settings.push_back(std::string("PIN SIM THREADS ") + (simPin_ ? "ON" : "OFF"));
         std::snprintf(b, sizeof b, "RESOLUTION  %d X %d", winW, winH); settings.push_back(b);
         if (!benchGpuName_.empty()) settings.push_back(std::string("GPU         ") + benchGpuName_);
         {   // the backend that produced these numbers, and whether it was AUTO's pick

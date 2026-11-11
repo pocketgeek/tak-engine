@@ -377,16 +377,22 @@ client and `sim threads: 4 (4 over 1 game) pinned to cpus 1,3,5,7` in its server
 
 The CPUs come from `sim::detectCpus()` (`src/sim/simcpus.h`): the performance
 cores, efficiency cores and hyperthreads the process may use, and the order
-threads take them in. With **Pin threads to cores** on (`simPin` in the settings
-file, 1 by default) every simulation thread is pinned to a CPU of its own
-(`SimPool::handOut`): the client's sim worker thread and its pool's workers, and,
-through `takserver --sim-cpus <list>`, the local server's per-game worker and its
-pool. A thread without a CPU is not pinned, and neither is a main thread that
-ticks the simulation itself (replay playback, the headless harness). macOS pins
-nothing. The headless debug harness (`--mpai` and the other `--mp...` modes) does
-not pin unless `TAK_SIM_PIN=1`, so that many clients run at once do not all pin
-to the same cores; `TAK_SIM_PIN=0` stops a debug client pinning in any session,
-and ctest sets it for every test (`tak_isolate_test_profiles`). Two more debug
+threads take them in. With **Pin simulation threads** on (`simPin` in the settings
+file, 0 by default: nothing is pinned) every simulation thread is pinned to a CPU
+of its own (`SimPool::handOut`): the client's sim worker thread and its pool's
+workers, and, through `takserver --sim-cpus <list>`, the local server's per-game
+worker and its pool. A thread without a CPU is not pinned, and neither is a main
+thread that ticks the simulation itself (replay playback, the headless harness).
+macOS pins nothing. The setting alone decides, in every kind of session, the
+headless debug harness (`--mpai` and the other `--mp...` modes) included: a
+scratch profile has no `simPin`, so a harness run pins nothing unless its
+settings file says `simPin = 1`. `TAK_SIM_PIN=0` stops a debug client pinning
+whatever the setting says, and ctest sets it for every test
+(`tak_isolate_test_profiles`), so that many clients run at once never all pin to
+the same cores; any other value, like the variable unset, leaves it to the
+setting, and no variable turns pinning on (a test of the pinning writes
+`simPin = 1` and sets `TAK_SIM_PIN=1` over ctest's 0). The Benchmark results list
+what the run latched: `PIN SIM THREADS ON` or `OFF`. Two more debug
 hooks fake the detection: `TAK_CPU_SYSFS=<root>` reads a Linux sysfs fixture tree
 in place of this machine, and `TAK_CPU_NOPIN=1` reports a system that cannot pin
 (the macOS form of the Options row). `TAK_SIM_WORKERS=<n>` (debug

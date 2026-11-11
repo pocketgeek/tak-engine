@@ -3544,7 +3544,7 @@
     }
 
     void GameView::simWorkerLoop() {
-        // PIN THREADS TO CORES: this thread is the simulation's first (latchSimThreads).
+        // PIN SIMULATION THREADS: this thread is the simulation's first (latchSimThreads).
         if (simPin_) tak::sim::placeThisThread(simCpus_.empty() ? -1 : simCpus_.front());
         for (;;) {
             SimJob job;

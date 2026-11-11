@@ -358,7 +358,8 @@ log lines. With pinning, the log line names each running game's CPUs, for exampl
 `--sim-threads`, it never changes a game's outcome. macOS does not let a program
 pin threads: there the option is ignored. A player's own single-player server
 and **Local server** are given the CPUs the game left them (every other one of
-the hand-out), or `none` when **Pin threads to cores** is off.
+the hand-out) when the player has turned **Pin simulation threads** on, and
+`none` while it is off, as it is by default.
 
 Map uploads reserve their advertised size before receiving data and expire
 after 30 seconds without progress or five minutes total. Each package remains

@@ -1925,8 +1925,8 @@ at the bottom right). A
 slider is saved when you let go of it, a dropdown when you pick a choice, and your player name when you press
 Enter or click elsewhere. **Defaults** asks first (**Reset to defaults?**
 **Yes** / **No**), then puts that page's options back to their defaults; the
-**Game** page's puts **Simulation threads** back to Auto and **Pin threads to
-cores** back On, and leaves your player name
+**Game** page's puts **Simulation threads** back to Auto and **Pin simulation
+threads** back Off, and leaves your player name
 and data folder alone, and no page touches
 key bindings, audio or voice chat. It also sets UI Scale and Cursor Size
 back to 100% and 1×, not to the display scale the
@@ -1970,7 +1970,7 @@ is the one both use next time.
 | Option | Default | What it does |
 | --- | --- | --- |
 | **Simulation threads** | Auto | How many of your processor's threads the game's simulations may use. The slider starts at **Auto** on the left, then goes from 1 up to twice the threads your computer has (at most 128). |
-| **Pin threads to cores** | On | Keeps each simulation thread on a processor core of its own. Off lets the system place and move them. Greyed out on macOS, which does not let a game pin threads. |
+| **Pin simulation threads** | Off | On keeps each simulation thread on a processor core of its own. Off lets the system place and move them. Greyed out on macOS, which does not let a game pin threads. |
 
 Many processors have two kinds of core, fast **performance cores** and slower
 **efficiency cores**, and some run two threads on a core (**hyperthreading**).
@@ -1990,11 +1990,12 @@ Red is more threads than the computer has, so they take turns on the processor.
 A processor without efficiency cores has no green part, and one without
 hyperthreading no yellow part.
 
-With **Pin threads to cores** on, each simulation thread is pinned to its own
-core, so the system does not move it around: performance cores are used first,
-then efficiency cores, then hyperthreads. Threads beyond the number your computer
-has are not pinned. With it off, and always on macOS, the system places every
-thread. The line under the switch says which applies.
+**Pin simulation threads** is off unless you turn it on: the system places every
+simulation thread and may move it from core to core. Turned on, each thread is
+pinned to its own core, so the system does not move it around: performance cores
+are used first, then efficiency cores, then hyperthreads. Threads beyond the
+number your computer has are not pinned. On macOS the system always places the
+threads. The line under the switch says which applies.
 
 The setting changes only how the work is shared out. It never changes what
 happens in a game: every value plays the same game, tick for tick, so players
@@ -2016,7 +2017,7 @@ only so much work to share out, and the same processor threads are wanted by
 the drawing of the game and, in single player, by the second simulation. The
 [Benchmark](#benchmark) is a good way to try a value: run the same Benchmark
 with each value and compare the results. A new value, and a change to **Pin
-threads to cores**, applies from the next game
+simulation threads**, applies from the next game
 you open (a game, a replay or a Benchmark), not to one already open. If your
 settings file comes from a computer with more threads than this one has, the
 slider shows this computer's highest value.
@@ -3263,7 +3264,9 @@ chosen speed and takes longer. The results list the **Speed** the run used;
 compare only runs at the same speed. They also list **Sim threads**: how many
 threads the game (**Client**) and its local server (**Server**) each ran on, then
 the [Simulation threads](#performance) value the run was opened with, **Auto**
-or the number, so runs that differ only in that can be told apart.
+or the number, so runs that differ only in that can be told apart. **Pin sim
+threads** under it reads **On** when the run's threads were pinned
+([Pin simulation threads](#performance)), else **Off**.
 
 **Save as JPG**, beside **Done**, saves the results screen as a picture: the
 whole window as shown, without the pointer. It goes in a `benchmarks` folder in

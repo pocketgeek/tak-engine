@@ -10,10 +10,11 @@ still forces Legion. The run's stats panel and results must name the mode the si
 and DONE must fit the window: TAK_BENCH_STOP_TICK ends each run with a full run's results,
 and TAK_BENCH_REPORT prints what those two screens drew. The results also name the
 SIMULATION THREADS the run was opened with, as the client logged them: the game's half and
-its local server's, then AUTO or the saved count. The AUTO run pins its threads
-(TAK_SIM_PIN=1; ctest runs every other client with pinning off): the game and its server
-each log the CPUs they were handed, and no CPU is in both. The profile is scratch and the
-settings file is named outright: SDL_GetPrefPath ignores XDG_* on macOS and Windows.
+its local server's, then AUTO or the saved count, and under it PIN SIM THREADS ON or OFF:
+OFF unless the run's settings file turned PIN SIMULATION THREADS on. The AUTO run does
+(simPin = 1, and TAK_SIM_PIN=1 over the 0 ctest gives every client): the game and its
+server each log the CPUs they were handed, and no CPU is in both. The profile is scratch and
+the settings file is named outright: SDL_GetPrefPath ignores XDG_* on macOS and Windows.
 
 usage: benchmark_pathfinding_test.py <takclient> <retail-install>
 """
@@ -67,7 +68,8 @@ PINNED = r"( pinned to cpus ([\d,]+)(?:; \d+ threads? not pinned)?)?"
 def threads(log, name, saved, pinned=False):
     """The results' SIM THREADS row is what the client logged for this run: its own simulation's half
     and its local server's, of `saved` threads or of AUTO (one for each performance core). With
-    `pinned`, both processes also log the CPUs their threads are pinned to, and share none."""
+    `pinned` (the run's settings turned PIN SIMULATION THREADS on), both processes also log the CPUs
+    their threads are pinned to, and share none; the PIN SIM THREADS row reads ON then, else OFF."""
     row = re.search(r"^BENCHRESULT SIM THREADS (.*)$", log, re.M)
     if not row:
         fail("%s: the results must list SIM THREADS" % name, log)
@@ -104,6 +106,11 @@ def threads(log, name, saved, pinned=False):
                  % (name, mine[0], served[0]), log)
     elif mine[1] or served[2]:
         fail("%s: nothing is pinned here, got '%s' and '%s'" % (name, mine[0], served[0]), log)
+    # The row under SIM THREADS says which it was, as the run latched it.
+    pin = re.search(r"^BENCHRESULT PIN SIM THREADS (.*)$", log, re.M)
+    want = "ON" if pinned and sys.platform != "darwin" else "OFF"
+    if not pin or pin[1] != want:
+        fail("%s: the results must list PIN SIM THREADS %s, got '%s'" % (name, want, pin[0] if pin else "no row"), log)
 
 
 def probes(root, name, saved, size, extra=None):
@@ -123,7 +130,7 @@ with tempfile.TemporaryDirectory(prefix="tak-bench-path-") as root:
     if "PASS: Benchmark pathfinding row picks and saves" not in log:
         fail("the Benchmark screen's row", log)
 
-    ticks, log = probes(root, "legion", "benchmarkPathfinding = 4\n", (1024, 768), {"TAK_SIM_PIN": "1"})
+    ticks, log = probes(root, "legion", "benchmarkPathfinding = 4\nsimPin = 1\n", (1024, 768), {"TAK_SIM_PIN": "1"})
     if ticks.get(30, 0) < 2:
         fail("a saved Legion pick must run Legion on the client and the referee (got %s)" % ticks, log)
     named(log, "legion", "LEGION", (1024, 768))
