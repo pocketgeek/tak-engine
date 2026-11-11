@@ -2,8 +2,8 @@
 
 Protocol **323**, replay format **15**, random map generator version **10**.
 
-Tag `v1.0.0` -> `TODO-LEAD` (the version commit); annotated tag object `TODO-LEAD`.
-Published TODO-LEAD UTC as the Latest release.
+Tag `v1.0.0` -> `5b4bf59e` (the last preparation commit); annotated tag object `b71806c4`.
+Published 2026-11-11 19:08:55 UTC as the Latest release.
 
 ## Scope and compatibility
 
@@ -102,27 +102,44 @@ On `368bb3a7`, built on each host:
 
 ## CI and packages
 
-TODO-LEAD: tag CI on `v1.0.0` (Determinism (sim), Windows build, Linux packages, macOS
-build, both Sign + notarize jobs) with run ids and attempts; the asset count, all assets
-downloaded and matched against the release's SHA-256 digests; the build string `v1.0.0`
-in a Linux package's `takclient` and `takserver`; the new AppImage, openSUSE Tumbleweed
-and EL9 / EL10 packages installed and started.
+Main's CI on `5b4bf59e` passed after the Ubuntu jobs were rerun: during the preparation
+GitHub's runners could not resolve Ubuntu's package servers (`archive.ubuntu.com`), so the
+six Ubuntu package jobs failed before building anything, twice; the next retry passed. One
+macOS arm64 job was cancelled by the runner and passed on a rerun.
+
+Tag CI on `v1.0.0`, all green at the first attempt: Determinism (sim) 43078348825
+(dispatched), Linux packages 43078294196, macOS build 43078294195 (both Sign + notarize
+jobs included) and Windows build 43078294139.
+
+39 assets: 0.9.24's 31 plus the two AppImages, two openSUSE Tumbleweed and four EL9 / EL10
+packages. All 39 were downloaded and match the release's SHA-256 digests. `takclient` and
+`takserver` from the Fedora 44 package and the x86_64 AppImage report
+`1.0.0 (build v1.0.0)`; the EL9 (Rocky Linux 9), EL10 (AlmaLinux 10) and openSUSE
+Tumbleweed packages install in clean containers and their `takclient` and `takserver`
+start and report the same.
 
 ## Signing
 
-Windows: TODO-LEAD (`Get-AuthenticodeSignature` on the x64 setup program and
-`takclient`, `takserver` and `cartographer` in both zips; version string).
+Windows: on oden-win (scratch `C:/tak/w/rel100sig`, removed afterwards),
+`Get-AuthenticodeSignature` reports **Valid** (timestamped, "Curtis Edge") for the x64
+setup program and `takclient`, `takserver` and `cartographer` in both zips; the x64
+`takclient.exe` and `takserver.exe` report `1.0.0 (build v1.0.0)`.
 
-macOS: TODO-LEAD (`stapler validate`, `spctl -a -vv` and `codesign --verify --strict
---deep` on both DMGs and every app copy; version string).
+macOS: on the MacBook (macOS 27.2.1), both DMGs and all eight app copies (two in each DMG
+and each zip) pass `stapler validate`, and `spctl -a -vv` accepts them as "Notarized
+Developer ID"; every app in the DMGs passes `codesign --verify --strict --deep` and has
+version 1.0.0. The arm64 zip's `takclient` reports `1.0.0 (build v1.0.0)`. The scratch
+folder was removed.
 
 ## Publication
 
-TODO-LEAD: the draft created with the notes (validation link rewritten to its `blob`
-`v1.0.0` URL) before tag CI uploaded into it; publication time; asset count; the notes'
-links answering 200. Every earlier GitHub release removed after publication, their tags
-kept: TODO-LEAD (`gh release list` afterwards, `git ls-remote --tags` still listing every
-`v*` tag).
+The draft was created with the notes (their links rewritten to `blob` `v1.0.0` URLs)
+before the tag was pushed, and tag CI uploaded into it. Published on 2026-11-11 19:08:55
+UTC as the Latest release, 39 assets; every link in the notes answers 200.
+
+Every earlier GitHub release, 0.9.0 to 0.9.24 (25 releases), was then deleted, as the
+owner asked; `gh release list` lists only 1.0.0. Their tags are kept: `git ls-remote
+--tags` lists 84 tags before and after.
 
 ## Known limits
 
