@@ -138,8 +138,11 @@ def play_map(a, root):
             client.wait()
     out = log_path.read_text()
     assert 'Cannot test map' not in out and 'SAVE FAILED' not in out, out
-    copies = list((profile / 'MapCache').glob('*.kmp'))
-    assert copies and list((profile / 'MapCache').glob('*.takmap')), 'no Test Map copy beside settings.ini: ' + out
+    # A debug client keeps its profile beside TAK_SETTINGS_FILE; a release client reads
+    # no TAK_* variable, so its profile is the per-user folder under XDG_DATA_HOME.
+    caches = [profile / 'MapCache', home / 'xdg' / 'TAKengine' / 'TAKingdoms' / 'MapCache']
+    found = [c for c in caches if list(c.glob('*.kmp')) and list(c.glob('*.takmap'))]
+    assert found, 'no Test Map copy in the player\'s profile (%s): %s' % (', '.join(map(str, caches)), out)
     assert tree(data) == before, 'takclient --play-map wrote into its --data folder'
     assert not (home / 'xdg' / 'TAKengine' / 'takserver').exists(), 'the private server did not share the per-user folder'
     print('play-map: snapshot opened and verified on a read-only data folder, copy in the per-user folder')

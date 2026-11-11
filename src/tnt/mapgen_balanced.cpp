@@ -1252,9 +1252,11 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         if(!name)continue;
         const auto* f=sizeOf(name);if(!f)continue;
         bool good=true;
+        // A footprint that runs off the bottom of the map is refused: its cells past the
+        // last row do not exist (one past the right edge reads the next row's, as ever).
         for(int dz=-1;good&&dz<=f->z;++dz)for(int dx=-1;dx<=f->x;++dx) {
             const size_t j=size_t(z+dz)*w+x+dx;
-            if(!kitTop[j]||claim[j]||m.heights[j]!=spec.high){good=false;break;}
+            if(j>=kitTop.size()||!kitTop[j]||claim[j]||m.heights[j]!=spec.high){good=false;break;}
         }
         if(good)putFeature(x,z,name);
     }
