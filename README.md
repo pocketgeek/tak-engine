@@ -217,9 +217,10 @@ package and covers certificates, limits, status queries and
 
 ## Project status
 
-TAK Engine is playable and under active development. The aim is to behave as
-the original game did; that is not a claim that every mission, animation or
-interaction is identical or fully verified.
+TAK Engine 1.0.0 is complete: skirmish, both campaigns, multiplayer with its own
+server, replays, the Benchmark and the Cartographer editor are all in place and
+supported. It aims to behave as the original game did; that is not a claim that
+every mission, animation or interaction is identical or fully verified.
 
 - Selected movement, combat, transport, scripting and animation routines are checked
   against the original executable by emulating them headlessly. Retail
