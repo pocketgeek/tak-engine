@@ -191,7 +191,7 @@ Patrols queued with Shift loop back to where the patrol started.
 | **W** | Next weapon, for units with more than one. |
 | **K** | Cloak on / off. |
 | **O** | Open / close selected gates. With nothing selected in a campaign mission: show the objectives. |
-| **Ctrl+Shift+D** | Self-destruct in 5 seconds (press again to cancel). |
+| **Ctrl+Shift+D** | Self-destruct after a two-second countdown (press again to cancel). |
 
 ![The command panel with labels: MOVE, PATROL, ATTACK, GUARD, HEAL, CLEAR and STOP](img/quick/command-panel.jpg)
 
@@ -264,6 +264,7 @@ produce join the group.
 | **F1** | Unit information for the selected unit. |
 | **F4** | Scoreboard: players, kills, losses, score. When a team has two or more players, it shows teams and groups the rows by team. |
 | **F9** | YouTube streaming panel. |
+| **F11** | Fullscreen on or off, in the game and on the menus. |
 | **D** | Diplomacy: give units, share mana, chat and voice recipients. |
 | **Pause** | Pause / resume, for every player. |
 | **+** / **−** | Game speed, one level per press from −9 (0.1×) to +10 (2×). Host only, and only with *Allow Speed Change* on; always in a campaign mission. |
