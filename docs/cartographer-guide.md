@@ -11,10 +11,9 @@ with every TAK Engine package, next to the game.
 This guide is for players and mapmakers. It explains what you see on screen and
 what each control does, from a first map to sharing a finished one.
 
-This guide describes Cartographer in TAK Engine 0.9.24; changes by version are in
-the [CHANGELOG](../CHANGELOG.md).
+This guide describes Cartographer in TAK Engine 1.0.0.
 
-Every picture in this guide is a real Cartographer screen (the Test Map lobby is
+Every picture in this guide is a real Cartographer screen (the Test Map room is
 the game's), using the original game's art. Some put two moments side by side,
 and the first one has numbered markers added. The maps shown are shipped maps
 (*Ulasem Arena*, *King of the Hill*) or maps made in the editor for the guide.
@@ -803,7 +802,7 @@ New units belong to the **current owner**, shown as `PLAYER: n` in the status
 bar. Press **[** and **]** to change it (0 to 7). Units are drawn as small
 squares in their owner's colour, with their type ID (such as *ARAARCH*), or
 their display name if you gave one, above them when you are zoomed in. These
-colours are only the editor's markers; the game lobby gives players their own
+colours are only the editor's markers; the game room gives players their own
 colours.
 
 | Owner number | In the game | Colour in the editor |
@@ -820,7 +819,7 @@ colours.
 
 > **Watch the numbering.** The status bar and the Unit Properties PLAYER field
 > count owners from **0**. Everything else (the Placed units list, the trigger
-> rules, the game lobby) counts players from **1**. Owner 0 is Player 1.
+> rules, the game room) counts players from **1**. Owner 0 is Player 1.
 
 A **neutral** unit (owner 8) belongs to no player. Set it by typing 8 in
 [Unit Properties](#unit-properties); **[** and **]** only reach 0 to 7.
@@ -1089,8 +1088,8 @@ would be copied and replaced, then asks you to confirm. The whole change is
   *Player 1 mirror*). Rules do not use them until you rename them or point
   rules at them. Copied units lose their display names.
 
-Where a terrain section has no known twin, the old terrain on the other side is
-left as it was. The result message says how many blocks were left, and
+Where a terrain section has no known twin, the terrain already on the other side
+is left as it was. The result message says how many blocks were left, and
 **Symmetry → Locate unmirrored terrain** (or **Scenario → Next issue**) takes
 you to each one, so you can fix it by hand.
 
@@ -1121,7 +1120,7 @@ uses for its random maps.
 | **TREES**, **ROCKS**, **MANA** | How many of each, from 0 to 255. More mana adds more mana sites per player. |
 | **WATER INTENSITY** | How strongly lakes appear, from 0 (dry) to 255. Used by Mainland, Lakes and Zhon Clearings. Ignored by Islands, Veruna Ports and Aramon Riverlands, which make their own water, and by Taros Maze and Creon Highlands. |
 | **RELIEF** | How many hills, from 0 (flat) to 255. |
-| **WIDTH**, **HEIGHT** | 1 to 64 units. |
+| **WIDTH**, **HEIGHT** | 1 to 64 units, set separately (the generator makes at least 8; see below). |
 | **WORLD** | The world to use. |
 | **SCATTERED MANA (BY MAP AREA)** | None, Minimum, Medium, High or Max neutral mana spots spread over open ground, by area. Max is as dense as a home with six spots; each lower level halves it. |
 | **PLATEAUS**, **MOUNTAINS**, **TOWNS** | 0 to 255: cliff-edged plateaus with ramps, mountain ranges and walled towns (Zhon: villages), built from the world's own retail sections. Ignored where a world has no such kit (Veruna has no mountains) and, for plateaus, by Taros Maze and Creon Highlands, which make their own high ground. All three at 0 build none of them. |
@@ -1134,15 +1133,20 @@ size it really used:
 - The **themed layouts set their own world**: Taros Maze makes a Taros map,
   Veruna Ports a Veruna map, Aramon Riverlands an Aramon map, Zhon Clearings a
   Zhon map and Creon Highlands a Creon map.
-- Maps are at least 4 × 4 units, and each layout has a larger minimum for more
-  players:
+- A width or height under 8 units is raised to 8. If the map is still too small
+  for its layout and players, the generator grows the shorter side (the width on
+  a tie) through 12, 16, 20, 24, 32, 40, 48, 56 and 64 until it fits. It fits when
+  every start can be kept 72 cells from the others, which usually means 12 units
+  on a side for 6 to 8 players unless the other side is long, and when the shorter
+  side is at least the layout's minimum:
 
-| Layout | Up to 4 players | 5 to 8 players |
-| --- | --- | --- |
-| Mainland | 8 × 8 | 12 × 12 |
-| Lakes | 12 × 12 | 16 × 16 |
-| Islands | 16 × 8 for 2, 16 × 16 for 3 or 4 | 24 × 16 for 5 or 6, 24 × 24 for 7 or 8 |
-| Themed layouts | 16 × 16 | 24 × 24 |
+| Layout | 2 players | 3 | 4 | 5 | 6 | 7 | 8 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Mainland, Taros Maze, Zhon Clearings, Creon Highlands | 8 | 8 | 8 | 8 | 8 | 8 | 8 |
+| Lakes | 8 | 8 | 8 | 12 | 12 | 12 | 12 |
+| Aramon Riverlands | 8 | 8 | 12 | 12 | 12 | 12 | 16 |
+| Islands | 8 | 12 | 12 | 16 | 16 | 20 | 20 |
+| Veruna Ports | 12 | 12 | 16 | 16 | 16 | 16 | 16 |
 
 Accepting replaces the whole map: terrain, features, start positions and any
 scenario content. The new map is unsaved, its description is empty, and the
@@ -1152,8 +1156,8 @@ settings (the **recipe**) are saved with the map.
 the open map, so you can try another seed or density. Accepting keeps the map's
 name and description and replaces everything else. It can be undone with
 **Ctrl+Z**. A map that was not generated has no recipe, and Cartographer says
-so; so does a map whose recipe this generator cannot rebuild exactly (one made
-by another generator version): use **RANDOM** for a new one.
+so; so does a map whose recipe this generator cannot rebuild exactly: use
+**RANDOM** for a new one.
 
 ---
 
@@ -1202,7 +1206,7 @@ such as "hold the hill for five minutes to win".
 > original Cartographer did not mark one either), so MAP SCENARIO is not
 > offered for it and its list applies only in a test game. Its test copy's
 > button reads OFF, and the lines under it say *TEST COPY: USE ONLY LIST* and
-> how many unit types can be built; the lobby says the same.
+> how many unit types can be built; the game room says the same.
 
 In a scenario game:
 
@@ -1210,7 +1214,7 @@ In a scenario game:
   each player's view starts at the middle of their units. A map with rules or
   regions but no placed units keeps the normal Monarch starts.
 - Every player who owns placed units or has rules of their own must have a seat
-  in the lobby. The lobby lists those seats (*NEEDS SEATS 1-4*), tags each empty
+  in the game room. The room lists those seats (*NEEDS SEATS 1-4*), tags each empty
   one *NEEDED BY SCENARIO*, and keeps **START** greyed until they are filled; a
   start that still fails says why under the buttons (*Seat player N in the
   lobby to play this scenario*). Neutral units need no seat, and neither does a
@@ -1451,7 +1455,7 @@ The game has two kinds of computer player, and each reads its own file:
 | Computer player | File | What the file does |
 | --- | --- | --- |
 | **DEFAULT AI** (the 1999 game's own AI) | the map's **own profile**, `ai/<name>.txt`, named by the map | The whole profile: every unit the file does not name is built at full chance with no limit. |
-| Our levels: **Defensive**, **Easy**, **Normal**, **Hard**, **Absurd**, **Absurdly Defensive** | one file for all six, `ai/takengine.txt` | Changes only the units it names, in every level; every other unit keeps each level's own built-in values. The six built-in tables are the same today, so the file sets the same values for every level; the levels still play differently and treat limits their own way (see [One file, six levels](#one-file-six-levels-preview-level)). |
+| Our levels: **Defensive**, **Easy**, **Normal**, **Hard**, **Absurd**, **Absurdly Defensive** | one file for all six, `ai/takengine.txt` | Changes only the units it names, in every level; every other unit keeps each level's own built-in values. The six built-in tables are the same, so the file sets the same values for every level; the levels still play differently and treat limits their own way (see [One file, six levels](#one-file-six-levels-preview-level)). |
 
 The DEFAULT AI is the one the room calls **RETAIL**. See
 [AI difficulty](user-guide.md#ai-difficulty) in the game guide for how each
@@ -1504,7 +1508,7 @@ Click a cell, type, and press **Enter** (**Esc** cancels the typing).
 
 `ai/takengine.txt` is read by all six of our levels. A value you set replaces
 that unit's value in **every** level; a unit you do not set keeps **each**
-level's own built-in value. (Today the six built-in tables hold the same
+level's own built-in value. (The six built-in tables hold the same
 values, so PREVIEW LEVEL changes only the limits in play.) The table can show only one level at a time: **PREVIEW LEVEL** (click
 for the next level, right-click for the one before) picks whose built-in
 values fill the unset cells and the **BUILT-IN** column, and whose limits in
@@ -1745,7 +1749,7 @@ built by any of our levels while the pack is ticked. Nothing is saved yet.*
   **File → Open map**, which go back to maps.
 - **TEST IN GAME...** plays the pack as it is saved: with unsaved edits it
   asks to save them first. Then it lists your install's maps (type to search,
-  click or **Enter** to pick). The game opens its private test lobby on a test
+  click or **Enter** to pick). The game opens its private test room on a test
   copy of that map, as **Test Map** does, with this pack ticked as the room's
   only game mod. This applies to that run only: your own ticks under the
   room's mod list stay saved. Your always-enabled game packs
@@ -1864,7 +1868,7 @@ Notes:
   running*.
 - If the game cannot load the test copy, it shows **Cannot test map** with the
   reason. Problems with a scenario, such as a placed unit type this install does
-  not have, are reported when you start the game from the lobby, in red under
+  not have, are reported when you start the game from the room, in red under
   the buttons (*CANNOT START: ...*). If the game stops with an error,
   Cartographer shows **TEST MAP ENDED** with the error code.
 - Each test leaves a verified copy of the map in the game's `MapCache` folder, in
@@ -2033,7 +2037,7 @@ checked before the game starts, so every player plays exactly the same
 scenario.
 
 To test a scenario `.kmp` the way Cartographer does, open it in the game's test
-lobby directly, from a command prompt or terminal, giving the full path of the
+room directly, from a command prompt or terminal, giving the full path of the
 file, for example:
 
 ```sh
@@ -2242,7 +2246,7 @@ under it (a map whose only content is a Use Only list has no scenario). See
 
 **The game says "Seat player N in the lobby to play this scenario".**
 Player N owns placed units or has rules. Seat a human or computer player in seat
-N. Remember that owner 0 in the editor is Player 1. The lobby already tags such
+N. Remember that owner 0 in the editor is Player 1. The game room already tags such
 seats *NEEDED BY SCENARIO* and keeps **START** greyed until they are filled.
 
 **Test Map says "Cannot find takclient beside Cartographer".**
@@ -2306,10 +2310,10 @@ Start Cartographer from its shortcut and choose **Recover**. See
 - **Maps with rules but no placed units keep the Monarchs.** Every player
   starts with the usual Monarch as well as anything the rules create. The
   original game may have started such maps with no units at all; that is not
-  yet confirmed.
+  confirmed.
 - **Computer players do not read scenarios.** They ignore regions and
   objectives and simply play with the units they are given; a computer player
-  in a seat that has no units does nothing. The lobby warns about such a seat
+  in a seat that has no units does nothing. The game room warns about such a seat
   (*NO PLACED UNITS: PLAYER N*).
 - **You start in seat 1, but can move.** The player who opens the game room takes
   seat 1, and players who join take the lowest open seat. In the room of a

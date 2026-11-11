@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""gen_scale.py -- write the Legion 10,000 scale suite's .scn files (docs/legion-10000-progress.md, phase 0).
+"""gen_scale.py -- write the Legion 10,000 scale suite's .scn files (phase 0).
 
     python3 tools/scenarios/scale/gen_scale.py [OUTDIR]     (default: this file's directory)
 

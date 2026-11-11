@@ -113,7 +113,7 @@ private:
 // Estimated cost of one unit's geometry build (GameView::buildUnitGeom), from
 // what the build redid: the exact key check (every unit, every frame) plus the
 // stages that ran. Rates fitted to serial per-unit timings on the reference
-// machine (docs/render-optimization-progress.md, Experiment 11); they only
+// machine (render optimization Experiment 11); they only
 // steer chunking and the participant count, never what is computed.
 struct GeometryCostModel {
     // Fitted to 952k serial per-unit samples over eight matrix scenes (median

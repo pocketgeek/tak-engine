@@ -1,8 +1,7 @@
 #pragma once
 
 // Colour-atlas painting for model textures and per-atlas tracking of the frame
-// each animated region holds (render optimization workstream B; see
-// docs/render-optimization-progress.md).
+// each animated region holds (render optimization workstream B).
 //
 // Every model texture has one rect in each player-colour atlas, with a one-texel
 // clamped gutter inside a two-texel pad (GameView::buildAtlasLayout). Animated

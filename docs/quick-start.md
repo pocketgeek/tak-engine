@@ -32,7 +32,7 @@ expansion adds the Creon side and its campaign.
 4. The game checks the folder and remembers it. If something is missing, it says
    what and asks again.
 5. The main menu opens. You can change the folder later in **Settings →
-   Options → Data folder** ([Game data](user-guide.md#game-data)).
+   Game → Data folder** ([Game data](user-guide.md#game-data)).
 
 ## Your first skirmish
 
@@ -111,8 +111,9 @@ can be changed in **CONTROLS** (the main menu's lower-right Settings button, or
 unbind it. The number keys, Esc, Enter, Pause, **+**/**−** and the arrow keys
 are fixed.
 
-**UI Font** (**Options → Interface**): *Modern* (the default, a clean bold
-sans-serif, as in these pictures) or *Classic* (the engine's old lettering).
+**Modern UI Font** (**Settings → User Interface**): on (the default) is a clean
+bold sans-serif, as in these pictures; off is the Classic lettering, a blocky
+pixel font in the menus and the original game's serif faces in the HUD.
 
 ### Mouse
 
@@ -127,7 +128,7 @@ sans-serif, as in these pictures) or *Classic* (the engine's old lettering).
 | Right-drag (a reclaiming builder selected) | Reclaim every tree, rock and wreck in the box. The box must be at least about 32 pixels each way; anything smaller is a normal right-click where you pressed. Shift queues the sweep. |
 | Pan or zoom during a drag | A selection, reclaim or lodestone box stays on the ground where you pressed. |
 | Middle-drag | Scroll the map. |
-| Pointer at a screen edge | Scroll the map (Options → Edge Scrolling). |
+| Pointer at a screen edge | Scroll the map (**Settings → User Interface → Edge Scrolling**). |
 | Mouse wheel | Zoom in and out, towards the pointer. During a Shift-drag build line it sets the line's gap instead. |
 | Minimap: left-click or drag | Move the camera there. With an order armed, give that order there instead. |
 | Minimap: right-click | Move the selection there (Shift queues). |
@@ -270,11 +271,11 @@ produce join the group.
 | **Shift+P** | Save a picture of the whole map to the *screenshots* folder. Only with *Power Codes* on. |
 | **Space** (hold) | Push to talk, in a multiplayer game with voice chat on. |
 | **Shift+D** / **Shift+H** | Emotes: disco / headbang. |
-| **Esc** | In order: close Unit Info, cancel placement or an armed order, clear the selection, open the game menu (Resume, Options, Controls, Voice Chat, Quit…). |
+| **Esc** | In order: close Unit Info, cancel placement or an armed order, clear the selection, open the game menu (Resume, the Game, Graphics, User Interface, Audio and Voice Chat pages, Controls, YouTube Streaming, Surrender). |
 
 **Chat Scale** (50–300%, default 100%) and **Chat Position** (*Left* or
-*Centered*, the default) set the chat box's size and place: **Options →
-Interface**.
+*Centered*, the default) set the chat box's size and place: **Settings →
+User Interface**.
 
 There is no ordinary screenshot key. *MAKE POSTER* can be rebound in
 *Controls*.

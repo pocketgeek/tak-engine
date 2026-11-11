@@ -16931,7 +16931,7 @@ void World::clearProductionRoom(Unit& producer,const UnitType* type,Fixed x,Fixe
 // no idle body, at a Navy Yard or a land factory alike: BUGGER_OFF only stores
 // a bit (0x50d50e, read back by GET 19 and save/load alone), an output leaving
 // on its PARK presses on a parked body and only clamps and slows (0x4dbe2c,
-// docs/retail-engine.md "retail genuinely wedges"), and BUILD stage 2 holds the
+// docs/retail-engine.md "Retail wedges: there is no avoidance"), and BUILD stage 2 holds the
 // next site while any body is on the pad (401deb). A crowd of idle units a few
 // cells off the door then shuts the factory for good: the first output wedges
 // against it just out of the yard and the next is born behind that one; one

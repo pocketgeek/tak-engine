@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.24-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.0.0-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,29 +26,36 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.24
+## TAK Engine 1.0.0
 
-- Random maps get cliff-edged plateaus (some with mana on top), mountains and towns.
-- Legion ranged attackers fill up to three rows deep, so many more of them shoot.
-- Units you order to attack walk to a clear shot whatever their stance.
-- Spectators no longer see build menus.
+- The original game on Windows, macOS and Linux: skirmish, both campaigns and
+  multiplayer, read from your own installation.
+- A game room where the host picks the map, an installed one or a random one,
+  and the rules; online games get a name and an optional password when created.
+- Retail pathfinding and the Retail AI ported from the original, beside Legion
+  pathfinding for large armies and seven AI levels of TAK Engine's own.
+- Simulation threads spread a big battle over your processor's cores
+  (**Settings → Game → Performance**).
+- Random maps, the Cartographer editor, mods, replays, voice chat, YouTube
+  streaming and a Benchmark.
 
-Protocol 320: does not play with 0.9.23 or earlier, nor their replays; servers must update too.
-Details in the [CHANGELOG](CHANGELOG.md#0924).
+Network protocol 323, replay format 15. Details in the [CHANGELOG](CHANGELOG.md).
 
 ## Features
 
 - **Skirmish** on up to eight slots with all five sides, teams, Retail or
   Crusades balance and eight computer-player levels, including **RETAIL**, the
   original game's own AI ([AI difficulty](docs/user-guide.md#ai-difficulty)).
-- **Random maps** in five themed layouts and three classic ones, up to 64×64
+- **Random maps** in five themed layouts and three classic ones, from 8×8 to
+  64×64 sections, width and height set separately
   ([random maps](docs/user-guide.md#random-maps)).
 - **Two pathfinding modes:** Retail, as in 1999 (the default), and
   Legion for large armies ([Legion](docs/user-guide.md#legion)).
 - **Power codes:** the original cheat codes, when a game allows them
   ([power codes](docs/user-guide.md#power-codes)).
-- **Multiplayer** through a server, with accounts, spectators, a disconnect
-  wait with computer takeover, voice chat and automatic map and mod transfer
+- **Multiplayer** through a server, with accounts, password-locked games,
+  spectators, a disconnect wait with computer takeover, voice chat and
+  automatic map and mod transfer, or on your own network with **LOCAL SERVER**
   ([multiplayer](docs/user-guide.md#multiplayer)).
 - **Campaigns:** *The Book of Darien* (48 missions) and *The Iron Plague* (25,
   with its alternate ending) ([campaigns](docs/user-guide.md#campaigns)).
@@ -58,7 +65,11 @@ Details in the [CHANGELOG](CHANGELOG.md#0924).
 - **Cartographer**, a map and scenario editor
   ([map editor guide](docs/cartographer-guide.md)).
 - **YouTube streaming** built in ([streaming](docs/streaming.md)), and a
-  repeatable **Benchmark** ([benchmark](docs/user-guide.md#benchmark)).
+  repeatable **Benchmark** whose results save as a JPG
+  ([benchmark](docs/user-guide.md#benchmark)).
+- **Simulation threads**: large battles use several processor threads; the
+  number, and whether they are pinned to cores, are set under
+  **Settings → Game** ([performance](docs/user-guide.md#performance)).
 
 <div align="center">
 
@@ -137,7 +148,7 @@ provides only graphics, sound and windowing.
   the game, and `cartographer` or `takserver` as its first argument starts those.
   On a Wayland desktop the game and Cartographer open native Wayland windows,
   sharp at any display scale (GNOME without the libdecor library keeps X11);
-  **Options → Display → Native Wayland** changes this.
+  **Settings → Graphics → Native Wayland** changes this.
 
 Every package holds the game, the Cartographer map editor and the dedicated
 server `takserver`. No server shortcut is added and no server starts by itself.
@@ -150,7 +161,7 @@ Updating? Install the new version over the old one;
 2. When asked, choose your original game's installation folder: the one that
    holds `data.hpi`, `terrain.hpi`, `sections.hpi` and `maps.hpi`. Nothing
    needs extracting. The game remembers the folder; change it later under
-   **Settings → Options → Data folder**.
+   **Settings → Game → Data folder**.
 3. Pick a door on the main menu: **single player** for a skirmish,
    **multiplayer** to join a server, or **campaign** for the missions.
 
@@ -168,8 +179,9 @@ From the command line, the game accepts `--data <folder>`, `--play-map
   start. Your first game step by step:
   [Your first skirmish](docs/user-guide.md#your-first-skirmish).
 - **Multiplayer:** choose a server, sign in (an unused name registers itself on
-  first sign-in), then create or join a game. Only the server needs an open
-  network port. See [Multiplayer](docs/user-guide.md#multiplayer).
+  first sign-in), then join a game, or **CREATE** one with a name and, to lock
+  it, a password. Only the server needs an open network port. See
+  [Multiplayer](docs/user-guide.md#multiplayer).
 - **Campaigns:** every chapter of both campaigns can be played in any order.
   See [Campaigns](docs/user-guide.md#campaigns).
 - **Replays:** every game you play or watch is recorded; open one from **Settings → Load
@@ -219,8 +231,7 @@ interaction is identical or fully verified.
 The evidence and the remaining gaps: [retail engine notes](docs/retail-engine.md),
 [Retail pathfinding port](docs/pathfinding-port.md),
 [Legion pathfinding](docs/legion-pathfinding.md),
-[Retail AI plan](docs/classic-ai-plan.md) and
-[acceptance](docs/classic-ai-acceptance.md), and
+[Retail AI port](docs/classic-ai-plan.md) and
 [campaign implementation](docs/campaign-design.md).
 
 ## Building from source

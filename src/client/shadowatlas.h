@@ -1,7 +1,7 @@
 #pragma once
 
 // Persistent allocation of shadow silhouette tiles (rendering optimization
-// workstream F, docs/render-optimization-progress.md).
+// workstream F).
 //
 // Before F, GameView repacked every visible shadow into height-sorted shelves
 // every frame and compared each tile with whatever tile had the same INDEX on

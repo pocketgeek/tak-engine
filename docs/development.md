@@ -62,24 +62,20 @@ suite. Some animation checks also require extracted scripts under
 `assets/extracted/all/scripts`. Rebuild **all targets** after simulation, AI, or
 network changes so the client, server, and tools use the same code.
 
-### Building another version
+### Building a tagged release
 
-Released versions stay on the GitHub releases page. To play another version's
-replays, or with friends on another version, you can also build that version
-from its git tag (every release has one; the [CHANGELOG](../CHANGELOG.md) lists
-them):
+Every release has a git tag (the [CHANGELOG](../CHANGELOG.md) lists them). To
+build exactly a release, check out its tag:
 
 ```sh
 git clone https://github.com/pocketgeek/tak-engine.git
 cd tak-engine
-git checkout v0.9.0
+git checkout v1.0.0
 ```
 
-Then follow the build steps in that checkout's own `docs/development.md` (or
-its README for versions before that guide existed), since the dependencies and
-steps have changed over time. Each version's client plays only with servers and
-replays of its own protocol, so a client built from another tag needs a server
-of that version too.
+Then follow the build steps in that checkout's own `docs/development.md`. A
+client plays only with servers and replays of its own protocol, so a client built
+from a tag needs a server built from a tag of the same protocol.
 
 ### Static dependencies and menu videos
 
@@ -137,9 +133,13 @@ frameworks. CI checks these dependency boundaries for release packages.
   are published with each release, as well as CI artifacts.
   See [macos.yml](../.github/workflows/macos.yml) for app/DMG packaging.
 - **Linux x64 and ARM64:** native CI runners build Ubuntu 22.04/24.04/26.04,
-  Debian 12/13, Fedora 44/45, and openSUSE Leap 16.0 containers for each architecture. Arch's official
-  container builds x64 only. Choose the package matching both your distribution
-  and architecture (`amd64`/`arm64` for DEB, `x86_64`/`aarch64` for RPM).
+  Debian 12/13, Fedora 44/45, openSUSE Leap 16.0 and Tumbleweed, and EL9/EL10
+  (one package per major release for RHEL, Rocky and Alma, built on AlmaLinux with a
+  `gcc-toolset`) containers for each architecture. Arch's official container builds
+  x64 only. The Ubuntu 22.04 leg (the oldest glibc) also makes an AppImage per
+  architecture (`packaging/appimage/build.sh`) from the same static binaries, for any
+  other distribution and the Steam Deck. Choose the package matching both your
+  distribution and architecture (`amd64`/`arm64` for DEB, `x86_64`/`aarch64` for RPM).
   ARM64 uses GitHub's [native ARM runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
   not emulation. Dependencies and caches are isolated by distro and architecture;
   both architectures run the same package-workflow regression tests, ELF checks,
@@ -181,7 +181,7 @@ the platform checks, Windows signing and complete asset verification pass.
   (a second build of the same sources, or of another worktree, is mostly cache hits).
 - **Targeted tests: `ctest -L quick -j 8`.** Every test that is not `nightly` and takes
   under 5 s is labelled `quick`, plus the four `retailgap_*` slices, which are slower but
-  check too much to skip (about 600 of the roughly 900 tests, about a minute at `-j 8`,
+  check too much to skip (about 630 of the roughly 930 tests, about a minute at `-j 8`,
   against several minutes for the full suite). Use it for a task's own checks; run the full suite
   (`ctest -j 8`) before handing a change over. Other labels: `legion`, `w2`, `nightly`
   (`ctest -L legion`, `-LE nightly`).
@@ -203,7 +203,7 @@ the platform checks, Windows signing and complete asset verification pass.
   The longest scenario tests (`legion_gen1_route_*`, `legion_situation_*`) are split
   into parallel parts (per start offset and per mode respectively); `legion_scenario`
   checks serial == workers per mode and offset and gates nothing across them, so the
-  parts together are exactly the old test.
+  parts together check exactly what one whole run would.
 - **Exact-identity harness: `tools/legion_identity.sh --base <build> --cand <build>`.**
   Base results are cached under `~/.cache/tak-identity/<base commit>/<build type>-v<N>/`
   (every replay, golden, `--mpai` game, ctest run, `check-determinism.sh` and crowdbench
@@ -214,18 +214,19 @@ the platform checks, Windows signing and complete asset verification pass.
   with every row SAME also stores the candidate's results under the candidate's own commit, so in
   a chain A->B, B->C the second step finds its base warm. `--no-cache` ignores it,
   `-j N --cores a-b` sets the job width and CPU list, `--quick` also leaves the `nightly` tests out of
-  its ctest section (they were 90% of a quick run), and crowdbench now starts beside the
+  its ctest section (they are most of its time), and crowdbench starts beside the
   tail of the replays instead of after them. Bump `HARNESS_VERSION` in
   `tools/legion_identity.py` when a base row's definition changes. The 2-hour
   replays are platform independent, so running them on the Windows or macOS test hosts
-  is possible but not automated (follow-up): the harness relies on `taskset`/`setsid`.
+  is possible but not automated: the harness relies on `taskset`/`setsid`.
 
 ## WE timing rounds (`tools/we_timing.sh`)
 
-Engine-wide perf (WE) steps are judged by swapped, concurrent A/B pairs on the reserved timing cores 0-3
-(`/home/pocket_geek/tak-tmp/tools/timing.sh`, which flocks them; everything else runs on 4-23). Replaying R-2h / L-2h /
-R-bench / L-bench in full, twice, swapped, took about 70 minutes a round. `tools/we_timing.sh` does the same job in
-about 10 minutes for two swapped rounds:
+Engine-wide perf (WE) steps are judged by swapped, concurrent A/B pairs on reserved timing cores 0-3, with
+everything else on 4-23. Every timed run goes through a local wrapper script that flocks those cores: `TAK_TIMING_SH`
+names it (the default is the maintainer's `/home/pocket_geek/tak-tmp/tools/timing.sh`; set your own). Replaying R-2h /
+L-2h / R-bench / L-bench in full, twice, swapped, takes about 70 minutes a round. `tools/we_timing.sh` does the same job
+in about 10 minutes for two swapped rounds:
 
 ```sh
 tools/we_timing.sh --base <base build-o2> --cand <cand build-o2> [--rounds 2] [--sits R-2h-1800,...] [--counters]
@@ -251,56 +252,28 @@ tools/we_timing.sh --base ... --cand ... --replays <dir of .takrep>   # exact mo
   of base and candidate (a hash-identical step must print `identical`). `--counters` adds the TAK_SIMSTATS work counters
   (do not compare ms from a `--counters` run).
 - **Both trees need the tool files** (`tools/legion_scn.h`, `tools/legion_scenario.cpp` `--catchup`, `src/client/situation.h`,
-  `src/client/ordershape.h`): rebase or cherry-pick the commit that added them onto a base/candidate that predates it.
+  `src/client/ordershape.h`).
 - **`--replays DIR`** runs the exact thing instead: each recording played from tick 0 and cut off at harvest + warm +
   measure ticks (a debug `takclient` per build dir; the SIMPHASE lines before the harvest tick are dropped). Same report,
   no situation fidelity limit, roughly twice the wall of the situation mode and still about a third of a full-length
-  replay round. Use it whenever a result will be quoted for a phase where the validation below shows a gap.
+  replay round. Use it whenever a result will be quoted for a phase where situations and replays disagree (below).
 - **Identity is still the full replays** (`tools/legion_identity.sh`): a situation is not byte-identical to the recording
   and proves nothing about hashes.
 - **Situation timing is for SCREENING.** Use it to find and rank candidate steps quickly; before calling a WE step done,
   confirm any claimed gain with `--replays` (exact mode). This applies above all to Legion combat and order-queue claims:
-  the E1.3 pair showed a 14 pp gap on L-2h (replay -12.5%, situation +1.9%, see Validation below), so a situation result
-  there is neither a confirmation nor a refutation. A quoted final number comes from `--replays`, never from a situation.
+  one such step measured -12.5% in the replays and +1.9% as a situation on L-2h, so a situation result there is neither
+  a confirmation nor a refutation. A quoted final number comes from `--replays`, never from a situation.
 
-### Validation (2026-10-10)
+### How close situations are
 
-The situation ratios were checked against controlled truncated replays of the same pairs, same window, same quiet cores
-(two rounds, four swapped pairs each); `Δ` is situation minus replay, in percentage points of the pair-median ratio.
-
-Pair-median ratio of the combat phase, cand/base - 1, warm-up 1000 and 1000 measured ticks (replay window: the same ticks
-of the recording). E1.3 (13bc9697 vs 20a5195a, findTarget gate order) and E2.1 (d361329a vs f0e49384, forEachNear block skip):
-
-| pair | workload | replay | situation | delta (pp) |
-|---|---|---|---|---|
-| E2.1 | R-2h (10k) | -21.1 | -21.7 | -0.6 |
-| E2.1 | L-2h (10k) | -19.0 | -19.7 | -0.6 |
-| E2.1 | R-bench | -26.4 | -29.3 | -2.9 |
-| E2.1 | L-bench | -26.2 | -29.4 | -3.3 |
-| E1.3 | R-2h (10k) | -22.5 | -17.3 | +5.2 |
-| E1.3 | R-bench | -35.7 | -33.7 | +2.0 |
-| E1.3 | L-bench | -2.6 | -0.8 | +1.9 |
-| E1.3 | **L-2h (10k)** | **-12.5** | **+1.9** | **+14.4** |
-
-The other phases agree to within about 3 pp in most rows and 7 pp in all of them (`other` of E2.1 L-2h, `sep` and
-`movement` of the E2.1 benches), where the replay pairs themselves spread by 5-15 pp. E2.1's `grid` phase on the benches
-(0.015 ms) reads +36..+46% in the replays and +36..+38% in the situations.
-Two cases do not meet the 3 pp bar, and why:
-
-- **E1.3 on L-2h: the situation shows nothing where the replay shows -12..-14%.** The work counters match the recording
-  closely (acq_scans, los_calls and the queue walks within 5%, order-queue shapes equal), so the missing gain is a
-  cost-per-walk difference. Tested and ruled out: heap age (fragmenting the allocator before the build changed nothing), the
-  Retail waypoint backlog (Legion has none), the warm-up (the ratio is flat from tick 0 to 2500). It is not understood; treat
-  any Legion combat-phase claim from order-queue or acquisition changes as unconfirmed until `--replays` agrees.
-- **E1.3 on R-2h: -17% against -22%.** Without `--catchup` it was -11% and still rising: the recording holds ~900 units
-  with 8+ waypoint orders that a rebuilt world takes ~2000 ticks to regrow (the retail path-budget scheduler drains the
-  tick-0 backlog slowly). `--catchup 60` brings most of them back at once; the rest of the gap (the waypoint queues
-  plateau at ~85% of the recording's) is left.
-
-Absolute ms are not comparable between modes (a situation tick ran from 18% cheaper to 4% dearer than the recording's, base
-build), and the host differs between days, so compare only within one pair.
-Round wall: 7-11 minutes for two swapped rounds of all four situations (430 s with the committed defaults, 363 s of it run time, plus the wait for the
-timing cores), against ~70 minutes.
+Checked against truncated replays of the same pairs, window and cores, the combat-phase pair ratios of situations
+agree with the replays to within about 3 percentage points in most cases and 7 in all but one, where the replay pairs
+themselves spread by 5-15 points. The exception is a Legion combat step on L-2h (an acquisition-order change), where
+the situation shows no gain and the replay -12..-14%, with matching work counters; the cause is not known. A situation
+of R-2h regrows the recording's long waypoint queues only to about 85% even with `--catchup 60`, so a gain there can
+read a few points smaller than in the replay. Absolute ms are not comparable between modes (a situation tick runs from
+18% cheaper to 4% dearer than the recording's), and the host differs between days, so compare only within one pair.
+A round of two swapped rounds of all four situations takes 7-11 minutes, against about 70 for the replays.
 
 ## Developer launch modes
 
@@ -367,9 +340,11 @@ The simulation's worker pool (`src/sim/simpool.h`) is as wide as the player's
 **Simulation threads** option says (`simThreads` in the settings file: 0 = Auto,
 one thread for each performance core, `SimPool::autoThreads`; else that many
 threads, up to twice the CPU threads). A game
-with its own local server gives its simulation half and starts the server with
-the other half (`--sim-threads`); any other game gives its one simulation all of
-them (`SimPool::sessionThreads`). A `takserver` shares its `--sim-threads
+with its own local server (single player, a hosted Local server, the Benchmark,
+`--play-map`) gives its simulation the larger half, rounded up, and starts the
+server with the rest (`--sim-threads`), each at least 1; any other game gives its
+one simulation all of them (`SimPool::sessionThreads`), never more than 64 per
+simulation. A `takserver` shares its `--sim-threads
 <auto|N>` total among its running games (`SimPool::serverShare`). Each process
 logs what its simulation runs on when a game starts, for example
 `sim threads: 4 (auto: 8, half; local server 4) pinned to cpus 0,2,4,6` in the
@@ -392,7 +367,8 @@ whatever the setting says, and ctest sets it for every test
 the same cores; any other value, like the variable unset, leaves it to the
 setting, and no variable turns pinning on (a test of the pinning writes
 `simPin = 1` and sets `TAK_SIM_PIN=1` over ctest's 0). The Benchmark results list
-what the run latched: `PIN SIM THREADS ON` or `OFF`. Two more debug
+what the run latched: `SIM THREADS CLIENT <n>  SERVER <m>` with the setting, and
+`PIN SIM THREADS ON` or `OFF`. Two more debug
 hooks fake the detection: `TAK_CPU_SYSFS=<root>` reads a Linux sysfs fixture tree
 in place of this machine, and `TAK_CPU_NOPIN=1` reports a system that cannot pin
 (the macOS form of the Options row). `TAK_SIM_WORKERS=<n>` (debug

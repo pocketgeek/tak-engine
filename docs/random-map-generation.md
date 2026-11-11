@@ -79,7 +79,7 @@ If any player lacks space for another round or its surrounding ruins, the
 entire round and its new route reservations are discarded for everyone.
 This is an economic fairness rule, not a promise of perfectly symmetric terrain.
 
-The generator uses the existing retail terrain classifier and footprint
+The generator uses the game's retail terrain classifier and footprint
 clearance. It validates six-cell-wide ground bodies between mainland/lake starts
 and each owner's mana sites, after placing scenery. Expansion approaches are
 reserved along actual reachable routes. Island harbors share an eight-cell ship
@@ -177,8 +177,8 @@ default amounts, maps with plateaus got plateau mana in 13/24 2-player 16×16 ma
 23/24 at 24×24 and 22/24 at 32×32; 4-player maps about half to two-thirds of the
 time from 24×24 up; 8-player maps rarely (all eight must find a fair top in one
 band). Across all layouts and player counts, 26% of plateaus carried mana. The final
-walking-distance validation is unchanged and sees mountains, cliffs and houses as the
-simulation will. If kit terrain leaves no room for a fair map, the generator retries
+walking-distance validation applies as on any map and sees mountains, cliffs and houses
+as the simulation will. If kit terrain leaves no room for a fair map, the generator retries
 deterministically with half the kit amounts, then none (`Result::kitFallback`); a
 sweep of 1,620 maps (five worlds; Mainland, Lakes and each themed layout; 2, 4 and 8
 players; 16×16 to 32×32; two seeds; six Plateaus/Mountains combinations) never
@@ -196,7 +196,7 @@ room lists the three amounts with the map seed in the recipe box over its map
 preview (and the full-window map); Cartographer's generator dialog has
 PLATEAUS, MOUNTAINS and TOWNS fields (0–255).
 
-The version-6 relief audit excludes Veruna grass-covered Breaker pieces from
+Relief placement excludes Veruna grass-covered Breaker pieces from
 sandy terrain and Taros cobblestone-edged unique23/25/27 pieces from bare low
 ground. They require transitions which this placement path does not assemble.
 The compatible relief families in all five worlds were visually inspected;
@@ -250,11 +250,11 @@ scattered spots follow the same rule: they are spread evenly but are not
 mirrored, and they never enter a home economy.
 
 Generated terrain ignores terrain replacements bundled with unrelated downloaded
-maps. Explicit user overrides retain their precedence, and authored maps retain
-their existing texture lookup. CPU composition, full-detail terrain textures,
+maps. Explicit user overrides keep their precedence, and authored maps keep their
+own texture lookup. CPU composition, full-detail terrain textures,
 and distant terrain mipmaps distinguish the two lookup scopes in their caches.
 The runtime provenance flag is not serialized into a bare exported TNT; a saved
-map is subsequently treated as an authored map.
+map is then treated as an authored map.
 
 ## Reproducibility and verification
 
@@ -262,7 +262,7 @@ All generation decisions use integer arithmetic and fixed traversal orders.
 Prefab discovery is sorted. The asset-free synthetic golden is
 `6bf977a42891c638` (the synthetic install has no kit
 sections, so the default kit amounts are a no-op there). The multiplayer gameplay-data hash includes the
-coast and relief sections used by the generators, as well as its existing
+coast and relief sections used by the generators, as well as the
 feature-definition checks. It therefore detects differences in the source
 height/feature planes, not just differences in unit stats.
 
@@ -284,9 +284,10 @@ On retail's own 790,192 boundary segments the edge score has median 0.79 and
 leave-one-map-out whitelist 0.050% are candidates (largely genuine retail seams,
 such as a mission map's mid-map join). A 6,150-map sweep (every world and layout,
 16×16 to 64×64, 2/4/8 players, three seeds, default, maximum and three mixed slider
-extremes) found every candidate and strong seam in one place: hillside ramps beside
-cliffs (Aramon's dirt slopes read as rectangular patches; Taros's showed as a faint
-lighter band, tone 1.6 to 2.6). With the ramp rules above the sweep finds none.
+extremes) finds no candidate and no strong seam. The seams this hunt catches are
+hillside ramps laid beside the wrong cliffs (Aramon's dirt slopes read as rectangular
+patches, Taros's as a faint lighter band, tone 1.6 to 2.6), which is why the ramp
+rules above lay hillsides only as retail does.
 `mapgen_seams <data> pairs` scores every hillside/cliff and hillside/hillside join
 from the section art; the `mapgen_seams` test runs a smaller sweep and fails on any
 candidate or strong seam.
@@ -331,21 +332,15 @@ reduced, an independent flood that cliffs never cut a start off, that every sect
 whose tiles are one whole kit piece carries that piece's heights exactly, and that
 each world builds exactly the kits the survey above says it has.
 
-The development audit also compared 30 version-1/version-2 maps against the
-pre-change generator, with identical heights, features, tile references, names,
-and starts. Windows and macOS CI run the asset-free generator golden alongside
-the existing simulation/render regressions.
-
-Local acceptance for this change: 91 Release and 94 optimized-Debug CTests
-passed; GCC and Clang matched the synthetic golden and all 105 retail-roster map
-hashes. Thirty-second Crusades client/referee matches on generated Mainland and
-Islands each reached tick 900 without a mismatch. The accelerated terrain-cache
-regression also passed on a generated map, covering mipmaps, panning, zoom,
-filtering, edits, and renderer reset.
+The focused `mapgen_themes` test exercises all five themes, 2–8 players and
+three seeds (including maximum scenery density), checking deterministic output
+and terrain/resource reachability. `mapgen_ports` produces two of every Sea Fort
+ship in both balance modes on the Ports layout. Windows and macOS CI run the
+asset-free generator golden alongside the simulation/render regressions.
 
 ## Saved maps and multiplayer
 
-The lobby distributes generated-map recipes, not independently chosen random seeds.
+The game room distributes generated-map recipes, not independently chosen random seeds.
 Once the match starts, the host, every client (including spectators), and the server
 save a reusable `Maps/Generated-<recipe SHA-256>.kmp` in their per-user folder (the
 client's beside `settings.ini`, the server's `--map-cache-dir` or, without one,
@@ -357,30 +352,9 @@ it. Saved maps appear in the map picker in subsequent games.
 Custom maps use [verified automatic transfer](map-transfer.md). Received maps also
 remain selectable, with a short fingerprint in the name to distinguish versions.
 
-### Version 4 validation (2026-09-30)
-
-- All 4,725 terrain/layout/player/seed/size/density cases passed, including a
-  surrounding-ruin check for every mana deposit and footprint-aware route checks.
-- All 15 combinations of five worlds and three layouts passed at 64×64 with
-  eight players; regenerating their recipes produced identical maps.
-- GCC Release and Clang ASAN produced identical hashes for all 105 roster maps.
-- The version-3 synthetic golden was `9258a896baaf4285` in that audit.
-- Thirteen focused tests passed in each of Release, optimized Debug, and ASAN,
-  including generated naval production, map transfer, Cartographer generation,
-  AI behavior, and results-screen texture cleanup.
-- A live 64×64 generated-map network test reached 300 matching ticks on host,
-  peer, referee, and late spectator (`b471a5694f12d9e5`). Host, peer, and server
-  each saved the generated map for later selection.
-
-Lakes water can reach map edges.
 Optional map names travel in the recipe,
 are limited to 24 ASCII letters/digits/spaces/hyphens/underscores, and are used
 for the saved map title and filename. The filename retains a recipe hash to avoid
 collisions. Named maps also include a 16-digit recipe hash in their internal
 map name and browser entry, so duplicate titles stay independently selectable.
 Slider previews regenerate on release, not during dragging.
-
-The focused `mapgen_themes` test exercises all five themes, 2–8 players and
-three seeds (including maximum scenery density), checking deterministic output
-and terrain/resource reachability. `mapgen_ports` produces two of every Sea Fort
-ship in both balance modes on the new Ports layout.

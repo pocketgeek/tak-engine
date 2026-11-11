@@ -18,12 +18,12 @@ from these verified files.
 Packages also contain the TNT, referenced terrain JPGs, and map feature definitions
 with their burn/death chains, sprites, and palettes. Unit definitions, build lists,
 and executable scripts are not transferred;
-the existing gameplay-data checks still require compatible game data/mods.
+the gameplay-data checks require compatible game data/mods.
 Map-specific resources are mounted only for the selected game, including on a server
 hosting multiple rooms. Downloaded map resources do not alter the base-game handshake
 or the generated-map source data.
 
-Transfers use the existing TCP connection in sequential 64 KiB chunks, with bounded
+Transfers use the game's TCP connection in sequential 64 KiB chunks, with bounded
 send queues and a 256 MiB package limit. The receiver verifies the complete digest,
 resource paths/types, geometry dimensions, and dependencies before accepting it.
 Partial transfers are not installed. Leaving/reconnecting restarts an incomplete
@@ -51,7 +51,7 @@ A client reports a save failure (`MAP SAVE FAILED`) in chat and its log; it can 
 play using its in-memory copy. A saved generated map picked later is an ordinary map:
 it transfers and plays like any other, from its saved terrain.
 
-Validation: `map_transfer_test` checks canonical identity, resource isolation,
+`map_transfer_test` (ctest `map_transfer`, and `map_transfer_data` with game data) checks canonical identity, resource isolation,
 cache/catalog reuse, malformed packages, checksums, and chunk ordering. With a data
 root argument it also reopens a saved generated map and checks terrain and starts.
 Its `--network PORT HOST_ROOT PEER_ROOT [MAP]` mode exercises real server transfer,

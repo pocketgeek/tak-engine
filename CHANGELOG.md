@@ -4,9 +4,9 @@ Every published TAK Engine release, newest first.
 
 The current version is always at
 [the latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
-Releases from 0.9.0 on stay on the GitHub releases page; versions before 0.9.0
-are kept only as git tags (each entry links its source): to run one, build it
-from source with the [development guide](docs/development.md) of that tag. No release includes retail game assets: every version needs your own
+Only 1.0.0 is a GitHub release; every earlier version is kept only as a git
+tag (each entry links its source): to run one, build it from source with the
+[development guide](docs/development.md) of that tag. No release includes retail game assets: every version needs your own
 *Total Annihilation: Kingdoms* installation.
 
 **Protocol** decides who can play together. A server and all of its players
@@ -17,7 +17,132 @@ neighbours. **Upgrading** lines appear only where you have to do something
 yourself.
 
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
-their validation reports; both live in [`docs/`](docs/).
+their validation reports: 1.0.0's live in [`docs/`](docs/), every earlier one's
+in the source of its tag.
+
+## 1.0.0
+*2026-11-11 · protocol 323 · replay format 15 · does not play with 0.9.24 or earlier, nor their replays*
+
+- **The game room is where a game is set up.** **Play the Machine**, **CREATE** in the
+  game browser and a **LOCAL SERVER** host open a game room at once, with the settings
+  used last time; the create screens are gone. The host picks the map in the room with
+  **CHANGE MAP...** (an **EXISTING MAP** or **RANDOM MAP** tab, then **PICK**) and sets
+  every rule in the room itself. A map with fewer starts removes the computer players
+  past them and moves the players it must, and says so first. Guests see what the host
+  changed light up, are told in the chat, and press **READY** again. **LEAVE** goes back
+  to where the room came from. Cartographer's **TEST MAP** opens a single-player room
+  that keeps its map.
+- **Single player and multiplayer remember their own settings.** Play the Machine and
+  online or LOCAL SERVER games each keep their own rules, map, random map recipe, map
+  sort and ticked game packs. Cosmetic packs stay one list. The game name is not
+  remembered.
+- **Watch the computer players from the room.** In single player, **WATCH** on your
+  own row makes you a spectator: with fewer than two computer players, every open seat
+  gets one, and **SIT HERE** takes a seat back. While you watch, **FOG OF WAR** reads
+  **FULL VISION** and **POWER CODES** reads **OFF**, greyed; your own choices come back
+  when you sit down.
+- **MOVE HERE is live only with START LOCATIONS: BY SLOT** (and in scenarios whose seats
+  have their own armies), the only setting in which a seat picks its start; greyed, it
+  says why under the pointer.
+- **The room's layout.** The map's name stands alone above a larger preview whose
+  height follows the map's shape (in single player it fills the right column), with a
+  one-line **MODS** summary and a **MODS...** button under it. A random map's recipe
+  shows when the pointer is over the preview. **Click a map preview** to see the whole
+  map in the window, with the starts numbered.
+- **Game name and password are set when the game is created.** **CREATE** opens a
+  window with **GAME NAME** (your name's game by default, up to 32 characters) and
+  **PASSWORD (OPTIONAL)**; both stay as set for the life of the room. Clicking a locked
+  game, or **WATCH** on one, asks for its password in a window. Passwords are hidden as
+  you type, with **SHOW** / **HIDE**. **CANCEL** takes back a request the server has not
+  answered yet. **WATCH** on a game whose map or game mods must download shows how far
+  the download has got instead of giving up.
+- **A multiplayer room needs a second human player to START.**
+- **Network fixes.** A room you leave stays left. A server with no room for another
+  game refuses **CREATE**, and one running all the games it may refuses **START** with
+  "retry later", instead of ending the connection. In a running game the host's powers
+  belong to the host's seat: a host who reconnects is host again, and one who leaves
+  hands them to the next player still playing. A player who reconnects gets the game's
+  current speed and pause. An unstarted room nobody is in closes. A click meant for one
+  lobby screen no longer lands on the screen that opens under it.
+- **LOCAL SERVER and games on your network.** **LOCAL SERVER** in **CONNECT TO SERVER**
+  hosts a game on your own computer for players on your network: no accounts, no
+  encryption, port 7677 (or a free one), with an optional game password. Games
+  announced on the network are listed under it (**LAN**, **LOCK** or **LIVE** with their
+  seats) and are joined with just a name; **SPECTATE**, beside **CONNECT**, watches one,
+  waiting for the start if it has not begun. When the host leaves, the game closes for
+  everyone (the host is asked first). Network sessions end at **CONNECT TO SERVER**.
+- **Connecting.** An address typed without `tls://` or `tcp://` tries an encrypted
+  connection first and then the same address unencrypted; with a prefix only that kind
+  is tried. The row for typing an address reads **NEW SERVER...**, under **LOCAL
+  SERVER**. Names on the connect screen are at most 16 characters.
+- **The end screen's doors** say where they go: the title screen on the left; on the
+  right **Play the Machine** after single player, the server's game list after an online
+  game, **Connect to Server** after a network game.
+- **Options in pages.** **SETTINGS** on the title screen and the in-game **Esc** menu
+  open **GAME**, **GRAPHICS**, **USER INTERFACE**, **AUDIO**, **VOICE CHAT** and
+  **CONTROLS**, each with a **DEFAULTS** that resets only that page. The camera,
+  **Tactical Dots** and **Screen Shake** are under **USER INTERFACE**; **TALK MODE** and
+  its push-to-talk key are under **MICROPHONE**, greyed while the microphone is off.
+- **Custom music.** The **AUDIO** page lists every original music track by side;
+  **CHOOSE** plays a WAV, MP3, FLAC or Ogg file of yours in its place wherever that track
+  plays, title screen and lobby included, and **CLEAR** puts the original back. Only you
+  hear it.
+- **Mouse Zoom** (on by default): off, the wheel does not zoom and the game keeps the
+  original 1:1 view; Tactical Dots are off with it.
+- **F11 switches fullscreen** on every screen; it is rebindable. **CONTROLS** has a
+  **DEFAULT** button on every row that puts back just that key.
+- **Simulation threads.** **Options → Game → Performance** has a **SIMULATION THREADS**
+  slider: **AUTO**, one thread for each performance core, or 1 up to twice the threads
+  the computer has, coloured by the kind of core a number reaches (blue performance,
+  green efficiency, yellow hyperthreads, red more than the computer has). Lines under it
+  say what the computer has. A game with its own local server (single player, a LOCAL
+  SERVER you host, the Benchmark) gives half to the game and half to its server. **PIN
+  SIMULATION THREADS** (off by default; greyed on macOS) keeps each simulation thread
+  on a core of its own. Both apply from the next game opened and never change what
+  happens in a game.
+- **Benchmark results** list **SIM THREADS** (the game's and its server's) and **PIN SIM
+  THREADS**, and **SAVE AS JPG** saves the results screen to a `benchmarks` folder beside
+  your replays. The pointer stays an arrow over the results.
+- **Random maps: width and height are set separately**, from 8 to 64 sections, each
+  offering only the sizes the layout builds with the other; most layouts go down to
+  8 × 8 for up to five players and 12 × 12 for six to eight. Generation is faster (a
+  64 × 64 map for eight players: 2.6 s to 0.55 s), and the room's preview is made in the
+  background, marked **GENERATING**, so the screen no longer stops while it is.
+- **Animations slow with the world** when a big battle or a slow machine cannot keep
+  the game's speed, so walking units no longer slide.
+- **LOAD REPLAY** has a scroll bar.
+- **Fixes.** Ctrl+click on a building's icon with a mobile builder starts placing it (it
+  was made beside the builder with no placement). A refused order changes nothing (a
+  Ctrl **Load** naming another player's unit reset its movement). A unit builds or trains
+  only what is on its own build menu. Malformed art in a map package can no longer crash
+  a game. Changing a volume no longer races the sound mixer.
+- **The game-data check covers unit scripts and models**: a player whose install has a
+  changed script or model is turned away when joining instead of losing sync mid-game.
+- **Only 1.0.0's own files.** Replays play only if recorded by 1.0.0; another
+  version's unfinished recording is left as it is. Settings keys of earlier versions are
+  not translated, and a new profile sets **UI Scale** and **Cursor Size** from the
+  display's scale once. Cartographer treats the old per-level AI files (`ai/d.txt` to
+  `ai/ad.txt`) as ordinary files and no longer offers to merge them, and a random map's
+  recipe lives only in its `.ota` (a new random map's description starts empty).
+- **Linux:** an AppImage (x64 and ARM64) for any other distribution and the Steam Deck,
+  and packages for openSUSE Tumbleweed and RHEL, Rocky Linux and AlmaLinux 9 and 10.
+  Package installers show the real publisher and description.
+
+**Upgrading (players):** the remembered room settings and the ticked game-mod packs
+start fresh once: tick your game packs again from a room's **MODS...** screen, once in
+single player and once in multiplayer. Cosmetic packs keep their ticks.
+
+**Upgrading (server operators):** update `takserver` together with your players.
+`--crusades-db` and `--crusades-definition` are now refused as unknown options: remove
+them from your command line or service file. New options: `--sim-threads <auto|N>`, the
+simulation threads all running games share (each gets an equal part, at least 2 and at
+most 64; `auto`, the default, is every CPU the server may use), `--sim-cpus
+<list|auto|none>` to pin those threads (default `none`), and `--lan` for a no-account,
+unencrypted network host that announces its games. `--max-games` and
+`--max-running-games` now refuse the request instead of disconnecting the player.
+
+Full notes: [release-1.0.0-notes.md](docs/release-1.0.0-notes.md) ·
+validation: [release-1.0.0-validation.md](docs/release-1.0.0-validation.md)
 
 ## 0.9.24
 *2026-11-08 · protocol 320 · replay format 15 · does not play with 0.9.23 or earlier, nor their replays*
@@ -122,8 +247,8 @@ players.
 **Upgrading (server operators):** update `takserver` together with your
 players.
 
-Full notes: [release-0.9.22-notes.md](docs/release-0.9.22-notes.md) ·
-validation: [release-0.9.22-validation.md](docs/release-0.9.22-validation.md)
+Full notes: [release-0.9.22-notes.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.22/docs/release-0.9.22-notes.md) ·
+validation: [release-0.9.22-validation.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.22/docs/release-0.9.22-validation.md)
 
 ## 0.9.21
 *2026-11-07 · protocol 315 · replay format 15 · does not play with 0.9.20 or earlier, nor their replays*
@@ -164,8 +289,8 @@ validation: [release-0.9.22-validation.md](docs/release-0.9.22-validation.md)
 **Upgrading (server operators):** update `takserver` together with your
 players.
 
-Full notes: [release-0.9.21-notes.md](docs/release-0.9.21-notes.md) ·
-validation: [release-0.9.21-validation.md](docs/release-0.9.21-validation.md)
+Full notes: [release-0.9.21-notes.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.21/docs/release-0.9.21-notes.md) ·
+validation: [release-0.9.21-validation.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.21/docs/release-0.9.21-validation.md)
 
 ## 0.9.20
 *2026-11-06 · protocol 312 · replay format 15 · does not play with 0.9.19 or earlier, nor their replays*
@@ -654,8 +779,8 @@ validation: [release-0.9.21-validation.md](docs/release-0.9.21-validation.md)
 **Upgrading (server operators):** update `takserver` together with your
 players.
 
-Full notes: [release-0.9.20-notes.md](docs/release-0.9.20-notes.md) ·
-validation: [release-0.9.20-validation.md](docs/release-0.9.20-validation.md)
+Full notes: [release-0.9.20-notes.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.20/docs/release-0.9.20-notes.md) ·
+validation: [release-0.9.20-validation.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.20/docs/release-0.9.20-validation.md)
 
 ## 0.9.19
 *2026-11-03 · protocol 311 · replay format 15 · does not play with 0.9.18 or earlier, nor their replays*
@@ -695,8 +820,8 @@ validation: [release-0.9.20-validation.md](docs/release-0.9.20-validation.md)
 **Upgrading (server operators):** update `takserver` together with your
 players.
 
-Full notes: [release-0.9.19-notes.md](docs/release-0.9.19-notes.md) ·
-validation: [release-0.9.19-validation.md](docs/release-0.9.19-validation.md)
+Full notes: [release-0.9.19-notes.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.19/docs/release-0.9.19-notes.md) ·
+validation: [release-0.9.19-validation.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.19/docs/release-0.9.19-validation.md)
 
 ## 0.9.18
 *2026-11-02 · protocol 309 · replay format 15 · plays with 0.9.17 and 0.9.16, and their replays*
@@ -716,8 +841,8 @@ validation: [release-0.9.19-validation.md](docs/release-0.9.19-validation.md)
   0.9.18, 0.9.17 and 0.9.16 play together and play each other's replays. Servers
   need no update.
 
-Full notes: [release-0.9.18-notes.md](docs/release-0.9.18-notes.md) ·
-validation: [release-0.9.18-validation.md](docs/release-0.9.18-validation.md)
+Full notes: [release-0.9.18-notes.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.18/docs/release-0.9.18-notes.md) ·
+validation: [release-0.9.18-validation.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.18/docs/release-0.9.18-validation.md)
 
 ## 0.9.17
 *2026-11-02 · protocol 309 · replay format 15 · plays with 0.9.16, and its replays*
@@ -740,8 +865,8 @@ validation: [release-0.9.18-validation.md](docs/release-0.9.18-validation.md)
   clients and servers play together in either direction, and each plays the other's
   replays. Servers need no update.
 
-Full notes: [release-0.9.17-notes.md](docs/release-0.9.17-notes.md) ·
-validation: [release-0.9.17-validation.md](docs/release-0.9.17-validation.md)
+Full notes: [release-0.9.17-notes.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.17/docs/release-0.9.17-notes.md) ·
+validation: [release-0.9.17-validation.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.17/docs/release-0.9.17-validation.md)
 
 ## 0.9.16
 *2026-11-01 · protocol 309 · replay format 15 · does not play with 0.9.15 or earlier, nor their replays*
@@ -771,8 +896,8 @@ validation: [release-0.9.17-validation.md](docs/release-0.9.17-validation.md)
 - **The streaming panel's key can be rebound** in Controls; it was fixed on F9.
 - **START says STARTING...** as soon as you click it.
 
-Full notes: [release-0.9.16-notes.md](docs/release-0.9.16-notes.md) ·
-validation: [release-0.9.16-validation.md](docs/release-0.9.16-validation.md)
+Full notes: [release-0.9.16-notes.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.16/docs/release-0.9.16-notes.md) ·
+validation: [release-0.9.16-validation.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.16/docs/release-0.9.16-validation.md)
 
 ## 0.9.15
 *2026-11-01 · protocol 308 · replay format 15 · plays with 0.9.14, and its replays*
@@ -790,8 +915,8 @@ validation: [release-0.9.16-validation.md](docs/release-0.9.16-validation.md)
   clients and servers play together in either direction, and each plays the
   other's replays. Servers need no update.
 
-Full notes: [release-0.9.15-notes.md](docs/release-0.9.15-notes.md) ·
-validation: [release-0.9.15-validation.md](docs/release-0.9.15-validation.md)
+Full notes: [release-0.9.15-notes.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.15/docs/release-0.9.15-notes.md) ·
+validation: [release-0.9.15-validation.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.15/docs/release-0.9.15-validation.md)
 
 ## 0.9.14
 *2026-11-01 · protocol 308 · replay format 15 · does not play with 0.9.13 or earlier, nor their replays*
@@ -813,8 +938,8 @@ validation: [release-0.9.15-validation.md](docs/release-0.9.15-validation.md)
   Cursor on. Each screen put the default cursor back as it closed, and it stayed
   up until the next screen's first frame.
 
-Full notes: [release-0.9.14-notes.md](docs/release-0.9.14-notes.md) ·
-validation: [release-0.9.14-validation.md](docs/release-0.9.14-validation.md)
+Full notes: [release-0.9.14-notes.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.14/docs/release-0.9.14-notes.md) ·
+validation: [release-0.9.14-validation.md](https://github.com/pocketgeek/tak-engine/blob/v0.9.14/docs/release-0.9.14-validation.md)
 
 ## 0.9.13
 *2026-10-31 · protocol 307 · replay format 15 · does not play with 0.9.12 or earlier, nor their replays*
@@ -969,7 +1094,7 @@ validation: [release-0.9.14-validation.md](docs/release-0.9.14-validation.md)
 **Upgrading (server operators):** update `takserver` together with your
 players.
 
-[Release notes](docs/release-0.9.13-notes.md) · [Validation report](docs/release-0.9.13-validation.md) · [Source at v0.9.13](https://github.com/pocketgeek/tak-engine/tree/v0.9.13)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.9.13/docs/release-0.9.13-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.9.13/docs/release-0.9.13-validation.md) · [Source at v0.9.13](https://github.com/pocketgeek/tak-engine/tree/v0.9.13)
 
 ## 0.9.12
 *2026-10-29 · protocol 305 · replay format 15 · does not play with 0.9.11 or earlier, nor their replays*
@@ -1144,7 +1269,7 @@ players.
 **Upgrading (server operators):** update `takserver` together with your
 players.
 
-[Release notes](docs/release-0.9.12-notes.md) · [Validation report](docs/release-0.9.12-validation.md) · [Source at v0.9.12](https://github.com/pocketgeek/tak-engine/tree/v0.9.12)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.9.12/docs/release-0.9.12-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.9.12/docs/release-0.9.12-validation.md) · [Source at v0.9.12](https://github.com/pocketgeek/tak-engine/tree/v0.9.12)
 
 ## 0.9.11
 *2026-10-29 · protocol 304 · replay format 15 · does not play with 0.9.10 or earlier, nor their replays*
@@ -1189,7 +1314,7 @@ players.
 **Upgrading (server operators):** update `takserver` together with your
 players.
 
-[Release notes](docs/release-0.9.11-notes.md) · [Validation report](docs/release-0.9.11-validation.md) · [Source at v0.9.11](https://github.com/pocketgeek/tak-engine/tree/v0.9.11)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.9.11/docs/release-0.9.11-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.9.11/docs/release-0.9.11-validation.md) · [Source at v0.9.11](https://github.com/pocketgeek/tak-engine/tree/v0.9.11)
 
 ## 0.9.10
 *2026-10-28 · protocol 303 · replay format 15 · plays with 0.9.9, and its replays*
@@ -1220,7 +1345,7 @@ players.
   together in either direction, and each plays the other's replays. Servers
   need no update.
 
-[Release notes](docs/release-0.9.10-notes.md) · [Validation report](docs/release-0.9.10-validation.md) · [Source at v0.9.10](https://github.com/pocketgeek/tak-engine/tree/v0.9.10)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.9.10/docs/release-0.9.10-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.9.10/docs/release-0.9.10-validation.md) · [Source at v0.9.10](https://github.com/pocketgeek/tak-engine/tree/v0.9.10)
 
 ## 0.9.9
 *2026-10-28 · protocol 303 · replay format 15 · does not play with 0.9.8 or earlier, nor their replays*
@@ -1297,7 +1422,7 @@ players.
 **Upgrading (server operators):** update `takserver` together with your
 players.
 
-[Release notes](docs/release-0.9.9-notes.md) · [Validation report](docs/release-0.9.9-validation.md) · [Source at v0.9.9](https://github.com/pocketgeek/tak-engine/tree/v0.9.9)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.9.9/docs/release-0.9.9-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.9.9/docs/release-0.9.9-validation.md) · [Source at v0.9.9](https://github.com/pocketgeek/tak-engine/tree/v0.9.9)
 
 ## 0.9.8
 *2026-10-27 · protocol 302 · replay format 15 · does not play with 0.9.7 or earlier, nor their replays*
@@ -1350,7 +1475,7 @@ players.
 **Upgrading (server operators):** update `takserver` together with your
 players.
 
-[Release notes](docs/release-0.9.8-notes.md) · [Validation report](docs/release-0.9.8-validation.md) · [Source at v0.9.8](https://github.com/pocketgeek/tak-engine/tree/v0.9.8)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.9.8/docs/release-0.9.8-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.9.8/docs/release-0.9.8-validation.md) · [Source at v0.9.8](https://github.com/pocketgeek/tak-engine/tree/v0.9.8)
 
 ## 0.9.7
 *2026-10-27 · protocol 301 · replay format 15 · does not play with 0.9.6 or earlier, nor their replays*
@@ -1411,7 +1536,7 @@ players.
 **Upgrading (server operators):** update `takserver` together with your
 players.
 
-[Release notes](docs/release-0.9.7-notes.md) · [Validation report](docs/release-0.9.7-validation.md) · [Source at v0.9.7](https://github.com/pocketgeek/tak-engine/tree/v0.9.7)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.9.7/docs/release-0.9.7-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.9.7/docs/release-0.9.7-validation.md) · [Source at v0.9.7](https://github.com/pocketgeek/tak-engine/tree/v0.9.7)
 
 ## 0.9.6
 *2026-10-27 · protocol 300 · replay format 15 · does not play with 0.9.5 or earlier, nor their replays*
@@ -1510,7 +1635,7 @@ players. A server without `--map-cache-dir` keeps its maps in
 `TAKengine/takserver` in its per-user folder (since 0.9.5). A 0.9.6 server
 allows a loading seat 30 s of silence and logs why it dropped a client.
 
-[Release notes](docs/release-0.9.6-notes.md) · [Validation report](docs/release-0.9.6-validation.md) · [Source at v0.9.6](https://github.com/pocketgeek/tak-engine/tree/v0.9.6)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.9.6/docs/release-0.9.6-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.9.6/docs/release-0.9.6-validation.md) · [Source at v0.9.6](https://github.com/pocketgeek/tak-engine/tree/v0.9.6)
 
 ## 0.9.5
 *2026-10-26 · protocol 299 · replay format 15 · does not play with 0.9.4 or earlier, nor their replays*
@@ -1577,7 +1702,7 @@ players. A server started with `--map-cache-dir` behaves as before; one started
 without it now caches maps in its per-user folder (above), and its data folder's
 old `MapCache/` is no longer read.
 
-[Release notes](docs/release-0.9.5-notes.md) · [Validation report](docs/release-0.9.5-validation.md) · [Source at v0.9.5](https://github.com/pocketgeek/tak-engine/tree/v0.9.5)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.9.5/docs/release-0.9.5-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.9.5/docs/release-0.9.5-validation.md) · [Source at v0.9.5](https://github.com/pocketgeek/tak-engine/tree/v0.9.5)
 
 ## 0.9.4
 *2026-10-26 · protocol 298 · replay format 15 · does not play with 0.9.3 or earlier, nor their replays*
@@ -1662,7 +1787,7 @@ beside `settings.ini` (downloaded Crusades battle replays) is no longer used and
 can be deleted; your settings, including the remembered Crusades choice of the
 game setup screen, are kept.
 
-[Release notes](docs/release-0.9.4-notes.md) · [Validation report](docs/release-0.9.4-validation.md) · [Source at v0.9.4](https://github.com/pocketgeek/tak-engine/tree/v0.9.4)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.9.4/docs/release-0.9.4-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.9.4/docs/release-0.9.4-validation.md) · [Source at v0.9.4](https://github.com/pocketgeek/tak-engine/tree/v0.9.4)
 
 ## 0.9.3
 *2026-10-26 · protocol 297 · replay format 15 · does not play with 0.9.2 or earlier, nor their replays*
@@ -1718,7 +1843,7 @@ game setup screen, are kept.
   the releases page, or build it from its tag) to watch replays recorded
   before 0.9.3.
 
-[Release notes](docs/release-0.9.3-notes.md) · [Validation report](docs/release-0.9.3-validation.md) · [Source at v0.9.3](https://github.com/pocketgeek/tak-engine/tree/v0.9.3)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.9.3/docs/release-0.9.3-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.9.3/docs/release-0.9.3-validation.md) · [Source at v0.9.3](https://github.com/pocketgeek/tak-engine/tree/v0.9.3)
 
 ## 0.9.2
 *2026-10-25 · protocol 296 · replay format 15 · does not play with 0.9.1 or earlier, nor their replays*
@@ -1757,7 +1882,7 @@ game setup screen, are kept.
   the releases page, or build it from its tag) to watch replays recorded
   before 0.9.2.
 
-[Release notes](docs/release-0.9.2-notes.md) · [Validation report](docs/release-0.9.2-validation.md) · [Source at v0.9.2](https://github.com/pocketgeek/tak-engine/tree/v0.9.2)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.9.2/docs/release-0.9.2-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.9.2/docs/release-0.9.2-validation.md) · [Source at v0.9.2](https://github.com/pocketgeek/tak-engine/tree/v0.9.2)
 
 ## 0.9.1
 *2026-10-25 · protocol 295 · replay format 15 · does not play with 0.9.0 or earlier, nor their replays*
@@ -1852,7 +1977,7 @@ game setup screen, are kept.
   the releases page, or build it from its tag) to watch replays recorded
   before 0.9.1.
 
-[Release notes](docs/release-0.9.1-notes.md) · [Validation report](docs/release-0.9.1-validation.md) · [Source at v0.9.1](https://github.com/pocketgeek/tak-engine/tree/v0.9.1)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.9.1/docs/release-0.9.1-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.9.1/docs/release-0.9.1-validation.md) · [Source at v0.9.1](https://github.com/pocketgeek/tak-engine/tree/v0.9.1)
 
 ## 0.9.0
 *2026-10-24 · protocol 294 · replay format 15 · does not play with 0.8.14 or earlier, nor their replays*
@@ -1913,7 +2038,7 @@ game setup screen, are kept.
   changelog; the README, quick start, user guide, map editor guide, server
   guide and streaming guide were rewritten and their pictures retaken.
 
-[Release notes](docs/release-0.9.0-notes.md) · [Validation report](docs/release-0.9.0-validation.md) · [Source at v0.9.0](https://github.com/pocketgeek/tak-engine/tree/v0.9.0)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.9.0/docs/release-0.9.0-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.9.0/docs/release-0.9.0-validation.md) · [Source at v0.9.0](https://github.com/pocketgeek/tak-engine/tree/v0.9.0)
 
 ## 0.8.14
 *2026-10-24 · protocol 293 · replay format 14 · plays with 0.8.12 and 0.8.13, and their replays*
@@ -1933,7 +2058,7 @@ game setup screen, are kept.
   for example `mods/cosmetic/always_enabled/click/click.hpi`. The saved GAME
   MODS choice is ignored.
 
-[Release notes](docs/release-0.8.14-notes.md) · [Validation report](docs/release-0.8.14-validation.md) · [Source at v0.8.14](https://github.com/pocketgeek/tak-engine/tree/v0.8.14)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.8.14/docs/release-0.8.14-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.8.14/docs/release-0.8.14-validation.md) · [Source at v0.8.14](https://github.com/pocketgeek/tak-engine/tree/v0.8.14)
 
 ## 0.8.13
 *2026-10-24 · protocol 293 · replay format 14 · plays with 0.8.12, and its replays*
@@ -1945,7 +2070,7 @@ game setup screen, are kept.
   from **File → New map** (Ctrl+N), **Open map** (Ctrl+O), **New AI mod**
   (Ctrl+Shift+N) or **Open AI mod** (Ctrl+Shift+O).
 
-[Release notes](docs/release-0.8.13-notes.md) · [Validation report](docs/release-0.8.13-validation.md) · [Source at v0.8.13](https://github.com/pocketgeek/tak-engine/tree/v0.8.13)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.8.13/docs/release-0.8.13-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.8.13/docs/release-0.8.13-validation.md) · [Source at v0.8.13](https://github.com/pocketgeek/tak-engine/tree/v0.8.13)
 
 ## 0.8.12
 *2026-10-23 · protocol 293 · replay format 14 · does not play with 0.8.11 or earlier*
@@ -1967,7 +2092,7 @@ game setup screen, are kept.
   Cartographer's **MERGE INTO TAK ENGINE...** moves one into
   `ai/takengine.txt`. AI level 6, DEFAULT in 0.8.11, is now shown as **RETAIL**.
 
-[Release notes](docs/release-0.8.12-notes.md) · [Validation report](docs/release-0.8.12-validation.md) · [Source at v0.8.12](https://github.com/pocketgeek/tak-engine/tree/v0.8.12)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.8.12/docs/release-0.8.12-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.8.12/docs/release-0.8.12-validation.md) · [Source at v0.8.12](https://github.com/pocketgeek/tak-engine/tree/v0.8.12)
 
 ## 0.8.11
 *2026-10-23 · protocol 290 · replay format 14 · does not play with 0.8.10 or earlier*
@@ -1984,7 +2109,7 @@ game setup screen, are kept.
   the information panel shows progress.
 - The other AI levels and the game itself play as in 0.8.10.
 
-[Release notes](docs/release-0.8.11-notes.md) · [Validation report](docs/release-0.8.11-validation.md) · [Source at v0.8.11](https://github.com/pocketgeek/tak-engine/tree/v0.8.11)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.8.11/docs/release-0.8.11-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.8.11/docs/release-0.8.11-validation.md) · [Source at v0.8.11](https://github.com/pocketgeek/tak-engine/tree/v0.8.11)
 
 ## 0.8.10
 *2026-10-22 · protocol 289 · replay format 14 · does not play with 0.8.9 or earlier*
@@ -2002,7 +2127,7 @@ game setup screen, are kept.
 - **Public servers:** Let's Encrypt renewal follows the CA's renewal window
   (ARI) and renews at once after a revocation; clients check revocation lists.
 
-[Release notes](docs/release-0.8.10-notes.md) · [Validation report](docs/release-0.8.10-validation.md) · [Source at v0.8.10](https://github.com/pocketgeek/tak-engine/tree/v0.8.10)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.8.10/docs/release-0.8.10-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.8.10/docs/release-0.8.10-validation.md) · [Source at v0.8.10](https://github.com/pocketgeek/tak-engine/tree/v0.8.10)
 
 ## 0.8.9
 *2026-10-21 · protocol 288 · replay format 14 · plays with 0.8.8, and its replays*
@@ -2015,7 +2140,7 @@ game setup screen, are kept.
 - Neater setup and room screens; **GAME MODS VERIFIED** shows only when game
   packs are in play.
 
-[Release notes](docs/release-0.8.9-notes.md) · [Validation report](docs/release-0.8.9-validation.md) · [Source at v0.8.9](https://github.com/pocketgeek/tak-engine/tree/v0.8.9)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.8.9/docs/release-0.8.9-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.8.9/docs/release-0.8.9-validation.md) · [Source at v0.8.9](https://github.com/pocketgeek/tak-engine/tree/v0.8.9)
 
 ## 0.8.8
 *2026-10-21 · protocol 288 · replay format 14 · does not play with 0.8.7 or earlier*
@@ -2037,7 +2162,7 @@ game setup screen, are kept.
   is moved: move your packs into `mods/` yourself and tick them again in the
   room.
 
-[Release notes](docs/release-0.8.8-notes.md) · [Validation report](docs/release-0.8.8-validation.md) · [Source at v0.8.8](https://github.com/pocketgeek/tak-engine/tree/v0.8.8)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.8.8/docs/release-0.8.8-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.8.8/docs/release-0.8.8-validation.md) · [Source at v0.8.8](https://github.com/pocketgeek/tak-engine/tree/v0.8.8)
 
 ## 0.8.7
 *2026-10-20 · protocol 284 · replay format 13 · does not play with 0.8.6 or earlier*
@@ -2048,7 +2173,7 @@ game setup screen, are kept.
   a corner clearly sooner than Retail), steadier attack, fight and guard rings,
   and bridges and one-unit corridors taken in turn.
 
-[Release notes](docs/release-0.8.7-notes.md) · [Validation report](docs/release-0.8.7-validation.md) · [Source at v0.8.7](https://github.com/pocketgeek/tak-engine/tree/v0.8.7)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.8.7/docs/release-0.8.7-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.8.7/docs/release-0.8.7-validation.md) · [Source at v0.8.7](https://github.com/pocketgeek/tak-engine/tree/v0.8.7)
 
 ## 0.8.6
 *2026-10-20 · protocol 281 · replay format 13 · does not play with 0.8.5 or earlier*
@@ -2061,7 +2186,7 @@ game setup screen, are kept.
 - **Legion** with armies of about 100: bridges taken in turn, squads that pass
   each other, full attack rings, formations that keep their files.
 
-[Release notes](docs/release-0.8.6-notes.md) · [Validation report](docs/release-0.8.6-validation.md) · [Source at v0.8.6](https://github.com/pocketgeek/tak-engine/tree/v0.8.6)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.8.6/docs/release-0.8.6-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.8.6/docs/release-0.8.6-validation.md) · [Source at v0.8.6](https://github.com/pocketgeek/tak-engine/tree/v0.8.6)
 
 ## 0.8.5
 *2026-10-18 · protocol 278 · replay format 13 · does not play with 0.8.4 or earlier*
@@ -2078,7 +2203,7 @@ game setup screen, are kept.
 - **Upgrading:** a settings file you already have keeps its values; **Defaults**
   in Options applies the new ones.
 
-[Release notes](docs/release-0.8.5-notes.md) · [Validation report](docs/release-0.8.5-validation.md) · [Source at v0.8.5](https://github.com/pocketgeek/tak-engine/tree/v0.8.5)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.8.5/docs/release-0.8.5-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.8.5/docs/release-0.8.5-validation.md) · [Source at v0.8.5](https://github.com/pocketgeek/tak-engine/tree/v0.8.5)
 
 ## 0.8.4
 *2026-10-18 · protocol 277 · replay format 13 · does not play with 0.8.3 or earlier*
@@ -2089,14 +2214,14 @@ game setup screen, are kept.
 - **Faster rendering:** a still army of 2,000 drew in 4.5 ms instead of 10.5 ms
   at 7680×2160 (measured on Linux with an NVIDIA GPU).
 - **Legion takes much bigger armies:** one click reaches 10,000 units in the
-  same tick ([Legion 10,000 report](docs/legion-10000-report.md)).
+  same tick ([Legion 10,000 report](https://github.com/pocketgeek/tak-engine/blob/v0.8.4/docs/legion-10000-report.md)).
 - **New AI level: Absurdly Defensive;** Defensive keeps building as fast as its
   income allows.
 - **Replays are saved however a game ends,** crash or power cut included.
 - **Short mana is shared:** every construction slows together, as in the
   original.
 
-[Release notes](docs/release-0.8.4-notes.md) · [Validation report](docs/release-0.8.4-validation.md) · [Source at v0.8.4](https://github.com/pocketgeek/tak-engine/tree/v0.8.4)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.8.4/docs/release-0.8.4-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.8.4/docs/release-0.8.4-validation.md) · [Source at v0.8.4](https://github.com/pocketgeek/tak-engine/tree/v0.8.4)
 
 ## 0.8.3
 *2026-10-15 · protocol 266 · replay format 13 · does not play with 0.8.2 or earlier*
@@ -2113,7 +2238,7 @@ game setup screen, are kept.
   borderless fullscreen and edge scrolling.
 - Replay format 13 records the Map Scenario option.
 
-[Release notes](docs/release-0.8.3-notes.md) · [Validation report](docs/release-0.8.3-validation.md) · [Source at v0.8.3](https://github.com/pocketgeek/tak-engine/tree/v0.8.3)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.8.3/docs/release-0.8.3-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.8.3/docs/release-0.8.3-validation.md) · [Source at v0.8.3](https://github.com/pocketgeek/tak-engine/tree/v0.8.3)
 
 ## 0.8.2
 *2026-10-14 · protocol 257 · replay format 12 · does not play with 0.8.1 or earlier*
@@ -2122,7 +2247,7 @@ game setup screen, are kept.
   recording, walking on the spot fell from 857 to 34 unit-seconds). Retail
   plays as in 0.8.1.
 
-[Release notes](docs/release-0.8.2-notes.md) · [Validation report](docs/release-0.8.2-validation.md) · [Source at v0.8.2](https://github.com/pocketgeek/tak-engine/tree/v0.8.2)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.8.2/docs/release-0.8.2-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.8.2/docs/release-0.8.2-validation.md) · [Source at v0.8.2](https://github.com/pocketgeek/tak-engine/tree/v0.8.2)
 
 ## 0.8.1
 *2026-10-13 · protocol 256 · replay format 12 · plays with 0.8.0, and its replays*
@@ -2134,7 +2259,7 @@ game setup screen, are kept.
 - **Streaming: Remember Key** in the system password store.
 - Options dropdowns open upward when there is no room below.
 
-[Release notes](docs/release-0.8.1-notes.md) · [Validation report](docs/release-0.8.1-validation.md) · [Source at v0.8.1](https://github.com/pocketgeek/tak-engine/tree/v0.8.1)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.8.1/docs/release-0.8.1-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.8.1/docs/release-0.8.1-validation.md) · [Source at v0.8.1](https://github.com/pocketgeek/tak-engine/tree/v0.8.1)
 
 ## 0.8.0
 *2026-10-13 · protocol 256 · replay format 12 · does not play with 0.7.28 or earlier*
@@ -2149,7 +2274,7 @@ game setup screen, are kept.
   browser and a wider built-in font.
 - **Upgrading:** a saved Bilinear Filtering choice loads as Off or Units.
 
-[Release notes](docs/release-0.8.0-notes.md) · [Validation report](docs/release-0.8.0-validation.md) · [Source at v0.8.0](https://github.com/pocketgeek/tak-engine/tree/v0.8.0)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.8.0/docs/release-0.8.0-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.8.0/docs/release-0.8.0-validation.md) · [Source at v0.8.0](https://github.com/pocketgeek/tak-engine/tree/v0.8.0)
 
 ## 0.7.28
 *2026-10-11 · protocol 253 · replay format 12 · does not play with 0.7.27 or earlier*
@@ -2166,7 +2291,7 @@ game setup screen, are kept.
 - Steadier frame pacing, VSync pacing that fixes macOS stutter, and **Ignore
   Windows Display Scaling** on Windows.
 
-[Release notes](docs/release-0.7.28-notes.md) · [Validation report](docs/release-0.7.28-validation.md) · [Source at v0.7.28](https://github.com/pocketgeek/tak-engine/tree/v0.7.28)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.28/docs/release-0.7.28-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.28/docs/release-0.7.28-validation.md) · [Source at v0.7.28](https://github.com/pocketgeek/tak-engine/tree/v0.7.28)
 
 ## 0.7.27
 *2026-10-07 · protocol 238 · replay format 11 · does not play with 0.7.26 or earlier*
@@ -2178,7 +2303,7 @@ game setup screen, are kept.
 - **Renderer** option: Auto or any backend SDL offers, with fallback to Auto.
 - Linux and Windows builds report their real build id.
 
-[Release notes](docs/release-0.7.27-notes.md) · [Validation report](docs/release-0.7.27-validation.md) · [Source at v0.7.27](https://github.com/pocketgeek/tak-engine/tree/v0.7.27)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.27/docs/release-0.7.27-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.27/docs/release-0.7.27-validation.md) · [Source at v0.7.27](https://github.com/pocketgeek/tak-engine/tree/v0.7.27)
 
 ## 0.7.26
 *2026-10-07 · protocol 237 · replay format 11 · does not play with 0.7.25 or earlier*
@@ -2188,7 +2313,7 @@ game setup screen, are kept.
 - **Retail grouped flyers** follow the original's group checks, including its
   1-in-4 chance to drop orders.
 
-[Release notes](docs/release-0.7.26-notes.md) · [Validation report](docs/release-0.7.26-validation.md) · [Source at v0.7.26](https://github.com/pocketgeek/tak-engine/tree/v0.7.26)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.26/docs/release-0.7.26-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.26/docs/release-0.7.26-validation.md) · [Source at v0.7.26](https://github.com/pocketgeek/tak-engine/tree/v0.7.26)
 
 ## 0.7.25
 *2026-10-06 · protocol 236 · replay format 11 · does not play with 0.7.23 or earlier*
@@ -2205,12 +2330,12 @@ game setup screen, are kept.
 - **Upgrading:** the experimental Retail+, Flowfield and Cooperative modes were
   removed; a saved choice of one falls back to Retail.
 
-[Release notes](docs/release-0.7.25-notes.md) · [Validation report](docs/release-0.7.25-validation.md) · [Source at v0.7.25](https://github.com/pocketgeek/tak-engine/tree/v0.7.25)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.25/docs/release-0.7.25-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.25/docs/release-0.7.25-validation.md) · [Source at v0.7.25](https://github.com/pocketgeek/tak-engine/tree/v0.7.25)
 
 ## 0.7.24
 *Prepared but never published; its surviving changes shipped in 0.7.25.*
 
-[Release notes](docs/release-0.7.24-notes.md) · [Validation report](docs/release-0.7.24-validation.md)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.25/docs/release-0.7.24-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.25/docs/release-0.7.24-validation.md)
 
 ## 0.7.23
 *2026-10-04 · protocol 221 · replay format 11 · does not play with 0.7.22 or earlier*
@@ -2226,7 +2351,7 @@ game setup screen, are kept.
 - World sounds fade with distance outside the view; all lodestones cast shadows.
 - **Linux ARM64, openSUSE Leap and Slackware64 packages.**
 
-[Release notes](docs/release-0.7.23-notes.md) · [Validation report](docs/release-0.7.23-validation.md) · [Source at v0.7.23](https://github.com/pocketgeek/tak-engine/tree/v0.7.23)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.23/docs/release-0.7.23-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.23/docs/release-0.7.23-validation.md) · [Source at v0.7.23](https://github.com/pocketgeek/tak-engine/tree/v0.7.23)
 
 ## 0.7.22
 *2026-10-02 · protocol 213 (unchanged from 0.7.21) · replay format 10*
@@ -2239,7 +2364,7 @@ game setup screen, are kept.
 - Builders clear several reclaimable obstructions from a site.
 - Signed Windows executables and installer.
 
-[Release notes](docs/release-0.7.22-notes.md) · [Validation report](docs/release-0.7.22-validation.md) · [Source at v0.7.22](https://github.com/pocketgeek/tak-engine/tree/v0.7.22)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.22/docs/release-0.7.22-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.22/docs/release-0.7.22-validation.md) · [Source at v0.7.22](https://github.com/pocketgeek/tak-engine/tree/v0.7.22)
 
 ## 0.7.21
 *2026-10-01 · protocol 213 · replay format 10 · does not play with 0.7.20 or earlier (still plays 0.7.20 replays)*
@@ -2251,7 +2376,7 @@ game setup screen, are kept.
 - **Public-server hardening:** verified TLS, authenticated accounts, upload
   limits, built-in Let's Encrypt; players can type just a server name.
 
-[Release notes](docs/release-0.7.21-notes.md) · [Validation report](docs/release-0.7.21-validation.md) · [Source at v0.7.21](https://github.com/pocketgeek/tak-engine/tree/v0.7.21)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.21/docs/release-0.7.21-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.21/docs/release-0.7.21-validation.md) · [Source at v0.7.21](https://github.com/pocketgeek/tak-engine/tree/v0.7.21)
 
 ## 0.7.20
 *2026-10-01 · protocol 212 · replay format 9 · does not play with 0.7.19 or earlier*
@@ -2259,7 +2384,7 @@ game setup screen, are kept.
 - **Naval AI** for all five sides in both balances: coastal production, usable
   shipyard launch routes and smaller fleets.
 
-[Release notes](docs/release-0.7.20-notes.md) · [Validation report](docs/release-0.7.20-validation.md) · [Source at v0.7.20](https://github.com/pocketgeek/tak-engine/tree/v0.7.20)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.20/docs/release-0.7.20-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.20/docs/release-0.7.20-validation.md) · [Source at v0.7.20](https://github.com/pocketgeek/tak-engine/tree/v0.7.20)
 
 ## 0.7.19
 *2026-10-01 · protocol 211 (unchanged from 0.7.18) · replay format 9*
@@ -2267,7 +2392,7 @@ game setup screen, are kept.
 - **Native Windows ARM64** portable ZIPs.
 - **Native Intel macOS** packages; both macOS builds need macOS 14 or later.
 
-[Release notes](docs/release-0.7.19-notes.md) · [Validation report](docs/release-0.7.19-validation.md) · [Source at v0.7.19](https://github.com/pocketgeek/tak-engine/tree/v0.7.19)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.19/docs/release-0.7.19-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.19/docs/release-0.7.19-validation.md) · [Source at v0.7.19](https://github.com/pocketgeek/tak-engine/tree/v0.7.19)
 
 ## 0.7.18
 *2026-10-01 · protocol 211 · replay format 9 · does not play with 0.7.17 or earlier*
@@ -2278,7 +2403,7 @@ game setup screen, are kept.
 - Veruna establishes fleets; converters reject targets they cannot capture.
 - Victory opens results after three seconds.
 
-[Release notes](docs/release-0.7.18-notes.md) · [Validation report](docs/release-0.7.18-validation.md) · [Source at v0.7.18](https://github.com/pocketgeek/tak-engine/tree/v0.7.18)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.18/docs/release-0.7.18-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.18/docs/release-0.7.18-validation.md) · [Source at v0.7.18](https://github.com/pocketgeek/tak-engine/tree/v0.7.18)
 
 ## 0.7.17
 *2026-09-30 · protocol 203 (unchanged from 0.7.16) · replay format 9*
@@ -2287,7 +2412,7 @@ game setup screen, are kept.
 - Game-create choices and random-map recipes are remembered (not passwords).
 - A local 24-hour clock in the stats panel.
 
-[Release notes](docs/release-0.7.17-notes.md) · [Validation report](docs/release-0.7.17-validation.md) · [Source at v0.7.17](https://github.com/pocketgeek/tak-engine/tree/v0.7.17)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.17/docs/release-0.7.17-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.17/docs/release-0.7.17-validation.md) · [Source at v0.7.17](https://github.com/pocketgeek/tak-engine/tree/v0.7.17)
 
 ## 0.7.16
 *2026-09-30 · protocol 203 · replay format 9 · does not play with 0.7.15 or earlier*
@@ -2296,7 +2421,7 @@ game setup screen, are kept.
 - **Gentler Easy AI;** Passive renamed **Defensive**.
 - Conversion targeting and production exits fixed; results use the F4 emblems.
 
-[Release notes](docs/release-0.7.16-notes.md) · [Validation report](docs/release-0.7.16-validation.md) · [Source at v0.7.16](https://github.com/pocketgeek/tak-engine/tree/v0.7.16)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.16/docs/release-0.7.16-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.16/docs/release-0.7.16-validation.md) · [Source at v0.7.16](https://github.com/pocketgeek/tak-engine/tree/v0.7.16)
 
 ## 0.7.15
 *2026-09-29 · protocol 201 · replay format 9 · does not play with 0.7.14 or earlier*
@@ -2304,7 +2429,7 @@ game setup screen, are kept.
 - Expired unit records are removed from the simulation, so long games stay
   fast (a synthetic test went from 6.26 ms to 0.022 ms per tick and checksum).
 
-[Release notes](docs/release-0.7.15-notes.md) · [Validation report](docs/release-0.7.15-validation.md) · [Source at v0.7.15](https://github.com/pocketgeek/tak-engine/tree/v0.7.15)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.15/docs/release-0.7.15-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.15/docs/release-0.7.15-validation.md) · [Source at v0.7.15](https://github.com/pocketgeek/tak-engine/tree/v0.7.15)
 
 ## 0.7.14
 *2026-09-29 · protocol 200 · replay format 9 · does not play with 0.7.13 or earlier*
@@ -2316,7 +2441,7 @@ game setup screen, are kept.
 - **Cartographer:** browsers, undo/redo, recovery, background saving, map
   checks, regions and rules, F6 model inspector, F5 Test Map.
 
-[Release notes](docs/release-0.7.14-notes.md) · [Validation report](docs/release-0.7.14-validation.md) · [Source at v0.7.14](https://github.com/pocketgeek/tak-engine/tree/v0.7.14)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.14/docs/release-0.7.14-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.14/docs/release-0.7.14-validation.md) · [Source at v0.7.14](https://github.com/pocketgeek/tak-engine/tree/v0.7.14)
 
 ## 0.7.13
 *2026-09-29 · protocol 198 · replay format 9 · does not play with 0.7.12 or earlier*
@@ -2326,7 +2451,7 @@ game setup screen, are kept.
   regions, objective templates and an F5 Test Map handoff.
 - Diplomacy hides gifting and mana sharing for non-allies.
 
-[Release notes](docs/release-0.7.13-notes.md) · [Validation report](docs/release-0.7.13-validation.md) · [Source at v0.7.13](https://github.com/pocketgeek/tak-engine/tree/v0.7.13)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.13/docs/release-0.7.13-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.13/docs/release-0.7.13-validation.md) · [Source at v0.7.13](https://github.com/pocketgeek/tak-engine/tree/v0.7.13)
 
 ## 0.7.12
 *2026-09-29 · protocol 195 · replay format 9 · does not play with 0.7.11 or earlier*
@@ -2335,7 +2460,7 @@ game setup screen, are kept.
 - Hard and Absurd expand earlier.
 - Memory and resource fixes.
 
-[Release notes](docs/release-0.7.12-notes.md) · [Validation report](docs/release-0.7.12-validation.md) · [Source at v0.7.12](https://github.com/pocketgeek/tak-engine/tree/v0.7.12)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.13/docs/release-0.7.12-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.13/docs/release-0.7.12-validation.md) · [Source at v0.7.12](https://github.com/pocketgeek/tak-engine/tree/v0.7.12)
 
 ## 0.7.11
 *2026-09-29 · protocol 194 (unchanged from 0.7.10) · replay format 9*
@@ -2344,7 +2469,7 @@ game setup screen, are kept.
 - **Hard and Absurd** keep expanding past the former ceilings.
 - Zhon producers build an opening army.
 
-[Release notes](docs/release-0.7.11-notes.md) · [Validation report](docs/release-0.7.11-validation.md) · [Source at v0.7.11](https://github.com/pocketgeek/tak-engine/tree/v0.7.11)
+[Release notes](https://github.com/pocketgeek/tak-engine/blob/v0.7.12/docs/release-0.7.11-notes.md) · [Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.12/docs/release-0.7.11-validation.md) · [Source at v0.7.11](https://github.com/pocketgeek/tak-engine/tree/v0.7.11)
 
 ## 0.7.10
 *2026-09-28 · protocol 194 · replay format 9 · does not play with 0.7.9 or earlier*
@@ -2358,7 +2483,7 @@ game setup screen, are kept.
   mana to the emptiest ally first.
 - **Options → Player Name;** unit limit and Allow Speed Change at game creation.
 
-[Validation report](docs/release-0.7.10-validation.md) · [Source at v0.7.10](https://github.com/pocketgeek/tak-engine/tree/v0.7.10)
+[Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.10/docs/release-0.7.10-validation.md) · [Source at v0.7.10](https://github.com/pocketgeek/tak-engine/tree/v0.7.10)
 
 ## 0.7.9
 *2026-09-27 · protocol 189 (unchanged from 0.7.8) · replay format 8*
@@ -2368,7 +2493,7 @@ game setup screen, are kept.
 - The retail F4 score table.
 - Double Sight/Radar chosen at game setup.
 
-[Validation report](docs/release-0.7.9-validation.md) · [Source at v0.7.9](https://github.com/pocketgeek/tak-engine/tree/v0.7.9)
+[Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.9/docs/release-0.7.9-validation.md) · [Source at v0.7.9](https://github.com/pocketgeek/tak-engine/tree/v0.7.9)
 
 ## 0.7.8
 *2026-09-27 · protocol 189 · replay format 8 · does not play with 0.7.7 or earlier*
@@ -2377,7 +2502,7 @@ game setup screen, are kept.
 - Building palette shading and scripted shadow flags, as in retail Glide.
 - A streaming shutdown race fixed.
 
-[Validation report](docs/release-0.7.8-validation.md) · [Source at v0.7.8](https://github.com/pocketgeek/tak-engine/tree/v0.7.8)
+[Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.8/docs/release-0.7.8-validation.md) · [Source at v0.7.8](https://github.com/pocketgeek/tak-engine/tree/v0.7.8)
 
 ## 0.7.7
 *2026-09-27 · protocol 187 · replay format 8 · does not play with 0.7.6 or earlier*
@@ -2388,7 +2513,7 @@ game setup screen, are kept.
   **Double Sight/Radar.**
 - Defeated players go to results without pausing the others.
 
-[Validation report](docs/release-0.7.7-validation.md) · [Source at v0.7.7](https://github.com/pocketgeek/tak-engine/tree/v0.7.7)
+[Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.8/docs/release-0.7.7-validation.md) · [Source at v0.7.7](https://github.com/pocketgeek/tak-engine/tree/v0.7.7)
 
 ## 0.7.6
 *2026-09-26 · protocol 184 (unchanged from 0.7.5) · replay format 7*
@@ -2397,7 +2522,7 @@ game setup screen, are kept.
 - The retail monarch-under-attack warning.
 - Group recall: one number-key press selects, a second tracks.
 
-[Validation report](docs/release-0.7.6-validation.md) · [Source at v0.7.6](https://github.com/pocketgeek/tak-engine/tree/v0.7.6)
+[Validation report](https://github.com/pocketgeek/tak-engine/blob/v0.7.6/docs/release-0.7.6-validation.md) · [Source at v0.7.6](https://github.com/pocketgeek/tak-engine/tree/v0.7.6)
 
 ## 0.7.5
 *2026-09-26 · protocol 184 · replay format 7 · does not play with 0.7.1 or earlier*

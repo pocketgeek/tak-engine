@@ -1001,7 +1001,7 @@ public:
                            panSnapBase_->second+std::round(160*std::cos(phase))+fraction);
     }
     void renderStudyVeteran(unsigned frame, unsigned period);
-    // Render-optimization harness (docs/render-optimization-progress.md). Each
+    // Render-optimization harness. Each
     // is presentation-side or local-harness only and runs in the standalone
     // render study, never in a networked game.
     void renderStudyChurn(unsigned frame, unsigned period);

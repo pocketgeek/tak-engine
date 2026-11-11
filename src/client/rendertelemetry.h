@@ -1,7 +1,7 @@
 #pragma once
 
-// Shared renderer vocabulary for the rendering optimization program
-// (docs/render-optimization-progress.md): per-frame telemetry, generation and
+// Shared renderer vocabulary for the rendering optimization program:
+// per-frame telemetry, generation and
 // revision numbers, and stable render handles. Everything here is PRESENTATION
 // state. None of it may become an input to the deterministic simulation, enter
 // World::stateHash(), or change what a frame draws.

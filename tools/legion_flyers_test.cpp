@@ -8,7 +8,7 @@
 // numbers the W6 steps move, and asserts determinism (the serial run equals the
 // workers run). With W6_REQUIRE=1 it also asserts the PLAN targets, so each case
 // fails on a head that does not meet them yet and is the acceptance check of the
-// step that fixes it (docs/legion-w6-step0.md lists case, target and head value).
+// step that fixes it.
 //
 // Cases: mixedsquad mixedseal mv08group deadendrejoin(mv08deadend) ctrlmixed
 // ctrlmixedbig factoryjoin landunder descentwalkin auditlift auditlift40 fl04

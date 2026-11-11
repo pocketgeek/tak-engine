@@ -1,6 +1,6 @@
 #pragma once
 // navbudget.h -- navigation work and byte accounting, the per-tick budgets and the deterministic
-// service policy of Legion's scheduler (Legion 10,000 stage 4, docs/legion-10000-progress.md 3.2).
+// service policy of Legion's scheduler (Legion 10,000 stage 4).
 //
 // Everything here counts in deterministic units -- cells touched, relaxations, registrations,
 // entries -- never wall time, worker order or machine memory, so a policy that reads these numbers
@@ -35,7 +35,7 @@ inline constexpr const char* kNavWorkNames[size_t(NavWork::Count)] = {
     "field_relax", "field_init", "plane_build", "plane_relabel", "registration", "awareness",
     "slot_search", "ring_build", "connectivity", "tile_build", "route_search"};
 
-// The route consumers that state the region they need (Legion 10,000 stage 5, docs/legion-10000-progress.md 3.3):
+// The route consumers that state the region they need (Legion 10,000 stage 5):
 // on a paused build each asks for its region (a need) and reads it through the certainty checks; one that meets a
 // read a later slice could change has the route run on to done (a run-on). Observation counters per consumer.
 enum class RouteNeed : uint8_t {
@@ -166,8 +166,8 @@ struct NavAccounting {
     uint64_t groupEntrances = 0;   // entrances found for a point's further groups (their own plane, field and way in)
 };
 
-// Per-tick budgets (constants: the same on every peer). Units and the reference cost per unit
-// (Intel Core Ultra 9 275HX, build-o2) are recorded in docs/legion-10000-progress.md, section 7.4.
+// Per-tick budgets (constants: the same on every peer). The reference cost per unit was measured on an
+// Intel Core Ultra 9 275HX (build-o2).
 struct NavBudget {
     // Field service: relaxations + initialisation + ring cells per tick. A quarter of it is the most
     // the refresh classes (AwareRepair + StaleRefresh) may take, so first routes keep most of it.

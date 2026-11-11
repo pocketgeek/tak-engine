@@ -43,11 +43,11 @@ For example:
 | Action: display text with flag | 25 | recipient, prefix, flag, suffix |
 
 The control-count operand order is also present in shipped scenarios, for
-example Ulin's Folly condition 15 with `2`, `ARAAT`, `hill`. The runner now uses
+example Ulin's Folly condition 15 with `2`, `ARAAT`, `hill`. The runner uses
 that order, handles `Any Unit` in control-count comparisons, and includes both
 the flag value and suffix in action 25 messages.
 
-## Current engine integration and limits
+## Engine integration and limits
 
 `src/sim/scenario.cpp` implements the CRT runner. Shared match setup attaches it
 to `World` when the map OTA declares `hasscenario=1` and either the room's MAP
@@ -69,9 +69,9 @@ server must run the same engine version.
 Rules execute at startup and whenever the integer game second advances (30 ticks).
 A true group executes again at the next evaluation; Disable Rule makes it a
 one-time event. All Players groups are copied into each seated player's rule list,
-before that player's own groups. Enabled state is independent per player. See the
-[native evidence](scenario-runtime-retail-2026-09-29.md) for ownership, cadence,
-outcome recipients, and stat handling.
+before that player's own groups. Enabled state is independent per player. The
+cadence follows retail: one evaluation at startup, then one at each integer
+game-second boundary.
 
 Authored placements replace default skirmish monarchs. Their owner, position,
 heading, starting health, armor/weapon percentages and veterancy apply on every
@@ -132,8 +132,8 @@ produce visible setup errors. Authored names appear as cosmetic unit labels,
 truncated to retail's 31 bytes, and do not replace unit type IDs in triggers.
 Placement cells identify footprint origins. Vertical placement values are
 preserved but ignored by native placement; authored angles remain an engine
-extension. See the [placement evidence](scenario-placement-retail-2026-09-29.md). The
-ordinary lobby requires at least two participants; a verified authored scenario
+extension. The
+ordinary game room requires at least two participants; a verified authored scenario
 can start with one. Not every wildcard/action
 combination or neutral lifecycle has been compared with retail; this is not a
 claim of complete mission-runtime parity.
@@ -141,23 +141,23 @@ claim of complete mission-runtime parity.
 Selectors use case-insensitive exact region names and inclusive footprint-origin
 bounds. Unknown type names resolve to the native wildcard; missing regions select
 nothing. Flags use the first byte of their name, so `alpha` and `apple` alias.
-See the [selector evidence](scenario-selectors-retail-2026-09-29.md) for strict
-most/least comparisons and retail's first-inserted wildcard death-counter behavior.
+Most/least conditions compare strictly, so tied counts fail for both, and compare
+only other occupied, eligible, undefeated players (with none, both hold). As in
+retail, a kill or loss count for the wildcard type returns the first type counted,
+not the sum of all types; the engine keeps that first type and hashes it. Kill
+credit goes to the player who owned the damaging hit, and self-kills do not count.
 
 Trigger Heal/Damage actions use absolute HP, not percentages. Create scans for a
 free cell in the selected region; Move targets its integer midpoint. Ownership
 changes preserve HP while clearing the previous owner's commands/group and
-updating ownership bookkeeping. See the [action evidence](scenario-actions-retail-2026-09-29.md).
+updating ownership bookkeeping.
 
 A positive resource limit persists, caps storage and suppresses natural income;
 Resources normal removes it. Display gameclock enables a separate game-time
 readout. Pool changes retain native float rounding and
-negative values are clamped at tick-end. See the [resource evidence](scenario-resources-retail-2026-09-29.md).
+negative values are clamped at tick-end.
 
 The scenario tests cover malformed input, control operands and wildcards,
 authored setup and peer hashes, construction restrictions, permanent combat stats,
 neutral targeting/capture, and explicit outcomes. The retail-stat probe runs
 native custom-default and placement arithmetic without launching the game.
-
-For the integrated build, native comparison and client/server results, see the
-[2026-09-29 action/placement validation](scenario-actions-validation-2026-09-29.md).

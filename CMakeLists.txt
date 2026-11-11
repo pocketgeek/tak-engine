@@ -410,7 +410,7 @@ endforeach()
 set_tests_properties(legion_planeincremental PROPERTIES ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
 # W6 step 0 (PLAN 4 W6): the flyer instruments of tools/legion_flyers_test.cpp. Each prints the numbers the W6
 # steps move and asserts determinism (serial == workers); W6_REQUIRE=1 asserts the PLAN targets (the acceptance
-# check of the step that meets them; docs/legion-w6-step0.md).
+# check of the step that meets them).
 add_executable(legion_flyers_test tools/legion_flyers_test.cpp)
 target_link_libraries(legion_flyers_test PRIVATE tak-formats)
 foreach(legion_probe mixedsquad mixedseal mv08group mv08deadend deadendrejoin ctrlmixed ctrlmixedbig factoryjoin auditlift
@@ -423,7 +423,7 @@ foreach(legion_probe landunder descentwalkin auditlift40 splitpatrol liftcombat)
   add_test(NAME legion_flyers_${legion_probe} COMMAND legion_flyers_test ${legion_probe})
   set_tests_properties(legion_flyers_${legion_probe} PROPERTIES LABELS "legion;w6" ENVIRONMENT TAK_LEGION_VERIFY=1)
 endforeach()
-# W7 step 0 fixtures (PLAN 4 W7 step 0, docs/legion-exit-tables.md "W7 step 0"): the promoted RB-02 probe (ring clot,
+# W7 step 0 fixtures (PLAN 4 W7 step 0): the promoted RB-02 probe (ring clot,
 # Holding-queue corridor, plug) and the awareness stream fixtures awarebig (768x768), awaredense (200 v 200 at 85% fill),
 # crossthree and crosslong. Measurement only: each prints the numbers W7's steps move (done tick, standing share,
 # contacts, hold_max, the aware / parting / give-way counters, the route-behind metric) in both awareness arms and asserts
@@ -558,7 +558,7 @@ set_tests_properties(legion_scenario_smoke observer_neutral
 # The Legion 10,000 scale probe (tools/legion_scale.h, `probe scale`): it changes no hash with the observer on
 # or off, serial or workers (legion_scale_neutral), and the smallest scale file still delivers every body
 # (legion_scale_one100: all 100 arrive, none stuck). The suite itself (tools/scenarios/scale/, 100 to 10,000
-# bodies) is run by tools/legion_scale.py at stage ends, not by ctest (docs/legion-10000-progress.md).
+# bodies) is run by tools/legion_scale.py at stage ends, not by ctest.
 add_test(NAME legion_scale_neutral
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/one-100.scn
                  ${CMAKE_SOURCE_DIR}/tools/scenarios/scale/churn-1000.scn --neutral --mode both --offsets 0)
@@ -576,7 +576,7 @@ set_tests_properties(legion_scale_one100 PROPERTIES
 # Legion 10,000 stage 2 (exact optimisations): the brute-force references under TAK_LEGION_VERIFY (debug builds;
 # compiled out of Release, where these only run the file). Each file is one a deliberate mutation trips:
 # battle-assault the join index (registerMove picks the first joinable group of all), crosslong awareScan's
-# broad phase (a dropped mover with a conflict), gap8 gateCommit's static-decline memo (docs/legion-10000-progress.md).
+# broad phase (a dropped mover with a conflict), gap8 gateCommit's static-decline memo.
 foreach(legion_scn battle-assault crosslong gap8)
   add_test(NAME legion_verify_${legion_scn}
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode legion --offsets 0 --workers)
@@ -617,7 +617,7 @@ foreach(legion_scn aware-cross-behind crosslong)
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;w7")
 endforeach()
-# W8 step 0 fixtures (PLAN 4 W8 step 0, docs/legion-exit-tables.md "W8 step 0"): the flowing-route guard doubleturn, the
+# W8 step 0 fixtures (PLAN 4 W8 step 0): the flowing-route guard doubleturn, the
 # audit's gap sweep one gap per world (gap 6 is gap6), the MV-12 mixed-speed spacing probe at 0.7x / 0.5x / 0.4x, and the
 # 8x30 multi-group corner. Same run as part A (both modes, serial and workers); the lane probes (`probe lanes`,
 # lane / hug shapes in sbend) report with them. No bounds yet: S1's gates come with W8's steps.
@@ -1300,8 +1300,8 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100 corner-1x100 --data "${TAK_TEST_DATA}"
                    --offsets 0,1,-1 --max still900_ever=3 --max stopped_permille=245 --max g.A.t90=4100 --min g.A.done=1)
   set_tests_properties(legion_cornermerge PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
-  # The Legion steering changes of 2026-11-02 (docs/legion-deep-dive-2026-11-02.md sections 3-6 for the measured
-  # basis; the commits a06d3f80, 740f0bd9, 75925618, 8dcb123f, c4933aa8 for the shape landed), one test each. The
+  # The Legion steering changes of 2026-11-02 (the commits a06d3f80, 740f0bd9, 75925618, 8dcb123f, c4933aa8 give the
+  # measured basis and the shape landed), one test each. The
   # numbers are the final shape's against main's (0.9.18 plus the observer instrument), measured with both binaries at
   # the offsets named; the per-mechanism why.* keys are docs/legion-scenario-keys.md's.
   # 1. No facing cap on an unturned step: a formation member's flow-around shuffle, a side-step, a detour route and a

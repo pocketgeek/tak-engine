@@ -1,6 +1,6 @@
 #pragma once
-// legion_hier.h -- the routing hierarchy above Legion's exact footprint-origin planes (Legion 10,000 stage 6,
-// brief phase 5; docs/legion-10000-progress.md 3.4 and 7.6, docs/legion-pathfinding.md "Legion 10,000 stage 6").
+// legion_hier.h -- the routing hierarchy above Legion's exact footprint-origin planes
+// (docs/legion-pathfinding.md "Hierarchical routes and tiles").
 //
 // A plane (one mobility class's `legal` origins) is cut into square SECTORS of K x K origins, K a power of two
 // (32; the size was chosen by measurement, see the record). Inside a sector the legal origins fall into REGIONS:

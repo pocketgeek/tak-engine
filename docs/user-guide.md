@@ -2,9 +2,9 @@
 
 [Back to the README](../README.md) · [Quick start](quick-start.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Changelog](../CHANGELOG.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.9.24**. Which versions it plays with, and whose
-replays it plays: see [Versions](#versions). What changed in each release: see
-the [CHANGELOG](../CHANGELOG.md). It is written for three kinds of reader:
+This guide covers **TAK Engine 1.0.0**. Which versions it plays with, and whose
+replays it plays: see [Versions](#versions). It is written for three kinds of
+reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
   the game;
@@ -141,22 +141,19 @@ has to provide graphics, sound and windowing.
 
 ### Updating
 
-Install the new version over the old one, in the same way. Everything of yours
+Install a new version over the old one, in the same way. Everything of yours
 carries over: your settings, your data folder choice, key bindings, the maps in
 your install's `Maps` folder, the downloaded and generated maps in your
 per-user folder (see [Where files are kept](#where-files-are-kept)), and your
 mod packs and their ticks.
 
-- **Multiplayer:** you can play only with the versions that share your network
-  protocol, and a server turns away any other. When a release changes the
-  protocol, the server and all of its players update together. See
-  [Versions](#versions).
-- **Replays** play only on a version with the protocol that recorded them. Keep
-  an old copy of the engine if you want to keep watching old replays.
-- **Anything you must do by hand** when updating is listed under *Upgrading* in
-  that release's [CHANGELOG](../CHANGELOG.md) entry. Released versions stay on
-  the GitHub releases page, and any version can be built from source from its
-  tag (see the [development guide](development.md)).
+- **Multiplayer:** you play only with versions that share your network
+  protocol, and a server turns away any other, so a server and its players run
+  the same version. See [Versions](#versions).
+- **Replays** play only on a version with the protocol that recorded them.
+- What changed in each release, and anything you must do by hand when you
+  install it, is in the [CHANGELOG](../CHANGELOG.md). Any version can be built
+  from source from its tag (see the [development guide](development.md)).
 
 ---
 
@@ -246,7 +243,7 @@ The **Settings** button opens:
 
 | Entry | What it does |
 | --- | --- |
-| **Game** | Player name, game data folder and simulation threads. See [Options](#options). |
+| **Game** | Player name, game data folder, **Simulation threads** and **Pin simulation threads**. See [Options](#options) and [Performance](#performance). |
 | **Graphics** | Display and graphics settings. See [Options](#options). |
 | **User Interface** | Interface, camera (with tactical dots and screen shake) and cursor settings. See [Options](#options). |
 | **Audio** | Sound device, volumes, speakers and custom music. See [Audio](#audio). |
@@ -285,8 +282,8 @@ In a game, **Esc** opens the game menu: **Resume**, **Game**, **Graphics**,
 **User Interface**, **Audio**, **Voice Chat**, **Controls**, **YouTube Streaming** and **Surrender**. Replays, spectators and a
 finished game have **Main Menu** in place of Surrender.
 **Surrender** (click twice to confirm) ends your part in the game and shows the
-defeat screen with the match's statistics; your units go the way the room's forfeit
-setting says, and any allies and opponents play on.
+defeat screen with the match's statistics; your units stand idle for the rest of
+the game, and any allies and opponents play on.
 
 ---
 
@@ -369,7 +366,7 @@ open theirs with the multiplayer ones. A rule is remembered when you click it, a
 map once the room has changed to it. What you change while you host a room is
 remembered; the game's name and password, Watch and Map scenario are not, and
 neither is anything in a campaign or a `--play-map` test game. If the remembered
-map is no longer installed, or its random map can no longer be made, the room opens
+map is missing, or its random map cannot be made, the room opens
 on another map and says why.
 
 ### AI difficulty
@@ -382,7 +379,7 @@ on another map and says why.
 | **Hard** | Keeps expanding its income and production, raids, and commits larger armies. |
 | **Absurd** | Plays like Hard, with **double mana income**. |
 | **Defensive** | Keeps building as fast as its mana income allows, with no limit of its own on how many factories, builders, towers or troops it makes; only the room's unit cap and the game's rules stop it. Builds at home; the base spreads outward as it grows, but stays on its own side of the map, and its builders claim mana deposits farther out. Sends its army to meet attackers near its base, then pulls it back, including attackers it cannot see that shoot its units from out of sight. Its melee troops go first for the unit hitting them, and keep chasing a target while it stays near, instead of all walking at one enemy. Does not build where enemy troops are about. Never raids; once it is far ahead (five times the armed strength of all its enemies together, as far as it knows: an enemy whose home it has not looked at in the last five minutes counts as at least as strong as its own army), it sends half its army out to find and finish them off. |
-| **Absurdly Defensive** | Plays like Defensive, with Absurd's **double mana income** ([details](ai-defensive-2026-10-17.md)). |
+| **Absurdly Defensive** | Plays like Defensive, with Absurd's **double mana income**. |
 | **Retail** | The Retail AI: the original 1999 game's own AI, driven by `ai/default.txt` (or the profile the map names; 30 campaign missions name their own), ported from the original program and checked against it. A game pack or a map archive that carries the profile file replaces the install's. No difficulty setting and no income bonus; it keeps the original's quirks and plays weaker than Normal. It always plays the campaign opponents. A new AI seat starts on Normal. See [Retail AI](#retail-ai). |
 
 At every difficulty except Retail, the AI's Monarch fights back when it is attacked, or when
@@ -491,8 +488,8 @@ starts a private server on your own computer for you.
 Every level except Retail has its own **build profile** built into the game: a
 weight and a limit for each unit, which decide how often it picks that unit and
 how many of it it may have. (The values are the original game's default AI
-profile, the one these levels were tuned on, and are the same for all six
-levels today.) These levels never read the install's
+profile, the one these levels were tuned on, and are the same for all seven
+levels.) These levels never read the install's
 `ai/*.txt` files; a map or a game mod can change all of their profiles at once
 with one file, `ai/takengine.txt`, which each level applies on top of its own
 built-in profile (see [AI profiles in game mods](#ai-profiles-in-game-mods)).
@@ -506,7 +503,7 @@ The Retail AI is the original 1999 game's own computer player, driven by its
 the same thing as **Retail** pathfinding, which is chosen separately). Every decision it makes (what to build, where to put it, which units guard
 the base, when a wave leaves and what it marches on) follows the 1999 game's own AI, which was read from the original
 program and checked against it piece by piece
-([plan](classic-ai-plan.md), [acceptance](classic-ai-acceptance.md)). So it plays the way the original did,
+([how it was ported](classic-ai-plan.md)). So it plays the way the original did,
 quirks included:
 
 - It builds from the map's **AI profile**, the file the map names
@@ -597,10 +594,10 @@ when the pointer is on the map. When the game starts, the map is saved on
 every player's computer and on the server, so it appears in the map list later.
 See [random map generation](random-map-generation.md) for the rules it follows.
 
-The generator is version 10 and builds only its own recipes (seed and
-settings); for any other the game asks you to generate a new map. A
-generated map you have saved as a `.kmp` always plays, whatever made it.
-Rebuilding a map from its recipe needs the same game data.
+A random map is rebuilt from its recipe, its seed and settings, by the
+generator (version 10): the same recipe and the same game data always give the
+same map. A generated map you have saved as a `.kmp` plays as it is, without
+being rebuilt.
 
 ![The CHANGE MAP panel's RANDOM MAP tab over a single-player room: the MAP NAME (OPTIONAL) box, Type Aramon, Layout Mainland and Players 4, then Width 16 and Height 12 on one row, the Forests, Rocks, Extra Mana, Scattered Mana (at High), Water, Hills, Plateaus, Mountains and Towns sliders in two columns and Re-roll Seed. The preview shows the wide 16 × 12 map with four numbered starts, and CANCEL and PICK are at the bottom](img/guide/random-map-lobby.jpg)
 
@@ -1180,8 +1177,8 @@ time.
 In the original game, roughly one multiplayer game in ten was a "god game", in
 which gods appeared on their own 30–60 minutes in. **TAK Engine does not make
 gods appear by themselves in skirmish or multiplayer.** A god turning up
-unannounced decided games for reasons neither player chose, so this was removed
-on purpose. You can still conjure one if you can afford it.
+unannounced decides games for reasons neither player chose, so TAK Engine leaves
+this out on purpose. You can still conjure one if you can afford it.
 
 The five dragons (one per side) and the Creon Aerial Juggernaut are also limited
 to one at a time.
@@ -1195,9 +1192,7 @@ units and buildings scores nothing, and building units, gathering mana and
 losing units do not change your score. The values come from the balance in use,
 so Retail and Crusades can score the same unit differently: a Taros Zombie is
 worth 3 points in Retail and 5 in Crusades. Some campaign missions set the score
-from their own script instead. The
-[retail scoring evidence](campaign-presentation-2026-09-26.md#result-score) has
-the details.
+from their own script instead.
 
 The **F4** panel shows each player's kills, losses and score. When any team has
 two or more players, it adds a team column and lists the players team by team.
@@ -1381,7 +1376,7 @@ speed keys are fixed.
 | **Alt + right-click** | Unload the selected transports there. |
 | **Right-drag** | A box (at least about 32 × 32 pixels; a smaller drag is an ordinary right-click): the selection attacks the visible enemies in it, nearest first; units with no attack order that can clear it clear the box (reclaim); a lone transport loads your units in it. The cursor shows what the box will do. |
 | **Middle-drag**, or the cursor at a screen edge | Scroll the map. |
-| **Mouse wheel** | Zoom in and out, towards the cursor. Far out, **Settings → Game → Tactical Dots** can draw units as minimap-style dots. |
+| **Mouse wheel** | Zoom in and out, towards the cursor. Far out, **Settings → User Interface → Tactical Dots** can draw units as minimap-style dots. |
 | **Mouse wheel** during a Shift-drag build line | Space the buildings out (up) or pack them tighter (down), one cell per notch. The camera does not zoom. |
 | **Minimap left-click / drag** | Move the camera. With an order armed, issue it there instead. |
 | **Minimap right-click** | Move the selection there, or attack, help or repair the unit under the pointer. Shift queues it. |
@@ -1438,7 +1433,7 @@ such a movement order waits behind the target (the Creon Fire Wagon starts on
 Hold Position, so this is what lets a Fire Wagon on an attack-move get round a
 standing stone); with nothing queued they fire on from where they stand. Buildings, flyers and melee units never move
 for this. A unit that is not under an attack order stops firing at that target
-and picks another one. This is new behaviour; the original game had no such
+and picks another one. This is TAK Engine's own; the original game had no such
 check, and its units fire into the hill or rock until their orders change.
 
 The check is of the line between the two spots, not of the enemy: once
@@ -1551,7 +1546,7 @@ units in its group; that a builder's do too is TAK Engine's own.)
 | **F1** | Unit information for the selected unit. |
 | **F4** | Player names, kills, losses and score; with teams of two or more, grouped by team (see [Scoring](#scoring)). |
 | **F9** | YouTube streaming setup (rebindable). |
-| **F11** | Switch between fullscreen and a window, on every screen (rebindable; the same as **Fullscreen** in Options). |
+| **F11** | Switch between fullscreen and a window, on every screen (rebindable; the same as **Fullscreen** in **Settings → Graphics**). |
 | **Pause** | Pause or resume. This pauses the game for every player. |
 | **+** / **−** | Game speed, as in the original: one level per press from −9 (0.1×) through NORMAL (1×) to +10 (2×): level *d* runs at (*d*+10)/10 of normal speed. **=** and the keypad **+**/**−** work too. In a replay they set the playback speed. A banner shows the new level, for example **GAME SPEED NORMAL** or **GAME SPEED +5**. The new speed takes effect at once, for spectators too. Only the host can change it, and only if **Allow speed change** was on. In a campaign mission you can always change it. |
 | **Enter** | Open chat; **Enter** sends, **Esc** cancels. Also where you type [power codes](#power-codes). Chat works in live games, single player included, but not in replays. |
@@ -1684,9 +1679,7 @@ just like its first move.
 The host chooses how units find their way, in **Pathfinding** among the game
 room's rules (click it to switch between the two). Everyone in the match
 uses the same choice; the other players see it read-only, and the choice is remembered
-for your next game. Campaigns always use Retail. A saved
-choice of Retail+, Flowfield or Cooperative (experimental modes that were
-removed before release) becomes Retail.
+for your next game. Campaigns always use Retail.
 
 ### Retail (the default)
 
@@ -1773,7 +1766,7 @@ measurements](legion-pathfinding.md)):
   one ahead and slides along the file instead of stopping dead. A unit
   moving outside a formation still edges round an obstacle slowly, and units on
   an attack, guard or patrol order keep facing their target and wait in their
-  queue as before.
+  queue.
 - **Allies meeting head on swap places.** Two units of yours or your allies'
   on move orders that block each other where neither can get round, as two
   columns meeting on a bridge, trade places and walk on; on screen they pass
@@ -1790,7 +1783,7 @@ measurements](legion-pathfinding.md)):
 - **Crossing groups take the longer route.** When two groups' ways cross, the
   later one does not stand and wait for the other to pass: it plans round,
   behind the other stream's tail, even if that is a long way. Only when no way
-  round exists at all does it go straight across, as before. Groups that meet
+  round exists at all does it go straight across. Groups that meet
   head on still keep to the right, and units stuck in a clot do not block
   the routes of other groups planned past them.
 - **Attackers surround their target.** A group ordered to attack one unit or
@@ -1898,8 +1891,10 @@ in a formation with ground units keep station over them.
 - With thousands of units, Legion uses more processor time than Retail.
 - With about 10,000 units moving at once, crowds can still stand at corners,
   at the mouths of narrow passages where two armies meet head on, and in the
-  queue for routes when many groups head for many different places. The
-  [Legion 10,000 report](legion-10000-report.md) has the measurements.
+  queue for routes when many groups head for many different places.
+
+[Legion pathfinding](legion-pathfinding.md) describes the design and its
+measured limits in detail.
 
 ### Which should I choose?
 
@@ -1913,11 +1908,12 @@ in a formation with ground units keep station over them.
 
 ## Options
 
-The options are on three pages: **Graphics** ([Display](#display) and
-[Graphics](#graphics)), **User Interface** ([Interface](#interface), [Camera](#camera)
-with **Tactical Dots**, **Tactical Dots Zoom** and **Screen Shake** at its end, plus
-**Hardware Cursor** and **Cursor Size** under *Cursor*) and **Game** ([Player](#player),
-[Game data folder](#game-data-folder) and [Performance](#performance)).
+The options are on three pages: **Game** ([Player](#player),
+[Game data folder](#game-data-folder) and [Performance](#performance), with
+**Simulation threads** and **Pin simulation threads**), **Graphics**
+([Display](#display) and [Graphics](#graphics)) and **User Interface**
+([Interface](#interface), [Camera](#camera) with **Tactical Dots**, **Tactical
+Dots Zoom** and **Screen Shake** at its end, and [Cursor](#cursor)).
 Open them from **Settings** on the main menu, or from the game menu (**Esc**) in a
 game; sound has its own [Audio](#audio) page. Changes apply and are saved
 immediately; there is no Save button (**Defaults** is at the bottom left, **Back**
@@ -1933,9 +1929,9 @@ back to 100% and 1×, not to the display scale the
 [first start](#interface-size-on-the-first-start) chose, so raise them again on a
 scaled or Retina display.
 
-Every choice here is remembered. When a new version changes a default, a
-settings file you already have keeps the values saved in it; press **Defaults**
-to take the new ones.
+Every choice here is remembered in your settings file, which keeps the values
+saved in it until you change them; **Defaults** puts a page back to the game's
+defaults.
 
 ### Player
 
@@ -1966,6 +1962,9 @@ folder. The map editor shares this setting: a folder chosen in either program
 is the one both use next time.
 
 ### Performance
+
+The **Performance** section of the **Game** page (**Settings → Game**, or
+**Esc → Game** in a game) sets how the game's simulations use your processor.
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -2016,7 +2015,8 @@ small game runs the same at any value. More is not always faster: a battle has
 only so much work to share out, and the same processor threads are wanted by
 the drawing of the game and, in single player, by the second simulation. The
 [Benchmark](#benchmark) is a good way to try a value: run the same Benchmark
-with each value and compare the results. A new value, and a change to **Pin
+with each value and compare the results, whose **Sim threads** and **Pin sim
+threads** rows say what each run used. A new value, and a change to **Pin
 simulation threads**, applies from the next game
 you open (a game, a replay or a Benchmark), not to one already open. If your
 settings file comes from a computer with more threads than this one has, the
@@ -2072,9 +2072,9 @@ missed are silent while the game catches up.
 
 ### Display
 
-![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, Native Wayland set to Auto, then Renderer set to Auto (OpenGL), Texture Filtering at Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind on, Tactical Dots on at a zoom of 0%, Hidden Units at Fade with Fade Opacity at 50%, Screen Shake off, Hardware Cursor on with the note OS CURSOR 16X25 beside it, Smooth Motion on, and GPU Memory Limit set to 1.25 GB (default)](img/guide/options-graphics.jpg)
+![The Graphics page with its Display and Graphics sections: Fullscreen off, VSync on and Max FPS 60 greyed out, Native Wayland set to Auto, then Renderer set to Auto (OpenGL), Texture Filtering at Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind on, Hidden Units at Fade with Fade Opacity at 50%, Smooth Motion on, and GPU Memory Limit set to 1.25 GB (default)](img/guide/options-graphics.jpg)
 
-*Options, Display and Graphics sections, at the default settings. Max FPS is greyed out because VSync is on. Renderer reads Auto (OpenGL): Auto, and the backend it started with. The picture was taken in a window, so Fullscreen shows Off, and on Linux, so Native Wayland shows and Ignore Windows Display Scaling does not.*
+*The Graphics page at the default settings. Max FPS is greyed out because VSync is on. Renderer reads Auto (OpenGL): Auto, and the backend it started with. The picture was taken in a window, so Fullscreen shows Off, and on Linux, so Native Wayland shows and Ignore Windows Display Scaling does not.*
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -2092,26 +2092,22 @@ starts at the size the desktop gives everything else: your Windows display scale
 or the desktop's scale in a native Wayland window on Linux, on every Wayland
 desktop. In an X11 window on Linux they stay at 100% and 1×. A profile you already
 have is never resized this way; change the two values in
-[Interface](#interface) and [Camera](#camera) whenever you like.
+[Interface](#interface) and [Cursor](#cursor) whenever you like.
 
 ### Graphics
 
 | Option | Default | What it does |
 | --- | --- | --- |
 | **Renderer** | Auto | Which graphics backend draws the game. Takes effect after a restart; see [Renderer](#renderer). |
-| **Ignore Windows Display Scaling** | On | Windows only. Stops Windows from enlarging the game window to match your display scaling (for example 150%), which made everything blurry. The game draws at the real screen resolution instead. Takes effect after a restart. A new profile starts UI Scale and Cursor Size at your Windows scale ([first start](#interface-size-on-the-first-start)). |
-| **Native Retina Resolution** | On | macOS only; the same row as Ignore Windows Display Scaling. Draws at the full resolution of a Retina display (normally twice the window's size in points) instead of letting macOS double a half-size image, which made everything soft. Takes effect after a restart. A new profile on a Retina display starts UI Scale and Cursor Size at the Retina scale ([first start](#interface-size-on-the-first-start)). The window can move between a Retina and an ordinary display: the picture and the pointer follow the display it is on, but UI Scale is not changed again, so the interface looks bigger on an ordinary display. |
+| **Ignore Windows Display Scaling** | On | Windows only. Stops Windows from enlarging the game window to match your display scaling (for example 150%), which makes everything blurry. The game draws at the real screen resolution instead. Takes effect after a restart. A new profile starts UI Scale and Cursor Size at your Windows scale ([first start](#interface-size-on-the-first-start)). |
+| **Native Retina Resolution** | On | macOS only; the same row as Ignore Windows Display Scaling. Draws at the full resolution of a Retina display (normally twice the window's size in points) instead of letting macOS double a half-size image, which makes everything soft. Takes effect after a restart. A new profile on a Retina display starts UI Scale and Cursor Size at the Retina scale ([first start](#interface-size-on-the-first-start)). The window can move between a Retina and an ordinary display: the picture and the pointer follow the display it is on, but UI Scale is not changed again, so the interface looks bigger on an ordinary display. |
 | **Texture Filtering** | Everything | How the game area is smoothed when you zoom in. **Off**: nothing is smoothed, as in the original. **Units**: the original game's Bilinear Filtering option; smooths unit textures and unit shadows only. **Everything**: Units, plus terrain, trees, rocks and other scenery, and effects, once you zoom in past 150%. Not in the original game. The interface, cursor and movies are never affected; see below. |
 | **Shadows** | On | Unit, scenery and projectile shadows, boats and every lodestone included. The biggest single graphics cost in a crowded battle. See below. |
 | **Smooth GUI Art** | On | Sharpens the low-resolution interface art, menus, fonts, cursors and build-menu portraits with an edge-aware upscale. Applies at once. No cost per frame; uses more video memory. |
 | **Smooth Movies** | On | Removes the blocky compression artefacts from the game's movies. |
 | **Trees Sway in Wind** | On | Animated trees and their shadows. |
-| **Tactical Dots** | On | Zoomed far out, every unit is drawn as a dot in its player's colour, like the minimap, instead of its model. Not in the original game. See below. While **Mouse Zoom** is off it reads **Off**, greyed out with **Tactical Dots Zoom**, since the map is never zoomed out; your choice is kept and comes back with Mouse Zoom. |
-| **Tactical Dots Zoom** | 0% | How far out you must zoom before dots replace models. Greyed out while Tactical Dots is off. See below. |
-| **Hidden Units** | Fade | Units behind trees, rocks and buildings. **Off**: hidden, as in the original game. **Dots**: a unit whose centre is hidden shows its tactical dot on top. **Fade**: a tree, rock or building over a unit fades out. Not in the original game. See below. |
+| **Hidden Units** | Fade | Units behind trees, rocks and buildings. **Off**: hidden, as in the original game. **Dots**: a unit whose centre is hidden shows its [tactical dot](#camera) on top. **Fade**: a tree, rock or building over a unit fades out. Not in the original game. See below. |
 | **Fade Opacity** | 50% | How visible a faded tree, rock or building stays: 100% no fade, 0% gone. Greyed out unless Hidden Units is Fade. |
-| **Screen Shake** | Off | Shakes the camera on heavy impacts (weapons that shake the screen in the original game) and on mission earthquakes. Applies at once. |
-| **Hardware Cursor** | On | The operating system draws the cursor, so it stays smooth even if the game stutters. It stays on while you stream; the stream draws the same cursor into the video. Beside the switch the game shows what it gave the system, for example `OS CURSOR 64X100`, or `UNAVAILABLE - SOFTWARE` if the system refused a cursor that size and the game is drawing it itself. |
 | **Smooth Motion** | On | Units glide between the game's 30 updates per second instead of stepping. Adds about 33 ms of visual delay. |
 | **GPU Memory Limit** | 1.25 GB | The most video memory the game's own textures may use: 512 MB, 768 MB, 1 GB, 1.25 GB (the default), 1.5 GB, 2 GB, 3 GB, 4 GB or Unlimited. Applies at once. See below. |
 
@@ -2156,37 +2152,6 @@ lowers its limit for a while, shows **LOWERED FOR NOW** next to the option, and
 returns to your choice after a minute without another error (longer if it keeps
 happening, up to eight minutes). The help text shown while the pointer is over
 the option says how much is in use right now.
-
-**Tactical Dots Zoom** sets when dots take over; it is greyed out and cannot be
-changed while Tactical Dots is off. It is a position along your zoom-out range:
-at **0%** dots appear only when you are zoomed all the way out;
-at **100%** they appear from normal size (100% zoom) outwards; **20%** means
-the most zoomed-out fifth of that range. The range is measured in
-mouse-wheel notches, so each notch moves the same share of it. It is relative
-because how far you can zoom out depends on your window and the map: the view
-stops where the map fills the window, which on a very wide screen is close to
-normal size. Once dots are showing, the models come back only after you zoom
-in a little more than one wheel notch past the setting, so the view never
-flickers between the two at the boundary. Dots follow the
-main view's rules: enemies show only where you can currently see them (an
-enemy that only your radar finds is a dot on the minimap, not here).
-Buildings are bigger squares than soldiers, flyers sit at their flying height,
-and selected units get a white outline. Click and box selection work on the
-dots. Health bars and unit shadows are hidden while dots are
-showing, and so are the battle's effects: fire, smoke, particles, explosions,
-spell glows, beams and lightning, wandering storms and every projectile, which at that zoom
-would be drawn far bigger than the dots and bury them. They come back, already
-under way, as soon as you zoom in to models; sounds are not affected. Trees,
-terrain and the art of burning or burnt scenery are still drawn. Dots
-are much cheaper to draw than models, so a huge zoomed-out battle also runs
-faster.
-
-![Two views of the same moment in a large battle, fully zoomed out. Left, labelled MODELS, the armies are tiny unit models that are hard to tell apart from the trees, with fire and spell flashes among them. Right, labelled TACTICAL DOTS, each army is a field of squares in its player's colour, blue, red and grey, with no effects drawn](img/guide/tactical-dots.jpg)
-
-*The same moment of an eight-AI Benchmark battle on Ulasem Arena, zoomed far out
-in a 1920 × 1080 window, at the default Tactical Dots Zoom of 0%. Left, Tactical
-Dots off; right, on. Trees and terrain are drawn either way; the battle's
-effects only without dots.*
 
 **Hidden Units** shows the units that trees, rocks and other tall scenery or a
 building stand in front of. It marks only units you would see anyway: your
@@ -2261,7 +2226,7 @@ your system appear.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| **Modern UI Font** | On | The lettering of the interface's text. **On** is a clean bold sans-serif (the chat box's), sharp at every UI Scale; **Off** is the look this engine had before: its blocky pixel font in the menus, rooms and Options, and the game's original serif faces in the HUD, scoreboard, briefings and Unit Info. The original decorative lettering (big messages, PAUSED, briefing headings, Unit Info labels, the title doors) is the same with either. Takes effect at once. |
+| **Modern UI Font** | On | The lettering of the interface's text. **On** is a clean bold sans-serif (the chat box's), sharp at every UI Scale; **Off** is the Classic look: a blocky pixel font in the menus, rooms and Options, and the game's original serif faces in the HUD, scoreboard, briefings and Unit Info. The original decorative lettering (big messages, PAUSED, briefing headings, Unit Info labels, the title doors) is the same with either. Takes effect at once. |
 | **F4 Scorecard Scale** | 100% | Size of the F4 player panel (50–200%). |
 | **UI Scale** | 100% | Size of the in-game interface (50–200%). A new profile starts at the display's scale ([first start](#interface-size-on-the-first-start)). |
 | **Health Bars** | Damaged | Off, only on damaged units, or always. |
@@ -2334,6 +2299,46 @@ mod packs, units), while labels such as **START** stay in capitals.
 | **Mouse Zoom Speed** | 1× | Wheel zoom speed (greyed while Mouse Zoom is off). |
 | **Edge Scrolling** | On | Scroll when the cursor touches a screen edge. |
 | **Edge Scroll Speed** | 1× | Edge scrolling speed. |
+| **Tactical Dots** | On | Zoomed far out, every unit is drawn as a dot in its player's colour, like the minimap, instead of its model. Not in the original game. See below. While **Mouse Zoom** is off it reads **Off**, greyed out with **Tactical Dots Zoom**, since the map is never zoomed out; your choice is kept and comes back with Mouse Zoom. |
+| **Tactical Dots Zoom** | 0% | How far out you must zoom before dots replace models. Greyed out while Tactical Dots is off. See below. |
+| **Screen Shake** | Off | Shakes the camera on heavy impacts (weapons that shake the screen in the original game) and on mission earthquakes. Applies at once. |
+
+**Tactical Dots Zoom** sets when dots take over; it is greyed out and cannot be
+changed while Tactical Dots is off. It is a position along your zoom-out range:
+at **0%** dots appear only when you are zoomed all the way out;
+at **100%** they appear from normal size (100% zoom) outwards; **20%** means
+the most zoomed-out fifth of that range. The range is measured in
+mouse-wheel notches, so each notch moves the same share of it. It is relative
+because how far you can zoom out depends on your window and the map: the view
+stops where the map fills the window, which on a very wide screen is close to
+normal size. Once dots are showing, the models come back only after you zoom
+in a little more than one wheel notch past the setting, so the view never
+flickers between the two at the boundary. Dots follow the
+main view's rules: enemies show only where you can currently see them (an
+enemy that only your radar finds is a dot on the minimap, not here).
+Buildings are bigger squares than soldiers, flyers sit at their flying height,
+and selected units get a white outline. Click and box selection work on the
+dots. Health bars and unit shadows are hidden while dots are
+showing, and so are the battle's effects: fire, smoke, particles, explosions,
+spell glows, beams and lightning, wandering storms and every projectile, which at that zoom
+would be drawn far bigger than the dots and bury them. They come back, already
+under way, as soon as you zoom in to models; sounds are not affected. Trees,
+terrain and the art of burning or burnt scenery are still drawn. Dots
+are much cheaper to draw than models, so a huge zoomed-out battle also runs
+faster.
+
+![Two views of the same moment in a large battle, fully zoomed out. Left, labelled MODELS, the armies are tiny unit models that are hard to tell apart from the trees, with fire and spell flashes among them. Right, labelled TACTICAL DOTS, each army is a field of squares in its player's colour, blue, red and grey, with no effects drawn](img/guide/tactical-dots.jpg)
+
+*The same moment of an eight-AI Benchmark battle on Ulasem Arena, zoomed far out
+in a 1920 × 1080 window, at the default Tactical Dots Zoom of 0%. Left, Tactical
+Dots off; right, on. Trees and terrain are drawn either way; the battle's
+effects only without dots.*
+
+### Cursor
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| **Hardware Cursor** | On | The operating system draws the cursor, so it stays smooth even if the game stutters. It stays on while you stream; the stream draws the same cursor into the video. Beside the switch the game shows what it gave the system, for example `OS CURSOR 64X100`, or `UNAVAILABLE - SOFTWARE` if the system refused a cursor that size and the game is drawing it itself. |
 | **Cursor Size** | 1× | Cursor size, 1× (the original size) to 8×. A new profile starts at the display's scale ([first start](#interface-size-on-the-first-start)). |
 
 Key bindings are under **Settings → Controls**.
@@ -2634,23 +2639,21 @@ connection closes before the game starts is counted down from that moment.
   RESPONDING: AN AI (NORMAL) TAKES OVER**, and the player can no longer return
   to that game.
 
-Leaving on purpose (**MAIN MENU** or **QUIT** from the in-game menu) is not a
-disconnect: you leave at once and your units stand idle, with no wait for the
+Leaving on purpose (**Surrender** in the in-game menu, or closing the game) is
+not a disconnect: you leave at once and your units stand idle, with no wait for the
 others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-TAK Engine 0.9.24 uses network protocol **320** and replay format **15**.
+TAK Engine 1.0.0 uses network protocol **323** and replay format **15**.
 
 - **Multiplayer:** a server turns away a client whose protocol differs from its
-  own; the connection fails with a *protocol version mismatch* message. When a
-  release changes the protocol, a server and all of its players update together.
+  own; the connection fails with a *protocol version mismatch* message. A server
+  and all of its players run versions with the same protocol.
 - **Replays:** a replay plays only on a version with the protocol and replay format
-  that recorded it. Keep a copy of the version that recorded a replay (or build it
-  from its tag, see the [development guide](development.md)) if you want to keep
-  watching it.
+  that recorded it.
 
-Every release's protocol and replay format are listed in the
+Each release's protocol and replay format are listed in the
 [CHANGELOG](../CHANGELOG.md).
 
 If players' games ever fall out of step (a "desync"), the server detects it.
@@ -2960,9 +2963,6 @@ small. Playback needs:
   recorded it (see [Versions](#versions) for which versions share one);
 - the same game data and map.
 
-Older recordings need the engine version that made them. Keep an old copy of the
-engine if you want to keep watching old replays.
-
 Replays are saved beside your settings file; see
 [Where files are kept](#where-files-are-kept). A server can also keep finished
 games, if its operator turns that on.
@@ -3065,8 +3065,8 @@ unit's file name (`arabow`, `tarcage`); lines starting with `//` are comments.
 Every one of our levels reads the same file, and each applies it **on top of its
 own built-in profile**: a line replaces that unit's value in every level, and
 every unit the file does not name keeps each level's own built-in values.
-Today the six built-in profiles hold the same values, so the file sets the same
-weights and limits for every level. The levels still play differently, and
+The built-in profiles all hold the same values (Passive uses Easy's), so the
+file sets the same weights and limits for every level. The levels still play differently, and
 each treats a limit its own way: Easy halves it, Hard and Absurd raise it,
 and Defensive and Absurdly Defensive ignore limits (but not a limit of
 0). `limit <unit> 0` stops every level building the unit. The file also
@@ -3082,7 +3082,7 @@ the map's archive can replace (see [Retail AI](#retail-ai)).
 
 The Cartographer makes these files for you: **Scenario → AI Profiles...**
 (**A**) opens a window with a **DEFAULT AI** tab (the Retail AI's profile) and a
-**TAK ENGINE AI** tab (`ai/takengine.txt`, which all six of our levels read; a
+**TAK ENGINE AI** tab (`ai/takengine.txt`, which all seven of our levels read; a
 **PREVIEW LEVEL** choice shows the table as one level at a time sees it), a
 table of units in which you switch units off, change how often they are built
 and set limits, and presets such as **No flyers** and **No ships**. See
@@ -3091,7 +3091,7 @@ and set limits, and presets such as **No flyers** and **No ships**. See
 - **For one map**: the files are saved inside the map's `.kmp` and travel with
   it. The Retail AI gets the map's own profile (`ai/<name>.txt`, which the map
   names), usually started from the game's standard profile; our levels get
-  `ai/takengine.txt`, one file for all six.
+  `ai/takengine.txt`, one file for all seven.
 - **For every map**: **SAVE AS GAME MOD...** writes the files into a game pack,
   `mods/game/<pack>/ai/`. They apply whenever that pack is ticked.
 - **Without a map**: **File → New AI mod...** (**Ctrl+Shift+N**) and **File →
@@ -3215,11 +3215,15 @@ installing it step by step. In short:
 - `takserver --status` on the server machine prints how many games and players
   are active.
 
-See [public server deployment](public-server.md) for manual certificates,
-resource limits, upgrades and troubleshooting.
+- `takserver --sim-threads` sets how many processor threads the running games'
+  simulations share (each running game gets an equal part), and `--sim-cpus`
+  pins them to chosen CPUs. Neither changes a game's outcome.
 
-**Upgrade the server and players together when the protocol changes.** A server
-only accepts clients of the same protocol version; see [Versions](#versions).
+See [public server deployment](public-server.md) for manual certificates,
+resource limits and troubleshooting.
+
+**The server and its players run the same version.** A server only accepts
+clients of its own protocol version; see [Versions](#versions).
 
 ---
 
@@ -3285,15 +3289,7 @@ your other games.
 
 The engine is tested with up to **16,000 units** in a game. That is a test
 target, not a promise of smooth play at that size: the map, the mix of units,
-their orders, your hardware and your graphics settings all matter. The
-measurements behind it: [large-map collision grid](large-map-collision-performance.md),
-[moving armies, shadows and simulation](performance-2026-09-28.md),
-[distant rendering](distant-rendering-performance.md),
-[geometry and shadow reuse](render-reuse-2026-09-26.md),
-[model reuse](render-reuse-2026-10-04.md),
-[rendering and animation](render-submission-2026-09-26.md),
-[engine profiling](performance-2026-09-26.md) and
-[earlier notes](performance-2026-09-20.md).
+their orders, your hardware and your graphics settings all matter.
 
 ![A benchmark battle: several armies meet at the edge of a sandy clearing, with health bars over the damaged units and the BENCHMARKING countdown at the top](img/guide/benchmark.jpg)
 
@@ -3307,7 +3303,7 @@ measurements behind it: [large-map collision grid](large-map-collision-performan
 
 - Choose the folder that contains `data.hpi`, `terrain.hpi`, `sections.hpi` and
   `maps.hpi`, not a parent or child folder.
-- To switch to another install, use **Data folder** in Options (or
+- To switch to another install, use **Data folder** in **Settings → Game** (or
   **View → Preferences** in the map editor) and restart when asked.
 - If the game says core data is unreadable, the archives may be damaged; copy
   them again from your original installation.
@@ -3333,8 +3329,8 @@ files) in your install folder. See [Creon](#creon).
 ### The game looks blurry on Linux
 
 At a display scale above 100% on a Wayland desktop, an X11 window is drawn at
-the small size and enlarged by the desktop, which blurs it. Check **Options →
-Display → Native Wayland**: its help line says what is running. If it says X11,
+the small size and enlarged by the desktop, which blurs it. Check **Settings →
+Graphics → Native Wayland**: its help line says what is running. If it says X11,
 set it to **Auto** or **On** and restart. If it is Auto and still X11 on GNOME,
 install the libdecor package (`libdecor` or `libdecor-0-0`) or choose **On**.
 
@@ -3359,7 +3355,7 @@ Plasma's settings. It also waits for the desktop to report the Wayland window's
 scale before deciding, and remembers which window it last had, so this never adds
 up over several switches. UI Scale stops at 200% and Cursor Size at 8×, so a
 value at the top cannot grow and comes back a little smaller after switching
-back; set it again in Options if so.
+back; set it again in **Settings → User Interface** if so.
 
 ### The whole screen flickers on a large display
 
@@ -3431,10 +3427,11 @@ retry later*, and the host presses **Start** again a little later.
 - Check that you have the same base game data as the server.
 - Map downloads are automatic; wait for the map to verify in the lobby.
 
-### My old replays will not play
+### A replay will not play
 
-Replays only play on an engine version with the same network protocol as the
-one that recorded them. See [Versions](#versions) and [Replays](#replays).
+A replay plays only on an engine version with the same network protocol and
+replay format as the one that recorded it, with the same game data and map. See
+[Versions](#versions) and [Replays](#replays).
 
 ### Where files are kept
 

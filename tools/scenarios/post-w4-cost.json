@@ -1,5 +1,5 @@
 {
- "note": "Post-W4 cost baseline (PLAN 3.0 / C21; task-w4-exit, protocol 242), Legion: each scenario's total Legion work (work.legion_total max / p99 / total), gauge.* running maxima and churn bins, as legion_scenario --offsets gate reports them (optimized Debug; platform-independent). The 3.0 caps declared against the post-W4 head (e.g. W7 G: aware work per-tick max <= the post-W4 per-tick max of total Legion work on aware-* and battle-field) read these. legion_cost.py battle prints the offset-0 window tables (docs/legion-exit-tables.md, W4 exit); the live 8-AI Ulasem counterpart is ulasem-w4-exit.json.",
+ "note": "Post-W4 cost baseline (PLAN 3.0 / C21; task-w4-exit, protocol 242), Legion: each scenario's total Legion work (work.legion_total max / p99 / total), gauge.* running maxima and churn bins, as legion_scenario --offsets gate reports them (optimized Debug; platform-independent). The 3.0 caps declared against the post-W4 head (e.g. W7 G: aware work per-tick max <= the post-W4 per-tick max of total Legion work on aware-* and battle-field) read these. legion_cost.py battle prints the offset-0 window tables; the live 8-AI Ulasem counterpart is ulasem-w4-exit.json.",
  "scenarios": {
   "aware-adjacent": {
    "churn.bin0": 768895,

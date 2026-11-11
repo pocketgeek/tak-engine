@@ -1,5 +1,5 @@
 #pragma once
-// legion_scale.h -- the Legion 10,000 scale probe (docs/legion-10000-progress.md, phase 0).
+// legion_scale.h -- the Legion 10,000 scale probe (phase 0).
 // Header-only, tools only. legion_scenario reports its keys for a file that says `probe scale`
 // (or with --scale). Observation only: it reads `const World&` and the navigator's read-only test
 // hooks after each tick, keeps integer state of its own and writes nothing back, so a run with it

@@ -6,7 +6,6 @@
 // alone -- no data files: folders map to kind groups (cliffs, transitions, water,
 // ...), names decompose into kind / direction / corner tokens, and numbered or
 // lettered variants of one piece collapse into a single browser entry.
-// Naming survey: docs/cartographer-improvements-progress.md (section browser).
 
 #include "cartographer/sections.h"
 

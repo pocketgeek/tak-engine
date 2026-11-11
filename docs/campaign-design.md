@@ -1,14 +1,7 @@
-> Historical design notes below include superseded implementation inventories.
-> For the current native-backed screen behavior, see
-> [campaign presentation](campaign-presentation-2026-09-26.md).
-> Results already use the authored victory/defeat plates; the 2026-09-26 pass
-> replaces the old list picker and front-end briefing with the retail book and
-> loaded-world initial pause, and replaces the guessed score formula.
-
 # Campaign system — design & RE notes
 
-Current campaign implementation and evidence for the retail Book of Darien
-(base) and Iron Plague campaigns. Updated 2026-09-26. Reverse-engineered by static analysis of `KINGDOMS.icd` + the
+How the campaign implementation works, and the evidence for the retail Book of
+Darien (base) and Iron Plague campaigns. Reverse-engineered by static analysis of `KINGDOMS.icd` + the
 shipped mission data (`missions.hpi`, `IPMissions.hpi`, `camps/*.tdf`); see the
 per-area findings below. Nothing here is copied from retail code/data.
 
@@ -19,10 +12,10 @@ is an orphaned older build (PE link Dec 1999, FileVersion **2.0.0.1**,
 `...\Final_Release\Kingdoms.pdb`); `KINGDOMS.icd` is the shipped final patch (Feb
 2000, **3.0.0.1**, `...\V3Final_Release\`) and a strict superset. The install's
 `Kingdoms.exe` stub composes `Kingdoms.ICD` — nothing ever loads `ironplague.icd`.
-This audit uses the final patched `KINGDOMS.icd` for both campaigns. The
+These notes use the final patched `KINGDOMS.icd` for both campaigns. The
 `SelectPlayerAndCampaign` / `PlayerCampaignDialogue` names refer to player/profile
-selection, not a character-dialogue overlay. Crusades balance remains selectable
-through the existing engine setting.
+selection, not a character-dialogue overlay. Crusades balance is selectable
+through the engine setting.
 
 ## 1. Data model
 
@@ -133,14 +126,14 @@ selectable (owner unchanged; not modelled) · `d` self-destruct when the order
 comes up · `c` cloak · `bw…` BuildWeapon and `r` resurrect (no shipped uses).
 A NAME is a placed unit's `Ident=`, else its `Unitname`, the first record that
 matches; it resolves only in an `InitialMission` (retail hands SetMission an
-empty unit table). Details and addresses: [retail-engine.md](retail-engine.md#mission-order-strings-icd-0x513fb0-2026-10-30).
+empty unit table). Details and addresses: [retail-engine.md](retail-engine.md#mission-order-strings-icd-0x513fb0).
 Example (`takmission01`): `SetMission s, w 4, m 133 68, m 129 68, w 3, m 133 68, a TARZOM`.
 
 ### GET / SET
 `GET` and `GET_UNIT_VALUE` reach the same table (retail `4d4060`): 5 = a player's
 population (0-based player index, as `Create`'s), 7 = the unit cap, 30 = a unit's type
 (compare against `GetUtype`), 31 = a unit's owner, 35/36 = its footprint-origin cell,
-40 = a player's score. Details: [retail-engine.md](retail-engine.md#the-mission-get-table-icd-0x4d4060-gap-hunt-12-2026-11-05).
+40 = a player's score. Details: [retail-engine.md](retail-engine.md#the-mission-get-table-icd-0x4d4060).
 `SET_UNIT_VALUE(id=2, value=1|0)` → **force victory / force defeat** (scripted override
 of the data-driven rules).
 
@@ -148,8 +141,8 @@ of the data-driven rules).
 `PLAY_SOUND <nameIdx>` resolves `nameTable[nameIdx]` as a WAV and preserves its
 authored flags. The native mission host submits global, nonlooping audio with
 priority from the low three flag bits. Ordered events survive multiple requests
-per tick and render snapshots that skip ticks. See the
-[campaign dialogue audit](campaign-dialogue-2026-09-26.md), including missing assets.
+per tick and render snapshots that skip ticks. Some requested sounds are not
+in the shipped data; no replacement clip is added for them.
 
 ## 3. Win / lose — **data-driven**
 
@@ -165,39 +158,37 @@ events. Victory conditions combine with AND; defeat conditions combine with OR:
   `UnitTypeKilled=<T>,<n>`, `DeathTimerRunsOut=<s>`, `AnyUnitPassesX/Z`.
 - **Scripted override:** the COB can force the result with `SET_UNIT_VALUE(2, 1|0)`.
 
-The implementation and focused native comparisons are recorded in the
-[condition audit](campaign-conditions-2026-09-26.md). Passing a selection of
-missions or reproducing a lockstep hash is not evidence that every mission has
-been played from beginning to end against retail.
+The condition evaluators are checked by native comparisons against the retail
+routines under controlled inputs. Passing a selection of missions or reproducing
+a lockstep hash is not evidence that every mission has been played from
+beginning to end against retail.
 
 ## 4. Campaign presentation
 
 The retail book picker is `BOD.gui`, with chapter illustrations selected from the
 `Story1` sequence. It is distinct from the player/profile chooser. The engine uses
-that authored book art, typography, and chapter navigation, while retaining its
-existing ability to choose any chapter without unlocking it first. Completion is
-tracked in portable settings. Iron Plague's alternate finale remains selectable.
+that authored book art, typography, and chapter navigation, and lets the player
+choose any chapter without unlocking it first. Completion is tracked in portable
+settings. Iron Plague's alternate finale is selectable.
 
 Chapter movies play before loading. Native in-game constructor `4b3360` creates
 `Briefing.gui` after the game has loaded; `4b51e0` pauses and fills the chapter,
-title, and objective lines. The engine now presents that overlay on the loaded
+title, and objective lines. The engine presents that overlay on the loaded
 battlefield. It withholds the initial network Loaded acknowledgement until the
 briefing is dismissed, while polling keepalives. The referee therefore cannot
 advance the mission while the player reads. Rejoins and spectators skip this
-initial modal. The existing objectives panel remains available during play.
+initial modal. The objectives panel is available during play.
 
 Narration and dialogue use the authored movie soundtrack or explicit script sound
-requests. The earlier claim that Iron Plague requires a missing in-engine portrait
-widget was wrong: `PlayerCampaignDialogue.gui` is a profile chooser. No invented
-portrait, dialogue text, or replacement clips are added.
+requests. Iron Plague has no in-engine portrait widget: `PlayerCampaignDialogue.gui`
+is a profile chooser. No invented portrait, dialogue text, or replacement clips
+are added.
 
 The result screen uses the authored faction victory/defeat plate. Victory records
 that chapter's completion; Next follows campaign-list order, Retry replays the
-same chapter, and either finale is terminal. Direct Debug campaign launches now
-honor Next/Retry as well as menu launches. Chapter titles and the alternate title
+same chapter, and either finale is terminal. Direct Debug campaign launches
+honor Next/Retry as menu launches do. Chapter titles and the alternate title
 come from the shipped translations rather than generic mission-number labels.
-See the [presentation audit](campaign-presentation-2026-09-26.md) for native
-addresses, rendering checks, and remaining differences.
 
 ## 5. Architecture and limits
 
@@ -208,62 +199,43 @@ than skirmish last-team-standing, determine the campaign result. Script-driven
 reinforcements can revive otherwise empty factions. Strategic opponents play the
 **Retail AI** (with no choice): a port of retail's strategic AI
 over the mission's `aiprofile` file (`ai/mission<NN>.txt`, else
-`ai/default.txt`), its `.ota` StartPos table and its Player lines' `massattack`
-(see [classic-ai-acceptance.md](classic-ai-acceptance.md#campaign)). A player
-who disconnects is still taken over by the Normal level.
+`ai/default.txt`), its `.ota` StartPos table and its Player lines' `massattack`.
+A player who disconnects is taken over by the Normal level.
 
-The mission `.tdf` restricts the player's build menu. Server-side enforcement of
-that restriction is a separate limitation. The player is seated as retail seats
-them: `Player1` is world slot 0, the campaign room seats its host at slot 0 and
+The mission `.tdf` restricts the player's build menu on the client; the server
+does not enforce that restriction. The player is seated as retail seats them:
+`Player1` is world slot 0, the campaign room seats its host at slot 0 and
 refuses seat moves, so the server's command stamping, the referee's world and
-the client's view all name the same player. Before this, a "first non-AI player"
-guess left `takx22_mt`/`takx24_mt` (Player1 marked `strategic opponent`) with an
-AI driving the player's units and the player teamed with the Aramon invaders;
-fixing it changes those two missions' hashed state and no other. The obsolete client-only mission runner is
-gone. Campaign progress remains local portable settings, not retail's Windows
+the client's view all name the same player. This matters for
+`takx22_mt`/`takx24_mt` (Player1 marked `strategic opponent`): the player
+drives their own units and is not teamed with the Aramon invaders. Campaign
+progress is kept in local portable settings, not retail's Windows
 registry/profile format.
 
-This audit targets mission conditions, presentation, and dialogue. It does not
-claim that every scripting verb, AI decision, or complete campaign playthrough
-has been compared to retail. Native tests run extracted routines under controlled
+The retail comparisons cover mission conditions, presentation, and dialogue.
+Not every scripting verb, AI decision, or complete campaign playthrough has
+been compared to retail. Native tests run extracted routines under controlled
 inputs; asset-backed tests establish loading and rendering of the installed data.
-No retail GUI was launched for this pass.
+Mission-only score and condition state is not part of the ordinary skirmish
+checksum.
 
-## Integration validation
+## Tests
 
-Final builds completed for all targets in Release, optimized Debug and regular
-Debug. All **207 CTest runs passed** (67/70/70), including campaign conditions,
-audio events, authored chapter selection, scoring and existing mission regressions.
-
-The optional `campaign_test assets/game --startup` sweep loaded and ran the first
-30 ticks of all **74 chapters in both balance modes**: 148 successful openings.
-This found and fixed Iron Plague chapter 13's erroneous immediate victory; that
-mission has no explicit victory list and must wait for its script. This sweep is
-an opening regression, not a complete campaign playthrough.
-
-Release-server/optimized-Debug-client checks exercised loaded briefings in base
-chapter 1, Iron Plague chapter 1 and Iron Plague chapter 13. Each screenshot path
-asserted that rendering and dismissing the briefing left the tick-zero simulation
-hash unchanged. Both campaign book screenshots and the battlefield briefing were
-visually reviewed. The normal base-chapter launch and the `--mission` alias
-repeated the same ten-second state hash, `d10fe3f010796c06`, without desync.
-
-Native comparisons include 7,205 condition cases, 512 mission-audio routing
-cases plus objective-cue checks, 112 chapter-art cases, 216 death-score cases and
-full score GET/SET host checks. Their controlled scope is detailed in the linked
-reports; they do not imply an end-to-end retail GUI comparison.
-
-GCC/Clang determinism checks retained golden `dcef618cd2e4d558`. The harness skipped
-ARM cross-build checks because target build dependencies were unavailable.
-Protocol **183** (the protocol of this pass; 0.9.7 uses 301) requires matching client/server builds and rejects earlier
-protocol recordings under the existing replay-version policy.
-
-Two fresh ordinary skirmish multiplayer runs also retained the pre-change hash
-`3c4e5e85a939988c`. Mission-only score and condition state does not change the
-ordinary skirmish checksum. No pathfinding implementation was changed.
-
-A final direct-launch check also asserts that the front-end campaign catalog
-survives GameView construction. Command-line campaign sessions now retain it for
-result/progression and subsequent Next/Retry sessions instead of moving it away.
-Both the normal command-line launch and the `--mission` alias passed that assertion,
-briefing tick-zero invariance, and the same repeated campaign state hash above.
+- CTest covers campaign conditions, mission audio events, authored chapter
+  selection, scoring and mission regressions.
+- `campaign_test <data> --startup` (optional, asset-backed) loads every chapter
+  of both campaigns, Iron Plague's alternate finale included, in both balance
+  modes (standard and Crusades), runs its first 30 ticks and requires that no
+  mission has ended. Iron Plague chapter 13 has no explicit victory list and
+  must wait for its script. This is an opening regression, not a complete
+  campaign playthrough.
+- Debug `TAK_SHOT_BRIEFING` runs assert that rendering and dismissing the
+  loaded briefing leaves the tick-zero simulation hash unchanged ("PASS: loaded
+  campaign briefing preserves tick-zero state"), and that the front-end
+  campaign catalog survives GameView construction so command-line sessions
+  keep it for result/progression and Next/Retry ("PASS: campaign catalog
+  retained for result/progression"). The normal command-line launch and the
+  `--mission` alias give the same campaign state hash.
+- Native comparisons cover the condition evaluators, mission-audio routing and
+  objective cues, chapter art, death scores and the score GET/SET host. They do
+  not amount to an end-to-end retail GUI comparison.

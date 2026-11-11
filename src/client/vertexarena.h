@@ -1,7 +1,7 @@
 #pragma once
 
 // Retained body vertices for the native submission path (rendering
-// optimization workstream H, docs/render-optimization-progress.md).
+// optimization workstream H).
 //
 // Before H every visible body was copied every frame: each unit's screen-space
 // vertices (UnitGeom::verts) into one assembled buffer (GameView::bodyVerts_),

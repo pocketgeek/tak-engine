@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""legion_scale -- the Legion 10,000 scale suite (docs/legion-10000-progress.md, phase 0).
+"""legion_scale -- the Legion 10,000 scale suite (phase 0).
 
   legion_scale.py run    --bin BUILD/legion_scenario --out DIR [--files GLOB]... [--modes legion,retail]
                          [--retail-files GLOB]... [--cores 4-23] [--per-job 4] [--workers 3] [--data DIR]

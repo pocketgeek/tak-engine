@@ -1,7 +1,6 @@
 #pragma once
 
-// Per-tick render SNAPSHOT of the sim (sim/render decouple -- see
-// docs/sim-render-decouple-plan.md): UnitR / PlayerR mirror sim::Unit / sim::Player
+// Per-tick render SNAPSHOT of the sim (sim/render decouple): UnitR / PlayerR mirror sim::Unit / sim::Player
 // field names so render code reads them unchanged, and Frame is the whole triple-
 // buffered snapshot the render/HUD reads instead of live world_. Extracted from
 // client/main.cpp; kept at global scope so its unqualified use sites there are
@@ -56,8 +55,7 @@ struct RenderOrder {
     }
 };
 
-// Per-tick render SNAPSHOT of a sim Unit (sim/render decouple -- see
-// docs/sim-render-decouple-plan.md). Field names + methods MIRROR sim::Unit so render code
+// Per-tick render SNAPSHOT of a sim Unit (sim/render decouple). Field names + methods MIRROR sim::Unit so render code
 // reads them unchanged; captured each tick by GameView::captureFrame() so the render never
 // dereferences world_. Also carries the motion-interpolation prev pose (px/pz/ph); the curr
 // pose is x/z/heading (mirroring Unit). Indexed by unit id in Frame::units.

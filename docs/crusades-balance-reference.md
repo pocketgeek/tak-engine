@@ -6,7 +6,7 @@ Source reports, effective loaded-value reports, fingerprints and regression
 coverage are linked below. Counts distinguish authored fields from effective
 fields; neither is a count of independent balance-design decisions.
 
-## How retail selects the Crusades balance (corrected in 0.9.4)
+## How retail selects the Crusades balance
 
 Retail changes exactly one thing when the Crusades balance is on: the unit
 roster. Static analysis of `KINGDOMS.icd` (sha256 `1144a394...`):
@@ -32,17 +32,15 @@ roster. Static analysis of `KINGDOMS.icd` (sha256 `1144a394...`):
 In retail Crusades games the tech tree is therefore the standard one: the gods
 stay on the monarchs, the Shaman builds the Giant Orm and Giant Barracuda, the
 Beast Handler builds the Swamp Beast, the Beast Tamer has the same nine entries
-as in the standard game, and the Ark has no build menu. Until 0.9.4 the engine
-loaded `canbuildcb/` menus and fell back to `units/` for units with no
-`unitscb/` FBI; that let a Crusades Beast Tamer build the Trapdoor Spider
-(`zonspide`), which retail never offers. `setupRegistry` now loads the roster
+as in the standard game, and the Ark has no build menu; a Crusades Beast Tamer
+cannot build the Trapdoor Spider (`zonspide`). `setupRegistry` loads the roster
 from `unitscb/` alone and the menus from `canbuild/` alone, filtered by the
-roster, and `balance_roster_test` checks this against the shipped data. On the
-shipped data no menu has a priority tie or a missing priority, so the stable
-priority sort gives the same order as the earlier (priority, name) sort, and
-every Crusades menu equals its standard menu.
+roster, with no fallback to `units/`, and `balance_roster_test` checks this
+against the shipped data. On the shipped data no menu has a priority tie or a
+missing priority, so the stable priority sort gives the same order as a
+(priority, name) sort, and every Crusades menu equals its standard menu.
 
-Scenario maps follow the same roster (0.9.6): a scenario's custom unit-type
+Scenario maps follow the same roster: a scenario's custom unit-type
 stats for a type the Crusades roster lacks are skipped, as retail does, while a
 scenario that places such a unit is refused with a message naming it.
 Cartographer's Check Map also loads a Crusades registry and warns about units a
@@ -76,21 +74,9 @@ below resolves canonical definitions, inherited movement, defaults, conversions
 and complete menus through the registry. Removed fields can revert to defaults;
 a text difference need not change effective gameplay.
 
-## First local survey
+## What differs
 
-On 2026-09-30, the current `/home/pocket_geek/tak_data` installation yielded
-the figures below. They predate the 0.9.4 correction and still count the
-`canbuildcb/` menu comparison; the current reports are in the tables further
-down.
-
-- 377 compared files, including base menu entries suppressed by CB replacement;
-- 193 changed files, 15 CB-only files (all build-menu entries);
-- 1,269 field differences plus 24 definition-existence rows;
-- nine removed base-menu entries and fifteen added entries.
-
-The survey uses the existing mixed Iron Plague-era installation; it is not a
-claim to a pristine official 3.0 or Iron Plague installation. The complete derived comparison is now published with source fingerprints below.
-
+The derived comparison, with source fingerprints, is in the tables below.
 Frequent differences include cost, build time, hit points, healing, experience
 points, weapon ranges, category-specific damage, capture immunity, movement
 classes, sight/radar, resource income and mana regeneration. The audit also finds authored spelling differences such as cruisalt and
@@ -128,10 +114,8 @@ origin archive. The tool checks those source bytes against the actual audit VFS.
 | Original Iron Plague CD composed data view | [iron-plague-cd.tsv](research/darien-crusades/balance/iron-plague-cd.tsv) | [iron-plague-cd-manifest.tsv](research/darien-crusades/balance/iron-plague-cd-manifest.tsv) | 197 (+6 removed) | 1,244 |
 | Base data/English archives plus official ordinary 3.0 patch archives | [official30.tsv](research/darien-crusades/balance/official30.tsv) | [official30-manifest.tsv](research/darien-crusades/balance/official30-manifest.tsv) | 172 | 1,028 |
 
-The reports were regenerated for 0.9.4 from the same three roots; the
-manifests reproduced byte for byte, and every unit field row is unchanged. The
-difference from the earlier figures is the dropped `canbuildcb/` menu rows
-(25 priority rows in each scope) and the six new `removed-definition` rows.
+The field reports carry no `canbuildcb/` menu rows (the game never reads that
+tree) and include the six `removed-definition` rows.
 
 The CD and official-patch scopes are explicitly assembled data views, not executed installers.
 The CD view combines the disc's base/Data archives with the Required_Install_Files
@@ -143,7 +127,9 @@ The provenance investigation also found byte-identical original-CD base and
 IP data archives; see [sources](research/darien-crusades/sources.md).
 Both 3.0 installer distributions carry identical balance archives, so installing
 the Crusades campaign package is distinct from selecting Crusades Balance.
-The GOG field report is byte-identical to the current local-install report.
+The GOG field report is byte-identical to the report from the local Iron
+Plague-era install (a mixed installation, not a pristine official 3.0 or Iron
+Plague one).
 
 ```sh
 build/crusades_balance_audit /path/to/data --manifest > /tmp/balance-manifest.tsv
@@ -155,7 +141,7 @@ build/crusades_balance_audit /path/to/data --manifest > /tmp/balance-manifest.ts
 the original source deltas, including derived movement limits/timing, aura
 parameters, native weapon-slot state, precomputed integer damage and ordered
 menus. A unit absent from one mode's roster reports only its `unit/present`
-row. Since 0.9.4 no ordered menu differs: Crusades menus are the standard
+row. No ordered menu differs: Crusades menus are the standard
 canbuild menus filtered by the roster, and none of the removed units is on a
 standard menu. It also retains selected presentation references used downstream. It
 does not claim to serialize every field or every rule of the engine.
@@ -194,11 +180,10 @@ standard canbuild tree filtered by that roster) and active native-to-local
 weapon slot mappings. `balance_roster_test` pins the retail facts directly: the
 six absent units, the nine-entry Beast Tamer, the Shaman's Orm and Barracuda,
 the monarch gods and the Ark's empty menu.
-A review caught that the initial weapon check searched the wrong TDF level and
-therefore checked no weapons. This is corrected: weapon, explosion and category
-counts are explicit, and a zero-coverage corpus fails.
+Weapon, explosion and category counts are explicit, and a zero-coverage corpus
+fails, so a check that finds no weapons cannot pass.
 
-Current coverage includes:
+Coverage includes:
 
 - costs, build times, health, healing, experience, worker rate, mana income,
   storage/capacity/regeneration, sight/radar and building reach;
@@ -217,7 +202,7 @@ Current coverage includes:
 The GOG scope exercises 399 unit/mode cases, 64 complete builder/mode menus,
 390 weapons, 12 death explosions and 415 category overrides. The official 3.0
 scope exercises 344 unit/mode cases, 52 menus, 323 weapons, seven death
-explosions and 348 category overrides. Registry runs (0.9.4) pass 123,362 checks
+explosions and 348 category overrides. Registry runs pass 123,362 checks
 for each IP-era scope and 93,334 for the official 3.0 scope. Native investigation resolved the suspect keys and damage
 semantics; no changed gameplay field is left unclassified.
 
@@ -226,39 +211,37 @@ cmake --build build --target crusades_registry_test balance_roster_test
 ctest --test-dir build -R '^(crusades_registry|balance_roster)$' --output-on-failure
 ```
 
-## Corrected wind callback gate
+## Wind callback gate
 
 Retail sets UnitDef offset `+0x260` bit 31 if `windgenerator` or `wind` is
 nonzero (EXE-3 `0x4bfe91`–`0x4bfed5`). Its `WindChange` dispatcher tests this
-bit at `0x4d453c` before calling the script. Previously the engine delivered the
-callback whenever the script existed, irrespective of the authored flag.
-It now loads that OR condition into `UnitType::receivesWind` and applies it to
-the client animation callback. No gameplay state or pathfinding changes.
+bit at `0x4d453c` before calling the script, so a script alone does not get the
+callback. The engine loads that OR condition into `UnitType::receivesWind` and
+applies it to the client animation callback; it is not gameplay state.
 
 This matters to the balance comparison: `cregate` and `zonmana` gain `wind=1`
-in the IP-era Crusades definitions. Other units also retain their authored
+in the IP-era Crusades definitions. Other units keep their authored
 wind-gating behavior instead of receiving an unsolicited callback.
 
 Isolated execution of the fingerprinted EXE-3 routines passed all sixteen
 combinations of `wind`/`windgenerator` in {0, 1, 2, -1}, and 96 callback cases
 combining those flags, the global wind-enabled bit and three relative headings.
-It confirmed that bearing subtraction is not normalized. The harness and retail
-machine code remain in scratch, outside Git; the roster test checks both modes'
-loaded wind flags.
+Bearing subtraction is not normalized. The harness and retail machine code
+stay outside Git; the roster test checks both modes' loaded wind flags.
 
-## Corrected damage interpretation
+## Damage interpretation
 
-The native lookup uses the target's single `DamageCategory` token. The engine
-previously searched its broader CATEGORY/TEDClass token list, which could select
-an override that retail would not use. Both combat and cursor targeting now
-use the single native category.
+The native lookup uses the target's single `DamageCategory` token, not the
+broader CATEGORY/TEDClass token list (which could select an override that
+retail would not use). Both combat and cursor targeting use the single native
+category.
 
 Retail reads default damage as an integer stored in an unsigned 16-bit field.
 It multiplies each authored category multiplier by that default using 53-bit
 binary floating-point precision, truncates toward zero, and stores the resulting
-integer in the category table. Previously the engine retained float multipliers
-and applied them during damage lookup. The corrected loader reproduces the
-native stored values before later combat modifiers.
+integer in the category table. The loader reproduces these native stored
+integers (rather than keeping float multipliers for the damage lookup), before
+later combat modifiers.
 
 For example, native default damage 301 with multiplier 0.5 stores 150, and
 100 with multiplier 0.29 stores 28. The runtime's floating-point precision was
@@ -267,22 +250,18 @@ precision; the discriminating 10 × 0.3 case produces 3 there and 2 at 64-bit
 extended precision. The original code, tests and exact addresses are described
 in [the native review](research/darien-crusades/balance-field-review.md).
 
-The new `crusades_damage` regression exercises numeric truncation, wrapped
+The `crusades_damage` regression exercises numeric truncation, wrapped
 integer defaults, single-category selection, explicit immunity and cursor/combat
 agreement. The roster test also checks every loaded weapon against every actual
 target type in both modes.
 
-## Corrected authored water-key fallback
+## Authored water-key spelling
 
 The native unit reader accepts `watermultiplier` with a fixed-point default of
-1.0. It does not accept `watermultipliser`. The engine previously added that
-misspelled-key fallback. In the Crusades definitions for `lifdeer` and `lifdeer2`,
+1.0. It does not accept `watermultipliser`, and neither does the engine. In the
+Crusades definitions for `lifdeer` and `lifdeer2`,
 the correct key disappears and the misspelled key appears; the effective native
 value therefore changes from fixed-point 53084 (authored 0.81) to 65536 (1.0).
-The loader and research probes now preserve that native default instead of
-silently repairing the authored spelling. This changes the affected units'
-terrain-speed input; it does not replace the navigation algorithms.
-
-The combat and terrain-input corrections required **development protocol 204**
-when they landed (no release tag was cut for that milestone); the current
-protocol is in the [CHANGELOG](../CHANGELOG.md).
+The loader and research probes preserve that native default instead of
+silently repairing the authored spelling. This affects the units'
+terrain-speed input, not the navigation algorithms.

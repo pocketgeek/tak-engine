@@ -9,7 +9,7 @@ scn 1
 # The audit's numbers (main b8a4110; its harness issued the orders one body at a time, not through
 # issueSelection, so these are re-recorded at the W8 base, not reproduced): mixed 0.7x legion 64/64 @5789;
 # 0.5x legion 49/64 @6000, far held 12.0%, stops fast/slow 4948/1838; 0.4x legion 0/64 @6000, far held 29.9%.
-# W8's target: far held <= 6% at 0.5x and <= 15% at 0.4x, fast stops halved (docs/legion-exit-tables.md).
+# W8's target: far held <= 6% at 0.5x and <= 15% at 0.4x, fast stops halved.
 # Speeds: the fast type is the repo's 1.79999 (raw 117964); the slow ones scale it.
 name mixed-spacing-05x
 ticks 6000

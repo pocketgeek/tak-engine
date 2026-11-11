@@ -53,7 +53,7 @@ compete with a stream of small ones. Checks:
     file: kFirstInflight whole-map builds (8 W H relaxations + W H / kInitDiv initialisation each) at half
     the quota (the other half may pay plane debt) take at most kFieldTenure ticks.
     On sched-mix the bound fails if the reservation is removed (the large requests starve: 4,497 ticks) or
-    requests are served by id instead of age (4,604), both measured (docs/legion-10000-progress.md, 7.4).
+    requests are served by id instead of age (4,604), both measured.
   * movement goes on (scale.arrive.n > 0).
 
 Exit 0 pass, 1 fail, 2 tooling.

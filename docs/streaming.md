@@ -292,7 +292,7 @@ connection failure, the worker retries three times, waiting 2, 4 and 8 seconds.
 A connection that stayed live for a minute starts a fresh set of three retries
 when it drops, so drops far apart never end the stream. Stop interrupts network
 I/O; an unsuccessful stream reports failure in the game. The primary YouTube
-ingest endpoint is currently fixed in the client.
+ingest endpoint is fixed in the client.
 
 While retrying, the status line names the reason (for example
 **RECONNECTING 1/3 - CONNECTION DROPPED**). After the last retry it shows one of:
@@ -340,7 +340,7 @@ OS frameworks remain external, just as SDL's display/audio drivers do.
 
 ## Development checks
 
-`tools/build-ffmpeg-bink.sh` now builds both Bink playback and streaming support.
+`tools/build-ffmpeg-bink.sh` builds both Bink playback and streaming support.
 Its pinned dependencies are built by `tools/build-stream-deps.sh`. Linux needs
 Python 3, Ninja, Perl's standard modules (Fedora: `perl-core`), and patch in
 addition to the regular build tools. Perl configures OpenSSL during the build;
@@ -375,9 +375,9 @@ records with a local copy and reads the MP4 back box by box (the shipped FFmpeg 
 MP4 reader): fragmented, an H.264/HEVC video track and an AAC track, the expected
 duration, and exactly as many video frames as the stream itself carried. A simulated
 full disk must stop only the copy, leaving the frames already fragmented readable,
-and an unwritable folder must fail only the copy. Built against an FFmpeg from before
-the local copy (no MP4 muxer), that part reports itself and CTest shows the test as
-skipped; CI does not allow the skip. Rerun `tools/build-ffmpeg-bink.sh` to update.
+and an unwritable folder must fail only the copy. Built against an FFmpeg without the
+MP4 muxer, that part reports itself and CTest shows the test as skipped; CI does not
+allow the skip. Rebuild the FFmpeg prefix with `tools/build-ffmpeg-bink.sh` to get it.
 `stream_capture_test` exercises capture with an open private setup panel; with
 `cursor` as its fifth argument (`stream_capture_test gl "" 640 480 cursor`) it
 checks that a cursor reaches the encoded picture at the right place and size through
@@ -402,7 +402,7 @@ SDL_VIDEODRIVER=offscreen SDL_RENDER_DRIVER=opengl \
 10 seconds to a local Python TLS proxy in front of `stream_network_test --sink`, a plain
 RTMP receiver built from the same static FFmpeg. It needs only `python3` and `openssl`
 (it is skipped without `openssl`), and fails unless the stream stays LIVE without a
-reconnect and the receiver gets nearly all of it (megabytes of FLV with libx264). It caught the macOS stall above. The
+reconnect and the receiver gets nearly all of it (megabytes of FLV with libx264), which is what catches a stall like the SecureTransport one above. The
 proxy's certificate is issued by a throwaway root CA that the client is given as its CA
 file. The check then offers a certificate from that root for another host name, and the
 right host name with no test CA (the client keeps its real trust store, which does not

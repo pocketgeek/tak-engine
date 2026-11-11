@@ -1804,8 +1804,7 @@
         windHeading_ = float(front().wind.heading) * (6.2831853f / 65536.0f);
         // (No world_.clearHits() here: World::tick already clears hits_ at the start of the
         //  next tick, so the viewer-side clear was redundant -- and dropping it keeps the
-        //  render path from mutating sim state, a prerequisite for the sim-thread decouple.
-        //  See docs/sim-render-decouple-plan.md.)
+        //  render path from mutating sim state, a prerequisite for the sim-thread decouple.)
         updateParticles(dt);
         updateEffects(dt);
         updateRings(dt);

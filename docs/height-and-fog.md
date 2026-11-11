@@ -23,10 +23,9 @@ terrain skew). Everything below lives in the client's `GameView`
   110px on the INDUSTRIAL Zone map, whose ground is at 220, enough to stand units
   on a lava-side road in the painted lava.
 - `terrainLift = floor(heightAbove * kHeightScale_)` (screen-Y, toward north) and
-  `terrainLiftX = heightAbove * kHeightScaleX_` (screen-X). Current constants:
-  `kHeightScale_ = 0.5` (retail's `sar $1`; an earlier art-calibrated 1.1 lifted
-  units 2.2× too far) and `kHeightScaleX_ = 0` (retail's screen X has no height
-  term at all). Live-tunable via `TAK_HSCALE` / `TAK_HSCALEX` (debug builds).
+  `terrainLiftX = heightAbove * kHeightScaleX_` (screen-X), with
+  `kHeightScale_ = 0.5` (retail's `sar $1`) and `kHeightScaleX_ = 0` (retail's
+  screen X has no height term at all). Live-tunable via `TAK_HSCALE` / `TAK_HSCALEX` (debug builds).
 - A wading (`canhover`) body stands at `max(terrain, sea - waterline)` and a
   floater at `sea - waterline` (`0x51b220` / `0x51b2fa`); `waterSink` is the
   difference from the terrain lift.

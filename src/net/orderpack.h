@@ -19,7 +19,7 @@
 // member does not depend on the others are order verbs (orderVerb: Load and
 // GiveUnit stay per-unit, in issue order). The movement verbs register their
 // members with the navigator in id order instead of selection order; that is
-// part of stage 3's licensed behaviour change (docs/legion-10000-progress.md 7.3).
+// part of stage 3's licensed behaviour change.
 #include "net/protocol.h"
 
 #include <algorithm>

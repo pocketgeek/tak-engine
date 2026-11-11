@@ -1,4 +1,4 @@
-// takserver: the central multiplayer server (docs/multiplayer-design.md, M3).
+// takserver: the central multiplayer server (docs/multiplayer-design.md, "The server").
 //
 // A network poll loop hosts the lobby; each running game has its own worker. Each game
 // is a server-sequenced deterministic lockstep: clients send commands, the

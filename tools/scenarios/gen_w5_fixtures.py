@@ -49,7 +49,6 @@ AR_COMMON = [
     "Legion Holding run out of reach (hold_out_max; hold0_max at field potential 0). Mechanism (audit AR-06): the",
     "shared field single-files the blob onto one row, only the head of the line is in range, and a shooter's",
     "braking is invisible to the settle rule. Source: the audit's attackring probe ($SCR/ar06/attackring.cpp).",
-    "PLAN targets (Retail-floor exception keys, 3.0): see docs/legion-exit-tables.md 'W5 step 0'.",
 ]
 
 

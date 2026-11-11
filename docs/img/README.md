@@ -1,801 +1,213 @@
-# README and user-guide screenshots
+# Documentation pictures
 
-**Retaken for the game browser without a password field** (2026-11-10, protocol 323):
-`guide/game-browser.jpg`, the one picture that showed the PASSWORD (FOR LOCKED GAMES)
-field (no picture showed a host's room with the name and password boxes: the room
-pictures are single-player rooms), by a Debug `-O2` build of the `lobby/int` branch
-with the CREATE and password windows (no capture patch). A private loopback
-`takserver --local` on a port of its own with a scratch account file; five headless
-debug clients signed in with `TAK_MENU_PICK=connect:...` make the games with
-`TAK_ROOM_SCRIPT`, each from its own remembered `mpRoom.map`: `create:Friday Night
-Skirmish` (ulasem arena), `create:Clan Practice:oak` (King of the Hill), `create:Evening
-Ladder;wait:humans=2;ready;wait:ready=2;start` with a second client's `join:Evening
-Ladder;ready` (Inner Circle), and `create:Newcomers Welcome` (Ladron's Tarn). The viewer
-signs in as *aldric* at 1600 x 900 with `--shot`; `TAK_SHOT_CLICKS` only waits and moves
-the pointer to a corner. Scripts `harness.py`, `scenes.py` and `shots.py` (scene `docs`)
-in `~/tak-tmp/lobby-name-pass/`; install, profile base and JPEG settings as for the
-retake below (`guide/`: quality 86, scaled to 1280 x 720).
+The pictures used by the README, the [user guide](../user-guide.md), the
+[quick start](../quick-start.md), the [Cartographer guide](../cartographer-guide.md),
+[streaming.md](../streaming.md) and [public-server.md](../public-server.md). Every
+picture is real engine or editor output from a Debug build with `-O2` (OpenGL
+renderer, version 1.0.0), inspected by eye. Nothing is painted into a scene; the only
+additions are the numbered markers on `guide/hud-annotated.jpg` and
+`cartographer/window-annotated.jpg` and the text labels over the side-by-side
+composites, which the captions name.
 
-**Earlier: retaken for the game room without a create screen** (2026-11-10, protocol 323): the
-seven pictures that showed a create screen or the old room, by a Debug `-O2` build of
-the `lobby/int` branch at `00a8494a` (no capture patch: the debug `TAK_MENU_PICK`,
-`TAK_ROOM_SCRIPT`, `TAK_SHOT_CLICKS` and `TAK_SHOT_SIZES` hooks drive everything).
-Script `cap.py`, job list `jobs.json`, profile base `base-settings.ini` and encoder
-`encode.py` in `~/tak-tmp/scratch/lobby-merge-shots/`; offscreen GL, a fresh scratch
-profile and settings file per shot (`TAK_SETTINGS_FILE`) with the hardware cursor on,
-so no pointer is drawn. The remembered map and rules are now `spRoom.*` keys
-(`spRoom.map`, `spRoom.crusades`, ...): `lastMap` and `gameCreate.*` are no longer
-read. The PLAY THE MACHINE door opens the room at once; `TAK_ROOM_SCRIPT` seats the
-AIs, `TAK_SHOT_CLICKS` clicks sides, CHANGE MAP..., a panel tab or the panel's MAP
-SCENARIO, waits, then moves the pointer to a corner. Installs as for 0.9.23 (the
-0.9.1 `inst`; the 0.9.0 `instM` for House Rules, `instP0` with no packs, `instP` with
-only click). JPEG `subsampling=0`, quality 88 (root) and 86 (`guide/`, `quick/`,
-`cartographer/`).
+This file says what each picture shows and how to take it again.
 
-- `lobby.jpg`: the CHANGE MAP panel (EXISTING MAP) over a single-player room on Ulasem
-  Arena; 1600 x 900, not cropped.
-- `lobby-scenario.jpg`: the panel on King of the Hill (`spRoom.map`), its MAP SCENARIO
-  clicked ON; 1600 x 900 scaled to 1280 x 720.
-- `guide/random-map-lobby.jpg`: the panel's RANDOM MAP tab, the same scene as before
-  (Aramon, Mainland, 4 players, 16 x 12, Scattered Mana High, seed 2026) seeded as the
-  remembered recipe `spRoom.generator =
-  ~gen1~0a00ea0700000000000000000280010480608060800003603040`; 1600 x 900.
-- `room.jpg`: Ulasem Arena, `spRoom.crusades`, `spRoom.doubleSight` and
-  `spRoom.pathfindingMode = 4`, Alternate Cursors and Classic Sounds ticked
-  (`mods.cosmeticPack`), `TAK_ROOM_SCRIPT=ai:1;ai:2;ai:3`, the AIs' sides clicked to
-  Taros, Veruna and Zhon; 1600 x 900.
-- `guide/room-mods-power-codes.jpg`: `instM`, `spRoom.powerCodes = 1`, Classic Sounds
-  and Big Battles (`spRoom.gamePack`) ticked, two AIs (Taros, Veruna), GAME MODS
-  VERIFIED; 1600 x 900.
-- `quick/lobby-move-here.jpg`: `instP0`, no remembered map (so Athri Cay), one AI;
-  1600 x 900 cropped to (40, 80, 1580, 830) and scaled to 72%.
-- `cartographer/test-lobby.jpg`: `--play-map` on the 0.9.0 `Cartographer Test.kmp`
-  (King of the Hill), `instP`, 1024 x 768 cropped to the room (0, 96, 1024, 672).
+## Capture settings
 
-**Earlier: retaken for 0.9.24** (2026-11-08): by a Debug `-O2` build of `main` at `9b47f6dc` with the
-0.9.24 version line, the 0.9.23 in-game capture hooks and the 0.9.0 Cartographer capture
-driver (`capdrv`) in a worktree (not committed); scripts in
-`~/tak-tmp/scratch/release-0924/shots/`, offscreen GL, scratch profiles and installs as for
-0.9.23.
+- **Build.** A Debug build configured with `-DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS=-O2`
+  (the capture switches below are debug-only; a release build has none of them).
+- **Video.** `SDL_VIDEODRIVER=offscreen`, `SDL_RENDER_DRIVER=opengl`,
+  `SDL_AUDIODRIVER=dummy`; the window size is given with `--winsize W H` and the
+  picture written with `--shot <png>`.
+- **Profiles.** Every run has its own scratch `HOME`, `XDG_DATA_HOME`,
+  `XDG_CONFIG_HOME` and `TAK_SETTINGS_FILE`, never a user profile. The base profile is
+  `base-settings.ini` (below): windowed, VSync off, the default graphics (Texture
+  Filtering Everything, Smooth GUI Art and Smooth Movies on, Tactical Dots on at 0%
+  zoom, Screen Shake off, shadows and tree sway on), stats panel off, and the hardware
+  cursor on, so no pointer is drawn. The Options pictures use a fresh profile whose
+  only setting is `fullscreen = 0`.
+- **Data folder.** A scratch install that links the retail archives, `Maps`, `Movies`
+  and `Music` and has its own empty caches, so nothing is written into a real install.
+  Its `mods/` holds the always-enabled cosmetic pack *click*
+  (`mods/cosmetic/always_enabled/click/click.hpi`), the cosmetic packs *Alternate
+  Cursors* and *Classic Sounds* and the game pack *Big Battles* (placeholder folders
+  with one tiny file each, for the pack lists). Variants: one that also has the
+  always-enabled game pack *House Rules* (`mods/game/always_enabled/House Rules/`),
+  one with only *click*, and one with no packs.
+- **Servers.** Server-backed scenes run a private loopback
+  `takserver --local --no-auth --seed 42` (the game browser: `--local` with a scratch
+  account file), never the public server.
+- **Timing.** Headless scenes render the synchronized frame after the given number of
+  game seconds. Interactive scenes (the HUD, side and replay pictures) render live and
+  are captured after a wall-clock wait, so their FPS readings are real. Screenshot
+  timing is not a performance measurement.
+- **Encoding.** JPEG with full chroma resolution (`subsampling=0`): quality 90 for
+  `title.jpg`, 88 for the other root pictures, 86 for `guide/`, `quick/` and
+  `cartographer/` (98 for three AI Profiles pictures, as noted). Only cropping and
+  scaling are applied after capture.
 
-- `title.jpg`: the title capture at 1920 x 1080 cropped to (240, 0, 1680, 1080); VERSION 0.9.24.
-- `guide/random-map-lobby.jpg`: the same scene as before (Aramon, Mainland, 12 x 12, 4
-  players, Scattered Mana High), now with nine sliders in two columns; from 1600 x 1000
-  cropped to (0, 50, 1600, 950). The preview reads MANA: 54.
-- `cartographer/random-generator.jpg`: the generator dialog with its plateau, mountain
-  and town fields (seed 2026, 4 players, Aramon Riverlands, 16 x 16, defaults otherwise)
-  and its preview, composited as before (1103 x 508).
-- `generated.jpg`: a new Silverford: Aramon
-  Riverlands, seed 13, 512 x 512 cells (the generator raised the old 256), four players,
-  Scattered Mana Medium, Plateaus 96, Mountains 48, Towns 64:
-  `~gen1~0a000d00000000000000000002000204aa6e808296050260304053696c766572666f7264`. A local
-  server (`--seed 42`) with four level-3 AIs at speed 80, spectator view 9
-  (`2912,6672,1.0`) at 660 game seconds, 1920 x 1080 uncropped: the lake shore, an AI's
-  lodestone among standing stones on a neutral scattered spot, and a plateau rim.
+### Where the capture scripts are
 
-**Earlier: retaken for 0.9.23** (2026-11-08): the pictures of the screens 0.9.23 changed, by a
-Debug `-O2` build of `main` at `72ebf352` with the 0.9.23 version line and capture-only
-hooks in a worktree (not committed; `capture-hooks-0923.diff` in
-`~/tak-tmp/scratch/release-0923/shots/`, which also holds the scripts `menu.py`,
-`drv.py`, `lobjobs.json`, `encode.py` and `build.sh`): offscreen GL, scratch profiles from
-the 0.9.1 capture settings (`hardwareCursor = 1`, `lastMap` per shot), the 0.9.1 scratch
-install (the 0.9.0 `instM` install, which adds House Rules, for the mods pictures). JPEG
-`subsampling=0`, quality 90 (`title.jpg`), 88 (the other root pictures) and 86 (`guide/`).
+| Folder | What it holds |
+| --- | --- |
+| `~/tak-tmp/rel100/pictures/` | Front-end and room pictures: `menu.py` (one job per picture), `jobs.json` (the room jobs), `base-settings.ini`, `encode.py` (each picture's crop, scale and quality) and `capture-connC.diff` (the one capture-only hook, for `mp-connect-custom.jpg`) |
+| `~/tak-tmp/scratch/release-091/shots/inst` | The scratch install with *click*, the two cosmetic packs and *Big Battles* |
+| `~/tak-tmp/scratch/release-090/front/shots/` | The install variants `instM` (adds *House Rules*), `instP` (*click* only) and `instP0` (no packs); `kmp/Cartographer Test.kmp` for the Test Map room; `dw.sh` for the disconnect banner |
+| `~/tak-tmp/scratch/release-090/game/` | In-game pictures: `jobs.json` (scene, seed, moment, window and crop per picture), `drv.py`, `run1.py`, `encode.py` and `capture-090.patch`, the capture-only patch (camera, selection, overlay and spawned-scene switches; not committed) |
+| `~/tak-tmp/scratch/retailfog/shots/brief.sh` | The campaign briefing picture |
+| `~/tak-tmp/scratch/release-090/carto/` | Cartographer pictures: the capture driver `capdrv.cpp` with `build.sh`, `run.sh`, `scenes.inc` and `finish.py` (markers and composites) |
 
-- `title.jpg`: the 0.9.1 title capture at 1920 x 1080, cropped to (240, 0, 1680, 1080);
-  it reads VERSION 0.9.23.
-- `lobby.jpg`: Play the Machine's create screen, Ulasem Arena, defaults, 1600 x 1000
-  uncropped (the FILTER field, no MAP line or headings, the wider list).
-- `lobby-scenario.jpg`: King of the Hill with MAP SCENARIO: ON, from 1024 x 768 cropped
-  to (0, 93, 1024, 673).
-- `guide/random-map-lobby.jpg`: the random map panel (12 x 12, 4 players, Scattered Mana
-  High; MANA: 57), from 1600 x 1000 cropped to (0, 50, 1600, 950): now the full width,
-  since the even margins put the option column at x 27 (it was cropped from x 100).
-- `room.jpg`: the single-player room on Ulasem Arena with three Normal AIs (Taros,
-  Veruna, Zhon), Crusades, Double Sight and Legion on, the MODS summary with Alternate
-  Cursors and Classic Sounds ticked; 1600 x 1000 uncropped.
-- `guide/room-mods-power-codes.jpg`: the room with POWER CODES: ON and two AIs; the MODS
-  summary reads ALWAYS ON: click, House Rules, COSMETIC: Classic Sounds, GAME: Big Battles,
-  GAME MODS VERIFIED; 1600 x 1000 uncropped. Ticks seeded as hex `mods.cosmeticPack` /
-  `mods.gamePack` lines.
-- `guide/mods-screen.jpg` (new): the MODS screen opened from that room, from 1600 x 1000
-  cropped to (0, 50, 1600, 420), above DONE.
-- `mp-connect.jpg`: `TAK_SHOT_SERVER=4` (its two sample servers, account `aldric`), from
-  1600 x 900 cropped to the 640-wide panel at (480, 219, 1120, 681).
-- `guide/options-interface.jpg`: the Interface section scrolled into view
-  (`TAK_CAP_OPTIONS=40`), from 1600 x 1100 cropped to (388, 246, 1212, 776), 78 px taller
-  for IDLE BUILDERS and IDLE BUILDERS SCALE.
-
-Then the in-game pictures, for the Idle Builders column and the depth-ordered shots and
-effects: a Debug `-O2` build of `main` at `fd8a5cdf` (0.9.23) with the 0.9.0 in-game
-capture hooks ported, plus `TAK_CAP_BENCHSEC` (the Benchmark badge's seconds, which a
+The in-game patch is written against an older source tree and has to be ported to
+the current one before it applies. Three of the in-game pictures also used two small
+hooks that are not in it: `TAK_CAP_BENCHSEC` (the Benchmark badge's seconds, which a
 headless run does not advance) and `TAK_CAP_NONAME` (no player name on the Monarch's
-panel); the diff is `capture-hooks-0923-ingame.diff` and the jobs, driver, encoder and
-the 0.9.0 `brief.sh` / `dw.sh` are in `~/tak-tmp/scratch/release-0923/shots-ingame/`.
-Every picture keeps its 0.9.0 recipe (scene, seed, moment, window, crop, quality) and its
-size, except as listed:
+panel).
 
-- Retaken: `battle.jpg`, `dragons.jpg`, `hud.jpg`, `naval.jpg`, `generated.jpg`,
-  `diplomacy.jpg`; `guide/` `hud-annotated`, `selection-strip`, the five `side-*`,
-  `shift-queue`, `flyers-retail-legion`, `fire-on-the-move`, `tactical-dots`,
-  `campaign-briefing`, `benchmark`, `scorecard`, `chat-box`, `build-line`,
-  `disconnect-wait`, `build-menu-wrap`; `quick/` `box-select`, `selected`,
-  `attack-cursor`, `build-placement`, `build-line` (`quick/command-panel.jpg` came out
-  byte-identical).
-- `battle.jpg`, `guide/benchmark.jpg`, `guide/scorecard.jpg`: `TAK_CAP_BENCHSEC=55`, so the
-  badge reads 0:05 as before.
-- `generated.jpg`: at 660 game seconds (was 420): the AI no longer has the lodestone
-  up by 420.
-- `dragons.jpg`: the view showing the Neo Dragons' breath on the Aramon column.
-- `guide/tactical-dots.jpg`: zoom 0.10, the zoom-out floor now (0.1875 no longer is, and
-  drew no dots); same crop, the armies stand differently.
-- `quick/box-select.jpg`: the drag box `D160,190;M400,330;M570,430`, higher and smaller,
-  since the army now stands higher on the screen.
-- `quick/attack-cursor.jpg`: over the enemy the pointer is now retail's hover cursor (an
-  arrow with a red dot), as the cursor rules have been since 0.9.20; the crossed swords
-  belong to Attack mode.
-- `guide/disconnect-wait.jpg` reads WAITING FOR Brannoc 18 (the alt text's figure).
-- Idle Builders portraits show where the player has idle builders: `hud`,
-  `hud-annotated`, the `side-*` pictures, `shift-queue`, `fire-on-the-move`, `diplomacy`,
-  `disconnect-wait`, `guide/build-line`, `build-menu-wrap`, `flyers-retail-legion` and
-  some `quick/` pictures; none in the spectator, Benchmark and briefing views.
-- Kept: `guide/replay.jpg` (its procedure is not recorded and the 0.9.0 one gives a
-  different scene).
+### Front-end and room recipes
 
-**Earlier: retaken for 0.9.22** (2026-11-07): `title.jpg` only, by the 0.9.22 build (Debug of
-`main` at `ac1f9dac` with the 0.9.22 version line), with the 0.9.1 title capture (script
-`title.sh` in `~/tak-tmp/scratch/release-0922/shots/`), cropped to the artwork as before;
-it reads VERSION 0.9.22. Then, after the release, `diplomacy.jpg` and
-`guide/voice-chat.jpg` for the SPECTATORS line, the allies-only defaults, MICROPHONE and
-MIC GAIN: a Debug `-O2` build of `main` at `48f08a7c` with capture-only hooks in a
-worktree (not committed; `capture-hooks-0922.diff` in `~/tak-tmp/scratch/release-0922/shots/`),
-offscreen GL, scratch profiles from the 0.9.1 capture settings with `voiceEnabled = 1`, the
-0.9.1 scratch install. `diplomacy.jpg`: the `TAK_DIPLOMACY_TEST` fixture, 1600 x 1000,
-uncropped, with a voice engine that is on and the CHAT and VOICE columns set as a game
-starts (you and ALLY ticked, SPECTATORS off). `guide/voice-chat.jpg`:
-`TAK_CAP_VOICEPAGE=1`, 1600 x 900, cropped to the panel, now 832 x 696 at (384, 102)
-(one row taller). JPEG quality 86.
+Front-end pictures are `takclient menu --shot` with one capture switch each; `menu.py`
+has the exact environment, window and profile per job:
 
-**Earlier: retaken for 0.9.21** (2026-11-07): `title.jpg` only, by the 0.9.21 build (Debug of
-`main` at `b95091e7` with the 0.9.21 version line), with the 0.9.1 title capture (script
-`title.sh` in `~/tak-tmp/scratch/release-0921/shots/`), cropped to the artwork as before;
-it reads VERSION 0.9.21. Nothing else was retaken: no other picture here is about
-something 0.9.21 changed.
+- `TAK_SHOT_SERVER=4` the CONNECT TO SERVER panel with two sample remembered servers
+  (192.168.1.50:7677, example.dyndns.org), account *aldric* and a typed password;
+  `=2` the same panel with NEW SERVER... selected (with `capture-connC.diff`,
+  `TAK_CAP_SERVERTEXT` and `TAK_CAP_LOGINUSER` fill the address and the name).
+  Nothing connects to any server.
+- `TAK_SHOT_STREAM=1` (with `TAK_CREDSTORE=test`, so no real key can appear) the
+  streaming window; `TAK_SHOT_CAMPAIGN=0` the campaign book; `TAK_SHOT_RESULT=<png>`
+  the result screen with built-in sample statistics.
+- `TAK_SHOT_OPTIONS=graphics|interface|voice` an Options page.
 
-**Earlier: retaken for 0.9.20** (2026-11-06): `title.jpg` only, by the 0.9.20 build (Debug
-`-O2 -g` of `land-0920c` at `2910a7ef` with the 0.9.20 version line), with the 0.9.1
-title capture (script `title.sh` in `~/tak-tmp/scratch/release-0920/shots/`), cropped to
-the artwork as before; it reads VERSION 0.9.20. Nothing else was retaken: no
-other picture here is about something 0.9.20 changed, though in-game pictures from
-earlier builds draw units on high ground lower than 0.9.20 does (its height lift fix).
+Room pictures launch the menu with `TAK_MENU_PICK=singleplayer` and `TAK_NODOORVID=1`,
+which opens the single-player room at once from the profile's remembered settings:
+`spRoom.map` names the map (`spRoom.generator` the RANDOM MAP tab's recipe), the other
+`spRoom.*` keys set the rules, and `mods.cosmeticPack` and `spRoom.gamePack` (hex
+pack names) tick packs. `TAK_ROOM_SCRIPT` seats the AIs and sets rules
+(`ai:1;ai:2`, `opt:randomStarts=2`), `TAK_SHOT_CLICKS` clicks the rest (the AIs'
+sides, CHANGE MAP..., a panel tab, MAP SCENARIO, MODS...) with waits between and
+then moves the pointer to a corner, and `TAK_SHOT_SIZES` captures the live window.
+The AI names are the room's own random picks, so they differ from run to run.
 
-**Earlier: retaken for 0.9.19** (2026-11-03): `title.jpg` only, by the 0.9.19 build (Debug
-`-O2 -g` of `e8b3ca5b` with the 0.9.19 version line), with the 0.9.1 title capture
-(script `title.sh` in `~/tak-tmp/scratch/release-0919/shots/`), cropped to the artwork
-as before; it reads VERSION 0.9.19. The Legion swap and press and the Passive AI change
-no picture in this folder, so nothing else was retaken.
+## Development scenes
 
-**Earlier: retaken for 0.9.18** (2026-11-02): `title.jpg` only, by the 0.9.18 build, with the
-0.9.1 title capture (script `title.sh` in `~/tak-tmp/scratch/release-0918/shots/`),
-cropped to the artwork as before; it reads VERSION 0.9.18. Nothing else in this folder
-changed.
+Several scenes are set up with debug-build harnesses. Captions say when a picture is
+a **development scene**:
 
-**Earlier: retaken for 0.9.17** (2026-11-02): `title.jpg`, `streaming.jpg`, `guide/options-graphics.jpg`,
-`guide/options-interface.jpg` and `guide/voice-chat.jpg`, by a Debug `-O2` build of
-`7268d897` with the 0.9.17 version line and the capture-only hooks (not committed;
-`capture-hooks-0917.diff`, `cap.sh` and `enc.py` in `~/tak-tmp/scratch/release-0917/shots/`),
-offscreen video driver, scratch `HOME`, `XDG_DATA_HOME` and `XDG_CONFIG_HOME`, reading
-the 0.9.1 scratch install. 0.9.17 turned five Options rows into dropdowns and UI Font
-into a Modern UI Font switch, moved DEFAULTS to the footer's left edge and BACK to its
-right, and laid the streaming window out at the Options scale with a BACK button. The
-title capture, window sizes and crops are as before, except that `options-interface.jpg`
-is now taken at the end of the scroll and is 824 × 452. No other picture shows these
-screens, so no other picture was retaken.
+- **Stress-test start.** Each AI or player begins with about 95% of the unit cap in
+  combat units, in a grid (the debug `TAK_STRESS` fixture).
+- **Gods on.** Gods appear at the start (the debug `TAK_GODS` switch).
+- **Spawned scene.** The local harness places units and gives the move order itself.
+  There is no server, and it is not a real match.
+- **Scripted orders.** The harness gives the player's orders through the game's own
+  selection and right-click order code, as a click would.
+- **Two-player spawned scene.** As a spawned scene, but a second block of units is
+  placed for an enemy player (player 1), which has no AI and gives no orders.
+- **Selection still life.** The debug `TAK_SELPORTRAITS` fixture (with `--testbuild`)
+  spawns a mixed roster at the map centre and selects it; `TAK_SELPORTRAITS_HURT`
+  lowers some units' health and mana and `TAK_SELPORTRAITS_SQUAD` puts them in one
+  group.
 
-**Earlier: retaken for 0.9.16** (2026-11-01): `title.jpg` only, by the 0.9.16 build, with the
-0.9.1 title capture (script `title.sh` in `~/tak-tmp/scratch/release-0916/shots/`),
-cropped to the artwork as before; it reads VERSION 0.9.16. The replay bar, the game
-menu, the benchmark screen and the result screen's captions changed in 0.9.16, and
-pictures of them were not retaken.
-
-**Earlier: retaken for 0.9.15** (2026-11-01): `title.jpg` only, by the 0.9.15 build, with the
-0.9.1 title capture (script `title.sh` in `~/tak-tmp/scratch/release-0915/shots/`),
-cropped to the artwork as before; it reads VERSION 0.9.15. Selection rings and shots
-in the other pictures were not retaken.
-
-**Earlier: retaken for 0.9.14** (2026-11-01): `title.jpg` only, by the 0.9.14 build (Debug
-with `-O2`, CMake `VERSION 0.9.14` in the release commit), with the 0.9.1 title
-capture (script `title.sh` in `~/tak-tmp/scratch/release-0914/shots/`), cropped to
-the artwork as before; it reads VERSION 0.9.14 and shows the three doors. The
-Passive level, the level order and the cursor change no picture in this folder;
-the selection ring's new place shows in pictures with a selected unit, which were
-not retaken.
-
-**Earlier: retaken for 0.9.13** (2026-10-31): `title.jpg` only, by the 0.9.13 build (Debug
-with `-O2`, CMake `VERSION 0.9.13` in the release commit), with the 0.9.1 title
-capture (`takclient menu --shot`, offscreen video driver, a 1920 x 1080 window,
-the 0.9.1 scratch install and settings, scratch `HOME`, `XDG_DATA_HOME` and
-`XDG_CONFIG_HOME`; script `title.sh` in `~/tak-tmp/scratch/release-0913/shots/`),
-cropped to the artwork as before; it reads VERSION 0.9.13 and shows the three
-doors. The melee, air-traffic, status-spell, target and Legion flyer changes
-and the performance pass change no picture in this folder (the larger shadow
-atlas changes only views of thousands of units at 7680 x 2160, which no
-picture here shows), so no other picture was retaken and none was deleted.
-
-**Earlier: retaken for 0.9.12** (2026-10-29): `title.jpg` only, by the 0.9.12 build (Debug
-with `-O2`, CMake `VERSION 0.9.12` in the release commit), with the 0.9.1 title
-capture (`takclient menu --shot`, offscreen video driver, a 1920 x 1080 window,
-the 0.9.1 scratch install and settings, scratch `HOME`, `XDG_DATA_HOME` and
-`XDG_CONFIG_HOME`; script `title.sh` in `~/tak-tmp/scratch/release-0912/shots/`),
-cropped to the artwork as before; it reads VERSION 0.9.12 and shows the three
-doors. The fog pictures and the Options and Voice Chat pictures were retaken
-for 0.9.12 before the release commit (the next two entries). The AI's
-sight-only targets and scouting, the late-game speed work, the YouTube bitrate
-cap and the BACK buttons change no picture in this folder, so no other picture
-was retaken and none was deleted.
-
-**Earlier: retaken for the retail fog of war** (2026-10-29, for 0.9.12): `guide/campaign-briefing.jpg`
-and `guide/disconnect-wait.jpg`, the two pictures whose fog changed visibly:
-ground never seen is now opaque black, ground seen before lies under the side's
-rolling mist (white for Aramon; Inner Circle plays the room default, EXPLORED),
-and the clear area follows retail's sight rules (about 1x sight on flat ground,
-the Monarch's radar no longer clearing it). Captured by a Debug `-O2` build of
-the fog branch with the 0.9.0 procedures unchanged: the briefing as the 0.9.0
-`brief` job (`--campaign takmission01_mt`, `TAK_SHOT_BRIEFING`, 1600 × 900, the
-0.9.0 capture profile and scratch install; script `brief.sh` in
-`~/tak-tmp/scratch/retailfog/shots/`), the disconnect banner with the 0.9.0
-`dw.sh` (same folder), both scaled to 1280 × 720, JPEG quality 86. Checked by
-eye and kept: `hud.jpg`, `guide/hud-annotated.jpg` and the five
-`guide/side-*.jpg` (re-rendered with the 0.9.0 jobs: the army fills the view,
-so it is all in sight and nothing differs but unit placement), and the
-spectator, replay and fog-off pictures, which draw no fog.
-
-**Earlier: retaken after 0.9.11** (2026-10-29, for 0.9.12): `guide/options-graphics.jpg` and
-`guide/voice-chat.jpg`, because the **SAVE** button is gone (Options, Voice Chat
-and Controls save every change as it is made): their footers now read
-**DEFAULTS** and **BACK** only, and nothing else in either picture differs.
-Captured by a Debug `-O2` build of the autosave branch with the 0.9.1
-capture-only hooks in the working tree (not committed; script `cap.sh` in
-`~/tak-tmp/scratch/autosave/`), offscreen video driver, scratch `HOME`,
-`XDG_DATA_HOME` and `XDG_CONFIG_HOME`, reading the 0.9.1 scratch install.
-`options-graphics.jpg`: `TAK_CAP_OPTIONS=10`, a 1600 x 1100 window, a fresh
-profile whose only setting is `fullscreen = 0`, cropped to 840 x 1024 at
-(380, 38). `voice-chat.jpg`: `TAK_CAP_VOICEPAGE=1`, a 1600 x 900 window, the
-0.9.1 capture profile with `voiceEnabled = 1`, cropped to the 832 x 651 panel
-at (384, 124). JPEG quality 86. No other picture shows a SAVE button of these
-screens (`guide/options-interface.jpg` is cropped above the footer, and no
-picture shows Controls), so no other picture was retaken and none was deleted.
-
-**Earlier: retaken for 0.9.11** (2026-10-29): `title.jpg` only, by the 0.9.11 build (Debug
-with `-O2`, CMake `VERSION 0.9.11` in the release commit), with the 0.9.1 title
-capture (`takclient menu --shot`, offscreen video driver, a 1920 x 1080 window,
-the 0.9.1 scratch install and settings, scratch `HOME`, `XDG_DATA_HOME` and
-`XDG_CONFIG_HOME`; script `title.sh` in `~/tak-tmp/scratch/release-0911/shots/`),
-cropped to the artwork as before; it reads VERSION 0.9.11 and shows the three
-doors. `guide/options-graphics.jpg` was retaken for 0.9.11 before the release
-commit (next entry). The zoom-out floor, the hover move, the factory
-change, Legion facing and the AI's targets change no picture in this folder, so
-no other picture was retaken and none was deleted.
-
-**Earlier: retaken after 0.9.10** (2026-10-28, for 0.9.11): `guide/options-graphics.jpg` only, because the
-**FADE OPACITY** default changed from 65% to 50%; the slider now reads 50% and nothing
-else in the picture differs. Captured exactly as the 0.9.10 retake (the entry after next; capture-only
-hook in the working tree, not committed; `TAK_CAP_OPTIONS=10`, a 1600 x 1100 window, a
-fresh profile whose only setting is `fullscreen = 0`, cropped to 840 x 1024 at
-(380, 38), JPEG quality 86) by a Debug `-O2` build.
-
-**Earlier: retaken for 0.9.10** (2026-10-28): `title.jpg` only, by the 0.9.10 build (Debug
-with `-O2`, CMake `VERSION 0.9.10` in the release commit), with the 0.9.1 title
-capture (`takclient menu --shot`, offscreen video driver, a 1920 x 1080 window,
-the 0.9.1 scratch install and settings, scratch `HOME`, `XDG_DATA_HOME` and
-`XDG_CONFIG_HOME`; script `title.sh` in `~/tak-tmp/scratch/release-0910/shots/`),
-cropped to the artwork as before; it reads VERSION 0.9.10 and shows the three
-doors. `guide/options-graphics.jpg` was retaken for 0.9.10 before the release
-commit (next entry). Pictures that show a unit behind a tree or a building
-show it as HIDDEN UNITS OFF does; the flat-scenery order, the macOS renderer
-choice and the Metal clip fix change no picture in this folder, so no other
-picture was retaken and none was deleted.
-
-**Earlier: retaken after 0.9.9** (2026-10-28, for 0.9.10): `guide/options-graphics.jpg`
-only, for the new **HIDDEN UNITS** row (FADE, the default; the options are now
-OFF, DOTS and FADE) and the **FADE OPACITY** slider below it (65%) under Tactical
-Dots Zoom. Captured as for 0.9.6 (the capture-only hook in the working tree, not
-committed: a 1600 × 1100 window, a fresh profile whose only setting is
-`fullscreen = 0`, cropped to 840 × 1024 at (380, 38), JPEG quality 86) by a Debug
-`-O2` build of the hidden-units branch, but scrolled one step further
-(`TAK_CAP_OPTIONS=10`, not 9) so the two new rows still leave GPU Memory Limit in
-the picture: the Display heading is now cut off at the top and the Interface
-heading just cut off at the bottom. Otherwise only the new rows, the rows below
-them, the scroll bar and the Max FPS knob (its range is now 30 to Unlimited)
-differ from the 0.9.6 picture.
-
-**Earlier: retaken for 0.9.9** (2026-10-28): `title.jpg` only, by the 0.9.9 build (Debug
-with `-O2`, CMake `VERSION 0.9.9` in the release commit), with the 0.9.1 title
-capture (`takclient menu --shot`, offscreen video driver, a 1920 x 1080 window,
-the 0.9.1 scratch install and settings, scratch `HOME`, `XDG_DATA_HOME` and
-`XDG_CONFIG_HOME`; script `title.sh` in `~/tak-tmp/scratch/release-099/shots/`),
-cropped to the artwork as before; it reads VERSION 0.9.9 and shows the three
-doors. The guard ring, units stepping off a build site, the placement-reach
-check, the AI's divine lodestones, Max FPS, Shift+P, the Settings return, the
-Benchmark's mods and the TRAINING line change no picture in this folder, so no
-other picture was retaken and none was deleted.
-
-**Earlier: retaken for 0.9.8** (2026-10-27): `title.jpg` only, by the 0.9.8 build (Debug
-with `-O2`, CMake `VERSION 0.9.8` in the release commit), with the 0.9.1 title
-capture (`takclient menu --shot`, offscreen video driver, a 1920 x 1080 window,
-the 0.9.1 scratch install and settings, scratch `HOME`, `XDG_DATA_HOME` and
-`XDG_CONFIG_HOME`; script `title.sh` in `~/tak-tmp/scratch/release-098/shots/`),
-cropped to the artwork as before; it reads VERSION 0.9.8 and shows the three
-doors. Guard defence, the right-click Guard and the raising limits change no
-picture in this folder, so no other picture was retaken and none was deleted.
-
-**Earlier: retaken for 0.9.7** (2026-10-27): `title.jpg` only, by the 0.9.7 build (Debug
-with `-O2`, CMake `VERSION 0.9.7` in the release commit), with the 0.9.1 title
-capture (`takclient menu --shot`, offscreen video driver, a 1920 x 1080 window,
-the 0.9.1 scratch install and settings; script `title.sh` of 0.9.6 pointed at
-this worktree, in `~/tak-tmp/scratch/release-097/`), cropped to the artwork as
-before; it reads VERSION 0.9.7 and shows the three doors. Nothing in 0.9.7
-changes a picture, so no other picture was retaken and none was deleted.
-
-**Earlier: retaken for 0.9.6** (2026-10-27): `title.jpg` and `guide/options-graphics.jpg`,
-by the 0.9.6 build (Debug with `-O2`, CMake `VERSION 0.9.6` in the release
-commit). `title.jpg` is the 0.9.1 title capture (`takclient menu --shot`,
-offscreen video driver, a 1920 × 1080 window, the 0.9.1 scratch install and
-settings; script in `~/tak-tmp/scratch/release-096/shots/`), cropped to the
-artwork as before; it reads VERSION 0.9.6 and shows the three doors.
-`guide/options-graphics.jpg` shows the new **NATIVE WAYLAND** row (Auto) between
-MAX FPS and the Graphics heading, which Linux builds now have in Options,
-Display. It was captured with the 0.9.1 capture-only patch applied to the
-working tree (not committed: `TAK_CAP_OPTIONS=9`, a 1600 × 1100 window, a
-fresh profile whose only setting is `fullscreen = 0`, cropped to 840 × 1024
-as before); the row shows because the capture ran on Linux. Windows and macOS
-builds have no such row, so the guide's picture is the Linux view. The mana
-bulb's red number (now mana requested), rally markers, double-click select,
-cloaking and revive changes appear in no picture in this folder as a visible
-difference, so no other picture was retaken and none was deleted.
-
-**Earlier: retaken for 0.9.5** (2026-10-26): `title.jpg` only, by the 0.9.5 build (Debug
-with `-O2`, CMake `VERSION 0.9.5` in the release commit), with the 0.9.1 title
-capture (`takclient menu --shot`, offscreen video driver, a 1920 × 1080 window,
-the 0.9.1 scratch install and settings; script in
-`~/tak-tmp/scratch/release-095/shots/`), cropped to the artwork as before. It
-reads VERSION 0.9.5 and shows the three doors. 0.9.5 fixes dead units taking
-more hits and moves the map and mod caches out of the game data folder; no
-picture shows either, so no other picture was retaken and none was deleted.
-
-**Earlier: retaken for 0.9.4** (2026-10-26): `title.jpg` only, by the 0.9.4 build (Debug
-with `-O2`, CMake `VERSION 0.9.4` in the release commit), with the 0.9.1 title
-capture (`takclient menu --shot`, offscreen video driver, a 1920 × 1080 window,
-the 0.9.1 scratch install and settings; script in
-`~/tak-tmp/scratch/release-094/shots/`), cropped to the artwork as before. It
-reads VERSION 0.9.4 and shows the three doors. 0.9.4 removes the Darien
-Crusades meta game, which no picture here showed (it was hidden from the menu
-and the game browser), and changes Crusades-balance build menus, which no
-picture shows; so no other picture was retaken and none was deleted.
-
-**Earlier: retaken for 0.9.3** (2026-10-26): `title.jpg` only, by the 0.9.3 build (Debug
-with `-O2`, CMake `VERSION 0.9.3` in the release commit), with the 0.9.1 title
-capture (`takclient menu --shot`, offscreen video driver, a 1920 × 1080 window,
-the 0.9.1 scratch install and settings; script in
-`~/tak-tmp/scratch/release-093/shots/`), cropped to the artwork as before. It
-reads VERSION 0.9.3 and differs from the 0.9.2 file only in the last digit of
-that line. 0.9.3 changes which shots arcing weapons may fire and how macOS
-streaming connects; no picture shows either, so no other picture was retaken.
-
-**Earlier: retaken for 0.9.2** (2026-10-25): `title.jpg` only, by the 0.9.2 build (Debug
-with `-O2`, CMake `VERSION 0.9.2` in the release commit), with the 0.9.1 title
-capture (`takclient menu --shot`, offscreen video driver, a 1920 × 1080 window,
-the 0.9.1 scratch install and settings; script in
-`~/tak-tmp/scratch/release-092/shots/`), cropped to the artwork as before. It
-reads VERSION 0.9.2 and differs from the 0.9.1 file only in the last digit of
-that line. 0.9.2 changes how flames and lobbed shots are judged and where the
-computer players build; no picture shows any of that, so no other picture was
-retaken.
-
-**Retaken for 0.9.1** (2026-10-25): three pictures, by the 0.9.1 build (Debug
-with `-O2`, CMake `VERSION 0.9.1` set locally ahead of the release commit), with
-the 0.9.0 front-end capture scripts (copied to
-`~/tak-tmp/scratch/release-091/shots/`). `title.jpg` reads VERSION 0.9.1.
-`guide/options-graphics.jpg` shows the RENDERER row as **Auto (OpenGL)** (Auto
-now names the backend it is running) and the new note beside HARDWARE CURSOR,
-**OS CURSOR 16X25** (the size the game gave the system at Cursor Size 1×). The
-menu's still capture runs before the menu loop, which is where the cursor is
-first handed to the system, so the capture-only patch makes that same call
-before drawing the Options screen; the offscreen video driver accepts it.
-`streaming.jpg` was retaken too: an idle panel still reads OFF, so it differs
-from 0.9.0 only by the VERSION 0.9.1 line faintly visible behind the panel.
-0.9.1's new failure and reconnect reasons (for example `FAILED - CANNOT CONNECT -
-CHECK KEY, NETWORK`) appear only after a real start, and the panel always
-connects to YouTube, so no picture shows them. No other picture's scene or
-caption changed in 0.9.1 (its other changes are aiming, factory exits, streaming
-speed and the Windows renderer choice, none of them shown in a picture).
-
-**Retaken for 0.9.0** (2026-10-24): all 81 pictures on the 0.9.0 shot list
-(`SHOTLIST-0.9.0.md`, deleted once they landed) were retaken by the 0.9.0 build (Debug
-with `-O2`, CMake `VERSION 0.9.0`), on three branches: the Cartographer
-pictures, the front-end and multiplayer pictures, and the in-game pictures.
-`title.jpg` reads VERSION 0.9.0, and three pictures are new: `mp-connect.jpg`,
-`mp-connect-custom.jpg` (both from the menu's debug server-panel capture; no
-server was contacted) and `guide/game-browser.jpg` (a private loopback
-`takserver`, never the public one). Fourteen retakes came out byte-identical to
-the files they replace, because nothing in those scenes changed. Each picture's
-row below says how it was made; the sections that follow still describe the
-earlier rounds.
-
-Refreshed on 2026-10-24 for **0.8.14**. The always-on cosmetic mods became pack
-folders in `mods/cosmetic/always_enabled/<pack>/`, `mods/game/always_enabled/<pack>/`
-was added, and the multiplayer create screen lost its GAME MODS: ON/OFF option.
-The 0.8.14 build (version set to 0.8.14 locally, ahead of the release commit; no
-capture patch) retook `title.jpg` (VERSION 0.8.14) and every picture that named
-the old always-on archive: `room.jpg`, `guide/room-mods-power-codes.jpg`,
-`campaign.jpg`, `guide/campaign-briefing.jpg` and `cartographer/test-lobby.jpg`,
-which now read **ALWAYS ON: click** (and *Always-on mods: click*). The scratch
-install holds the click archive at `mods/cosmetic/always_enabled/click/click.hpi`
-and the ordinary packs *Alternate Cursors*, *Classic Sounds* (cosmetic) and *Big
-Battles* (game), each a folder with one tiny placeholder sound file; for
-`guide/room-mods-power-codes.jpg` a second scratch install also has the
-always-enabled game pack *House Rules* (`mods/game/always_enabled/House
-Rules/`, one placeholder file), so both kinds show an ALWAYS ON line;
-`cartographer/test-lobby.jpg` used an install with only the click pack. No
-retail or game files were added to any pack, and none is committed. Checked by
-eye and kept: `quick/lobby-move-here.jpg` (its install had no packs, so it shows
-no ALWAYS ON line and nothing in it changed) and `lobby.jpg`,
-`lobby-scenario.jpg` and `guide/random-map-lobby.jpg` (the single-player create
-screen, which never had a GAME MODS option). No shipped picture shows the
-multiplayer create screen, so none showed its old GAME MODS option.
-
-**0.8.13** (2026-10-24): the 0.8.13 build (version set to
-0.8.13 locally, ahead of the release commit; no capture patch was needed for the
-game) retook `title.jpg` (VERSION 0.8.13, since retaken for 0.8.14) the same way as for 0.8.12; only the
-version digits differ from the 0.8.12 file. Cartographer now opens to an empty
-window, so `cartographer/new-map.jpg` was retaken (the New Map dialog opened with
-File → New map over that window, where it used to sit over a placeholder map) and
-`cartographer/empty-window.jpg` was added; see the Cartographer section below.
-0.8.13 also drops the in-game text banner shown while an order is armed (ATTACK:
-CLICK TARGET and the like); no picture showed it (every game, guide and quick-start
-picture was checked by eye where the banner drew, under the top-left corner), so
-none was retaken for it.
-
-**0.8.12** retook `title.jpg` (VERSION 0.8.12, since retaken for 0.8.13) the same
-way as for 0.8.11. No other picture showed what 0.8.12 changed. The lobby and room pictures show no AI seat
-at level 6, so the RETAIL name does not appear in them (see below). The campaign
-order hint (ATTACK: CLICK TARGET...) then sat below the objectives panel (0.8.13
-removed the hint), but no picture showed an order armed in a mission: `guide/campaign-briefing.jpg` shows
-the paused briefing with the objectives button only. The Shift-queued flyer
-patrol has no picture. The Cartographer AI Profiles pictures
-(`cartographer/ai-profiles.jpg`, `ai-group-rules.jpg`, `ai-takengine.jpg` and
-`ai-mod.jpg`) were taken on `main` before the release with the final window
-text (one TAK ENGINE AI tab, the AI mod footer that says the install never
-supplies `ai/takengine.txt`) and were checked by eye again; they are kept.
-
-**0.8.11** added the **Opponent AI** line
-to the campaign book's left page, wraps a build menu too long for one row into
-more rows left of the command panel, and drops the blue production bar over a
-factory or conjurer. The 0.8.11 build (version set to 0.8.11 locally, ahead of
-the release commit; no capture patch was needed) retook `title.jpg` (VERSION
-0.8.11) and `campaign.jpg`, and added `guide/build-menu-wrap.jpg`. When campaigns
-were switched to default to Classic opponents (still before the 0.8.11 tag),
-`campaign.jpg` was retaken the same way and now reads OPPONENT AI: CLASSIC (A),
-the new default; nothing else in the picture changed (a Normal capture of the same
-build matched the earlier NORMAL picture pixel for pixel). When the line was removed
-again (campaign opponents are always Classic, still before the tag), `campaign.jpg`
-was retaken without it (`takclient menu --shot`, offscreen video driver, a scratch
-install with `mods/cosmetic/click.hpi`, a fresh profile with only `fullscreen = 0`). No picture showed the blue production bar (the
-game pictures with AI or player bases were checked by eye; the spawned scenes
-produce nothing), and the lobby and room pictures show each AI seat's level but
-not the list of levels, so CLASSIC does not appear in them; they keep their
-earlier captures. When level 6's lobby name became DEFAULT (still before the
-tag), the lobby and room pictures were checked again by eye (`lobby.jpg`,
-`lobby-scenario.jpg`, `room.jpg`, `guide/random-map-lobby.jpg`,
-`guide/room-mods-power-codes.jpg`, `cartographer/test-lobby.jpg`, and the
-in-game `diplomacy.jpg` and `guide/scorecard.jpg`): every AI seat shown reads
-NORMAL and none shows level 6 under either name, so none was retaken
-(`options-interface.jpg`'s CLASSIC is the UI font, not the AI).
-When it was renamed RETAIL after 0.8.11, the same pictures still show no level-6
-seat, so none was retaken.
-`guide/chat-box.jpg` shows a Barracks training Horsemen, but
-its crop leaves out the Barracks; its information bar's Horseman gauge now
-follows the new unit's health instead of build progress, a small early fill
-either way, so it is kept too (retaking it needs the 0.8.9 capture patch).
-
-0.8.10 added the **SAVE A LOCAL COPY**
-row to the YouTube Streaming panel and changed the disconnect wait (each seat has
-one 30 s budget per game, counted from the player's last contact, so a first stop
-shows 22 when the banner appears). The 0.8.10 build (version set to 0.8.10
-locally, ahead of the release commit; no capture patch was needed) retook
-`title.jpg` (VERSION 0.8.10), `streaming.jpg` and `guide/disconnect-wait.jpg`.
-No other picture shows what 0.8.10 changed: the campaign pictures show chapter 1,
-whose human player was already Player1, and the Cartographer Test Map fix is in
-the macOS app bundle only. Every other picture keeps the release named below.
-
-0.8.9 changed the create screen's option
-column (one button width and one label size), the room's rules (MAP SCENARIO is
-a normal rules line; GAME MODS VERIFIED shows only when game packs are in play)
-and the in-game chat box (always above the build row and its TRAINING or status
-line), and added Shift-drag build lines with a wheel-set gap. The 0.8.9 build
-(version set to 0.8.9 locally, ahead of the release commit) retook every picture
-that shows them: `title.jpg` (since retaken for 0.8.10), `lobby.jpg`, `lobby-scenario.jpg`,
-`room.jpg`, `cartographer/test-lobby.jpg`, `guide/random-map-lobby.jpg`,
-`guide/room-mods-power-codes.jpg` and `guide/chat-box.jpg`, and added
-`guide/build-line.jpg`. `diplomacy.jpg`, `guide/options-interface.jpg` and
-`guide/options-graphics.jpg` were re-rendered and compared with their 0.8.8
-captures: nothing they show changed, so they stay the 0.8.8 files.
-
-Every image below is actual engine output from a release-preparation build
-(Debug with `-O2`, OpenGL renderer) and was inspected by eye. 0.8.8 draws all plain interface text in Noto Sans Bold
-(Options → Interface → **UI Font**, default Modern), so every picture with
-interface text was re-rendered by the 0.8.8 build, with the default UI Font:
-
-- menus and rooms: `title.jpg` (VERSION 0.8.8), `lobby.jpg`,
-  `lobby-scenario.jpg`, `room.jpg`, `campaign.jpg`, `streaming.jpg`,
-  `results.jpg`, `cartographer/test-lobby.jpg`, `guide/random-map-lobby.jpg`,
-  `guide/options-graphics.jpg` and `guide/voice-chat.jpg`;
-- the game pictures: `battle.jpg`, `dragons.jpg`, `flyers.jpg`, `hud.jpg`,
-  `naval.jpg`, `generated.jpg`, `diplomacy.jpg` and, in `guide/`,
-  `hud-annotated.jpg` (markers redrawn), `selection-strip.jpg`, the five
-  `side-*.jpg`, `shift-queue.jpg`, `flyers-retail-legion.jpg`,
-  `fire-on-the-move.jpg`, `campaign-briefing.jpg`, `replay.jpg`,
-  `benchmark.jpg` and `scorecard.jpg`. Their scenes are the same runs as
-  before; the simulation places units a little differently than in the older
-  pictures;
-- new: `guide/chat-box.jpg`, `guide/options-interface.jpg` and
-  `guide/room-mods-power-codes.jpg`.
-
-Kept: `guide/tactical-dots.jpg` (0.8.5;
-no interface text), `cartographer.png`, `cartographer-model.png`,
-`guide/cartographer-terrain.jpg` and the other `cartographer/` pictures (the
-editor does not use the UI font), and `quick/` (its own section).
-
-The 0.8.5 to 0.8.8 captures read the user's own retail install, read-only, through a
-scratch folder that links its archives, `Maps`, `Movies` and `Music` and has
-its own empty `MapCache` and `ModCache`. For 0.8.8 its `mods/` holds the shipped
-always-on `mods/cosmetic/click.hpi`, two empty cosmetic packs (*Alternate
-Cursors*, *Classic Sounds*) and one empty game pack (*Big Battles*) for the
-room's pack lists, so nothing was written into the install. Earlier captures
-used a copy of the same retail archives. Encoding is
-the only change after capture: JPEG with full chroma resolution, quality 90 for
-the title, 88 for the gallery and 86 for the guide; guide images are scaled from
-1600 × 900 to 1280 × 720 (`guide/scorecard.jpg` from 1920 × 1080). `guide/options-graphics.jpg` (from a 1600 × 1100
-window, 840 × 1024) and `guide/random-map-lobby.jpg` (from 1600 × 1000,
-1500 × 900) are cropped, not scaled. The title is cropped to its 4:3 artwork,
-`guide/selection-strip.jpg` to the information bar, and `guide/voice-chat.jpg`
-to the Voice Chat panel (832 × 651, not scaled), `guide/chat-box.jpg` to the chat box, build row and information bar (1240 × 340 from 1600 × 900) and `guide/options-interface.jpg` to the Interface section (824 × 455 from 1600 × 1100). `cartographer.png` and
-`guide/cartographer-terrain.jpg` are the editor's own `--shot` output at its
-921 × 691 default window; the pictures in `cartographer/` come from the capture
-driver described below. Nothing was painted into a scene. The guide's HUD picture has
-numbered markers drawn on top, and the Retail/Legion and Tactical Dots comparisons
-put two captures side by side under text labels. The Cartographer guide's pictures
-are described in [their own section](#cartographer-guide-docsimgcartographer).
-
-Several scenes were set up with debug-build harnesses. Release builds do not have
-these switches. Captions say when a picture is a **development scene**:
-
-- **Stress-test start.** Each AI or player begins with about 95% of the unit cap
-  in combat units, in a grid. This is the debug `TAK_STRESS` fixture.
-- **Gods on.** Gods appear at the start. This is the debug `TAK_GODS` switch.
-- **Spawned scene.** The local harness places units and gives the move order
-  itself. There is no server, and it is not a real match.
-- **Scripted orders.** The debug harness gives the player's orders through the
-  game's own selection and right-click order code, as a click would.
-- **Two-player spawned scene.** As a spawned scene, but a second block of units
-  is placed for an enemy player (player 1), which has no AI and gives no orders.
-- **Selection still life.** The committed debug `TAK_SELPORTRAITS` fixture
-  (with `--testbuild`) spawns a mixed roster at the map centre and selects it;
-  `TAK_SELPORTRAITS_HURT` lowers some units' health and mana and
-  `TAK_SELPORTRAITS_SQUAD` puts them in one group.
-
-A capture-only patch, not committed, added camera, selection and overlay
-switches. It also added the larger naval fleet and the spawned-scene switch
-(since 0.7.28 with an optional enemy block; since 0.8.0 a Legion scene also
-turns on the path service, as match setup does, without which Legion flyers had
-no stations). The larger naval fleet, dropped from the patch after 0.7.26, was
-added back for 0.8.1. For 0.8.4 it also opens the Voice Chat page for a menu
-capture (`--shot` builds no voice engine, so no microphone is opened and the
-level meter is empty) and leaves the diplomacy fixture with a voice engine that
-is on, so the VOLUME sliders draw live instead of greyed. For 0.8.5 the same
-patch was applied unchanged; for 0.8.6 and 0.8.7 too, less its version bump
-(the 0.8.7 capture build set its version to 0.8.7 locally, ahead of the release
-commit). For 0.8.8 (version set to 0.8.8 locally) it also puts chat lines into
-the in-game chat box with fixed player names and a typed SAY line, for
-`guide/chat-box.jpg`. For 0.8.9 (version set to 0.8.9 locally) it also starts a
-Horseman training queue on the selected Barracks of the selection still life,
-puts the same named chat lines in from there, and lets the chat box draw in that
-serverless fixture (the game draws it only with a server). It changes no
-simulation code. Every scene runs the normal game rules, AI and renderer.
+Every scene runs the normal game rules, AI and renderer; the capture patch changes no
+simulation code.
 
 ## Gallery (`docs/img/`)
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.9.20 (0.9.20 build), 1920 × 1080 window cropped to the 1440 × 1080 artwork |
-| `mp-connect.jpg` | New in 0.9.0. The Multiplayer door's CONNECT TO SERVER panel over the title menu: the official TAK Engine server, tak.pgnet.us (marked DEFAULT), selected at the top of the list, two sample remembered servers the debug `TAK_SHOT_SERVER` capture seeds into an empty list (192.168.1.50:7677 and example.dyndns.org), CUSTOM..., the account name *aldric* typed and a ten-character password shown as pips, the A NEW NAME IS REGISTERED WHEN YOU SIGN IN note, CONNECT and BACK. `TAK_SHOT_SERVER=4` with the name and password set by the capture-only patch; nothing connected to any server. 1600 × 900, cropped to the panel (600 × 494, not scaled). Rendered by the 0.9.0 build |
-| `mp-connect-custom.jpg` | New in 0.9.0. The same panel with CUSTOM... selected (`TAK_SHOT_SERVER=2`): the address box below the list holds *tak.example.org* (typed by the capture-only patch), the account name *aldric*, the password empty. Nothing connected. 1600 × 900, cropped to the panel (600 × 550, not scaled). Rendered by the 0.9.0 build |
-| `battle.jpg` | **Benchmark** run (Settings → Benchmark, Absurd intensity) on Ulasem Arena, 55 game seconds in. Eight server AIs fight, all five sides. The camera, at 1.3× zoom, shows Aramon (magenta) and Taros (yellow) armies, with Black Dragons, clashing at a sandy arena; damaged units of every side show health bars. A real feature with no fixture; spectator view, so no fog. Rendered by the 0.9.0 build |
-| `dragons.jpg` | **Development scene.** Five server AIs, one per side, from a stress-test start (300-unit cap) with gods on, 90 game seconds in. Creon Neo Dragons breathe fire on an Aramon siege column; health bars show for every side. Spectator view, 1.4× zoom. Rendered by the 0.9.0 build |
-| `hud.jpg` | Aramon player in a local-server game, about 10 s in. **Stress-test start**: Normal AI opponent, 250-unit cap. **Scripted orders**: 45 units of eight types (Archers, Swordsmen, Knights, Catapults, Mage Archers, Cannoneers, Horsemen, Rolling Towers) were made formation 1 and selected, so the information bar shows the portrait strip (one portrait per type with its count), FORMATION 1 and 45 SELECTED, and the selected units show `1F` in solid green. Stats panel on, 1.15× zoom; its VID row reads 117 MB with the default graphics settings, and its CLOCK row is the capture machine's wall clock. Rendered by the 0.9.0 build |
-| `naval.jpg` | **Development scene, spawned.** Cairbray Coast Landing, 10 s in. Veruna Flagship, Men of War, Trebuchet Ships and Harpoon Ships fight Creon Iron Clads, Stern Wheelers and Submersibles. Nothing is selected, so the information bar is empty. 1.6× zoom, fog off. Rendered by the 0.9.0 build |
-| `generated.jpg` | Generated Aramon Riverlands map "Silverford" (generator version 10, seed 13, 512 × 512 cells, four players, Scattered Mana Medium, Plateaus 96, Mountains 48, Towns 64). Four AIs, eleven game minutes in. Spectator view of the lake shore at 1×, with an AI's lodestone on a neutral scattered mana spot among standing stones and a plateau rim at the lower left. Rendered by the 0.9.24 build (see "Retaken for 0.9.24") |
-| `lobby.jpg` | The CHANGE MAP panel over a single-player room, opened with **CHANGE MAP...** in a room whose remembered map is Ulasem Arena: the EXISTING MAP tab, the list sorted by name with Ulasem Arena selected and scrolled into view (the title from the map's translate table), the preview numbering the map's eight start positions above 20 X 20 8 PLAYER, MAP SCENARIO: OFF greyed (THIS MAP HAS NO SCENARIO), CANCEL and PICK; the room's slots and rules dimmed at the left. Rendered by the `lobby/int` debug build (2026-11-10), 1600 × 900 (see *Lobby captures* below) |
-| `lobby-scenario.jpg` | The CHANGE MAP panel over a single-player room on King of the Hill, with the panel's **MAP SCENARIO** clicked ON: the gold **S** marks the maps with a playable scenario in the list, the lines under the button say what the scenario changes (UNITS PLACED FOR 1-4, NEEDS SEATS 1-4, BUILDS 6 UNIT TYPES, ENDS BY SCENARIO RULES), and the preview numbers the four start positions. 1600 × 900 scaled to 1280 × 720; CHANGE MAP... and the button were clicked with `TAK_SHOT_CLICKS`, then the pointer moved off the panel. Rendered by the `lobby/int` debug build (2026-11-10). Used only by the user guide |
-| `room.jpg` | Single-player room on Ulasem Arena, opened by the PLAY THE MACHINE door from remembered settings with Crusades, Double Sight and Legion pathfinding on and both example cosmetic packs ticked (placeholder folders in the scratch install). Three Normal AIs seated by `TAK_ROOM_SCRIPT`, their sides clicked to Taros, Veruna and Zhon (the AI names are the room's own random picks). The host's row has **WATCH**, the open rows 5 to 8 each have **MOVE HERE**, greyed because START LOCATIONS is FIXED (retaken 2026-11-10 for that), the match rules are buttons under START and LEAVE (MAP SCENARIO: OFF greyed: the map has no scenario), the map at the top of the right column marks starts 1 to 4 in the colours of the four seated players, and under it are **CHANGE MAP...** and the MODS line (click, Alternate Cursors +1) with **MODS...**. Rendered by the `lobby/int` debug build (2026-11-10), 1600 × 900 |
-| `campaign.jpg` | Book of Darien campaign picker with a fresh profile, chapter 1. The CHAPTER heading and numeral are retail lettering; the chapter title and the always-on mods note (click, the always-enabled pack folder, in dark ink on the parchment) are in the UI font. No Opponent AI line: missions always play the Retail AI. Rendered by the 0.9.0 build, 1600 × 1000, with `TAK_SHOT_CAMPAIGN=0` |
-| `streaming.jpg` | Retaken for 0.9.17 (Options-scale layout). Streaming setup with no key or broadcast: a large centred YOUTUBE STREAMING title, KEY NOT SET with **Paste**, the **Remember Key** row (off; the Secret Service is available), resolution, frame rate 60, bitrate 6000 Kbps with **Recommended**, encoder Automatic, the **Save a Local Copy** row (off, the default; MP4 IN THE VIDEOS FOLDER), Start Streaming, the status OFF with its counters, and **Back** at the bottom right. Rendered by the 0.9.17 build at 1600 × 1000 (`TAK_SHOT_STREAM=1`), not cropped, with the debug `TAK_CREDSTORE=test` store so no real key could appear |
-| `diplomacy.jpg` | Built-in input-test fixture (the debug `TAK_DIPLOMACY_TEST` harness, `--testbuild`) after gifting, 1600 × 1000, in a profile with voice chat on (capture-only hooks: the fixture keeps a voice engine that is on, so the sliders draw live, and its CHAT and VOICE columns are set as a game starts). CHAT and VOICE tick you and ALLY only (your own VOICE box greyed); ENEMY and DEFEATED are unticked; the SPECTATORS line's boxes are off. VOLUME has sliders for the two other humans, left by the fixture at 50% (ALLY) and 25% (DEFEATED), and none for the computer player (ENEMY). Retaken for 0.9.22 |
-| `results.jpg` | Built-in five-player **sample statistics** (`TAK_SHOT_RESULT`), not a finished match. Hardware cursor on, so no pointer is drawn. Rendered by the 0.9.0 build |
-| `cartographer.png` | Cartographer Units tab on Ulasem Arena: the five-tool toolbar (TERRAIN, FEATURES, UNITS, STARTS, BLOCKED), the browser with its scrollbar, and the minimap. A fresh editor profile, `--shot --shot-tool units`, 30% zoom. Retaken by the 0.9.0 build; the output is byte-identical to the 0.8.3 picture, which already had the five tools |
-
-The 0.7.25 `army.jpg` (an Aramon army standing still, with no combat) and
-`gameplay.jpg` (a single barracks) were removed. `battle.jpg` and `hud.jpg`
-replace them. The unchanged views contain no version text.
+| `title.jpg` | The title menu with its three doors, reading VERSION 1.0.0. `menu` job `title`: 1920 × 1080, cropped to the 1440 × 1080 artwork at (240, 0) |
+| `mp-connect.jpg` | The Multiplayer door's CONNECT TO SERVER panel: tak.pgnet.us (DEFAULT) selected, LOCAL SERVER (HOST), NEW SERVER..., the two sample remembered servers each with DELETE, ACCOUNT NAME *aldric* and PASSWORD as pips side by side, A NEW NAME IS REGISTERED WHEN YOU SIGN IN, and BACK, SPECTATE and CONNECT. `TAK_SHOT_SERVER=4`, 1600 × 900, the panel's contents (360, 244, 1240, 656) scaled to 760 × 356 |
+| `mp-connect-custom.jpg` | The same panel with NEW SERVER... selected: the address box under it holds *tak.example.org*, the account name *aldric*, the password empty. `TAK_SHOT_SERVER=2` with `capture-connC.diff`, 1600 × 900, (360, 216, 1240, 684) scaled to 760 × 404 |
+| `battle.jpg` | **Benchmark** run (Absurd) on Ulasem Arena, 55 game seconds in: eight server AIs of all five sides; at 1.3× zoom Aramon (magenta) and Taros (yellow) armies with Black Dragons clash in a sandy arena, damaged units of every side showing health bars. Spectator view, no fog. `TAK_CAP_BENCHSEC=55`, so the badge reads 0:05; 1920 × 1080 |
+| `dragons.jpg` | **Development scene.** Five server AIs, one per side, from a stress-test start (300-unit cap) with gods on, 90 game seconds in: Creon Neo Dragons breathe fire on an Aramon siege column. Spectator view, 1.4× zoom, 1920 × 1080 |
+| `hud.jpg` | Aramon player in a local-server game, about 10 s in. **Stress-test start** (Normal AI opponent, 250-unit cap) and **scripted orders**: 45 units of eight types made formation 1 and selected, so the information bar shows one portrait per type with its count, FORMATION 1 and 45 SELECTED, and the units show `1F`. Stats panel on (its CLOCK row is the capture machine's clock), Idle Builders portraits, 1.15× zoom, 1920 × 1080 |
+| `naval.jpg` | **Development scene, spawned.** Cairbray Coast Landing, 10 s in: a Veruna Flagship, Men of War, Trebuchet Ships and Harpoon Ships fight Creon Iron Clads, Stern Wheelers and Submersibles. Nothing selected, 1.6× zoom, fog off, 1920 × 1080 |
+| `generated.jpg` | The generated Aramon Riverlands map *Silverford* (seed 13, 512 × 512 cells, four players, Scattered Mana Medium, Plateaus 96, Mountains 48, Towns 64: `~gen1~0a000d00000000000000000002000204aa6e808296050260304053696c766572666f7264`). Local server with `--seed 42` and four level-3 AIs at `TAK_SPEED=80`; spectator view at (2912, 6672), 1×, 660 game seconds in: the lake shore, an AI's lodestone among standing stones on a neutral scattered mana spot, and a plateau rim. 1920 × 1080 |
+| `lobby.jpg` | The CHANGE MAP panel over a single-player room whose remembered map is Ulasem Arena: the EXISTING MAP tab, the list sorted by name with Ulasem Arena selected, the preview numbering the eight start positions above 20 X 20 8 PLAYER, MAP SCENARIO: OFF greyed (THIS MAP HAS NO SCENARIO), CANCEL and PICK; the room dimmed at the left. Room job `lob`, 1600 × 900 |
+| `lobby-scenario.jpg` | The CHANGE MAP panel on King of the Hill with its **MAP SCENARIO** clicked ON: the gold **S** marks maps with a playable scenario, the lines under the button say what the scenario changes (UNITS PLACED FOR 1-4, NEEDS SEATS 1-4, BUILDS 6 UNIT TYPES, ENDS BY SCENARIO RULES), and the preview numbers the four starts. Room job `scen`, 1600 × 900 scaled to 1280 × 720. Used by the user guide |
+| `room.jpg` | Single-player room on Ulasem Arena from remembered settings with Crusades, Double Sight and Legion pathfinding on and *Alternate Cursors* and *Classic Sounds* ticked; three Normal AIs seated by `TAK_ROOM_SCRIPT=ai:1;ai:2;ai:3`, their sides clicked to Taros, Veruna and Zhon. The host's row has WATCH, the open rows 5 to 8 have MOVE HERE greyed (START LOCATIONS: FIXED), the rules are buttons under START and LEAVE, the map preview marks starts 1 to 4 in the players' colours, and under it are CHANGE MAP... and the MODS line (click, Alternate Cursors +1) with MODS.... Room job `room`, 1600 × 900 |
+| `campaign.jpg` | The Book of Darien campaign book with a fresh profile, chapter 1: retail CHAPTER lettering, the chapter title and the always-on mods note (click) in the UI font. `TAK_SHOT_CAMPAIGN=0`, 1600 × 1000 |
+| `streaming.jpg` | The YouTube Streaming window with no key or broadcast: KEY NOT SET with PASTE, REMEMBER KEY (off; SECRET SERVICE), resolution, frame rate 60, bitrate 6000 Kbps with RECOMMENDED, encoder Automatic, SAVE A LOCAL COPY (off), START STREAMING, the status OFF with its counters, and BACK; VERSION 1.0.0 shows below the panel. `TAK_SHOT_STREAM=1`, 1600 × 1000, not cropped |
+| `diplomacy.jpg` | The built-in input-test fixture (`TAK_DIPLOMACY_TEST`, `--testbuild`) after gifting, 1600 × 1000, in a profile with voice chat on. The capture patch keeps a voice engine on in the fixture, so the VOLUME sliders draw live, and sets the CHAT and VOICE columns as a game starts: you and ALLY ticked (your own VOICE box greyed), ENEMY, DEFEATED and SPECTATORS off. VOLUME has sliders for the two other humans (ALLY 50%, DEFEATED 25%) and none for the computer player |
+| `results.jpg` | The result screen with built-in five-player **sample statistics** (`TAK_SHOT_RESULT`), not a finished match. 1600 × 1000 |
+| `cartographer.png` | Cartographer's Units tab on Ulasem Arena: the five-tool toolbar (TERRAIN, FEATURES, UNITS, STARTS, BLOCKED), the browser with its scrollbar, and the minimap. The editor's own `--shot --shot-tool units`, fresh editor profile, 921 × 691, 30% zoom |
 
 ## User guide (`docs/img/guide/`)
 
+Game pictures here are captured at 1600 × 900 and scaled to 1280 × 720 unless the row
+says otherwise.
+
 | Image | Scene |
 | --- | --- |
-| `hud-annotated.jpg` | From the 0.9.0 build. The `hud.jpg` setup with Elsin alone selected, so her build menu shows, captured at 1600 × 900 with 1× zoom and scaled. Markers (redrawn): 1 minimap, 2 stats panel, 3 orders, 4 weapons and stances, 5 mana, 6 build menu, 7 information bar, 8 selected Monarch. The bar shows only her portrait, name, health and mana and STANDBY. At this window height the stats panel has room for its first four rows only (FPS, PING, SIM, UNITS) |
-| `selection-strip.jpg` | **Selection still life.** Ulasem Arena, `--testbuild` with `TAK_SELPORTRAITS=arasword:9,araarch:6,arabow:4,arapal:3,arapult:2`, `TAK_SELPORTRAITS_HURT` and `TAK_SELPORTRAITS_SQUAD=3`, 1920 × 1080 at UI Scale 150%, cropped to the left of the information bar (1160 × 110, not scaled). Five full-size type portraits with counts, GROUP 3, the group's partial health and mana totals and 24 SELECTED. Rendered by the 0.9.0 build |
-| `side-aramon.jpg` … `side-creon.jpg` | One per side, rendered by the 0.9.0 build. A local-server game with a **stress-test start** (250-unit cap, Normal AI opponent), about 10 s in, 1600 × 900, scaled. The player's Monarch is selected: Elsin, Lokken, Kirenna, Thirsha or the Sage. Each shows that side's interface and build menu |
-| `shift-queue.jpg` | From the 0.9.0 build. Elsin with a move and three Shift-queued moves (**scripted orders**), Shift held, about 3 s after the orders; the status reads MOVING. 1.7× zoom |
-| `flyers-retail-legion.jpg` | **Development scene, spawned.** From the 0.9.0 build (both halves). A spawned Zhon formation of ground units and flyers (`TAK_CAP_SCENE`) given one formation move order, 22 s in, run once in Retail (flyers far ahead) and once in Legion (flyers over the leading ground units). The same 1.05× camera is used for both, and the two captures are placed side by side with labels |
-| `options-graphics.jpg` | Retaken for 0.9.17 (dropdowns; footer DEFAULTS at the left edge, BACK at the right). Options screen in a 1600 × 1100 window, scrolled 10 wheel steps so that Display and the whole Graphics section show (the Display heading just cut off above, the Interface heading just cut off below), cropped to the panel: Fullscreen (OFF), VSync (ON), Max FPS (60, greyed out because VSync is on), Native Wayland (Auto; Linux only), Renderer (Auto (OpenGL)), Texture Filtering (Everything, a dropdown), Shadows, Smooth GUI Art, Smooth Movies, Trees Sway in Wind and Tactical Dots (ON), Tactical Dots Zoom (0%), Hidden Units (Fade, a dropdown) and Fade Opacity at 50%, Screen Shake (OFF), Hardware Cursor (ON, with the note OS CURSOR 16X25 beside it), Smooth Motion (ON) and GPU Memory Limit at 1.25 GB (default). A fresh profile whose only setting is `fullscreen = 0`. The capture-only patch hands the cursor to the system before drawing, as the menu loop would, so the note shows. Linux build, so the Windows-only Ignore Windows Display Scaling row is absent |
-| `fire-on-the-move.jpg` | **From the 0.9.0 build. Development scene, two-player spawned.** Ulasem Arena, Retail pathfinding, 14 s after one plain move order east (**scripted orders**). 14 Aramon Archers and 2 Mage Builders were spawned in a 4-wide grid; 6 Taros Zombies and 6 Skeleton Archers (enemy, no AI) stand south of their path. Shift is held, so the move line shows. Zombies have reached the back of the column, which keeps walking and shooting; the flashes are hits, and three of the sixteen have fallen, so the information bar shows two portraits (2 Mage Builders, 11 Archers) and 13 SELECTED. 1.4× zoom, fog off |
-| `cartographer-terrain.jpg` | Cartographer Terrain tab on Ulasem Arena (`--shot --shot-tool terrain`, fresh editor profile, 921 × 691), retaken by the 0.9.0 build (byte-identical to the 0.8.3 picture): the grouped section browser, All sections (555 pieces, 1261 sections), with readable piece names, variant badges and the scrollbar, and five tools on the toolbar |
-| `tactical-dots.jpg` | From the 0.9.0 build. **Benchmark** run (Absurd) on Ulasem Arena, 50 game seconds in, spectator view fully zoomed out (zoom 0.1875, the floor for this map in a 1920 × 1080 window), where the default Tactical Dots Zoom of 0% shows dots. The deterministic run was rendered twice at the same tick and camera, with Tactical Dots off and on in otherwise identical profiles. The same 800 × 900 region (the east of the map: the blue and red armies) is cropped from each at 1:1 and placed side by side under labels. With models, fire and spell effects show among the armies; with dots none are drawn |
-| `campaign-briefing.jpg` | *Book of Darien* chapter 1 briefing over the paused battlefield, from a direct mission launch (`TAK_SHOT_BRIEFING`, 1600 × 900, scaled), retaken for the retail fog of war (2026-10-29; second entry; unexplored ground black around the squad's sight): the PAUSED heading is retail art, the chapter, title and objectives are in the UI font, and the last line names the always-enabled cosmetic pack (Always-on mods: click). Nothing is selected, so the information bar is empty |
-| `replay.jpg` | Replay playback of a recorded local-server game, 9 s of 16 s, with the time bar. **Stress-test start**: an Aramon army given one Legion move order (**scripted orders**). Recorded and played back by the 0.9.0 build |
-| `benchmark.jpg` | From the 0.9.0 build. Benchmark run (Absurd), 55 s in; the BENCHMARKING badge counts down the remaining time (0:05 of 60 s): armies meet at the edge of a sandy clearing, with health bars for every side; scaled from 1920 × 1080 |
-| `scorecard.jpg` | From the 0.9.0 build. F4 scorecard over a benchmark battle (Absurd), 55 s in, at 1.1× zoom: eight AI players with kills, losses and score; captured at 1920 × 1080 (so the BENCHMARKING badge clears the Score column) and scaled |
-| `voice-chat.jpg` | Retaken for 0.9.22 (MICROPHONE row, MIC GAIN). The Voice Chat page opened from the menu (capture-only hook), 1600 × 900, cropped to the panel (832 × 696). The capture profile with `voiceEnabled = 1`; every other voice setting is at its default: TALK MODE PUSH TO TALK, PUSH TO TALK on SPACE, MICROPHONE ON, SYSTEM DEFAULT microphone at MIC GAIN 100%, ACTIVATION LEVEL 15 (greyed out under Push to Talk), SAME AS GAME OUTPUT at 100. No voice engine runs under `--shot`, so MIC LEVEL is empty |
-| `random-map-lobby.jpg` | The CHANGE MAP panel's **RANDOM MAP** tab over a single-player room, opened on the remembered recipe (Aramon, Mainland, 4 players, 16 × 12, Scattered Mana High, seed 2026, the other sliders at their defaults): MAP NAME (OPTIONAL) empty, the nine sliders in two columns, RE-ROLL SEED, the preview with four numbered starts and 16 x 12 4 PLAYER, CANCEL and PICK. Rendered by the `lobby/int` debug build (2026-11-10), 1600 × 900, not cropped or scaled |
-| `chat-box.jpg` | Recaptured by the 0.9.0 build. The in-game chat box at its defaults (Chat Position Centered, Chat Scale 100%) sitting above the build row and its TRAINING Horseman (10) line, on Ulasem Arena, 1600 × 900, cropped to the box, the row and the information bar (1240 × 340, not scaled). **Selection still life** (`--testbuild`, `TAK_SELPORTRAITS=arakeep:1`): a Barracks selected, with a Horseman queue of ten started by the capture patch; the information bar's Horseman gauge follows the new unit's health. Four chat lines put into the box by the capture patch with fixed names (Ludwin, Aldric, Kirenna, Pat) in their player colours, and *on my way* being typed after SAY: |
-| `options-interface.jpg` | Retaken for 0.9.17. Options screen in a 1600 × 1100 window scrolled to the end (`TAK_CAP_OPTIONS=40`), cropped to the Interface section (824 × 452): MODERN UI FONT ON, F4 SCORECARD SCALE and UI SCALE 100%, HEALTH BARS Damaged, STATS PANEL ON, BUILD MENU Center, BUILD MENU SCALE 100%, CHAT POSITION Centered and CHAT SCALE 100% (Health Bars, Build Menu and Chat Position are dropdowns); a fresh profile whose only setting is `fullscreen = 0`, all defaults |
-| `room-mods-power-codes.jpg` | Recaptured by the `lobby/int` debug build (2026-11-10). Single-player room on Ulasem Arena, 1600 × 900: POWER CODES: ON from the remembered settings, two Normal AIs (Taros, Veruna); the MODS line names click and House Rules (the always-enabled cosmetic and game packs of the scratch install, in green), then Classic Sounds and +1 (Big Battles, the ticked game pack), with **MODS...** and GAME MODS VERIFIED under it; MAP SCENARIO: OFF ends the rules. Seated by `TAK_ROOM_SCRIPT`, sides clicked with `TAK_SHOT_CLICKS` |
-| `build-line.jpg` | New in 0.8.9, retaken by the 0.9.0 build. A Shift-drag wall line in progress: the committed debug `TAK_BUILDLINE_SHOT=560,0,2` fixture (`--testbuild`, Ulasem Arena) selects Elsin, chooses the Aramon wall, holds Shift, presses the left button, drags 560 px east and turns the mouse wheel up two notches, so the preview shows nine wall sites two cells apart and the **GAP 2** label by the pointer. 1.5× zoom, fog off; 1600 × 900, scaled |
-| `disconnect-wait.jpg` | Recaptured for the retail fog of war (2026-10-29; second entry), by the 0.9.0 procedure. Two humans on Inner Circle through a local `takserver --local --no-auth --seed 1` at the default 8 s stall threshold (data: a copy of the retail archives); the second client (Brannoc, headless) was stopped with `SIGSTOP` 40 s in, and the first (Aldric, 1600 × 900, scaled) was captured about 4 s after the banner appeared: the game is paused and reads WAITING FOR Brannoc 19, and the ground outside Elsin's sight lies under Aramon's white mist (a first stop's countdown starts at 22, as the 8 silent seconds are already spent). Nothing is selected. Capture script `~/tak-tmp/scratch/release-090/front/shots/dw.sh` |
-| `game-browser.jpg` | Retaken by the `lobby/int` debug build (2026-11-10) for the browser without a password field. The online game browser of a client signed in as *aldric* to a private loopback `takserver --local` with a scratch account file (every name registered on first sign-in), never the public server. Headless debug clients on the same server made the games with `TAK_ROOM_SCRIPT` (`create:<name>[:<password>]`, the CREATE window's own commit): *Friday Night Skirmish* (Ulasem Arena, 1/8, open), *Clan Practice* (King of the Hill, 1/4, password, so LOCK), *Evening Ladder* (Inner Circle, two players, started, so 2/4 LIVE with WATCH) and *Newcomers Welcome* (Ladron's Tarn, 1/8). The NAME, MAP and PLAYERS columns, REFRESH and CREATE at the top and BACK at the bottom; nothing else is under the list (a locked game asks its password in a window, CREATE asks the name and password in another). Hardware cursor on, so no pointer is drawn. 1600 × 900, scaled to 1280 × 720 |
-| `build-menu-wrap.jpg` | New in 0.8.11, retaken by the 0.9.0 build. A Zhon Beast Tamer's nine-icon conjure menu wrapped into two rows (five above four, centred, the container over both) left of the command panel and the mana orb. **Selection still life** (`--testbuild --side zon`, `TAK_SELPORTRAITS=zontrain:1`, local server), Ulasem Arena, a 1024 × 768 window at Build Menu Scale 150% (the menu fits one row at 100%), hardware cursor on so no pointer is drawn; not scaled |
+| `hud-annotated.jpg` | The `hud.jpg` setup with Elsin alone selected, so her build menu shows, at 1× zoom. Markers: 1 minimap, 2 stats panel, 3 orders, 4 weapons and stances, 5 mana, 6 build menu, 7 information bar, 8 selected Monarch. At this window height the stats panel shows its first four rows (FPS, PING, SIM, UNITS) |
+| `selection-strip.jpg` | **Selection still life.** Ulasem Arena, `TAK_SELPORTRAITS=arasword:9,araarch:6,arabow:4,arapal:3,arapult:2` with `TAK_SELPORTRAITS_HURT` and `TAK_SELPORTRAITS_SQUAD=3`, 1920 × 1080 at UI Scale 150%, cropped to the left of the information bar (1160 × 110): five type portraits with counts, GROUP 3, the group's health and mana totals and 24 SELECTED |
+| `side-aramon.jpg` … `side-creon.jpg` | One per side: a local-server game with a **stress-test start** (250-unit cap, Normal AI opponent), about 10 s in, the player's Monarch selected (Elsin, Lokken, Kirenna, Thirsha or the Sage), showing that side's interface and build menu |
+| `shift-queue.jpg` | Elsin with a move and three Shift-queued moves (**scripted orders**), Shift held, about 3 s after the orders; the status reads MOVING. 1.7× zoom |
+| `flyers-retail-legion.jpg` | **Development scene, spawned.** A Zhon formation of ground units and flyers given one formation move order, 22 s in, run once with Retail pathfinding (flyers far ahead) and once with Legion (flyers over the leading ground units), the same 1.05× camera, side by side under labels (1610 × 450) |
+| `options-graphics.jpg` | The GRAPHICS page: Display (Fullscreen OFF, VSync ON, Max FPS 60 greyed, Native Wayland Auto) and Graphics (Renderer Auto (OpenGL), Texture Filtering Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind ON, Hidden Units Fade with Fade Opacity 50%, Smooth Motion ON, GPU Memory Limit 1.25 GB (default)), DEFAULTS and BACK. `TAK_SHOT_OPTIONS=graphics`, fresh profile, 1600 × 1100, cropped to the panel (840 × 844 at (380, 126)). A Linux capture, so the Native Wayland row shows and the Windows-only display-scaling row does not |
+| `fire-on-the-move.jpg` | **Development scene, two-player spawned.** Ulasem Arena, Retail pathfinding, 14 s after one plain move order east (**scripted orders**): 14 Aramon Archers and 2 Mage Builders in a 4-wide grid walk past 6 Taros Zombies and 6 Skeleton Archers (enemy, no AI). Shift is held, so the move line shows; the column keeps walking and shooting, three of the sixteen have fallen, and the bar reads 13 SELECTED. 1.4× zoom, fog off |
+| `cartographer-terrain.jpg` | Cartographer's Terrain tab on Ulasem Arena (`--shot --shot-tool terrain`, fresh editor profile, 921 × 691): the grouped section browser, All sections (555 pieces, 1261 sections), piece names, variant badges and the scrollbar |
+| `tactical-dots.jpg` | **Benchmark** run (Absurd) on Ulasem Arena, 50 game seconds in, spectator view at zoom 0.10 (the zoom-out floor), rendered twice at the same tick and camera with Tactical Dots off and on. The same 800 × 900 region (the east of the map) is cropped from each 1920 × 1080 capture at 1:1 and placed side by side under labels (1610 × 900) |
+| `campaign-briefing.jpg` | *Book of Darien* chapter 1 briefing over the paused battlefield, from a direct mission launch (`--campaign takmission01_mt`, `TAK_SHOT_BRIEFING`; `brief.sh`): the retail PAUSED heading, the chapter, title and objectives in the UI font, *Always-on mods: click*, ground never seen black and the squad's sight clear. Nothing selected |
+| `replay.jpg` | Replay playback of a recorded local-server game, 9 s of 16 s, with the time bar: a **stress-test start**, an Aramon army given one Legion move order (**scripted orders**). 1024 × 768, not scaled |
+| `benchmark.jpg` | A Benchmark run (Absurd), 55 s in, the BENCHMARKING badge reading 0:05 (`TAK_CAP_BENCHSEC=55`): armies meet at the edge of a sandy clearing, with health bars for every side. 1920 × 1080, scaled |
+| `scorecard.jpg` | The F4 scorecard over a Benchmark battle (Absurd), 55 s in, at 1.1× zoom: eight AI players with kills, losses and score. 1920 × 1080 (so the badge clears the Score column), scaled |
+| `voice-chat.jpg` | The VOICE CHAT page with voice chat on and every other voice setting at its default: GENERAL (VOICE CHAT ON), MICROPHONE (MICROPHONE ON, TALK MODE Push to Talk, PUSH TO TALK on SPACE, MIC DEVICE System Default, MIC GAIN 100%, an empty MIC LEVEL, ACTIVATION LEVEL 15 greyed), OUTPUT (Same as Game Output, volume 100), DEFAULTS and BACK. `TAK_SHOT_OPTIONS=voice`, a profile with `voiceEnabled = 1`, 1600 × 900, cropped to the panel (832 × 696 at (384, 101)). No voice engine runs under `--shot`, so the level meter is empty |
+| `random-map-lobby.jpg` | The CHANGE MAP panel's **RANDOM MAP** tab over a single-player room, opened on the remembered recipe `~gen1~0a00ea0700000000000000000280010480608060800003603040` (Aramon, Mainland, 4 players, 16 × 12, Scattered Mana High, seed 2026): MAP NAME (OPTIONAL) empty, the sliders in two columns, RE-ROLL SEED, the preview with four numbered starts and 16 x 12 4 PLAYER, CANCEL and PICK. Room job `rnd`, 1600 × 900, not cropped or scaled |
+| `chat-box.jpg` | The in-game chat box at its defaults (Chat Position Centered, Chat Scale 100%) above the build row and its TRAINING Horseman (10) line, on Ulasem Arena. **Selection still life** (`TAK_SELPORTRAITS=arakeep:1`): a Barracks selected, with a Horseman queue of ten and four chat lines (Ludwin, Aldric, Kirenna, Pat in their player colours) put in by the capture patch, and *on my way* being typed after SAY:. Cropped to the box, the row and the information bar (1240 × 340, not scaled) |
+| `options-interface.jpg` | The USER INTERFACE page's Interface section at its defaults: MODERN UI FONT ON, F4 SCORECARD SCALE and UI SCALE 100%, HEALTH BARS Damaged, STATS PANEL ON, BUILD MENU Center at 100%, IDLE BUILDERS Middle at 50%, CHAT POSITION Centered and CHAT SCALE 100%. `TAK_SHOT_OPTIONS=interface`, fresh profile, 1600 × 1100, cropped to the section (824 × 530 at (388, 108)) |
+| `room-mods-power-codes.jpg` | Single-player room on Ulasem Arena in the install with *House Rules*: POWER CODES: ON from the remembered settings, two Normal AIs (Taros, Veruna); the MODS line names click and House Rules (always enabled, in green), then Classic Sounds and +1 (Big Battles), with MODS... and GAME MODS VERIFIED under it. Room job `roomPC`, 1600 × 900 |
+| `mods-screen.jpg` | The MODS screen opened from that room with MODS...: COSMETIC MODS and GAME MODS side by side, each 2 / 64 ON with a FILTER box; click and House Rules ALWAYS ON at the top, Classic Sounds and Big Battles ticked, Alternate Cursors not. Room job `mods`, 1600 × 900, cropped to (0, 1, 1600, 371) |
+| `build-line.jpg` | A Shift-drag wall line in progress: the debug `TAK_BUILDLINE_SHOT=560,0,2` fixture (`--testbuild`, Ulasem Arena) selects Elsin, chooses the Aramon wall, holds Shift, drags 560 px east and turns the wheel up two notches, so the preview shows nine wall sites two cells apart and the **GAP 2** label by the pointer. 1.5× zoom, fog off |
+| `disconnect-wait.jpg` | Two humans on Inner Circle through a local `takserver --local --no-auth --seed 1` at the default 8 s stall threshold; the second client (Brannoc, headless) is stopped with `SIGSTOP` 40 s in, and the first (Aldric) is captured about 4 s after the banner appears: the game is paused and reads WAITING FOR Brannoc 18, and the ground outside Elsin's sight lies under Aramon's white mist. Nothing selected. `dw.sh` |
+| `game-browser.jpg` | The online game browser of a client signed in as *aldric* to a private loopback `takserver --local` with a scratch account file. Headless debug clients signed in with `TAK_MENU_PICK=connect:<name>:<password>@<address>` make the games with `TAK_ROOM_SCRIPT`, each from its own remembered `mpRoom.map`: `create:Friday Night Skirmish` (Ulasem Arena, 1/8), `create:Clan Practice:oak` (King of the Hill, 1/4, locked), `create:Evening Ladder;wait:humans=2;ready;wait:ready=2;start` with a second client's `join:Evening Ladder;ready` (Inner Circle, 2/4 LIVE with WATCH) and `create:Newcomers Welcome` (Ladron's Tarn, 1/8). NAME, MAP and PLAYERS columns, REFRESH and CREATE at the top, BACK at the bottom. The viewer runs with `--shot` and `TAK_SHOT_CLICKS` only waits and moves the pointer to a corner |
+| `build-menu-wrap.jpg` | A Zhon Beast Tamer's nine-icon conjure menu wrapped into two rows (five above four) left of the command panel and the mana orb. **Selection still life** (`--testbuild --side zon`, `TAK_SELPORTRAITS=zontrain:1`, local server), Ulasem Arena, 1024 × 768 at Build Menu Scale 150% (the menu fits one row at 100%); not scaled |
 
-The guide also uses `title.jpg`, `lobby.jpg`, `room.jpg`, `campaign.jpg`,
-`diplomacy.jpg`, `generated.jpg` and `cartographer.png` from the gallery, and
-`lobby-scenario.jpg` from the table above.
-
-
+The guide also uses `title.jpg`, `mp-connect.jpg`, `lobby.jpg`, `lobby-scenario.jpg`,
+`room.jpg`, `campaign.jpg`, `diplomacy.jpg`, `generated.jpg` and `cartographer.png`.
 The first-launch folder picker is the operating system's own dialog
-(`kdialog`/`zenity`, Finder or Explorer), so it has no in-engine screenshot.
+(`kdialog`/`zenity`, Finder or Explorer), so it has no picture.
 
 ## Cartographer guide (`docs/img/cartographer/`)
 
-Added on 2026-10-14 for the [Cartographer user guide](../cartographer-guide.md),
-from a build of `main` after 0.8.2 (Debug with `-O2`). Every picture is real
-editor output, inspected by eye; the Test Map lobby is the game's.
+Pictures for the [Cartographer user guide](../cartographer-guide.md), taken in three
+ways:
 
-**Retaken for 0.9.0** (2026-10-24): all 32 pictures, `cartographer.png` and
-`guide/cartographer-terrain.jpg`, by the 0.9.0 build (Debug with `-O2`), the same
-ways as described below: a new scratch capture driver (outside Git, linked
-against the 0.9.0 editor objects like `cartographer_ui_test`) for the
-driver-made pictures, the editor's own `--shot` for `blocked.jpg`, the
-`cartographer_ui_test` workflows' capture mode for the AI Profiles pictures and
-(with the same capture-only patch as for 0.8.13, not committed) for
-`empty-window.jpg` and `new-map.jpg`, and the debug game client for
-`test-lobby.jpg`. Every whole-window picture now shows the five-tool toolbar.
-`window-annotated.jpg` has its markers redrawn for the five tools, and
-`menus.jpg` shows the current menus, including File → New AI mod and Open AI
-mod and Scenario → AI Profiles. Where the scene had not changed, the output came
-out byte-identical to the earlier file (`empty-window.jpg`, `new-map.jpg`,
-`terrain-variant.jpg`, `preferences.jpg`, `ai-mod.jpg`, `ai-group-rules.jpg`,
-`ai-takengine.jpg`, `cartographer.png` and `guide/cartographer-terrain.jpg`).
-Eight of Player 1's units are box-selected in `units.jpg` (seven before), and
-the guide's caption says so.
+- **The capture driver** (`capdrv.cpp`, kept outside Git) links the editor objects
+  that the `cartographer_ui_test` target builds and drives the editor through its own
+  SDL input path, as a player's clicks and keys would: menu and toolbar clicks,
+  browser picks, drags, key presses and a warped pointer for hover states. It waits
+  until thumbnails, portraits and feature sprites have loaded and the terrain is
+  composed before each capture.
+- **The `cartographer_ui_test` workflows' capture mode** (`TAK_EDITOR_TEST_CAPTURE`
+  names a file prefix) for the AI Profiles pictures and the empty window.
+- **The editor's own `--shot`** for `blocked.jpg`, `../cartographer.png` and
+  `../guide/cartographer-terrain.jpg`.
 
-**How they were captured.** A scratch capture driver, kept outside Git, links the
-editor objects that the `cartographer_ui_test` target builds (the release editor
-code; the test define only removes `main`) and drives the editor through its own
-SDL input path from the frame hook, as a player's clicks and keys would: menu and
-toolbar clicks, browser picks, drags, key presses and a warped pointer for hover
-states such as previews and the status-bar name. Nothing was drawn into the
-editor. Before each capture the driver waited until terrain thumbnails, unit
-portraits and feature sprites had stopped loading and the terrain was fully
-composed, so no browser cell or tree is a placeholder.
-
-- **Window.** The SDL `offscreen` driver gives the editor's default window,
-  921 × 691, as for `cartographer.png` (UI scale about 102%). Pictures are either
-  that whole window or a crop of it, as listed.
-- **Profiles.** Each run used scratch `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
-  `TAK_CARTOGRAPHER_PROFILE` and `TAK_SETTINGS_FILE`, never a user profile.
-- **Data folder.** The retail `.hpi` archives were linked into a scratch install
-  with an empty `Maps` folder. The capture runs saw that install at
-  `/home/player/Games/TA Kingdoms` through a private mount namespace
-  (`unshare`), so the paths shown in Save As, Open Map and Preferences are
-  neutral. *Twin Rivers*, *Silverford* and *Practice* are maps made in the
-  editor during the captures; *Ulasem Arena* and *King of the Hill* are shipped
-  maps. Edits made for a picture were not saved over them.
-- **Test Map.** `test-map.jpg` was taken with a stand-in `takclient` beside the
-  driver (it kept a copy of the snapshot and waited), so no game opened. That
-  snapshot was then opened with the debug game client
-  (`takclient --data … --play-map <snapshot> --shot`, `TAK_SHOT_MS=9000`,
-  `SDL_RENDER_DRIVER=opengl`, offscreen at 1024 × 768) for `test-lobby.jpg`;
-  the release client opens the same lobby but has no `--shot`. On 2026-10-14
-  `test-lobby.jpg` was recaptured the same way for MAP SCENARIO (protocol 259),
-  from a snapshot of the shipped King of the Hill files packed under the same
-  *Test* name, as F5 would have written it, and again after the room's
-  scenario lines moved up clear of the panel edge. On 2026-10-20 it was
-  recaptured by the 0.8.7 client for the MOVE HERE buttons on the open seats
-  (protocol 284), from a snapshot of the same files under the same *Test* name
-  (packed with `cartographer --bundle` and `hpitool pack`) and a scratch
-  install with no override packs; the room now also shows the map preview. On 2026-10-21 it was
-  recaptured by the 0.8.8 client for the UI font and the room's mods lists
-  (protocol 288), the same way, with only the always-on `mods/cosmetic/click.hpi`
-  in the scratch install, and once more after the 0.8.8 polish (ALWAYS ON under
-  the COSMETIC MODS heading). On 2026-10-21 it was recaptured by the 0.8.9
-  client the same way, for the room's rules (MAP SCENARIO as a normal rules
-  line, GAME MODS VERIFIED only with game packs in play). On 2026-10-24 it was
-  recaptured by the 0.8.14 client the same way, with the click archive at
-  `mods/cosmetic/always_enabled/click/click.hpi` in the scratch install, so the
-  room reads ALWAYS ON: click. On 2026-10-24 it was recaptured by the 0.9.0
-  client the same way (protocol 294), from the snapshot that F5 on King of the
-  Hill wrote for the stand-in client (*Cartographer Test*), with only the
-  click pack in the scratch install. On 2026-11-10 it was recaptured from the
-  same snapshot and install by the `lobby/int` debug client (protocol 323), for
-  the single-player room `--play-map` now opens (no CHANGE MAP..., QUIT for
-  LEAVE, the rules as greyed or live buttons), at 1024 × 768 cropped to the room
-  (1024 × 576).
-- **Markers and composites.** `window-annotated.jpg` has numbered markers drawn
-  on a copy of the capture with Pillow. `random-generator.jpg`,
-  `symmetry-stamp.jpg`, `terrain-clipboard.jpg` and `features-select.jpg` put two
-  crops side by side under text labels, and `menus.jpg` puts six crops of the
-  opened menus together (each with only its own menu title).
-- **Encoding.** JPEG, full chroma resolution, quality 86, not scaled (some AI
-  Profiles pictures at 98, below). The 32 files total about 3.7 MB (0.9.0).
-- **AI Profiles.** `ai-profiles.jpg` and `ai-group-rules.jpg` were added on
-  2026-10-23 with the AI Profiles window (branch `task-carto-ai`, after
-  0.8.11), not by the capture driver: they are the window captures that the
-  `cartographer_ui_test` workflows `aiprofile` and `aiprofile-extras` write
-  when `TAK_EDITOR_TEST_CAPTURE` names a prefix, run on the build-o2 test
-  binary with SDL `offscreen` (921 × 691) and a scratch profile, and cropped to
-  the window (802 × 534). The workflows edit through the editor's own input
-  path; their documents (*AiTest*, a copy of Ulasem Arena's terrain, and
-  Ulasem Arena itself) are never saved over a shipped map. The scratch data
-  root of `aiprofile-extras` holds a synthetic game pack, not shown.
-  `ai-profiles.jpg` was recaptured the same way later on 2026-10-23 and
-  encoded at quality 98 (full chroma) instead of 86, because at 86 the tab
-  label *DEFAULT AI* could read as *DEFAULT AT*; the scene is unchanged.
-  Both were recaptured again the same way when the levels' six tabs became one
-  TAK ENGINE AI tab (`ai/takengine.txt`). `ai-takengine.jpg` is the `aiprofile`
-  workflow's `-level.png`, taken the same way (crop 802 × 534 at 60,78, quality
-  98, full chroma).
-  `ai-mod.jpg` was added with the AI mod without a map, from the `aimod-nomap`
-  workflow's `-aimod.png` (SDL `offscreen`, 921 × 691, scratch data root and
-  profile), not cropped, so the empty editor behind the window shows; quality
-  98, full chroma.
-- **Empty window.** `empty-window.jpg` and `new-map.jpg` were taken for 0.8.13
-  (on 2026-10-24, by the 0.8.13 build) from the `cartographer_ui_test`
-  workflow `blank-launch` (a bare launch, fresh scratch profile, SDL
-  `offscreen`, 921 × 691, scratch data root of linked retail archives), with
-  `TAK_EDITOR_TEST_CAPTURE` naming a prefix and a capture-only patch, not
-  committed, that also writes `<prefix>-empty.png` right after the first run's
-  welcome is closed (before the workflow's inert clicks and keys) and
-  `<prefix>-newmap.png` when File → New map has opened the dialog. Whole window,
-  quality 86, full chroma; nothing was edited or saved.
-- **Toolbar.** From 0.9.0 every whole-window picture shows the five tool
-  buttons (TERRAIN, FEATURES, UNITS, STARTS, BLOCKED). Before that, every one
-  except `blocked.jpg` predated the BLOCKED tool and showed four.
+Each run uses the SDL `offscreen` driver, which gives the editor's default
+921 × 691 window, and scratch `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
+`TAK_CARTOGRAPHER_PROFILE` and `TAK_SETTINGS_FILE`. The data folder links the retail
+archives into a scratch install with an empty `Maps` folder, seen through a private
+mount namespace (`unshare`) at `/home/player/Games/TA Kingdoms`, so the paths in
+Save As, Open Map and Preferences are neutral. *Twin Rivers*, *Silverford* and
+*Practice* are maps made in the editor during the captures; *Ulasem Arena*, *King of
+the Hill* and *Ladron's Tarn* are shipped maps, never saved over. Pictures are the
+whole window or a crop of it; JPEG quality 86 unless noted.
 
 | Image | Scene |
 | --- | --- |
-| `window-annotated.jpg` | Ulasem Arena, Terrain tool, view centred on the arena at 35%, whole window, by the 0.9.0 build with the five-tool toolbar. Markers 1–13 (redrawn for 0.9.0): menu bar, tools, modes, REGIONS, TEST MAP, search, group button, counter line, variant badge, scrollbar, canvas, minimap, status bar |
-| `empty-window.jpg` | New in 0.8.13. Bare launch with a fresh profile, the first run's welcome closed: the empty window, title *Cartographer*, menu bar only, an empty toolbar, the centred NO MAP OPEN hint naming File → New map (Ctrl+N), Open map (Ctrl+O) and the AI mod commands, and NO MAP OPEN in the status bar. Whole window |
-| `new-map.jpg` | Retaken for 0.8.13. The same bare launch after File → New map: the New Map dialog (Untitled, 8 × 8, aramon) over the dimmed empty window, with NO MAP OPEN in the status bar. Whole window. Before 0.8.13 a bare launch opened this dialog by itself over an Untitled placeholder map |
-| `random-generator.jpg` | Retaken for 0.9.0 by the new capture driver, linked against the 0.9.0 editor (first recaptured for 0.8.5). Composite. Left: Random Map Settings (seed 2026, 4 players, Aramon Riverlands, 16 × 16, SCATTERED MANA (BY MAP AREA) set to Medium, other fields default). Right: the Generated Map Preview it produced. Dialog crops; the settings dialog is taller than before (twelve fields) |
+| `window-annotated.jpg` | Ulasem Arena, Terrain tool, view centred on the arena at 35%, whole window. Markers 1–13 drawn on a copy with Pillow: menu bar, tools, modes, REGIONS, TEST MAP, search, group button, counter line, variant badge, scrollbar, canvas, minimap, status bar |
+| `empty-window.jpg` | A bare launch with a fresh profile, the first run's welcome closed: title *Cartographer*, menu bar only, an empty toolbar, the centred NO MAP OPEN hint naming File → New map (Ctrl+N), Open map (Ctrl+O) and the AI mod commands, and NO MAP OPEN in the status bar. The `blank-launch` workflow, with a capture-only line that writes `<prefix>-empty.png` once the welcome is closed; whole window |
+| `new-map.jpg` | The same bare launch after File → New map: the New Map dialog (Untitled, 8 × 8, aramon) over the dimmed empty window (`<prefix>-newmap.png` from the same capture-only line); whole window |
+| `random-generator.jpg` | Composite. Left: Random Map Settings (seed 2026, 4 players, Aramon Riverlands, 16 × 16, SCATTERED MANA (BY MAP AREA) Medium, plateau, mountain and town fields at their defaults). Right: the Generated Map Preview it produced. Dialog crops (1103 × 508) |
 | `terrain-groups.jpg` | Ulasem Arena, the terrain group list open, whole window |
-| `terrain-variant.jpg` | Ulasem Arena, Cliff W clicked twice (variant 2/3) with the pointer on it, so the status bar shows its full name. Crop of the left 470 px |
+| `terrain-variant.jpg` | Ulasem Arena, Cliff W clicked twice (variant 2/3) with the pointer on it, so the status bar shows its full name. The left 470 px |
 | `symmetry-stamp.jpg` | Composite of two crops. Ulasem Arena, live symmetry (vertical axis), Low Sandy to High Sandy *Transition NW outer* chosen. Left: the preview before the click; right: the stamped section and its twin |
 | `terrain-clipboard.jpg` | Composite of two crops. Ulasem Arena, Terrain + Select: a 15 × 15-block rectangle (left); after Ctrl+C and Ctrl+V, the clipboard brush under the pointer (right) |
 | `symmetrize.jpg` | Ulasem Arena, Shift+M, the Symmetrize dialog. Dialog crop |
-| `features.jpg` | Ulasem Arena, Features tool, category *trees*: five palm trees placed by clicking, the preview of a sixth under the pointer, whole window |
+| `features.jpg` | Ulasem Arena, Features tool, category *trees*: five palm trees placed by clicking and the preview of a sixth under the pointer, whole window |
 | `features-select.jpg` | Composite of two crops of the same trees: the selection box being dragged in Select mode, then the selected anchor cells |
 | `units.jpg` | King of the Hill, Units tool filtered to GROUND and ARAMON; eight of Player 1's units box-selected in Select mode at 75%, whole window |
-| `unit-properties.jpg` | King of the Hill, Unit Properties of one of Player 1's Archers (opened with Shift+Enter in Placed units) with *Captain Aldric* typed as the display name, not applied. Dialog crop |
-| `unit-model.jpg` | Ulasem Arena, Units browser searched for *knight*, F6 on the Aramon Knight. Crop of the browser and the model window |
+| `unit-properties.jpg` | King of the Hill, Unit Properties of one of Player 1's Archers (Shift+Enter in Placed units) with *Captain Aldric* typed as the display name, not applied. Dialog crop |
+| `unit-model.jpg` | Ulasem Arena, the Units browser searched for *knight*, F6 on the Aramon Knight. Crop of the browser and the model window |
 | `starts.jpg` | Ulasem Arena, Starts tool, View → Fit map (7%), whole window |
 | `regions.jpg` | King of the Hill at Fit map, REGIONS on in Select mode with The Hill selected, whole window |
 | `scripting.jpg` | King of the Hill, Scenario Scripting with Rule 1 of All Players selected. Crop of the scripting window |
@@ -804,83 +216,39 @@ composed, so no browser cell or tree is a placeholder.
 | `check-map.jpg` | *Practice*: a new 8 × 8 Aramon map with one start, a Horseman, and a War Galley placed on dry land; then Check Map. Dialog crop |
 | `overlay-movement.jpg` | Ulasem Arena at 40%, Horseman chosen in the Units browser, View → Overlay: movement, whole window |
 | `preferences.jpg` | View → Preferences with default settings. Dialog crop |
-| `open-map.jpg` | Open Map after opening King of the Hill and saving *Twin Rivers*, so two Recent rows lead the list (Twin Rivers first, the latest). Dialog crop |
+| `open-map.jpg` | Open Map after opening King of the Hill and saving *Twin Rivers*, so two Recent rows lead the list (Twin Rivers first). Dialog crop |
 | `save-as.jpg` | Save As for the new map *Twin Rivers*. Dialog crop |
-| `test-map.jpg` | King of the Hill after F5: the TEST MAP message, with TEST RUNNING on the toolbar, whole window |
-| `test-lobby.jpg` | The game's single-player room for that King of the Hill snapshot (`--play-map`; retaken by the `lobby/int` debug client on 2026-11-10; before that by the 0.9.0, 0.8.14, 0.8.9 and 0.8.8 clients): PLAY THE MACHINE, the map name (test, a number and a fingerprint) cut with ... to fit its column, seat 1 with WATCH, seats 2 to 4 open, tagged NEEDED BY SCENARIO and each with a MOVE HERE button, START greyed beside QUIT, the rules with START LOCATIONS: FIXED and MONARCH EXPENDABLE: SCENARIO greyed and MAP SCENARIO: ON (TEST MAP) with the scenario details under both columns, the map preview numbering the four starts with no CHANGE MAP... under it, and MODS: click; 1024 × 768 cropped to the room (1024 × 576) |
-| `menus.jpg` | Composite: the FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP menus, each opened over Ulasem Arena and cropped to the menu (with only its own title). From 0.9.0 FILE has New AI mod... and Open AI mod..., VIEW ends with Show blocked cells (B) and SCENARIO with AI Profiles... (A) |
-| `ai-profiles.jpg` | *AiTest* (Ulasem Arena's terrain), Scenario → AI Profiles, DEFAULT AI tab: the map's own profile *aitest* started Empty, then NO FLYERS after its confirmation, so every flying unit reads BUILD OFF and LIMIT 0; TAK ENGINE AI (`ai/takengine.txt`) is tagged `map *` from an earlier edit, and PREVIEW LEVEL reads HARD. Crop of the window |
-| `ai-group-rules.jpg` | Ulasem Arena, AI Profiles, DEFAULT AI tab in the GROUP RULES view: own profile *ulasem arena*, one rule WEIGHT ARA 50 % covering 32 units, the Archer set individually (80 %) and shown as skipped. Crop of the window |
-| `ai-takengine.jpg` | *AiTest* (Ulasem Arena's terrain), AI Profiles, TAK ENGINE AI tab previewing NORMAL with FIND *araarch*: the Archer's weight set to 0, so it reads OFF. From the `aiprofile` workflow's `-level.png`. Crop of the window |
-| `ai-mod.jpg` | File → New AI mod *Harder AI* (a scratch pack, no map open): the AI MOD (NO MAP) window on the TAK ENGINE AI tab previewing NORMAL after one edit, the Archer's WEIGHT 0, so the pack reads UNSAVED; the toolbar names the pack and the editor behind the window is empty. Whole window |
-| `blocked.jpg` | Added with the BLOCKED tool, not by the capture driver: the editor's own `--shot` output (`cartographer "Ladron's Tarn" --shot … --shot-tool blocked`, SDL `offscreen`, fresh scratch profile), whole 921 × 691 window at 30%. The shipped map's blocked cells along its castle walls are tinted red and its road cells blue; the browser lists the five brush sizes |
+| `test-map.jpg` | King of the Hill after F5: the TEST MAP message, with TEST RUNNING on the toolbar, whole window. A stand-in `takclient` beside the driver keeps a copy of the snapshot and waits, so no game opens |
+| `test-lobby.jpg` | The game's single-player room for that King of the Hill snapshot (`Cartographer Test.kmp`): `takclient --play-map <snapshot> --shot` in the install with only *click* (room job `test`, `TAK_SHOT_CLICKS` waits 8 s), 1024 × 768 cropped to the room (1024 × 576 at (0, 96)). PLAY THE MACHINE, the map name cut with ... to fit its column, seat 1 with WATCH, seats 2 to 4 open and tagged NEEDED BY SCENARIO, START greyed beside QUIT, the rules with START LOCATIONS: FIXED, MONARCH EXPENDABLE: SCENARIO greyed and MAP SCENARIO: ON (TEST MAP) with the scenario details under both columns, the preview numbering four starts, and MODS: click |
+| `menus.jpg` | Composite: the FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP menus, each opened over Ulasem Arena and cropped to the menu with its own title |
+| `ai-profiles.jpg` | *AiTest* (Ulasem Arena's terrain), Scenario → AI Profiles, DEFAULT AI tab: the map's own profile *aitest* started Empty, then NO FLYERS, so every flying unit reads BUILD OFF and LIMIT 0; TAK ENGINE AI (`ai/takengine.txt`) is tagged `map *`, and PREVIEW LEVEL reads HARD. From the `aiprofile` workflow, cropped to the window (802 × 534 at (60, 78)), quality 98 |
+| `ai-group-rules.jpg` | Ulasem Arena, AI Profiles, DEFAULT AI tab in the GROUP RULES view: own profile *ulasem arena*, one rule WEIGHT ARA 50 % covering 32 units, the Archer set individually (80 %) and shown as skipped. From the `aiprofile-extras` workflow, cropped to the window (802 × 534) |
+| `ai-takengine.jpg` | *AiTest*, AI Profiles, TAK ENGINE AI tab previewing NORMAL with FIND *araarch*: the Archer's weight set to 0, so it reads OFF. The `aiprofile` workflow's `-level.png`, cropped to the window (802 × 534 at (60, 78)), quality 98 |
+| `ai-mod.jpg` | File → New AI mod *Harder AI* (a scratch pack, no map open): the AI MOD (NO MAP) window on the TAK ENGINE AI tab previewing NORMAL after one edit (the Archer's WEIGHT 0), so the pack reads UNSAVED; the toolbar names the pack and the editor behind it is empty. The `aimod-nomap` workflow's `-aimod.png`, whole window, quality 98 |
+| `blocked.jpg` | `cartographer "Ladron's Tarn" --shot <png> --shot-tool blocked`, fresh profile, whole window at 30%: the map's blocked cells along its castle walls tinted red and its road cells blue; the browser lists the five brush sizes |
 
-The native dialogs (the first-start folder picker, *Not a game folder*,
-*Recover map* and *Restart failed*) belong to the operating system and are not
-pictured.
+The native dialogs (the first-start folder picker, *Not a game folder*, *Recover map*
+and *Restart failed*) belong to the operating system and are not pictured.
 
 ## Quick start (`docs/img/quick/`)
 
-New in 0.8.7, for [quick-start.md](../quick-start.md). Recaptured for 0.9.0
-by the 0.9.0 build, with the capture patch plus press, move and release entries
-for `TAK_SHOT_CLICKS` (for the drag); `build-line.jpg` (new in 0.8.9) uses the
-committed `TAK_BUILDLINE_SHOT` fixture. The game pictures are development scenes on
-Ulasem Arena, local server, 1600 × 900 at 1× zoom, cropped and scaled.
-`lobby-move-here.jpg` was retaken on 2026-11-10 for the game room without a create
-screen (see the top of this file).
+For [quick-start.md](../quick-start.md). The game pictures are development scenes on
+Ulasem Arena, local server, 1600 × 900 at 1× zoom, cropped and scaled; the drag uses
+press, move and release entries in `TAK_SHOT_CLICKS`.
 
 | Image | Scene |
 | --- | --- |
-| `box-select.jpg` | **Spawned.** 17 Aramon units (Swordsmen, Archers, Knights, Catapults); a left-drag box drawn round them, before release. Crop, not scaled |
-| `selected.jpg` | The same army after release: green selection rings, four type portraits with counts 2, 3, 6 and 6, 17 SELECTED and the command panel. Taros units stand to the east. 75% |
-| `attack-cursor.jpg` | The army selected, the pointer over a Taros Skeleton Archer: the crossed-swords attack cursor, at Cursor Size 2×. 80% |
-| `command-panel.jpg` | A Mage Builder's command panel at 200%, labelled MOVE (M), PATROL (P), ATTACK (A), GUARD (G), HEAL (H), CLEAR and STOP (S). Which icon is which was checked by arming each key and seeing which button darkened (0.8.7) |
+| `box-select.jpg` | **Spawned.** 17 Aramon units (Swordsmen, Archers, Knights, Catapults); a left-drag box (`D160,190;M400,330;M570,430`) drawn round them, before release. Crop, not scaled |
+| `selected.jpg` | The same army after release: green selection rings, four type portraits with counts 2, 3, 6 and 6, 17 SELECTED and the command panel; Taros units stand to the east. 75% |
+| `attack-cursor.jpg` | The army selected, the pointer over a Taros Skeleton Archer: retail's hover cursor over an enemy (an arrow with a red dot), at Cursor Size 2×. 80% |
+| `command-panel.jpg` | A Mage Builder's command panel at 200%, labelled MOVE (M), PATROL (P), ATTACK (A), GUARD (G), HEAL (H), CLEAR and STOP (S) |
 | `build-placement.jpg` | **Spawned** Mage Builder selected, its build menu along the bottom, the Barracks icon chosen and the Barracks ghost with its label under the pointer. 80% |
-| `build-line.jpg` | Two Shift-drag wall lines by Elsin, side by side: left, a tight diagonal of ten walls corner to corner (`TAK_BUILDLINE_SHOT=300,220,0`); right, a straight line of five walls three cells apart with the **GAP 3** label (`TAK_BUILDLINE_SHOT=360,0,3`). `--testbuild`, 1280 × 960, hardware cursor on; the same crop of each, joined and scaled to 85% |
-| `lobby-move-here.jpg` | Single-player room opened from the menu with the default map (Athri Cay), retaken by the `lobby/int` debug build (2026-11-10), 1600 × 900: the player in slot 1 with WATCH, a Normal AI in slot 2 (seated by `TAK_ROOM_SCRIPT`, which also sets START LOCATIONS: BY SLOT with `opt:randomStarts=2` so MOVE HERE is live), MOVE HERE on open slots 3 to 5, slots 6 to 8 closed, the match rules, the preview numbering starts 1 to 5, CHANGE MAP... and MODS: NONE (no packs in the scratch install). Cropped to (40, 80, 1580, 830), 72% |
+| `build-line.jpg` | Two Shift-drag wall lines by Elsin side by side: left, a tight diagonal of ten walls corner to corner (`TAK_BUILDLINE_SHOT=300,220,0`); right, five walls three cells apart with the **GAP 3** label (`TAK_BUILDLINE_SHOT=360,0,3`). `--testbuild`, 1280 × 960; the same crop of each, joined and scaled to 85% |
+| `lobby-move-here.jpg` | Single-player room opened from the menu with the default map (Athri Cay) in the install with no packs: the player in slot 1 with WATCH, a Normal AI in slot 2, START LOCATIONS: BY SLOT (so MOVE HERE is live) on open slots 3 to 5, slots 6 to 8 closed, the rules, the preview numbering starts 1 to 5, CHANGE MAP... and MODS: NONE. Room job `quick` (`TAK_ROOM_SCRIPT=ai:1;opt:randomStarts=2`), 1600 × 900 cropped to (40, 80, 1580, 830) and scaled to 72% |
 
-## Capture settings
+## Retaking
 
-Captures use isolated SDL preference directories (`XDG_DATA_HOME` and
-`XDG_CONFIG_HOME`), never a user profile. The window is 1920 × 1080 for the
-gallery and 1600 × 900 for the guide, windowed, with VSync off. From 0.8.5 the
-profiles use the 0.8.5 defaults: Texture Filtering Everything, Smooth GUI Art and
-Smooth Movies on, Tactical Dots on at 0% zoom, Screen Shake off, shadows and tree
-sway on. (Until 0.8.4 the defaults, and so the profiles, had Texture Filtering Off
-and Smooth GUI Art and Smooth Movies off.) The hardware cursor is off for capture.
-The stats panel is off unless a caption says it is on.
-
-Game images use `SDL_VIDEODRIVER=offscreen` with `SDL_RENDER_DRIVER=opengl`.
-Server-backed scenes run a temporary `takserver --local --no-auth --seed 42`.
-Headless scenes (`--mphost`) render the final synchronized frame after the given
-number of game seconds. Interactive scenes (the HUD, side shots and replay) render
-live and capture after a wall-clock wait, so their FPS reading is real. Screenshot
-timing is not a performance measurement.
-
-**Lobby captures** (`lobby.jpg`, `lobby-scenario.jpg`, `guide/random-map-lobby.jpg`,
-`room.jpg`, `guide/room-mods-power-codes.jpg` and `quick/lobby-move-here.jpg`, since
-2026-11-10 all of the game room and its CHANGE MAP panel)
-launch the debug client's menu with `TAK_MENU_PICK=singleplayer` (the
-single-player door, with `TAK_NODOORVID=1` skipping the door video), which opens the
-room at once from the profile's single-player settings: `spRoom.map` names the map
-(`spRoom.generator` the RANDOM MAP tab's recipe), the other `spRoom.*` keys set the
-rules, `mods.cosmeticPack` and `spRoom.gamePack` tick packs, and the hardware cursor
-is on so no pointer is drawn. `TAK_ROOM_SCRIPT` seats the AIs (`ai:1;ai:2`),
-`TAK_SHOT_CLICKS` clicks the rest (the AIs' sides, CHANGE MAP..., a panel tab, the
-panel's MAP SCENARIO) with waits between, and `TAK_SHOT_SIZES` captures the live
-window. The data folder is a scratch copy of the retail install (links to its archives and
-`Maps`, an empty `MapCache`) whose `mods/` holds the always-enabled cosmetic
-pack *click* (`mods/cosmetic/always_enabled/click/click.hpi`), the cosmetic packs *Alternate
-Cursors* and *Classic Sounds* and the game pack *Big Battles* (placeholder
-folders), for the pack lists; for `guide/room-mods-power-codes.jpg` also the
-always-enabled game pack *House Rules* (`mods/game/always_enabled/House Rules/`).
-
-Capture scripts, job lists and the encoder are in the release-preparation
-scratch directories, `$SCR/shared/release-0.7.26/shots`,
-`$SCR/shared/release-0.7.27/shots`, `$SCR/shared/release-0.7.28/shots`,
-`$SCR/shared/release-0.8.0/shots`, `$SCR/shared/release-0.8.1/shots`,
-`$SCR/shared/release-0.8.2/shots`, `$SCR/shared/release-0.8.3/shots`, `$SCR/shared/release-0.8.4/shots`, `~/tak-tmp/scratch/release-085/shots`, `~/tak-tmp/scratch/release-086/shots`, `~/tak-tmp/scratch/release-087/shots`, `~/tak-tmp/scratch/release-088/shots`, `~/tak-tmp/scratch/release-089/shots`, `~/tak-tmp/scratch/release-0810/shots`, `~/tak-tmp/scratch/release-0811/shots`, `~/tak-tmp/scratch/release-0812/shots`, `~/tak-tmp/scratch/release-0813/shots`, `~/tak-tmp/scratch/release-0814/shots`, and for 0.9.0 `~/tak-tmp/scratch/release-090/carto`, `~/tak-tmp/scratch/release-090/front/shots` and `~/tak-tmp/scratch/release-090/game`. Raw PNGs, logs, profiles
-and the SHA-256 manifest are kept locally in the worktree's ignored
-`build-o2/capture` folder. Keep retail archives, extracted assets and temporary
-capture files out of Git. When refreshing, rerender and inspect every view, then
-update these notes and the captions.
+Rerender every view a change touches and look at each one before keeping it; keep a
+picture's file name, size and crop unless the screen's layout changed, and update its
+row here and the alt text where it is used. Keep retail archives, extracted assets and
+raw captures out of Git.

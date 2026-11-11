@@ -328,7 +328,7 @@ void trapped() {
     // 2026-10-16). The churn stops at tick 60: a trapped body re-registers
     // on every static change anywhere (trappedEpoch), so under churn that
     // never stops its grace restarts and no order retires -- inherited from
-    // the starting revision, docs/legion-10000-progress.md 7.5 fix round.
+    // the starting revision.
     {
         Fixture f(256,64);
         f.rect(126,0,4,64);
@@ -471,8 +471,8 @@ void chainresolve() {
 // Legion 10,000 stage 7: traffic in coarse route selection. A wall crosses a 640 x 384 map with two gaps; with the
 // map empty the walker's chain takes the north gap (the region search's choice on this geometry), but here 121 idle
 // bodies (another player's) stand in the sector before it. The region search charges the regions by their soft share
-// (trafficPenalty), so the chain goes through the south gap instead and the walker arrives; without the charge (the
-// mutation in docs/legion-10000-progress.md 7.7) it takes the north gap into the idle block.
+// (trafficPenalty), so the chain goes through the south gap instead and the walker arrives; without the charge (a
+// deliberate mutation) it takes the north gap into the idle block.
 void trafficlane() {
     Fixture f(640,384);
     for(int z=0;z<384;++z)if(!(z>=2&&z<34)&&!(z>=250&&z<282)) {f.wall(320,z);f.wall(321,z);}
@@ -1135,7 +1135,7 @@ void liftflyers() {
     // The detour allows open + 3 cells, not + 1, by user decision W3-4 (2026-10-09): under W3 the last body
     // re-chooses its slot along the formation's west face AT the destination (own run 5 vs open 2), a
     // steering gap round a settled crowd accepted for W3. Moved to W9's exit by user decision W5-1
-    // (2026-10-10): HARD EXIT GATE at W9, back to open + 1 (docs/legion-exit-tables.md, "W3 exit" and "W5 exit").
+    // (2026-10-10): HARD EXIT GATE at W9, back to open + 1.
     constexpr uint64_t kLiftDetourSlack=3;   // W3-4; W9 restores 1 (W5-1)
     check(own.ticks<=open.ticks*11/10&&own.half<=open.half*11/10,"group slowed by flyers that lift");
     check(own.detour<=open.detour+kLiftDetourSlack,"group detoured round flyers that lift");
@@ -1705,7 +1705,7 @@ void planepin() {
 // finished chain's estimate strictly falls along some legal step from every cell (no loop, no false minimum) and no
 // chain reads a tile of another mobility class. (48 bodies run no worker jobs, so serial == workers is not this
 // test's claim: the chain code runs on the sim thread; the gate's both-exec runs and the 2,500-body scale run
-// under --both-exec cover it, docs/legion-10000-progress.md 7.6.)
+// under --both-exec cover it.)
 std::array<uint64_t,4> chainsRun(bool serial,bool churn=false) {
     Fixture f(512,320,serial);
     for(int z=0;z<320;++z)

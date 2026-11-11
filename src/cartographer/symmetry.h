@@ -14,7 +14,7 @@
 // (tile triples are nearly unique per section), and the mirrored block takes
 // the section's MIRROR TWIN, found by name (ne<->nw, lft<->rgt, ...), at the
 // mirrored placement. Blocks without a known section or twin are left alone
-// and reported. See docs/cartographer-improvements-progress.md.
+// and reported.
 
 #include "cartographer/sections.h"
 #include "cartographer/units.h"

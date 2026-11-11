@@ -12,7 +12,7 @@ so exhausted selections immediately disable the gift buttons. D, Escape, or Clos
 closes the window. The game keeps running.
 
 Share Mana controls **outgoing surplus** to that teammate. It defaults on for
-teammates and is sequenced through lockstep. Surplus still goes first to permitted
+teammates and is sequenced through lockstep. Surplus goes first to permitted
 recipients with the lowest storage fill percentage; disabling outgoing sharing
 does not stop incoming gifts of mana. Chat defaults on for every player and chooses
 who **receives your messages**. The server filters delivery. Default broadcast
@@ -53,27 +53,26 @@ The simplified diplomacy menu and recipient-cap checks are engine policy. The
 unfinished-site restriction avoids transferring an active construction contract.
 No retail executable or assets are distributed with these notes.
 
-`unit_gift_test` exercises the command/wire path, eligibility, cleanup, counts,
+`unit_gift_test` (ctest `unit_gift`) exercises the command/wire path, eligibility, cleanup, counts,
 score preservation, duplicate commands and recipient caps. It also covers mana
 overflow priority: lowest storage percentage first, equal percentages sharing
 proportionally to capacity.
 
+## Tests
 
-## Validation (2026-09-29)
+Gifting and sharing are lockstep commands, so every client and the server run
+the same engine version.
 
-Gifting and sharing are lockstep commands, so every client and the server must
-run the same engine version; the version that introduced them is in the
-[CHANGELOG](../CHANGELOG.md).
+The dialogue input regression (ctest `diplomacy_ui`) opens/closes D, checks a
+sparse player roster, exercises default and changed checkboxes, and verifies
+mixed selections, disabled opponent/empty-selection controls, and immediate
+post-gift selection/group cleanup. The economy regression covers directed
+sharing, need priority, re-enabling, no recipients, incoming sharing, rejected
+targets, wire encoding, and hashing.
 
-The dialogue input regression opens/closes D, checks a sparse player roster,
-exercises default and changed checkboxes, and verifies mixed selections, disabled
-opponent/empty-selection controls, and immediate post-gift selection/group cleanup.
-The economy regression covers directed sharing, need priority, re-enabling,
-no recipients, incoming sharing, rejected targets, wire encoding, and hashing.
-
-A live host/peer/referee/late-spectator test applied and restored sharing preferences
-through lockstep, including a deliberately forged command sender that the server
-corrected. All clients matched through 300 ticks. Chat tests verified the intended
-recipient, excluded players and spectators, an empty recipient mask, and default
-broadcast. Run the existing network fixture with `TAK_DIPLOMACY_NETWORK=1` for the
-allied-player plus enemy-AI variant.
+A live host/peer/referee/late-spectator game applies and restores sharing
+preferences through lockstep; the server corrects a forged command sender, and
+all clients match through 300 ticks. Chat tests verify the intended recipient,
+excluded players and spectators, an empty recipient mask, and default broadcast.
+Run the network fixture (`map_transfer_test --network ...`) with
+`TAK_DIPLOMACY_NETWORK=1` for the allied-player plus enemy-AI variant.

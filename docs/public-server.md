@@ -11,11 +11,10 @@ independent security audit or protection against a volumetric DDoS.
 
 ## Versions
 
-Server and clients must speak the same gameplay protocol; update the server and
-every client together when it changes. A `takserver` turns away a client of
-another protocol with a *protocol version mismatch* message. Which versions play
-together is listed in the [user guide](user-guide.md#versions) and in the
-[CHANGELOG](../CHANGELOG.md).
+Server and clients must speak the same network protocol: a 1.0.0 server plays
+with 1.0.0 clients. A `takserver` turns away a client of another protocol with a
+*protocol version mismatch* message, so update the server and every client
+together. The [CHANGELOG](../CHANGELOG.md) says which releases play together.
 
 A server whose game has no human player left (AIs watched by spectators) does
 not compute the lockstep check nobody compares, except for a recorded replay's
@@ -100,7 +99,7 @@ You do **not** need to download or copy a service unit from the source repositor
    Players then enter just your hostname in the multiplayer connection screen.
    Press Ctrl+C to leave the log viewer; this does not stop the server.
 
-   ![The Connect to Server panel with CUSTOM... selected and a server hostname typed in the address box](img/mp-connect-custom.jpg)
+   ![The Connect to Server panel with NEW SERVER... selected and tak.example.org typed in the address box](img/mp-connect-custom.jpg)
 
 **Optional: change server defaults.** Copy and edit the settings template:
 
@@ -173,7 +172,7 @@ there is no live certificate reload.
 
 Players enter just **`your-server.example`** in the multiplayer server field.
 The client automatically uses TLS and port **7677**. An optional `:port` supports
-servers on other ports; existing `tls://` addresses also work. TLS verifies both the certificate chain and the DNS name/IP address.
+servers on other ports; `tls://` addresses work too. TLS verifies both the certificate chain and the DNS name/IP address.
 An invalid certificate fails the connection; there is no plaintext fallback.
 A TLS listener accepts only TLS connections. TLS 1.2 or later protects the whole
 session, including registration, login, game passwords, chat and commands.
@@ -210,8 +209,8 @@ keep their private loopback connection. Debug command-line harness connections
 retain their explicit transport behavior. See [Versions](#versions) for which
 clients a server accepts.
 
-The login exchange alone is not session encryption. Do not expose the old
-plaintext port alongside TLS as a compatibility fallback.
+The login exchange alone is not session encryption. Do not expose a plaintext
+port alongside TLS as a fallback.
 
 ## Built-in Let’s Encrypt certificates
 
@@ -291,7 +290,7 @@ review the paths before restarting. It replaces the manual certificate options
 and credential entry. Do not run the game server as root just to bind port 80.
 On Windows and macOS, see [Running on Windows or macOS](#running-on-windows-or-macos).
 State uses private owner ACLs on Windows and owner-only Unix
-permissions. No new DLL/shared-library dependency is added; OpenSSL is static and
+permissions. ACME needs no DLL or shared library: OpenSSL is static and
 the vendored JSON parser is header-only (see `ACME-LICENSES.txt`).
 
 Use `--acme-staging` with a **separate state directory** to exercise Let’s Encrypt’s
@@ -312,10 +311,11 @@ clients.
 | `--sim-threads` | `auto` | CPU threads the running games' simulations share |
 | `--sim-cpus` | `none` | CPUs those threads are pinned to: `none`, `auto` or a list |
 
-A player who meets a game limit stays connected. At `--max-games` the **CREATE** window
-says *CANNOT OPEN A GAME: server game capacity reached*; at `--max-running-games` the
-room stays open and says *CANNOT START: server running-game capacity reached; retry
-later*. Both work again once a game has ended.
+A game limit refuses the request; it never disconnects the player. At `--max-games`
+the **CREATE** window says *CANNOT OPEN A GAME: server game capacity reached* and the
+player stays in the game list; at `--max-running-games` the room stays as it is and
+says *CANNOT START: server running-game capacity reached; retry later*, and the host
+may press **START** again. Both work again once a game has ended.
 
 Limits must be positive; invalid values fail startup. Game count limits may be
 raised to 64, accounts to 100,000, and memory/storage limits to 65,536 MiB.
@@ -356,10 +356,17 @@ outside the service's cpuset): the server names those numbers once at startup,
 log lines. With pinning, the log line names each running game's CPUs, for example
 `sim threads: 2 (4 over 2 games) pinned to cpus 1,3 / 5,7`. Like
 `--sim-threads`, it never changes a game's outcome. macOS does not let a program
-pin threads: there the option is ignored. A player's own single-player server
-and **Local server** are given the CPUs the game left them (every other one of
+pin threads: there the option is ignored (a CPU list says so at startup,
+`auto` quietly pins nothing). A player's own single-player server and
+**Local server** are given the CPUs the game left them (every other one of
 the hand-out) when the player has turned **Pin simulation threads** on, and
 `none` while it is off, as it is by default.
+
+The packaged service passes neither option, so it runs the defaults (`auto`,
+`none`). To change them, put them in the settings drop-in's extra arguments (see
+[changing server defaults](#changing-server-defaults)), for example
+`Environment="TAK_SERVER_EXTRA_ARGS=--sim-threads 16 --sim-cpus auto"`. A
+`CPUAffinity=` or cpuset in the unit narrows the CPUs `auto` counts.
 
 Map uploads reserve their advertised size before receiving data and expire
 after 30 seconds without progress or five minutes total. Each package remains
@@ -367,7 +374,8 @@ limited to 256 MiB. New disk writes are rejected at quota; old maps/replays are
 not silently deleted. Existing downloaded maps remain selectable. Uploaded maps and
 game mods and saved generated maps go in `--map-cache-dir`; without it, in
 `TAKengine/takserver` in the service account's per-user data folder (`$XDG_DATA_HOME`
-or `~/.local/share` on Linux, `%APPDATA%` on Windows). The `--data` folder is only
+or `~/.local/share` on Linux, `%APPDATA%` on Windows, `~/Library/Application Support`
+on macOS). The `--data` folder is only
 read, so it can be read-only to the service account.
 
 Ordinary lobby/chat/setting requests have per-connection, account, IP and global
@@ -386,12 +394,11 @@ jobs. Admission reserves twice the advertised package size for canonical and
 extracted bytes, including jobs whose sender disconnects. Cached file sizes are
 checked before allocation and must match the offer; uploaded lengths and final
 admission are checked again. On a cache miss, even an installed map is requested
-from the host instead of rebuilding it on the network loop. This can add a first-use
-upload but preserves the existing protocol. Validation results are discarded after
-the host leaves, changes rooms or changes the relevant settings.
-Cancellation uses a shared atomic flag whose lifetime is independent of the
-connection, including on the macOS 14 SDK; workers never dereference a departed
-client to check cancellation.
+from the host instead of rebuilding it on the network loop, which can add a
+first-use upload. Validation results are discarded after the host leaves, changes
+rooms or changes the relevant settings. Cancellation uses a shared atomic flag
+whose lifetime is independent of the connection; workers never dereference a
+departed client to check cancellation.
 
 TDF parsing preserves case-insensitive, last-definition lookup and duplicate
 section order, using an index instead of scanning earlier entries. Limits are
@@ -671,12 +678,12 @@ be free when the server starts. Do not forward or open it to the Internet: this
 is a local monitoring interface and requires no change to the packaged service
 sandbox. For remote monitoring, run the command through SSH.
 
-The query requires an updated running server. Failure or a three-second timeout
+The query needs the server running on that port. Failure or a three-second timeout
 returns a nonzero exit status with a diagnostic on standard error and no JSON
 on standard output. Status processing is bounded to 32 datagrams per second,
 including invalid requests, with at most eight handled per network-loop pass.
 Poll about once per second; excessive local traffic can cause query timeouts.
-Status does not modify game state or change the gameplay network protocol.
+Status does not modify game state.
 
 ### Changing server defaults
 
@@ -792,7 +799,7 @@ and attacks exceeding the host/network capacity. Map admission and room caps
 bound work but do not isolate each referee into its own process. The TLS client
 checks chains, hostnames and expiry, then online revocation: after the handshake
 it fetches the CRL named by the server certificate's CRL Distribution Points
-(plain HTTP, 4-second limit, 10 MiB cap; Let's Encrypt no longer runs OCSP, so
+(plain HTTP, 4-second limit, 10 MiB cap; Let's Encrypt does not run OCSP, so
 CRLs are the online source) and refuses the connection if a valid CRL lists the
 certificate. A CRL is trusted only when its issuer and signature match the
 certificate's issuer, that issuer may sign CRLs, it is current (five minutes of
@@ -813,9 +820,6 @@ and [systemd execution sandbox](https://github.com/systemd/systemd/blob/main/man
 
 ## Validation and testing (for developers)
 
-See the [2026-10-01 validation report](public-server-validation-2026-10-01.md)
-for local suites, remote TLS matches, and the deployment boundary.
-
 `tls_test` checks encrypted framing/backpressure, valid connections, wrong host,
 untrusted/expired certificates, abrupt peer closure and plaintext rejection, and
 CRL revocation through a loopback CRL host: good, revoked, cached, unreachable
@@ -823,10 +827,15 @@ CRL revocation through a loopback CRL host: good, revoked, cached, unreachable
 malformed CRLs.
 `server_public_test.py` exercises real-server admission, map reservation,
 registration closure, floods, invalid configuration, TLS login and ordinary
-lobby traffic. `server_spectators_test.py` checks the per-room spectator rule. `server_commands_test` checks malformed command batches and
-unsafe coordinates. Existing authentication, campaign, map-transfer and multiplayer
-regressions remain required. Native platform CI runs the TLS test and verifies
-that executable imports contain no new non-system dynamic libraries.
+lobby traffic. `server_limits_test.py` checks that the game and running-game limits
+refuse CREATE and START while the connection and the room stay usable, and that a
+seat is still left when the address's request budget is spent.
+`server_sim_threads_test.py` checks `--sim-threads` and `--sim-cpus`: what each
+accepts and refuses, the per-game share and its log lines, and that a seeded game
+starts the same either way. `server_spectators_test.py` checks the per-room spectator rule. `server_commands_test` checks malformed command batches and
+unsafe coordinates. The authentication, campaign, map-transfer and multiplayer
+tests cover the rest of the server. Native platform CI runs the TLS test and verifies
+that executable imports contain no non-system dynamic libraries.
 
 ### Focused untrusted-input regressions
 
@@ -874,9 +883,7 @@ python3 tools/acme_pebble_test.py --driver build-o2/acme_test_driver \
 
 The optional integration harness needs Python’s `cryptography` package to create
 an already-due fixture; the game/server and native CTests do not need Python
-cryptography, Pebble, or a container runtime. Validation on 2026-10-01 passed the
-169-test optimized Debug suite, six focused Release and Clang checks, and both
-native and end-to-end ACME checks under AddressSanitizer/LeakSanitizer. Pebble was
-configured to reject 50% of nonces to exercise retry handling. The TLS regression
+cryptography, Pebble, or a container runtime. Configure Pebble to reject 50% of
+nonces (`PEBBLE_WFE_NONCEREJECT=50`) to exercise retry handling. The TLS regression
 also replaces the server context while an established connection transfers data.
 These checks do not issue a production certificate or alter any live service.

@@ -6,7 +6,6 @@ scn 1
 # Legion Holding run out of reach (hold_out_max; hold0_max at field potential 0). Mechanism (audit AR-06): the
 # shared field single-files the blob onto one row, only the head of the line is in range, and a shooter's
 # braking is invisible to the settle rule. Source: the audit's attackring probe ($SCR/ar06/attackring.cpp).
-# PLAN targets (Retail-floor exception keys, 3.0): see docs/legion-exit-tables.md 'W5 step 0'.
 # Row: 60 attackers vs a STRUCTURE (a 4x4 house, reach = range + 8*4 + 24 px). PLAN: in reach by tick 2400 2/60 -> >= 40/60
 # (Retail 50); damage at 80 s (tick 2400) 1565 -> >= 15k with 10-damage shots.
 name attackring-struct-60

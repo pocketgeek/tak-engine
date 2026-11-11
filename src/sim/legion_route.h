@@ -1,6 +1,6 @@
 #pragma once
-// legion_route.h -- the route-query interface of Legion's navigator (Legion 10,000 stage 5, brief phase 4;
-// docs/legion-10000-progress.md 3.3, docs/legion-pathfinding.md "Legion 10,000 stage 5").
+// legion_route.h -- the route-query interface of Legion's navigator
+// (docs/legion-pathfinding.md "Route queries").
 //
 // Movement consumers -- steering and its descent, the pinwheel and the passage gate, group awareness, destination
 // packing (formation and packed slots, the area bounds), attack rings, the settle rule, the lift walk -- read a route

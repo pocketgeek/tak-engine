@@ -6,11 +6,10 @@ are reverse-engineered from the retail binary by **static analysis only** — sa
 rules as the engine (`docs/retail-engine.md`): never copy its code or ship the
 binary/its assets; reimplement observed behaviour.
 
-This document records the retail research and original port milestones. The
-editor's newer workflow, validation and authoring improvements are tracked in
-[the current implementation ledger](cartographer-improvements-progress.md);
-the historical milestone lists below are not a current feature checklist.
-For how to use the editor, see the [Cartographer user guide](cartographer-guide.md).
+This document records the retail research behind the port and how the port
+implements the retail editor's tools and formats, plus the editor additions
+documented below. It is not a full feature list of the editor; for how to use
+the editor, see the [Cartographer user guide](cartographer-guide.md).
 
 ## What it is (from the PE)
 
@@ -74,7 +73,7 @@ Ron Gilbert (design).
 
 ## File formats to master (RE targets)
 
-- **`.tnt`** WRITE format — DONE (`Map::save()`, RE'd from Cartographer 0x41ba70):
+- **`.tnt`** WRITE format — `Map::save()`, RE'd from Cartographer 0x41ba70:
   52-byte header (13 dwords, magic 0x4000) then sections in physical order:
   heights(u8/cell) · features(u16/cell) · feature-name table(count x 132B:
   {u32 seq, 128B name}) · tile keys(u32/block) · cols(u8) · rows(u8) ·
@@ -90,21 +89,21 @@ Ron Gilbert (design).
   (`W x H`, cells/32), memory=`32 MB`, useonlyunits, hasscenario; nested
   [Map Data]: Type=`Network 1`, aiprofile=`DEFAULT`; nested [specials] /
   [special%d]: specialwhat=`StartPos%d`, XPos, ZPos. Start positions are
-  16-byte records (XPos, ZPos, number). Writer: DONE (`tak::ota`, `src/tnt/ota.{h,cpp}`).
+  16-byte records (XPos, ZPos, number). Writer: `tak::ota` (`src/tnt/ota.{h,cpp}`).
 - Tile sections come from the retail install's `terrain/<hexkey>.jpg` +
-  `sections.hpi` prefabs — reuse `terrain::Compositor` + the section prefab loader.
+  `sections.hpi` prefabs — the editor uses `terrain::Compositor` + the section prefab loader.
 
-## Port architecture (planned)
+## Port architecture
 
 `src/cartographer/` — an SDL2/C++20 app (`cartographer` target), reusing the
 engine's `tnt`, `terrain::Compositor`, `hpi::Vfs`, `client/mapview` (render),
-`client/font`, `jpeg`. New pieces: a **TNT writer**, an **OTA scenario writer**,
-the **tile/section palette + brush tools**, the **height tools**, the
+`client/font`, `jpeg`. Its own pieces: a **TNT writer**, an **OTA scenario writer**,
+the **tile/section palette + brush tools**, the
 **feature/unit/start/trigger object model + property dialogs**, and the
-**trigger (condition/action) system**. Immediate-mode UI in our own widgets
-(we have font + input already), matching Cartographer's panel layout 1:1.
+**trigger (condition/action) system**. Immediate-mode UI in our own widgets,
+following Cartographer's panel layout.
 
-Source layout (split 2026-10-12): `editorstate.h` declares the editor state,
+Source layout: `editorstate.h` declares the editor state,
 `cart::Session` (command line, window, open document, save/history) and
 `cart::Editor` (UI state); `main.cpp` is startup plus the frame loop,
 `session.cpp` save/open/undo/recovery/Test Map, `headless.cpp` the command line
@@ -115,45 +114,45 @@ shortcuts, status bar and minimap, `dialogs.cpp` modal dialogs and lists,
 live mirroring and the terrain clipboard (their SDL-free mirror math, section
 twins and clipboard data are in `symmetry.cpp`).
 
-### Build phases
-0. Skeleton: window, open a `.tnt`, render terrain (reuse MapView), pan/zoom. ✅ this session
-1. TNT writer + New/Save/Save As round-trip (load→save→byte-compare).
-2. Tile palette + paint brush; height tools; Grid overlay; zoom levels.
-3. Feature/unit/start-pos placement + selection + the property dialogs. ✅
-   [start positions + FEATURES + UNITS all DONE. Units read/written through the
-    SHARED tak::crt (parse/write; also used by takclient/takserver). Place/move/
-    delete + a Unit Properties dialog (double-click: player/health/armor/weapon/
-    veteran/angle); Save writes the map's .crt, preserving the trigger rules,
-    regions, and custom types the unit tool doesn't touch.]
-4. Scenario Properties / Resize / Use Only / Check Map. ✅
-   [Scenario Properties + Resize (modal widget layer); Use Only checklist overlay
-    (toggle allowed types; writes the sibling <map>.tdf `[TYPE]\t{}` list + the
-    OTA `useonlyunits=<name>.tdf` ref, empty=unrestricted); Check Map message box
-    (warns which placed unit types are restricted — the one retail validation,
-    also fired at save). Keys: P/R/U/C.]
-5. The trigger system (Scripting): condition/action opcode tables (RE), rule
-   editor, per-player rules, script write. ✅
-   [Scripting overlay (key T): per-player rule groups, each a list of conditions
-    + actions rendered human-readably from the 26+26 opcode templates
-    (src/cartographer/triggers). Navigate players/rules; +/- RULE, +/- COND,
-    +/- ACT (26-item opcode picker); double-click a condition/action to edit its
-    parameters (fields labelled by param kind). Saves through tak::crt::write in
-    the .crt -- verified: Ulin's Folly's 30 rules load, render correctly ("I
-    control more than 2 ARAAT at hill"), and save back byte-identical.]
-6. Land Lasso + Clear Area; the .kmp bundle writer; polish to 1:1. ✅
-   [Clear Area (key K): arm, drag a box, confirm -> removes units + clears the
-    feature plane inside. Land Lasso (Ctrl+L): land-paint vs object-mode toggle.
-    .kmp bundle: SHARED tak::hpi::pack writes an HPI holding kmap/<name>/
-    <name>.{tnt,ota,crt,txt}(+.tdf) -- the retail distributable-map format the
-    engine mounts directly (Ctrl+B, or headless --bundle). Verified: a bundled
-    map loads through the engine's real path (MountSet -> findMap -> Map::load ->
-    28 units); hpitool pack round-trips. Recent Files is N/A -- the editor opens
-    maps by name via the VFS, not a file-open dialog.]
+### Retail features and how the port does them
+- Window, open a `.tnt`, render terrain (MapView), pan/zoom.
+- TNT writer + New/Save/Save As round-trip (load→save→byte-compare).
+- Tile palette + section stamp brush; Grid overlay; zoom levels.
+- Feature/unit/start-pos placement + selection + the property dialogs. Units
+  are read/written through the SHARED tak::crt (parse/write; also used by
+  takclient/takserver). Place/move/delete + a Unit Properties dialog
+  (double-click: player/health/armor/weapon/veteran/angle); Save writes the
+  map's .crt, preserving the trigger rules, regions, and custom types the unit
+  tool doesn't touch.
+- Scenario Properties / Resize / Use Only / Check Map. Scenario Properties +
+  Resize are modal widget-layer dialogs; Use Only is a checklist overlay
+  (toggle allowed types; writes the sibling <map>.tdf `[TYPE]\t{}` list + the
+  OTA `useonlyunits=<name>.tdf` ref, empty=unrestricted); Check Map is a
+  message box (warns which placed unit types are restricted — the one retail
+  validation, also fired at save). Keys: P/R/U/C.
+- The trigger system (Scripting): condition/action opcode tables (RE), rule
+  editor, per-player rules, script write. The Scripting overlay (key T) shows
+  per-player rule groups, each a list of conditions + actions rendered
+  human-readably from the 26+26 opcode templates (src/cartographer/triggers).
+  Navigate players/rules; +/- RULE, +/- COND, +/- ACT (26-item opcode picker);
+  double-click a condition/action to edit its parameters (fields labelled by
+  param kind). Saves through tak::crt::write in the .crt: Ulin's Folly's 30
+  rules load, render correctly ("I control more than 2 ARAAT at hill"), and
+  save back byte-identical.
+- Land Lasso + Clear Area; the .kmp bundle writer. Clear Area (key K): arm,
+  drag a box, confirm -> removes units + clears the feature plane inside. Land
+  Lasso (Ctrl+L): land-paint vs object-mode toggle. .kmp bundle: SHARED
+  tak::hpi::pack writes an HPI holding kmap/<name>/<name>.{tnt,ota,crt,txt}(+.tdf)
+  -- the retail distributable-map format the engine mounts directly (Ctrl+B, or
+  headless --bundle). A bundled map loads through the engine's real path
+  (MountSet -> findMap -> Map::load -> 28 units); hpitool pack round-trips.
+  Recent Files is N/A -- the editor opens maps by name via the VFS, not a
+  file-open dialog.
 
-The Cartographer port is FEATURE-COMPLETE: all editor tools, the full Scenario
-menu, and the .kmp writer. The engine-side work this left (playing scenario
-maps: applying .crt unit stats and a typed trigger evaluator) is done too; see
-[Engine: `.crt` scenario RUNNER](#engine-crt-scenario-runner-is-now-in-the-sim-done-knetversion-36)
+The port covers all retail editor tools, the full Scenario menu, and the .kmp
+writer. The engine plays scenario maps: it applies .crt unit stats and runs a
+typed trigger evaluator; see
+[Engine: `.crt` scenario runner](#engine-crt-scenario-runner-in-the-sim)
 below.
 
 ## Deep RE findings (tools + triggers, confirmed from the binary)
@@ -162,8 +161,8 @@ below.
 - Left panel is a palette (`CItemView`) with tabs: **Map Sections, Special,
   Features, Trigger, Units, Buildings**. Map Sections load from
   `sections/<world>/<category>/*.tnt` (each a prefab `.tnt`; a section is
-  256px = 8x8 tiles = 16x16 cells). We ALREADY load section prefabs for the map
-  generator (reuse that).
+  256px = 8x8 tiles = 16x16 cells). The engine's section prefab loader, also
+  used by the map generator, reads them.
 - Left-click (land mode) snaps to a **256px grid** and copies the selected
   section's cells `{tileKey u32, col u8, row u8}` verbatim into the tile plane.
   Height rides in the prefab -- there is **NO separate height tool** (painting a
@@ -216,8 +215,8 @@ i32 numRegions;      RegionDef[272] x N
   i32 weapon%@0x218 · i32 angle@0x21c (deg 0..359) · i32 veteran@0x220. Bytes
   0x224..0x238 are a type-derived cache + heap ptr = in-memory residue; a clean
   writer zero-fills them and the game loads identically. Coords are **16px
-  cells** (NOT the old 2px-unit guess; old offsets 0x160/0x1f8/0x1fa are zero in
-  every file — that was the bug in the pre-RE reader).
+  cells** (offsets 0x160/0x1f8/0x1fa are zero in every file; they hold no
+  coordinates).
 - **CustomType (272/0x110):** name char[256]@0x000 · i32 stat[4]@0x100 =
   default {health,armor,weapon,?} — a type is "custom" only when its stats
   differ from {100,100,100,0} (e.g. Cairbray's VERBALL = {100,0,0,0}).
@@ -232,8 +231,6 @@ i32 numRegions;      RegionDef[272] x N
 - There is **no per-player header** — team/color/AI live in the `.ota`, not the
   `.crt`; player identity is purely the index 0..8.
 
-The 1328-byte RuleRecord in an earlier note was wrong (it is 324 on disk).
-
 ### Trigger opcodes: 26 CONDITIONS + 26 ACTIONS (tables at 0x51c190)
 Param types: value, unit type, player, location, text string, flag. Conditions
 are opcode==display-index (identity remap). ACTIONS: display order != internal
@@ -241,13 +238,12 @@ opcode -- a remap permutation (0x51c3b0); the 4 team/opponent victory variants +
 the 4-arg Display were appended later, so **serialize the INTERNAL opcode**.
 String-param defaults: unit type="Any Unit", player="All Players",
 location="Anywhere"; text string = literal 256-byte string; flag = int index.
-Full 26+26 template list captured in the RE task output (session d39a8c26,
-task ac01eaf629a4e233d).
+The full 26+26 template list is in `src/cartographer/triggers.cpp`.
 
-### Engine: `.crt` scenario RUNNER is now in the sim (DONE, kNetVersion 36)
+### Engine: `.crt` scenario runner in the sim
 `tak::crt::parse` reads the full record; the engine's scenario branch spawns the
 placed units at the corrected cells, APPLYING each unit's health% and veteran,
-and honouring its facing angle. The 26+26 trigger opcodes now run in the sim:
+and honouring its facing angle. The 26+26 trigger opcodes run in the sim:
 `src/sim/scenario.{h,cpp}` (`ScenarioScript`) mirrors `MissionScript` — built on
 every peer, ticked in `World::tick`, folded into `stateHash`, so flag/timer
 state, spawns, and win/lose stay in lockstep. Rules are EDGE-triggered (fire
@@ -259,13 +255,10 @@ force per-player defeat via `World::forceDefeat` (respected by `updateOutcome`,
 hashed); "Display" actions surface as HUD notices for the viewing player.
 Verified: deterministic (stateHash reproduces + cross-build golden), edge-timing
 correct (a "set countdown timer to N" fires once then counts down), victory
-defeats opponents. `src/sim/mission.cpp` remains the separate CAMPAIGN runner.
+defeats opponents. `src/sim/mission.cpp` is the separate CAMPAIGN runner.
 
-The old client-side heuristic trigger code was removed (the superseded
-`loadTriggers`/`Triggers`/`TrigRecord`/`Placement`/`load` in tak::crt, the
-gameview spawn-rule/scoring/message machinery, and the `--hilltest` harness);
-tak::crt is now just the typed `parse`/`write`. Minor remaining: "Move all"
-uses a plain move order; kill/loss credit is by last-hitter.
+tak::crt is the typed `parse`/`write`. Known differences: "Move all" uses a
+plain move order; kill/loss credit is by last-hitter.
 
 ### Command ID -> handler VAs (for follow-up RE)
 ScenProps 0x401890 · UseOnly 0x401910 · zoom 0x401990/a10/a90/b10 · 12.5%
@@ -277,9 +270,9 @@ Feature Del 0x40b460 · StartPos Del 0x40b750 · Trigger Del/Props
 TXT 0x41c4e0 · CRT 0x40d8d0 · bundle 0x418b80. GetCell 0x419120 · SectionStamp
 0x41d2d0 · SetZoom 0x419790.
 
-## Browser scrollbar, edge scrolling and borderless fullscreen (2026-10-14)
+## Browser scrollbar, edge scrolling and borderless fullscreen
 
-Shipped in 0.8.3. The math is SDL-free in
+The math is SDL-free in
 `src/cartographer/scrolling.h`; `palette.cpp` draws and wires the scrollbar,
 `chrome.cpp` the display mode, F11 and edge scrolling, `dialogs.cpp` the
 Preferences dialog.
@@ -291,17 +284,17 @@ Preferences dialog.
   wheel scrolls 40px a notch. The scroll is clamped every frame (list shrink,
   window resize). A different list (tool, category, faction, search, group,
   world) starts at the top; the same list growing or shrinking (a start placed
-  or undone) keeps its place. Grid hit-testing now subtracts the 4px top pad
+  or undone) keeps its place. Grid hit-testing subtracts the 4px top pad
   the cells are drawn with. There is no keyboard navigation of the browser, so
   nothing to keep in view.
 - **View > Preferences** (`M_PREFERENCES`): DISPLAY windowed / borderless
   fullscreen, EDGE SCROLLING off / on, UI SCALE 50-200%. Retail had no options
-  dialog; earlier editor options lived as View toggles, which stay. All three
+  dialog; the editor's other options are View toggles. All three
   persist in `preferences.txt` (`fullscreen`, `edgescroll`, `scale`).
 - **Borderless fullscreen** is `SDL_WINDOW_FULLSCREEN_DESKTOP` as in the game
   client, applied live, toggled by **F11** (an editor function key beside F5
   Test Map / F6 model) and restored on startup (interactive runs only; `--shot`
-  keeps its window). The frame loop already re-derives `kUIScale` and the
+  keeps its window). The frame loop re-derives `kUIScale` and the
   logical size from the renderer output each frame, so drawing and pointer
   mapping follow the desktop size unchanged. Only the windowed size is
   remembered (`persistPreferences` skips fullscreen sizes); leaving fullscreen
@@ -333,9 +326,7 @@ Preferences dialog.
   `TAK_CARTO_SHOT_DIR=<dir>` makes the two UI workflows write screenshots.
   Each check was shown to fail against a deliberately broken build.
 
-## Game data folder in Preferences (2026-10-14)
-
-Shipped in 0.8.3.
+## Game data folder in Preferences
 
 View > Preferences ends with **GAME DATA FOLDER (SHARED WITH THE GAME)**: the
 install this editor mounted, elided at its start, and **CHANGE...**, which opens
@@ -360,7 +351,7 @@ registry key the retail installer wrote.
   (`saveSettings`): the game, open at the same time, cannot undo
   Cartographer's change with its next unrelated save, and vice versa.
 - **Applying it restarts the editor**, not a live reload. `openDocument`
-  already remounts per open, but the unit registry and type list, section
+  remounts per open, but the unit registry and type list, section
   catalogue, thumbnails and portraits, the default output folder and the open
   document all hang off the install, and a map from the old install may not
   exist in the new one. A fresh process gets all of it right by construction.
@@ -371,11 +362,11 @@ registry key the retail installer wrote.
   `cart::restartArguments`: `--out` kept, the one-shot `--new/--world/--random`
   and headless options dropped, and the document reopened -- its saved
   `.kmp`/`.tnt` file, or the installed map's name, or nothing for an unsaved
-  new map. A file named on the command line now opens through File > Open once
+  new map. A file named on the command line opens through File > Open once
   the editor is up, which is how the restarted editor gets it back. So does a
   map name the install does not have, in an interactive launch: the editor
   opens on the blank map with OPEN FAILED instead of exiting, since the new
-  install may lack the map that was open (headless runs still exit 1). If the
+  install may lack the map that was open (headless runs exit 1). If the
   prompt's SAVE fails, the restart is called off with it, so a later exit is
   only an exit.
 - **Greyed** with the reason when `--data` or the launch folder chose the
@@ -396,9 +387,7 @@ registry key the retail installer wrote.
   `TAK_CARTO_SHOT_DIR=<dir>` writes the dialog's states as screenshots. Each
   check was shown to fail against a deliberately broken build.
 
-## BLOCKED tool (2026-10-14, not retail)
-
-Shipped in 0.8.3.
+## BLOCKED tool (not retail)
 
 A non-retail addition: retail Cartographer has no blocker tool (no such string or
 command in the binary; blockers came only with stamped sections). The fifth tool
@@ -407,17 +396,17 @@ paint only on 0xFFFF, erase only 0xFFFC, every other value untouched; 1-16 cell
 square brushes, 4-connected strokes, Shift+drag rectangles, a red/blue (blocker /
 road) overlay with the tool or View > Show blocked cells (B, `blocked` in
 `preferences.txt`), live symmetry and Symmetrize. No tile changes, so `edited` stays
-clear and the minimaps are kept. The engine already honours 0xFFFC (`pathblock`
+clear and the minimaps are kept. The engine honours 0xFFFC (`pathblock`
 test, Retail and Legion).
 
-## RE status
-- Resource map + command handlers + tool behaviours + trigger opcode tables +
-  TNT/OTA write formats + coordinate model + world types: **DONE**.
+## RE coverage
+- Covered: resource map + command handlers + tool behaviours + trigger opcode
+  tables + TNT/OTA write formats + coordinate model + world types.
 - `.crt` full binary layout (UnitRecord 568B, Rule 324B, CustomType 272B,
-  RegionDef 272B, per-player group structure): **DONE** — proven byte-exact,
+  RegionDef 272B, per-player group structure): proven byte-exact,
   implemented as `tak::crt::parse`/`write` in the shared lib, round-trip tested
   by `tnttool crt` across all 27 shipped scenario maps.
-- `.kmp` bundle writer (retail 0x418b80): **DONE** as the shared
+- `.kmp` bundle writer (retail 0x418b80): implemented as the shared
   `tak::hpi::pack`.
 - Not pursued: the minimap's exact retail downsample (ours regenerates it from
   the tiles and the world palette); whether the loader consumes UnitRecord

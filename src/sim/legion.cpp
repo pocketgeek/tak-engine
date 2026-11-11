@@ -72,7 +72,7 @@ bool gInstrumentProbes=false;   // LegionNavigator::setInstrumentProbes: the ver
 uint64_t gBudgetDiv=1;          // LegionNavigator::setBudgetDivisorForTest (process-wide; 1 in the game)
 uint64_t gFieldBytes=0;         // LegionNavigator::setFieldBytesForTest (process-wide; 0: NavBudget::kFieldBytes)
 // Stage 6: the routing hierarchy's sector size, K = 1 << gSectorShift origins (LegionNavigator::setSectorSizeForTest;
-// 32 in the game, chosen by measurement: docs/legion-10000-progress.md 7.6).
+// 32 in the game, chosen by measurement).
 int gSectorShift=5;
 bool gHierRoutes=true;   // LegionNavigator::setHierarchicalRoutesForTest (process-wide; true in the game)
 // Perf follow-up I: staticChanged finds the routes a change reaches through the route index (routeBins) instead of
@@ -5353,7 +5353,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 // The popped cell is an interior cell of its tile (the common case: 88% of a 32-tile), so its eight
                 // neighbours lie in that tile: the tile's pointers, offset, dAllow bit and via plane are resolved
                 // once here instead of per neighbour (inside / cellIn / slot / viaTile / viaSlot each resolved them
-                // again; cellIn alone was 9-12% of a 1,000-body tick, docs/legion-deep-dive-2026-11-02.md 6.3).
+                // again; cellIn alone was 9-12% of a 1,000-body tick).
                 // Exact: every read and write is the same cell of the same tile and every allocation the same call
                 // (slot, viaSlot), the pointers re-read after one. inside(x,z) holds (g was read from a tile), so the
                 // tile's allow bit is set; a neighbour's inside() is the window's bounds alone.
@@ -8554,7 +8554,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // at most kMaxGiveWays times per leg, never straight back the way it last
     // gave way.
     // Retail has no give-way at all (its blocked mover clamps, slows and
-    // presses on: docs/retail-engine.md, "retail genuinely wedges").
+    // presses on: docs/retail-engine.md, "Retail wedges: there is no avoidance").
     bool giveWay(const Unit& u,Member& m,const Plane& p,RouteView f,int ox,int oz) {
         if(!f||!policy(m.kind).completes)return false;
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
@@ -14089,7 +14089,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // unturned step removed 99% of the statue ticks on 60 of 64 fixtures with
         // arrival equal or better (bridges-100 t90 -19%, densehead -14%,
         // taperbridge-100 -7%; one loss, motion-cross-100 +5%) and no fixture
-        // under the Retail floor (docs/legion-deep-dive-2026-11-02.md, 5.4).
+        // under the Retail floor.
         // Retail's mover traces round a body at its own speed.
         // Two unturned steps keep the cap. The in-reach press (pressIn): at travel speed its braked
         // bodies glided past reach and pressed again from the same origin (legion_pressin). A

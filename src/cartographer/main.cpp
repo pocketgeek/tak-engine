@@ -9,7 +9,6 @@
 // live in selection.h. This file starts the editor (Session: command line, data
 // root, window, document load) and runs the frame loop; editorstate.h maps the
 // other concerns to their files.
-// See docs/cartographer-improvements-progress.md for completed and pending work.
 
 #include "net/netcompat.h"
 #include <SDL.h>

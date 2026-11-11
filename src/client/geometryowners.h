@@ -1,7 +1,7 @@
 #pragma once
 
 // Stable generational ownership of per-unit render cache entries (rendering
-// optimization workstream C, docs/render-optimization-progress.md).
+// optimization workstream C).
 //
 // Before this, GameView kept its per-unit geometry in a vector indexed by the
 // unit's position in the depth-sorted visible list: entry i belonged to
