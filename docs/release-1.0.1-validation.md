@@ -14,7 +14,7 @@ Tag `v1.0.1` -> TODO (the release preparation commit).
 | `b780a96d` | Construction sparkles of a unit killed mid-build run out instead of freezing on its body | display only |
 | `f0ac09e0` | Water graves (wrecks and bodies on a shore or sea bed) decompose as land corpses do; the reclaim hold treats them alike | changed: protocol 324 |
 | `21eb6cc3` | A decaying body sinks (1/8 px per update, as retail) and fades over its last 60 updates | display only |
-| `3ea8f47b` | A ranged weapon that is not a `waterweapon` or `unitsonly` no longer picks, keeps, aims at or is ordered onto a body over water whose SweetSpot is under the surface (a swimming Mer Warrior) | changed: protocol 324 |
+| `ef91dc42` | A ranged weapon that is not a `waterweapon` or `unitsonly` no longer picks, keeps, aims at or is ordered onto a body over water whose SweetSpot is under the surface (a swimming Mer Warrior) | changed: protocol 324 |
 
 Two of them leave retail's behaviour on purpose, by the owner's decision: retail keeps a
 water grave for good, and retail goes on shooting at a swimming Mer Warrior, every shot
@@ -27,7 +27,7 @@ an aim point under water", and the water grave notes).
 
 ## Local tests
 
-Linux, Debug `-O2 -g` (`build-o2`), on `3ea8f47b`:
+Linux, Debug `-O2 -g` (`build-o2`), on `ef91dc42`:
 
 - **Quick suite** (`ctest -L quick`): 629 / 629. The Release build's quick suite: 448 / 449,
   `cli_tools` failing only because that local build is configured without
