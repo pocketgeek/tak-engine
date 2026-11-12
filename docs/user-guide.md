@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Quick start](quick-start.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Changelog](../CHANGELOG.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 1.0.2**. Which versions it plays with, and whose
+This guide covers **TAK Engine 1.0.3**. Which versions it plays with, and whose
 replays it plays: see [Versions](#versions). It is written for three kinds of
 reader:
 
@@ -2646,7 +2646,7 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-TAK Engine 1.0.2 uses network protocol **324** and replay format **15**.
+TAK Engine 1.0.3 uses network protocol **325** and replay format **15**.
 
 - **Multiplayer:** a server turns away a client whose protocol differs from its
   own; the connection fails with a *protocol version mismatch* message. A server

@@ -11,7 +11,7 @@ with every TAK Engine package, next to the game.
 This guide is for players and mapmakers. It explains what you see on screen and
 what each control does, from a first map to sharing a finished one.
 
-This guide describes Cartographer in TAK Engine 1.0.2.
+This guide describes Cartographer in TAK Engine 1.0.3.
 
 Every picture in this guide is a real Cartographer screen (the Test Map room is
 the game's), using the original game's art. Some put two moments side by side,

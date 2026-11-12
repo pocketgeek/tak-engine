@@ -20,6 +20,52 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports: the latest release's live in [`docs/`](docs/), every earlier one's
 in the source of its tag.
 
+## 1.0.3
+*2026-11-12 · protocol 325 · replay format 15 · does not play with 1.0.2, nor its replays*
+
+Units no longer keep attacking something they can never hurt. Most of these
+changes differ from the original game, which kept firing.
+
+- **Shots that keep landing short end the attack, or the unit moves.** A unit whose
+  shots stop in a bank, a wall's foot or a slope it cannot see past now walks or
+  sails to a spot with a clear shot, and if there is none it gives the target up
+  and picks another. A ship shooting at a unit on a raised shore used to empty its
+  quiver into the bank. Units on Hold Position give such a target up without moving.
+- **Units back away from targets inside their minimum range.** A Catapult, Trebuchet
+  Ship, Submersible, Tortoise, Beast Rider or Amazon Knight ordered onto something
+  too close to shoot used to stand there for good. It now backs off to where it can
+  fire, unless it is on Hold Position.
+- **Weapon-switching units only take attacks their selected weapon can make.** A
+  Fallen Angel holding its Death Sword is no longer sent against a ship it cannot
+  hurt, and a Thirsha with Lightning selected is not sent against a swimming Mer
+  Warrior. Select the weapon that works first.
+- **Stone, freeze and mind control are not wasted.** A Basilisk is no longer sent to
+  stone a ship, a god or a building that cannot be turned to stone, and the same
+  holds for freeze and mind control.
+- **The computer picks weapons that work.** A computer's Mage Archer, Grenadier or
+  Chief Engineer used to switch to a weapon that did nothing to its target and back,
+  again and again, never firing. A computer's Fallen Angel takes its Fire Bomb against
+  a ship, and a Sea Dragon on Hold Position fires the weapon that reaches.
+- **Flyers on Hold Position take off to fight.** A landed Thirsha, Iron Beak or Taros
+  priest on Hold Position used to sit on the ground with an enemy beside it: the
+  Thirsha's attack only works in flight, and a landed flyer cannot turn to face. It
+  now rises over its spot, turns to the enemy and fires, without chasing, and lands
+  again when the enemy is gone. Flyers that can fire from the ground stay down, and
+  Passive ones never take off.
+- **The Wrath of Tammuz's storm reaches boats.** Over deep water the Crusades
+  Hurricane ran along the sea bed, too far below boats and swimmers to touch them.
+  It now runs on the surface.
+- **The Creon Submersible can be hit from any side.** Its aim point lay outside its
+  body, so straight shots missed it depending on which way it faced.
+- **Custom music no longer changes the title screen.** Music you choose for the
+  title track now plays only in games; the title screen and the lobby keep the
+  original.
+- **Legion pathfinding:** a flyer that rose to let troops pass under it kept its weapons
+  from reloading until it landed; they reload in the air now.
+
+Full notes: [release-1.0.3-notes.md](docs/release-1.0.3-notes.md) ·
+validation: [release-1.0.3-validation.md](docs/release-1.0.3-validation.md)
+
 ## 1.0.2
 *2026-11-12 · protocol 324 · replay format 15 · plays with 1.0.1 and its replays*
 
@@ -33,8 +79,8 @@ in the source of its tag.
   and no size there. New saves carry the map picture and size, as maps saved by
   Cartographer do, and random maps saved by earlier versions get them when listed.
 
-Full notes: [release-1.0.2-notes.md](docs/release-1.0.2-notes.md) ·
-validation: [release-1.0.2-validation.md](docs/release-1.0.2-validation.md)
+Full notes: [release-1.0.2-notes.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.2/docs/release-1.0.2-notes.md) ·
+validation: [release-1.0.2-validation.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.2/docs/release-1.0.2-validation.md)
 
 ## 1.0.1
 *2026-11-12 · protocol 324 · replay format 15 · does not play with 1.0.0, nor its replays*
