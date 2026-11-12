@@ -2,7 +2,8 @@
 
 Protocol **324**, replay format **15**, random map generator version **10** (all as 1.0.1).
 
-Tag `v1.0.2` -> (filled in at publication).
+Tag `v1.0.2` -> `81e208af` (the release preparation commit); annotated tag object `8e2d7b53`.
+Published 2026-11-12 13:34:17 UTC as the Latest release; 1.0.0 and 1.0.1 stay GitHub releases.
 
 ## Scope and compatibility
 
@@ -49,4 +50,23 @@ list and the saved copy of a random map. Tag CI runs the determinism workflow.
 
 ## Tag CI and packages
 
-(Filled in at publication.)
+Tag CI on `v1.0.2`, all green at the first attempt: Determinism (sim) 43222569522
+(dispatched), Linux packages 43222557307, macOS build 43222557182 (both Sign + notarize
+jobs included) and Windows build 43222557389. Main's runs on the preparation commit and
+the three code commits were cancelled in favour of the tag's.
+
+39 assets, the same set as 1.0.1's. All 39 were downloaded and match the release's
+SHA-256 digests. `takclient` and `takserver` from the x86_64 AppImage and the Fedora 44
+package report `1.0.2 (build v1.0.2)`.
+Windows: on oden-win (scratch `C:/tak/w/rel102sig`, removed afterwards),
+`Get-AuthenticodeSignature` reports **Valid** (timestamped, "Curtis Edge") for the x64
+setup program and `takclient`, `takserver` and `cartographer` in both zips; the x64
+`takclient.exe` and `takserver.exe` report `1.0.2 (build v1.0.2)`.
+macOS: **the MacBook was offline**, so the DMGs and apps were not checked on a Mac this
+time. The Sign + notarize jobs' own logs show, for each architecture, the DMG and both
+apps accepted by `spctl` as "Notarized Developer ID" and "The staple and validate action
+worked!"; the downloaded DMGs are those jobs' uploads (digests above). Both zips' apps
+carry `_CodeSignature` and version 1.0.2.
+The draft was created with the notes (their links rewritten to `blob` `v1.0.2` URLs)
+before the tag was pushed, and tag CI uploaded into it. Every link in the notes answers
+200.
