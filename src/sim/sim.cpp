@@ -20198,7 +20198,9 @@ void World::tick(float dt) {
         if (!units_[unitIndex].type) continue;
         if (units_[unitIndex].alive() && units_[unitIndex].constructionEmitter)
             units_[unitIndex].constructionEmitter->advance();
-        if (units_[unitIndex].alive() && units_[unitIndex].cosmeticConstructionEmitter)
+        // The display sparkles outlive their unit: a body that died mid-build lets
+        // them run out rather than freezing them around the corpse (not hashed).
+        if (units_[unitIndex].cosmeticConstructionEmitter)
             units_[unitIndex].cosmeticConstructionEmitter->advance();
         if (g_phase) {
             PhaseSpan span(g_scriptMs,probe::kScripts);
