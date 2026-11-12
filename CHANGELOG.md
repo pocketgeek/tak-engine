@@ -4,7 +4,7 @@ Every published TAK Engine release, newest first.
 
 The current version is always at
 [the latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
-Only 1.0.0 is a GitHub release; every earlier version is kept only as a git
+Only 1.0.0 and later are GitHub releases; every earlier version is kept only as a git
 tag (each entry links its source): to run one, build it from source with the
 [development guide](docs/development.md) of that tag. No release includes retail game assets: every version needs your own
 *Total Annihilation: Kingdoms* installation.
@@ -17,8 +17,27 @@ neighbours. **Upgrading** lines appear only where you have to do something
 yourself.
 
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
-their validation reports: 1.0.0's live in [`docs/`](docs/), every earlier one's
+their validation reports: the latest release's live in [`docs/`](docs/), every earlier one's
 in the source of its tag.
+
+## 1.0.1
+*2026-11-12 · protocol 324 · replay format 15 · does not play with 1.0.0, nor its replays*
+
+- **Ships and archers no longer shoot at what they cannot hit.** A Mer Warrior swimming
+  under the surface used to draw endless volleys that all splashed short. A ranged
+  weapon that cannot reach under water now leaves such a unit alone, and an attack
+  order on it is refused; on a shore or in shallows, where it stands above the
+  surface, it is shot as before. The original game kept shooting.
+- **Wrecks and bodies in water decay like those on land.** Shipwrecks and bodies on a
+  shore or a sea bed used to stay for the whole game; they now go after the same time
+  as on land. The original game kept them.
+- **Bodies sink and fade as they go.** A decaying body settles into the ground and
+  fades over its last two seconds instead of vanishing at once.
+- **No frozen sparkles on bodies.** A unit killed while it was being built or conjured
+  left its construction sparkles hanging around its body; they now rise out and end.
+
+Full notes: [release-1.0.1-notes.md](docs/release-1.0.1-notes.md) ·
+validation: [release-1.0.1-validation.md](docs/release-1.0.1-validation.md)
 
 ## 1.0.0
 *2026-11-11 · protocol 323 · replay format 15 · does not play with 0.9.24 or earlier, nor their replays*
@@ -141,8 +160,8 @@ most 64; `auto`, the default, is every CPU the server may use), `--sim-cpus
 unencrypted network host that announces its games. `--max-games` and
 `--max-running-games` now refuse the request instead of disconnecting the player.
 
-Full notes: [release-1.0.0-notes.md](docs/release-1.0.0-notes.md) ·
-validation: [release-1.0.0-validation.md](docs/release-1.0.0-validation.md)
+Full notes: [release-1.0.0-notes.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.0/docs/release-1.0.0-notes.md) ·
+validation: [release-1.0.0-validation.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.0/docs/release-1.0.0-validation.md)
 
 ## 0.9.24
 *2026-11-08 · protocol 320 · replay format 15 · does not play with 0.9.23 or earlier, nor their replays*
