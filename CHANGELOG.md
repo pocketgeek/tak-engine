@@ -20,6 +20,22 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports: the latest release's live in [`docs/`](docs/), every earlier one's
 in the source of its tag.
 
+## 1.0.2
+*2026-11-12 · protocol 324 · replay format 15 · plays with 1.0.1 and its replays*
+
+- **Random map previews show the map.** The small preview of a random map, in the
+  **Random map** tab and in the game room, was a rough sketch: one flat colour for
+  the land, dark water and coloured dots for trees, rocks and mana spots. It is now
+  a picture made from the map's own terrain, like every other map's, so it matches
+  the full-size view you get by clicking it.
+- **Random maps you played show a preview and a size.** A played random map is saved
+  in your Maps folder and listed under **Existing map**; it used to show *NO PREVIEW*
+  and no size there. New saves carry the map picture and size, as maps saved by
+  Cartographer do, and random maps saved by earlier versions get them when listed.
+
+Full notes: [release-1.0.2-notes.md](docs/release-1.0.2-notes.md) ·
+validation: [release-1.0.2-validation.md](docs/release-1.0.2-validation.md)
+
 ## 1.0.1
 *2026-11-12 · protocol 324 · replay format 15 · does not play with 1.0.0, nor its replays*
 
@@ -36,8 +52,8 @@ in the source of its tag.
 - **No frozen sparkles on bodies.** A unit killed while it was being built or conjured
   left its construction sparkles hanging around its body; they now rise out and end.
 
-Full notes: [release-1.0.1-notes.md](docs/release-1.0.1-notes.md) ·
-validation: [release-1.0.1-validation.md](docs/release-1.0.1-validation.md)
+Full notes: [release-1.0.1-notes.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.1/docs/release-1.0.1-notes.md) ·
+validation: [release-1.0.1-validation.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.1/docs/release-1.0.1-validation.md)
 
 ## 1.0.0
 *2026-11-11 · protocol 323 · replay format 15 · does not play with 0.9.24 or earlier, nor their replays*

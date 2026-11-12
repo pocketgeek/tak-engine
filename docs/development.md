@@ -70,7 +70,7 @@ build exactly a release, check out its tag:
 ```sh
 git clone https://github.com/pocketgeek/tak-engine.git
 cd tak-engine
-git checkout v1.0.1
+git checkout v1.0.2
 ```
 
 Then follow the build steps in that checkout's own `docs/development.md`. A
