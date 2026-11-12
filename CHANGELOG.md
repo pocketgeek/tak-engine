@@ -20,6 +20,28 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports: the latest release's live in [`docs/`](docs/), every earlier one's
 in the source of its tag.
 
+## 1.0.4
+*2026-11-12 · protocol 326 · replay format 15 · does not play with 1.0.3, nor its replays*
+
+- **Choose the stance of new units.** A building that is training units, and a mobile
+  builder on infinite production, now shows the **Offensive**, **Defensive** and
+  **Passive** buttons. None is lit at first, and each new unit keeps its own usual
+  stance; click one and every unit made from then on starts with that stance; click
+  the lit one again to go back to each unit's own. The original game had no stance for
+  new units.
+- **A repeating builder's units spread out.** New units from a mobile builder on
+  infinite production (such as a Zhon Beast Tamer) now spread out on a ring round it,
+  as units leaving a production building do, instead of each taking one step south.
+  The original game moved them a shorter way.
+- **Lodestone areas show every lodestone.** Dragging a lodestone area now shows a
+  faded lodestone on every spot the builder is going to build on, not just the next
+  one.
+- **Infinite production reads +++.** The **TRAINING** line above the build menu shows
+  **(+++)** under infinite production, as the unit's icon does, instead of a count of 1.
+
+Full notes: [release-1.0.4-notes.md](docs/release-1.0.4-notes.md) ·
+validation: [release-1.0.4-validation.md](docs/release-1.0.4-validation.md)
+
 ## 1.0.3
 *2026-11-12 · protocol 325 · replay format 15 · does not play with 1.0.2, nor its replays*
 
@@ -63,8 +85,8 @@ changes differ from the original game, which kept firing.
 - **Legion pathfinding:** a flyer that rose to let troops pass under it kept its weapons
   from reloading until it landed; they reload in the air now.
 
-Full notes: [release-1.0.3-notes.md](docs/release-1.0.3-notes.md) ·
-validation: [release-1.0.3-validation.md](docs/release-1.0.3-validation.md)
+Full notes: [release-1.0.3-notes.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.3/docs/release-1.0.3-notes.md) ·
+validation: [release-1.0.3-validation.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.3/docs/release-1.0.3-validation.md)
 
 ## 1.0.2
 *2026-11-12 · protocol 324 · replay format 15 · plays with 1.0.1 and its replays*

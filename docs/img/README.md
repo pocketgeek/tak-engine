@@ -4,7 +4,7 @@ The pictures used by the README, the [user guide](../user-guide.md), the
 [quick start](../quick-start.md), the [Cartographer guide](../cartographer-guide.md),
 [streaming.md](../streaming.md) and [public-server.md](../public-server.md). Every
 picture is real engine or editor output from a Debug build with `-O2` (OpenGL
-renderer, version 1.0.0; `title.jpg` version 1.0.3, `guide/random-map-lobby.jpg` version 1.0.2), inspected by eye. Nothing is painted into a scene; the only
+renderer, version 1.0.0; `title.jpg` version 1.0.4, `guide/random-map-lobby.jpg` version 1.0.2), inspected by eye. Nothing is painted into a scene; the only
 additions are the numbered markers on `guide/hud-annotated.jpg` and
 `cartographer/window-annotated.jpg` and the text labels over the side-by-side
 composites, which the captions name.
@@ -113,7 +113,7 @@ simulation code.
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | The title menu with its three doors, reading VERSION 1.0.3. `menu` job `title`: 1920 × 1080, cropped to the 1440 × 1080 artwork at (240, 0) |
+| `title.jpg` | The title menu with its three doors, reading VERSION 1.0.4. `menu` job `title`: 1920 × 1080, cropped to the 1440 × 1080 artwork at (240, 0) |
 | `mp-connect.jpg` | The Multiplayer door's CONNECT TO SERVER panel: tak.pgnet.us (DEFAULT) selected, LOCAL SERVER (HOST), NEW SERVER..., the two sample remembered servers each with DELETE, ACCOUNT NAME *aldric* and PASSWORD as pips side by side, A NEW NAME IS REGISTERED WHEN YOU SIGN IN, and BACK, SPECTATE and CONNECT. `TAK_SHOT_SERVER=4`, 1600 × 900, the panel's contents (360, 244, 1240, 656) scaled to 760 × 356 |
 | `mp-connect-custom.jpg` | The same panel with NEW SERVER... selected: the address box under it holds *tak.example.org*, the account name *aldric*, the password empty. `TAK_SHOT_SERVER=2` with `capture-connC.diff`, 1600 × 900, (360, 216, 1240, 684) scaled to 760 × 404 |
 | `battle.jpg` | **Benchmark** run (Absurd) on Ulasem Arena, 55 game seconds in: eight server AIs of all five sides; at 1.3× zoom Aramon (magenta) and Taros (yellow) armies with Black Dragons clash in a sandy arena, damaged units of every side showing health bars. Spectator view, no fog. `TAK_CAP_BENCHSEC=55`, so the badge reads 0:05; 1920 × 1080 |

@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-1.0.3-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.0.4-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,7 +26,7 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## TAK Engine 1.0.3
+## TAK Engine 1.0.4
 
 - The original game on Windows, macOS and Linux: skirmish, both campaigns and
   multiplayer, read from your own installation.
@@ -39,11 +39,11 @@ interface art and sound straight from its installation folder.
 - Random maps, the Cartographer editor, mods, replays, voice chat, YouTube
   streaming and a Benchmark.
 
-New in 1.0.3: units no longer keep attacking what they can never hurt: they move to a clear
-shot, back out of their minimum range or give up, landed flyers on Hold Position take off
-to fight, and the computer picks weapons that work.
+New in 1.0.4: factories and repeating builders set the stance of the units they make,
+a repeating builder's units spread round it as a factory's do, and a lodestone area shows
+a lodestone on every spot it will build.
 
-Network protocol 325, replay format 15 (1.0.3 does not play with 1.0.2). Details in the
+Network protocol 326, replay format 15 (1.0.4 does not play with 1.0.3). Details in the
 [CHANGELOG](CHANGELOG.md).
 
 ## Features
@@ -222,7 +222,7 @@ package and covers certificates, limits, status queries and
 
 ## Project status
 
-TAK Engine 1.0.3 is complete: skirmish, both campaigns, multiplayer with its own
+TAK Engine 1.0.4 is complete: skirmish, both campaigns, multiplayer with its own
 server, replays, the Benchmark and the Cartographer editor are all in place and
 supported. It aims to behave as the original game did; that is not a claim that
 every mission, animation or interaction is identical or fully verified.

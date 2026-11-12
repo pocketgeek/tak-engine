@@ -11,8 +11,8 @@ independent security audit or protection against a volumetric DDoS.
 
 ## Versions
 
-Server and clients must speak the same network protocol: a 1.0.3 server plays
-with 1.0.3 clients. A `takserver` turns away a client of another protocol with a
+Server and clients must speak the same network protocol: a 1.0.4 server plays
+with 1.0.4 clients. A `takserver` turns away a client of another protocol with a
 *protocol version mismatch* message, so update the server and every client
 together. The [CHANGELOG](../CHANGELOG.md) says which releases play together.
 
