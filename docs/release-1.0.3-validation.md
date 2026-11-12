@@ -2,6 +2,10 @@
 
 Protocol **325**, replay format **15**, random map generator version **10**.
 
+Tag `v1.0.3` -> `0a9221d7` (the release preparation commit); annotated tag object `bbd63176`.
+Published 2026-11-12 20:25:49 UTC as the Latest release; 1.0.0, 1.0.1 and 1.0.2 stay GitHub
+releases.
+
 ## Scope and compatibility
 
 1.0.3 is 1.0.2 (tag `v1.0.2` -> `81e208af`) plus six changes, listed in the CHANGELOG's
@@ -60,3 +64,28 @@ Picture retaken with the 1.0.3 build: `docs/img/title.jpg` (VERSION 1.0.3).
 
 The full suite, the desync sweeps and the Windows and macOS test runs. Tag CI runs the
 determinism workflow and builds every package.
+
+## Tag CI and packages
+
+Main's CI on the last code commit (`12d26205`) was green before tagging. Tag CI on
+`v1.0.3`: Determinism (sim) 43289879097 (dispatched), macOS build 43289821344 (both Sign +
+notarize jobs included) and Windows build 43289821198 green at the first attempt; Linux
+packages 43289821496 green after one rerun of its EL10 x64 job, whose first attempt failed
+on an AlmaLinux mirror (the CRB repository's `repomd.xml` did not parse), not on the build.
+Main's runs on the preparation commit were cancelled in favour of the tag's.
+
+39 assets, the same set as 1.0.2's. All 39 were downloaded and match the release's
+SHA-256 digests. `takclient` and `takserver` from the x86_64 AppImage and the Fedora 44
+package report `1.0.3 (build v1.0.3)`.
+Windows: on oden-win (scratch `C:/tak/w/rel103sig`, removed afterwards),
+`Get-AuthenticodeSignature` reports **Valid** (timestamped, "Curtis Edge") for the x64
+setup program and `takclient`, `takserver` and `cartographer` in both zips; the x64
+`takclient.exe` and `takserver.exe` report `1.0.3 (build v1.0.3)`.
+macOS: **the MacBook was offline** when the packages were ready, so the DMGs and apps were
+not checked on a Mac. The Sign + notarize jobs' own logs show, for each architecture, the
+DMG and both apps accepted by `spctl` as "Notarized Developer ID" and "The staple and
+validate action worked!"; the downloaded DMGs are those jobs' uploads (digests above).
+Both zips' apps carry `_CodeSignature` and version 1.0.3.
+The draft was created with the notes (their links rewritten to `blob` `v1.0.3` URLs)
+before the tag was pushed, and tag CI uploaded into it. Every link in the notes answers
+200.
