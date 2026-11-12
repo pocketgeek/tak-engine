@@ -1150,6 +1150,15 @@
             // the model draw blends the body at ftol(alpha * 255.0f) (4ed04a).
             s.corpseSinkAlpha=sink->fading ? tak::sim::retailFadeByte(sink->alpha) : uint8_t(255);
         } else {s.corpseSinking=false;s.corpseSinkAlpha=255;}
+        // A decayed body's last 60 updates (+0x40 counting, 495af6..): retail
+        // lowers the model's root by 0x2000 (1/8 px) each update, 7.5 px in
+        // all, then takes it off the plane. Drawn as that sink plus a fade,
+        // so it does not pop at the end; land and water alike (water graves
+        // decay too here, World::updateCorpseWindow).
+        const int32_t corpseLeft=u.corpseUntil-u.deadFor;
+        const bool decaying=!u.alive() && !u.corpseFading && u.corpseUntil!=INT32_MAX && corpseLeft<60;
+        s.corpseDecayAlpha=decaying ? uint8_t(std::max(0,corpseLeft)*255/60) : uint8_t(255);
+        s.corpseDecaySink=decaying ? float(60-std::max(0,corpseLeft))*0.125f : 0.0f;
         if (!u.alive() && s.corpseFeat>=0 && size_t(s.corpseFeat)<world_.featureTypes().size()) {
             const auto& corpse=world_.featureTypes()[size_t(s.corpseFeat)];
             s.corpseReclaimable=corpse.reclaimable && !u.corpseFading;

@@ -11,6 +11,7 @@
 #include "sim/retailanimationqueries.h"
 #include "sim/sim.h"   // tak::sim::UnitType / Order / Projectile / World::HitFx
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -216,6 +217,11 @@ struct UnitR {
     bool corpseSinking = false;                // a water grave: the body is drawn at corpseSinkY
     float corpseSinkY = 0;                     // its feature height (4959c0), world px
     uint8_t corpseSinkAlpha = 255;            // its fade, ftol(alpha * 255.0f) (4ed056): 255 = none
+    uint8_t corpseDecayAlpha = 255;           // a decaying body's last 60 updates fade it out: 255 = none
+    float corpseDecaySink = 0;                 // ...and sink it into the ground (495af6), world px
+    uint8_t corpseFade() const {
+        return corpsePhase ? std::min(corpseSinking ? corpseSinkAlpha : uint8_t(255),corpseDecayAlpha) : uint8_t(255);
+    }
     int corpseCellX=0,corpseCellZ=0,corpseFootX=0,corpseFootZ=0;
     bool corpseStatue = false;                 // petrified/frozen: the body stays UPRIGHT,
                                                // unlike a normal corpse which lies flat

@@ -4885,6 +4885,8 @@
         ay += waterSink(u.type, ix, iz) * zm;
         // A water grave is drawn at its feature's height as it sinks (uLiftY).
         if (u.corpsePhase && u.corpseSinking) ay = (iz - mapView_.offY()) * zm - uLiftY(u) * zm;
+        // A decayed body sinks into the ground over its last 60 updates.
+        if (u.corpsePhase) ay += u.corpseDecaySink * kHeightScale_ * zm;
         // Body attitude precedes the animated piece tree for both ground and
         // flying units. Convert the retail mirrored basis at the same boundary.
         // Retail applies the birth heading to buildings as well as movers.
@@ -4975,7 +4977,7 @@
         const MaterialKey materialKey{uint64_t(u.veteran),ghost,conjuring,disco,
             uint64_t(discoCol.r)|(uint64_t(discoCol.g)<<8)|(uint64_t(discoCol.b)<<16),
             floatBits(discoMix),floatBits(p),conjuring ? floatBits(animClock_) : 0u,
-            u.corpsePhase && u.corpseSinking ? uint64_t(255-u.corpseSinkAlpha) : 0u};
+            uint64_t(255-u.corpseFade())};
         // PLACEMENT: zoom, interpolated anchor (lift, sink, altitude), emote bob,
         // flyer altitude (shadow lean), wall occlusion line (draw-only clip).
         const PlacementKey placementKey{floatBits(zm),floatBits(ax),floatBits(ay),floatBits(discoBob),
@@ -5043,7 +5045,7 @@
         // FBI ghost: a spectral body is see-through. Retail switches the renderer
         // to its translucent blend mode for these; we scale vertex alpha instead.
         in.material.spectral=ghost && !conjuring;
-        in.material.fade=u.corpsePhase && u.corpseSinking ? u.corpseSinkAlpha : Uint8(255);
+        in.material.fade=u.corpseFade();
         // Body-only local change: the silhouette's own inputs are all unchanged.
         in.shadowValid=!localValid && !reference && !g.localKey.empty() &&
             shadowInputsEqual(g.localKey,g.localLayout,key,layout,vt->second.meta.animationFrameMasks);
