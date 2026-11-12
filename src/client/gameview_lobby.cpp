@@ -615,6 +615,15 @@ std::string defaultGameName(const std::string& player) {
                         mi.scenario = mapScenarioInfo(path);
                 } catch (const std::exception&) {}
             }
+            // A saved random map's .ota has no size: its .tnt header has (cells, 32 to a unit).
+            if (mi.sizeW == 0 && vfs_.has(tak::vpath::replaceExtension(path, ".recipe"))) {
+                try {
+                    const auto d = vfs_.read(path);
+                    auto u32 = [&](size_t o) { return int(uint32_t(d[o]) | (uint32_t(d[o + 1]) << 8)
+                                                          | (uint32_t(d[o + 2]) << 16) | (uint32_t(d[o + 3]) << 24)); };
+                    if (d.size() >= 12) { mi.sizeW = u32(4) / 32; mi.sizeH = u32(8) / 32; }
+                } catch (const std::exception&) {}
+            }
             mi.starts = int(tak::sim::parseStartPositions(vfs_, path).size());
             if (mi.players == 0)   // .ota had no numplayers: count the start positions
                 mi.players = mi.starts;
@@ -736,20 +745,31 @@ std::string defaultGameName(const std::string& player) {
         // position scales straight onto the drawn image.
         mapPreviewStarts_ = tak::sim::parseStartPositions(from, tntPath);
         mapPreviewWorldW_ = float(u32(4)) * 16; mapPreviewWorldH_ = float(u32(8)) * 16;
-        int w = 0, h = 0; const uint8_t* idx = nullptr;
-        if (!tntIndexedImage(d, 12, w, h, idx) && !tntIndexedImage(d, 11, w, h, idx)) return;
         std::string ota;
         if (!src) ota = readOta(tntPath);
         else if (auto o = src->tryRead(tak::vpath::replaceExtension(tntPath, ".ota"))) ota.assign(o->begin(), o->end());
-        const std::vector<uint8_t>* pal = kingdomPalette(otaField(ota, "kingdom"));
-        if (!pal) pal = kingdomPalette("aramon");   // maps without a kingdom get a default
-        if (!pal) return;
-        std::vector<uint8_t> rgba(size_t(w) * h * 4);
-        for (size_t i = 0; i < size_t(w) * h; ++i) {
-            uint8_t p = idx[i];
-            if (p == 9) { rgba[i * 4 + 3] = 0; continue; }   // retail's transparent index
-            const uint8_t* c = &(*pal)[size_t(p) * 4];
-            rgba[i * 4 + 0] = c[0]; rgba[i * 4 + 1] = c[1]; rgba[i * 4 + 2] = c[2]; rgba[i * 4 + 3] = 255;
+        int w = 0, h = 0; const uint8_t* idx = nullptr;
+        std::vector<uint8_t> rgba;
+        if (tntIndexedImage(d, 12, w, h, idx) || tntIndexedImage(d, 11, w, h, idx)) {
+            const std::vector<uint8_t>* pal = kingdomPalette(otaField(ota, "kingdom"));
+            if (!pal) pal = kingdomPalette("aramon");   // maps without a kingdom get a default
+            if (!pal) return;
+            rgba.resize(size_t(w) * h * 4);
+            for (size_t i = 0; i < size_t(w) * h; ++i) {
+                uint8_t p = idx[i];
+                if (p == 9) { rgba[i * 4 + 3] = 0; continue; }   // retail's transparent index
+                const uint8_t* c = &(*pal)[size_t(p) * 4];
+                rgba[i * 4 + 0] = c[0]; rgba[i * 4 + 1] = c[1]; rgba[i * 4 + 2] = c[2]; rgba[i * 4 + 3] = 255;
+            }
+        } else {
+            // No radar picture (a saved random map has none): the generator's picture of
+            // its terrain, tinted by its kingdom.
+            std::string kingdom = otaField(ota, "kingdom");
+            for (auto& ch : kingdom) ch = char(std::tolower(uint8_t(ch)));
+            static const char* worlds[tak::mapgen::kMapTypes] = {"aramon", "taros", "veruna", "zhon", "creon"};
+            const int type = int(std::find(worlds, worlds + tak::mapgen::kMapTypes, kingdom) - worlds) % tak::mapgen::kMapTypes;
+            try { rgba = paintMapPreview(tak::tnt::Map::load(d, tntPath), type, w, h); } catch (const std::exception&) { return; }
+            if (rgba.empty()) return;
         }
         mapPreviewTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, w, h);
         if (!mapPreviewTex_) return;
@@ -768,26 +788,17 @@ std::string defaultGameName(const std::string& player) {
         mapPreviewDims_ = size + (players.empty() ? "" : "   " + players + " PLAYER");
     }
 
-    GameView::GenPreviewOut GameView::rollGenPreview(const std::string& id, const tak::hpi::Vfs& vfs) {
-        // On a worker: roll the map from the seed and paint a downsampled height/water
-        // map with feature dots; pollGenPreview uploads it. Nothing here touches the view.
-        GenPreviewOut out;
-        out.id = id;
-        tak::mapgen::Params gp;
-        tak::mapgen::Result g;
-        try { gp = tak::mapgen::parseMapId(id); g = tak::mapgen::generate(gp, vfs); }
-        catch (const std::exception& e) { out.error = e.what(); return out; }
-        const tak::tnt::Map& m = g.map;
+    std::vector<uint8_t> GameView::paintMapPreview(const tak::tnt::Map& m, int mapType, int& TW, int& TH) {
         const int W = m.width, H = m.height, sea = m.seaLevel;
-        if (W <= 0 || H <= 0 || m.heights.size() < size_t(W) * H) return out;
+        if (W <= 0 || H <= 0 || m.heights.size() < size_t(W) * H) return {};
         // 288 texels on the long side: the CHANGE MAP panel's previews (220 and 336) and the
         // room's (up to 360) show it sharp enough without rolling a larger picture.
         const int cap = 288, mx = std::max(W, H);
-        const int TW = std::max(1, W * cap / mx), TH = std::max(1, H * cap / mx);
+        TW = std::max(1, W * cap / mx); TH = std::max(1, H * cap / mx);
         // World-flavoured land tint (loosely matches each world's ground section art).
         static const uint8_t landRGB[tak::mapgen::kMapTypes][3] = {
             {74, 118, 58}, {112, 84, 54}, {200, 172, 148}, {46, 92, 46}, {34, 80, 60}};
-        const uint8_t* lc = landRGB[gp.mapType % tak::mapgen::kMapTypes];
+        const uint8_t* lc = landRGB[mapType % tak::mapgen::kMapTypes];
         std::vector<uint8_t> rgba(size_t(TW) * TH * 4, 255);
         auto put = [&](int tx, int ty, uint8_t r, uint8_t gg, uint8_t b) {
             if (tx < 0 || ty < 0 || tx >= TW || ty >= TH) return;
@@ -824,6 +835,22 @@ std::string defaultGameName(const std::string& player) {
                 else if (nm.find("Rock") != std::string::npos) put(tx, ty, 150, 148, 140);      // rock: grey
                 else put(tx, ty, 28, 66, 28);                                                   // tree: dark green
             }
+        return rgba;
+    }
+
+    GameView::GenPreviewOut GameView::rollGenPreview(const std::string& id, const tak::hpi::Vfs& vfs) {
+        // On a worker: roll the map from the seed and paint a downsampled height/water
+        // map with feature dots; pollGenPreview uploads it. Nothing here touches the view.
+        GenPreviewOut out;
+        out.id = id;
+        tak::mapgen::Params gp;
+        tak::mapgen::Result g;
+        try { gp = tak::mapgen::parseMapId(id); g = tak::mapgen::generate(gp, vfs); }
+        catch (const std::exception& e) { out.error = e.what(); return out; }
+        const int W = g.map.width, H = g.map.height;
+        int TW = 0, TH = 0;
+        auto rgba = paintMapPreview(g.map, gp.mapType, TW, TH);
+        if (rgba.empty()) return out;
         // Start positions: drawn over the thumbnail as numbered markers (drawStartMarkers),
         // in world px like a shipped map's -- the same cell -> px setupMatch applies.
         for (auto& [sx, sz] : g.starts) out.starts.push_back({float(sx * 16), float(sz * 16)});
