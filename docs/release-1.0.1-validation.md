@@ -2,7 +2,8 @@
 
 Protocol **324**, replay format **15**, random map generator version **10**.
 
-Tag `v1.0.1` -> TODO (the release preparation commit).
+Tag `v1.0.1` -> `a830ab1c` (the last preparation commit); annotated tag object `90d17673`.
+Published 2026-11-12 05:06:27 UTC as the Latest release; 1.0.0 stays a GitHub release.
 
 ## Scope and compatibility
 
@@ -66,4 +67,23 @@ drawing and one targeting predicate, and the gates above are unchanged.
 
 ## Tag CI and packages
 
-TODO
+Tag CI on `v1.0.1`, all green at the first attempt: Determinism (sim) 43153159288
+(dispatched), Linux packages 43153123963, macOS build 43153123988 (both Sign + notarize
+jobs included) and Windows build 43153123974. Main's runs on the preparation commits were
+cancelled in favour of the tag's; main's CI on the three earlier 1.0.1 commits passed.
+
+39 assets, the same set as 1.0.0's. All 39 were downloaded and match the release's
+SHA-256 digests. `takclient` and `takserver` from the x86_64 AppImage and the Fedora 44
+package report `1.0.1 (build v1.0.1)`.
+Windows: on oden-win (scratch `C:/tak/w/rel101sig`, removed afterwards),
+`Get-AuthenticodeSignature` reports **Valid** (timestamped, "Curtis Edge") for the x64
+setup program and `takclient`, `takserver` and `cartographer` in both zips; the x64
+`takclient.exe` and `takserver.exe` report `1.0.1 (build v1.0.1)`.
+macOS: on the MacBook (macOS 27.2.1), both DMGs and all eight app copies (two in each DMG
+and each zip) pass `stapler validate`, and `spctl -a -vv` accepts them as "Notarized
+Developer ID"; every app in the DMGs passes `codesign --verify --strict --deep` and has
+version 1.0.1. The arm64 zip's `takclient` reports `1.0.1 (build v1.0.1)`. The scratch
+folder was removed.
+The draft was created with the notes (their links rewritten to `blob` `v1.0.1` URLs)
+before the tag was pushed, and tag CI uploaded into it. Every link in the notes answers
+200.
