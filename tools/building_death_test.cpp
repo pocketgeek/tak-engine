@@ -46,7 +46,8 @@ int main(int argc,char** argv) {
                 if(water) {
                     // A sea bed of 0: a body at its own height (a wreck on
                     // the bed) lands at once (y <= 511260's 0) and lies there
-                    // for good, with no decomposition timer; one held above
+                    // until it decomposes as a land corpse would (not retail,
+                    // whose water grave has no decomposition); one held above
                     // the bed (a ship at its waterline) fades out as it
                     // reaches it and leaves the plane.
                     const auto* first=w.corpseSink(id);
@@ -58,8 +59,8 @@ int main(int argc,char** argv) {
                         gone=!w.unit(id) || w.unit(id)->corpseUntil==0;
                     }
                     const auto* sink=w.corpseSink(id);
-                    check(above ? gone && !sink : !gone && w.unit(id)->corpseUntil==INT32_MAX && sink && sink->y==0,
-                          "a water grave lies on a bed of 0 for good, or fades out reaching it");
+                    check(above ? gone && !sink : gone || (sink && sink->y==0),
+                          "a water grave lies on a bed of 0 until it decomposes, or fades out reaching it");
                     (above ? waterFades : waterStays)++;
                 }
                 hash=(hash*1099511628211ULL)^w.stateHash();
@@ -100,12 +101,12 @@ int main(int argc,char** argv) {
             decomposeOverride=90;
             check(lifetime(std::vector<uint8_t>(64*64,100),512<<16,512<<16)==90+58,
                   "a wreck with a decomposition of 90 ticks goes 148 ticks after it is laid");
-            check(lifetime(std::vector<uint8_t>(64*64,5),512<<16,512<<16,18<<16)>=INT32_MAX-3000,
-                  "a water grave has no decomposition");
+            check(lifetime(std::vector<uint8_t>(64*64,5),512<<16,512<<16,18<<16)==90+58,
+                  "a water grave decomposes as a wreck on land does");
             decomposeOverride=-1;
             const auto level=grave(std::vector<uint8_t>(64*64,20),512<<16,512<<16);
-            check(level.second && level.first>=INT32_MAX-3000,
-                  "a body on ground level with the sea is a water grave, with no decomposition");
+            check(level.second && level.first==land,
+                  "a body on ground level with the sea is a water grave, with a land corpse's lifetime");
             std::vector<uint8_t> corner(64*64,100);corner[32*64+32]=0;
             const auto dry=grave(corner,(32*16+15)<<16,(32*16+15)<<16);
             check(!dry.second && dry.first==land,

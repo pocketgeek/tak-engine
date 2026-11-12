@@ -1150,8 +1150,12 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
     and both water harnesses pass on the one step. Port:
     `retailFeatureSinkStep`, run by `World::tickCorpseSinks` at the end of
     the tick on `World::corpseSinks_` (hashed only when a grave sinks;
-    position, velocity, fade, decay and settled state); a water grave's `corpseUntil` stays open and the sink
-    takes it off the plane. Tests: `building_death_test`.
+    position, velocity, fade, decay and settled state). **Not retail, by the
+    owner's decision (2026-11-11, protocol 324):** a water grave also gets the
+    land corpse's `corpseUntil` (decomposition D + 58 updates), so wrecks and
+    bodies on the shore go as they do on land; the sink is still drawn and
+    still takes a bed-0 grave off the plane when its fade ends first. Tests:
+    `building_death_test`.
   - *Land*: `+0x3c` is the feature type's `+0x130`, `_ftol(decomposetime *
     30.0)` & 0xffff (`494337..494353`), and the record has no velocity, so
     steps 1 and 4 are all of it: removal at decomposition D + 58 updates
@@ -1166,9 +1170,10 @@ Emulated with `tools/re/check_kill_credit.py` (E unless marked).
     sinking or fading counts it as a land corpse would and goes D + 58
     updates after the last wake (step 1) unless its fade ends first, sinking
     on meanwhile, and a landed one with the decay running does not rest
-    (step 4). World loads the sink's decay on every wake while it is in the moving list (`World::tickReclaim`; E:
-    `check_corpse_sink.py`, 264 reloads, 162 of them decaying the grave
-    away; test: `reclaim_test`).
+    (step 4) (E: `check_corpse_sink.py`, 264 reloads, 162 of them decaying
+    the grave away). World instead holds a water grave's `corpseUntil` on
+    every wake as it does a land corpse's (`retailCorpseDecayHold`; test:
+    `reclaim_test`), since it decomposes as one.
   - *Display* (S): the feature draw (`4fd82b..4fd935`) loads the record into
     the renderer's stand-in unit (`game+0x19e78`: position `+0x68` from the
     record, model instance `+0xc0` = the record's `+4`) and copies `+0x2f` to

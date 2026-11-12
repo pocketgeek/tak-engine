@@ -339,11 +339,12 @@ int main(int argc,char**) {
         check(still && fadeOff,"a reclaimed wreck stops sinking where it is, its own fade over");
         check(retired-end==sim::kReclaimFadeTicks,"a reclaimed wreck goes with the reclaim's fade");
     }
-    // ---- a sinking corpse a reclaim leaves: the wake's reload decays it ----
-    // 406615 reloads +0x3c on a record still in the moving list too, and the
-    // feature update counts it there (495aaf..495af1): a water grave that was
-    // never to decay goes the decomposition plus 58 updates after the last
-    // wake, sinking on meanwhile (check_corpse_sink.py, reload cases).
+    // ---- a sinking corpse a reclaim leaves: held as a land corpse is ------
+    // A water grave decomposes as a land corpse does here (not retail, whose
+    // grave decays only once a wake reloads a record still sinking), so a
+    // reclaim wake holds it the same way (406615, retailCorpseDecayHold): it
+    // goes the decomposition plus 58 updates after the last wake, sinking on
+    // meanwhile.
     {
         sim::World w;
         w.setTerrain(std::vector<uint8_t>(kW*kW,0),kW,kW,120);
@@ -354,24 +355,28 @@ int main(int argc,char**) {
         soldier.maxVel=sim::Fixed::fromInt(1);
         w.mapCorpse(&soldier,0);
         const int dead=w.spawn(&soldier,at(32,1),at(30,1),0.0f,1);
-        auto* body=w.unit(dead);body->hp={};body->deadFor=120;body->corpseUntil=INT32_MAX;
+        auto* body=w.unit(dead);body->hp={};body->deadFor=120;body->corpseUntil=120+90+58;
         body->groundY=sim::Fixed::fromInt(120);
         check(Probe::corpse(w,*body,0) && w.corpseSink(dead),"the wreck in water sinks");
         auto type=builderType(2);
         const int id=w.spawn(&type,at(30,2),at(30,2),0.0f,0);
         w.reclaim(id,-dead,false);
-        int woke=-1,retired=-1;bool sank=true,reclaimed=false;int32_t lastY=INT32_MAX;
+        int woke=-1,retired=-1,left=INT32_MAX,heldFor=0;bool sank=true,reclaimed=false;int32_t lastY=INT32_MAX;
         for (int tick=0;tick<900 && retired<0;++tick) {
             w.tick(1.f/30);
             const auto* sink=w.corpseSink(dead);
             if (!sink || !w.unit(dead) || w.unit(dead)->corpseUntil==0) { retired=tick;break; }
             reclaimed|=w.unit(dead)->corpseFading;
-            // The wake's tick: reloaded to 90, counted once by its update.
-            if (woke<0 && sink->decay==89) { woke=tick;w.stop(id); }
+            // The wake's tick: the time left goes back up.
+            const int now=w.unit(dead)->corpseUntil-w.unit(dead)->deadFor;
+            if (woke<0 && now>left) { woke=tick;heldFor=now;w.stop(id); }
+            left=now;
             if (woke>=0) { sank&=sink->y<lastY;lastY=sink->y; }
         }
-        check(woke>=0 && !reclaimed,"a reclaim wake reloaded the sinking wreck's decay, and the reclaim stopped");
-        check(retired-woke==90+58 && sank,"the wreck decays as a land corpse would, sinking on meanwhile");
+        check(woke>=0 && !reclaimed,"a reclaim wake held the sinking wreck's decay, and the reclaim stopped");
+        // Seen after the wake's tick, which counts one of them.
+        check(heldFor==90+58-1 && retired-woke==heldFor && sank,
+              "the wreck decays as a land corpse would, sinking on meanwhile");
     }
     std::printf(failures ? "\nFAILED (%d)\n" : "\nall passed\n",failures);
     return failures ? 1 : 0;

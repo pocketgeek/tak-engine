@@ -12850,15 +12850,12 @@ void World::tickReclaim(Unit& b) {
     if (target<0) {
         // 406615: a corpse being reclaimed does not decay (object +0x3c
         // reloaded with decomposetime*30 on every wake; retailCorpseDecayHold).
-        // A water grave at rest left the update list, so the reload never
-        // counts; on one still sinking or fading it starts the decay its
-        // placement never loaded (retailFeatureSinkStep).
+        // A water grave decays as a land corpse here (updateCorpseWindow), so
+        // the wake holds it the same way.
         Unit* c=unit(-target);
         const int ct=corpseFootprints_.at(c->id).type;
         const int decompose=featTypes_[size_t(ct)].decomposeTicks;
-        if (auto sink=corpseSinks_.find(c->id);sink!=corpseSinks_.end()) {
-            if (!sink->second.settled) sink->second.motion.decay=decompose;
-        } else if (decompose>0 && c->corpseUntil!=INT32_MAX) {
+        if (decompose>0 && c->corpseUntil!=INT32_MAX) {
             const int32_t left=retailCorpseDecayHold(c->corpseUntil-c->deadFor,decompose);
             c->corpseUntil=left<0 ? INT32_MAX : int32_t(std::min(int64_t(INT32_MAX),int64_t(c->deadFor)+left));
         }
@@ -18399,12 +18396,12 @@ void World::updateCorpseWindow(Unit& u) {
     if (!u.deathHasCorpse || starts==INT32_MAX) return;
     const int ct=u.corpseStatue>=0 ? u.corpseStatue : corpseTypeOf(u.type);
     if (ct<0) return;
-    // On land the type's decomposition runs, then the 60-update sink into
-    // the ground (retailCorpseDecayLife; only the land branch, 513027..513034,
-    // loads +0x3c). A water grave, a statue's too, has no decomposition: it
-    // lies until its sinking takes it off the plane (tickCorpseSinks) or for
-    // good.
-    const int duration=waterGrave(u) ? 0 : retailCorpseDecayLife(featTypes_[size_t(ct)].decomposeTicks);
+    // The type's decomposition runs, then the 60-update sink into the ground
+    // (retailCorpseDecayLife). Retail loads it only on land (513027..513034):
+    // its water graves lie on their sea bed for good unless the sinking takes
+    // them off the plane. Here a water grave decomposes as a land corpse does
+    // (an owner's call, 2026-11-11), its sinking still drawn meanwhile.
+    const int duration=retailCorpseDecayLife(featTypes_[size_t(ct)].decomposeTicks);
     u.corpseUntil=duration>0 ? int32_t(std::min(int64_t(INT32_MAX),int64_t(starts)+duration)) : INT32_MAX;
 }
 
