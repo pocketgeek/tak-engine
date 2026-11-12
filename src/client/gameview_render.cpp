@@ -2417,6 +2417,16 @@
                         o.buildRectangle ? o.buildX.toFloat() : o.x.toFloat(),
                         o.buildRectangle ? o.buildZ.toFloat() : o.z.toFloat() - float(o.buildType->footZ) * 8 - 24);
                 }
+            // An area lodestone job builds one deposit at a time: ghost every
+            // deposit it is predicted to build (the order trail's plan, which
+            // follows World::tickManaBuildArea's choice), not only the next.
+            if (std::any_of(u.orders.begin(), u.orders.end(), [](const RenderOrder& o) { return o.manaBuildArea; }))
+                for (const auto& o : areaBuildPlan(u))
+                    if (o.trailPreview && o.buildType && o.buildRectangle) {
+                        any = true;
+                        if (draw) renderStats_.add(RS::GhostsQueued);
+                        if (draw) drawGhostAt(o.buildType, o.buildX.toFloat(), o.buildZ.toFloat());
+                    }
             return any;
         };
         {
@@ -8006,6 +8016,29 @@
             add(reinterpret_cast<uintptr_t>(s.occupant));add(uint32_t(s.player));add(s.underConstruction);
         }
         orderTrailSceneSignature_=h;
+    }
+
+    // The predicted stops of `u`'s area jobs (tak::expandOrderTrail), cached per
+    // builder and replanned when its orders, the features, the fog or the
+    // visible deposits change, or a second has passed.
+    const std::vector<RenderOrder>& GameView::areaBuildPlan(const UnitR& u) {
+        if(areaGhostCache_.size()>256 && !areaGhostCache_.contains(u.id))areaGhostCache_.clear();
+        auto& cache=areaGhostCache_[u.id];
+        const uint32_t tick=front().gameTick;
+        uint64_t signature=tak::orderTrailSignature(u.displayedOrders())^reinterpret_cast<uintptr_t>(u.type);
+        for(uint32_t i:u.areaVisited)signature=(signature^i)*1099511628211ull;
+        if(cache.unitId!=u.id || cache.signature!=signature || cache.featGen!=lastFeatGen_ ||
+           cache.fogGen!=front().fogGen || cache.noFog!=noFog_ || tick-cache.tick>=30u) {
+            // Several builders replanning in one tick share one scan.
+            if(areaGhostTargetsTick_!=tick) {refreshOrderTrailTargets();areaGhostTargetsTick_=tick;}
+            tak::expandOrderTrail(u.displayedOrders(),*u.type,u.player,
+                tak::sim::Fixed::fromFloat(u.x),tak::sim::Fixed::fromFloat(u.z),
+                orderTrailTargets_,orderTrailSites_,u.areaVisited,cache.orders);
+            cache.unitId=u.id;cache.signature=signature;cache.featGen=lastFeatGen_;
+            cache.fogGen=front().fogGen;cache.noFog=noFog_;cache.tick=tick;
+            cache.sceneSignature=orderTrailSceneSignature_;
+        }
+        return cache.orders;
     }
 
     void GameView::drawOrderTrails(int mvw, int winH) {

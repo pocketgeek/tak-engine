@@ -1090,7 +1090,12 @@ namespace {
         // Combat stance radio: offensive/defensive/passive. Gated on the FBI's
         // unitstandorders, which is what retail's panel consults -- not on a
         // mobile-and-armed guess that only happens to agree on the shipped data.
-        if (mobile && armed && front->type->canSetStance) {
+        // A factory that is building, or a mobile builder on an infinite queue,
+        // offers them too: they set the stance its output starts with
+        // (World::setStance's outputStance); none is lit until one is chosen.
+        const bool outputStance = (!mobile && front->type->producesUnits() && !front->buildQueue.empty()) ||
+                                  front->repeatType;
+        if ((mobile && armed && front->type->canSetStance) || outputStance) {
             add("Offensive", 'O');
             add("Defensive", 'D');
             add("Passive", 'H');
@@ -1146,9 +1151,13 @@ namespace {
             bool active = false;
             if (cmd >= '1' && cmd <= '3')
                 active = selFront && selFront->weaponSlot == (cmd - '1');
-            else if (cmd == 'O') active = selFront && selFront->stance == 0;
-            else if (cmd == 'D') active = selFront && selFront->stance == 1;
-            else if (cmd == 'H') active = selFront && selFront->stance == 2;
+            else if (cmd == 'O' || cmd == 'D' || cmd == 'H') {
+                // A producer of units shows the stance chosen for its output.
+                const int want = cmd == 'O' ? 0 : cmd == 'D' ? 1 : 2;
+                active = selFront && (selFront->holdsRally() && (!selFront->type->canSetStance ||
+                                      selFront->repeatType) ? selFront->outputStance == want
+                                                            : selFront->stance == want);
+            }
             else if (cmd == 'K') active = selFront && selFront->cloakOn;
             else if (cmd == 'k') active = selFront && !selFront->cloakOn;
             else if (cmd == 'N') active = selFront && selFront->active;
@@ -1288,6 +1297,12 @@ namespace {
                 selectWeapon(cmd - '1');
             } else if (cmd == 'O' || cmd == 'D' || cmd == 'H') {
                 int st = cmd == 'O' ? 0 : cmd == 'D' ? 1 : 2;
+                // A producer's lit output stance clicked again is cleared: its
+                // output keeps its own default.
+                const UnitR* f = selection_.empty() ? nullptr : frameUnitP(selection_.front());
+                if (f && f->type && f->holdsRally() && (!f->type->canSetStance || f->repeatType) &&
+                    f->outputStance == st)
+                    st = tak::sim::World::kStanceNone;
                 issuePerUnit(tak::net::Cmd::Stance, st);
             } else if (cmd == 'K' || cmd == 'k') {
                 issuePerUnit(tak::net::Cmd::Cloak, cmd == 'K' ? 1 : 0);
@@ -2089,9 +2104,14 @@ namespace {
             }
             if (!b->buildQueue.empty() && !tipShown) {
                 char q[64];
-                std::snprintf(q, sizeof q, "TRAINING %s (%zu)",
-                              b->buildQueue.front()->name.c_str(),
-                              b->buildQueue.size());
+                // Infinite production reads +++, as its icon's badge does: its
+                // queue always holds just the one it re-queues.
+                if (b->repeatType && b->buildQueue.front() == b->repeatType && b->buildQueue.size() == 1)
+                    std::snprintf(q, sizeof q, "TRAINING %s (+++)", b->buildQueue.front()->name.c_str());
+                else
+                    std::snprintf(q, sizeof q, "TRAINING %s (%zu)",
+                                  b->buildQueue.front()->name.c_str(),
+                                  b->buildQueue.size());
                 // From the top row's first icon, but never on into the command panel
                 // (a short right-aligned menu leaves the line little room).
                 const float qx = std::max(tak::buildrow::kEdge,

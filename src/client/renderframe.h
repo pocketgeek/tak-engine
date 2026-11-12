@@ -86,6 +86,7 @@ struct UnitR {
     int inTransport = 0;
     int8_t squad = 0;
     int stance = 1;
+    int8_t outputStance = -1;   // a producer's stance for its output (-1: none chosen)
     uint8_t standingOrder = 3;
     int weaponSlot = 0;
     std::array<int32_t,3> weaponReloads{};

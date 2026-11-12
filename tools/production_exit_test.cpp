@@ -13,6 +13,7 @@
 // must clear the factory, all four finish and none is left standing in the yard.
 #include "sim/matchsetup.h"
 #include "hpi/hpi.h"
+#include <cmath>
 #include <cstdio>
 #include <array>
 #include <algorithm>
@@ -148,6 +149,72 @@ int main(int argc,char** argv) {
             }
         }
         if(factories<8){std::printf("FAIL: only %d shipped ground factories found\n",factories);++failures;}
+        if(!crusades) {
+            const auto check=[&](bool ok,const char* what){std::printf("%s: %s\n",ok?"PASS":"FAIL",what);++cases;if(!ok)++failures;};
+            // A factory's output stance (engine addition): none at first, so the
+            // output keeps its own default; set, every new unit takes it; the lit
+            // one clicked again (kStanceNone) clears it. A computer's factory
+            // never takes one from its own stance orders.
+            const auto* keep=registry.find("arakeep");const auto* sword=registry.find("arasword");
+            auto made=[&](tak::sim::World& world,int factory) {
+                const size_t before=world.units().size();
+                world.train(factory,sword,1);
+                for(int tick=0;tick<9000;++tick) {
+                    world.tick(1.f/30);
+                    for(size_t i=before;i<world.units().size();++i) {
+                        const auto& u=world.units()[i];
+                        if(u.alive() && !u.underConstruction && u.type==sword) return u.stance;
+                    }
+                }
+                return -9;
+            };
+            {
+                tak::sim::World world;world.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+                world.buildNavClasses(registry);world.player(0).mana=1000000;
+                const int factory=world.spawn(keep,1800,1800,0,0);
+                const int base=world.spawn(sword,600,600,0,0);
+                const int fallback=world.unit(base)->stance;
+                check(world.unit(factory)->outputStance==-1 && made(world,factory)==fallback,
+                      "a factory with no output stance makes units with their own default");
+                world.setStance(factory,2);
+                check(world.unit(factory)->outputStance==2 && made(world,factory)==2,"a factory's output stance goes to its new units");
+                world.setStance(factory,tak::sim::World::kStanceNone);
+                check(world.unit(factory)->outputStance==-1 && made(world,factory)==fallback,
+                      "clearing the output stance gives new units their own default again");
+                world.player(0).automaticGates=true;world.setStance(factory,0);
+                check(world.unit(factory)->outputStance==-1,"a computer's factory takes no output stance");
+            }
+            // A mobile builder on an infinite queue parks its output on the
+            // factory's ring round it (engine deviation), not one step south.
+            {
+                const auto* tamer=registry.find("zontrain");const auto* wolf=registry.find("zonwolf");
+                tak::sim::World world;world.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+                world.buildNavClasses(registry);world.player(0).mana=1000000;
+                const int id=world.spawn(tamer,1800,1800,0,0);
+                world.setRepeat(id,wolf);
+                // Its stance buttons go through the command path, which keeps
+                // a repeating builder on its job and must let Stance through.
+                tak::net::Command stance;stance.kind=tak::net::Cmd::Stance;stance.player=0;
+                stance.unitId=id;stance.targetId=2;
+                tak::sim::applyCommand(world,registry,stance);
+                check(world.unit(id)->outputStance==2 && world.unit(id)->repeatType==wolf,
+                      "a repeating Beast Tamer takes a stance for its output and keeps producing");
+                for(int tick=0;tick<30*120;++tick) {
+                    if(auto* b=world.unit(id))b->mana=std::max(b->mana,double(b->type->maxMana));
+                    world.player(0).mana=1000000;   // no storage here: the cap would empty it
+                    world.tick(1.f/30);
+                }
+                int parked=0;bool clear=true;
+                for(const auto& u:world.units()) {
+                    if(u.id==id || !u.alive() || u.underConstruction || u.type!=wolf || !u.orders.empty())continue;
+                    ++parked;
+                    clear=clear && u.stance==2;
+                    const float dx=u.x.toFloat()-world.unit(id)->x.toFloat(),dz=u.z.toFloat()-world.unit(id)->z.toFloat();
+                    clear=clear && dx*dx+dz*dz>=96.f*96.f;
+                }
+                check(parked>=2 && clear,"a repeating Beast Tamer's wolves park on a ring round it, with its output stance");
+            }
+        }
         const auto *barracks=registry.find("arakeep"),*catapult=registry.find("arapult"),*knight=registry.find("araknigh");
         if(!barracks || !catapult || !knight){std::puts("FAIL: Barracks/Catapult/Knight missing");++failures;}
         else for(int side:{-1,0,1})for(bool legion:{false,true}) {

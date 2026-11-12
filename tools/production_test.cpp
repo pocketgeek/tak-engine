@@ -1421,9 +1421,9 @@ static void rallyPartlyDropped(bool mobile) {
           "it starts the step that survives", std::to_string(u.orders.size()));
 }
 
-// A rally that hands over nothing -- every step dropped -- is no rally: a mobile
-// producer's output takes the exit step, or it would stand where the next one
-// is built. Deciding on the rally being empty would leave it there. Passes
+// A rally that hands over nothing -- every step dropped -- is no rally: a
+// repeating mobile producer's output parks round it, or it would stand where
+// the next one is built. Deciding on the rally being empty would leave it there. Passes
 // without the fix too: this is the naive fix's guard.
 static void rallyHandsOverNothing(bool deadTarget) {
     std::printf("mobile producer: rally that hands over nothing (%s):\n", deadTarget ? "dead target" : "unarmed output");
@@ -1444,11 +1444,9 @@ static void rallyHandsOverNothing(bool deadTarget) {
     const Unit& u = *w.unit(child);
     check(u.orders.size() == 1, "it holds one order", std::to_string(u.orders.size()));
     if (u.orders.empty()) return;
-    const auto [lx, lz] = legPoint(u.orders.front());
-    check(lz >= u.z.toFloat() + 40, "the order is the exit step, south of its birth",
-          std::to_string(u.z.toFloat()) + " -> " + std::to_string(lz));
-    check(bool(u.orders.front().productionExit) == (g_pathfinding == PathfindingMode::Legion),
-          "Legion tags it as the automatic exit");
+    // A repeating mobile producer's output parks on the factory ring round it
+    // (engine deviation), as a factory's does, rather than the exit step.
+    check(u.orders.front().park && u.orders.front().park->target == id, "the order parks it round its producer");
 }
 
 // An attack step the output has no weapon for (here a ground-only weapon against a

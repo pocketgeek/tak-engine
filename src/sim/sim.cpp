@@ -6483,6 +6483,17 @@ void World::manaFallback(Unit& u,int slot) {
 void World::setStance(int unitId, int stance) {
     Unit* u = unit(unitId);
     if (!u || !u->alive()) return;
+    // Engine addition (owner, 2026-11-12): a factory, or a mobile builder on an
+    // infinite queue, keeps the stance for the units it makes (applied as each
+    // is finished); a factory has no stance of its own. kStanceNone clears it:
+    // the output keeps its own default again.
+    // A computer's own stance orders (squad assignment, 0x5198a0) never set it.
+    const bool producer = u->type && (u->type->producesUnits() || u->repeatType) && !computerOwned(u->player);
+    if (stance < 0 || stance > 2) {
+        if (stance == kStanceNone && producer) u->outputStance = -1;
+        return;
+    }
+    if (producer) u->outputStance = int8_t(stance);
     // A type with no stance cannot be given one. The HUD already hides the buttons;
     // this is the authoritative half, so a modified client cannot set a stance on
     // something retail would not offer it for.
@@ -17480,7 +17491,8 @@ void World::parkProductionOutput(int id,int factoryId) {
         // bearing is the birth point's, seen from the factory's centre (not
         // the ring's, snapped to this footprint's cells: a Navy Yard's pad is
         // only 25 px out).
-        if (isLegionPathfinding(pathfindingMode_) && legion_) {
+        // A mobile producer has no door: its output keeps retail's ring.
+        if (isLegionPathfinding(pathfindingMode_) && legion_ && f->type->isStructure()) {
             order.park->spread=true;
             order.park->door=uint16_t(retailDirection(u->x-f->x,u->z-f->z).v);
         }
@@ -19139,9 +19151,14 @@ void World::finishProduction(int producerId,Unit& finished) {
     // flies to one point on its circle). The step is ours and stays for a mobile
     // producer's output with nothing else to do: without it the next output would
     // be built on top of the last. Retail has no rally on a mobile builder; a
-    // repeating one gives its output a PARK of its own (0x405c07), not ported.
+    // repeating one gives its output a PARK of its own (0x405c07: no target, so
+    // a ring round the output's own spot, padding (3 x rand(3) + 1) x 16).
+    // Engine deviation (owner, 2026-11-12): a mobile builder on an infinite
+    // queue releases its output as a factory does instead, the factory's PARK
+    // ring round the builder, so a stream of output spreads as a factory's.
     const Unit* factory=unit(producerId);
-    const bool getBuilt=factory && factory->type->isStructure();
+    // A building it raises keeps the exit step (a building holds it as its rally).
+    const bool getBuilt=factory && (factory->type->isStructure() || (factory->repeatType && !t->isStructure()));
     bool hasExitStep=false;
     // Orders it was given while unfinished stand: no rally, exit step or PARK.
     // Otherwise hand it the producer's RALLY plan. A production building accepts
@@ -19149,6 +19166,10 @@ void World::finishProduction(int producerId,Unit& finished) {
     // on them itself, so they describe what its OUTPUT should do. Every output, a
     // mobile producer's and flyers included, takes the rally alone and starts it at
     // once, as GetBuilt copies it with nothing before it.
+    // The stance its producer holds for its output (World::setStance).
+    if (const Unit* pb = unit(producerId); pb && pb->outputStance >= 0 && t->canSetStance &&
+        (pb->type->isStructure() || pb->repeatType))
+        setStance(id, pb->outputStance);
     if (const Unit* pb = unit(producerId); pb && !commanded)
         for (const Order& ro : pb->rally) {
             Unit* nu = unit(id);
@@ -19214,7 +19235,7 @@ void World::finishProduction(int producerId,Unit& finished) {
     if (Unit* pu = unit(producerId)) {
         pu->justBuilt = id;
         if (Unit* nu = unit(id)) {
-            if (getBuilt) joinFactoryGroup(*pu,*nu);
+            if (pu->type->isStructure()) joinFactoryGroup(*pu,*nu);
             else joinBuilderGroup(*pu,*nu);
         }
         // Infinite build: re-queue so the next one starts once this one clears.
@@ -21817,6 +21838,7 @@ uint64_t World::stateHash() const {
         mix(u.standbyAllowed); mix(u.standbyActive);
         if (u.legionLift) { mix(0x4c494654u); mix(u.legionLiftUntil); mix(uint32_t(u.legionLiftX.v)); mix(uint32_t(u.legionLiftZ.v)); mix(u.legionLiftSince); }
         if (u.legionLiftRest) { mix(0x52455354u); mix(u.legionLiftRest); }
+        if (u.outputStance >= 0) { mix(0x4f535443u); mix(uint32_t(u.outputStance)); }
         if (u.holdLift) { mix(0x484c4654u); mix(u.holdLiftUntil); mix(uint32_t(u.holdLiftX.v)); mix(uint32_t(u.holdLiftZ.v)); }
         if (u.fireStartPending || u.unreleasedFires) { mix(0x46525354u); mix(uint32_t(u.fireStartPending)|uint32_t(u.unreleasedFires)<<8); mix(u.fireStartTick); }
         if (u.legionWindow || u.legionStill || u.legionShuffle) {

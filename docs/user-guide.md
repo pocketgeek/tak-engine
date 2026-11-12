@@ -800,6 +800,8 @@ target underneath.
   preferring spots it can walk to, and clearing trees and rocks from the spots
   when it can. Spots that are taken or cannot be reached are skipped; a divine
   lodestone area also upgrades your finished basic lodestones in it. A
+  faded lodestone is shown on every spot the builder is going to build on, not
+  only the next one; the plan can change if a spot is taken or found blocked. A
   Shift-queued area starts from where the previous order ends, and **Stop**
   cancels the job. Builders given overlapping areas split the spots between
   them instead of heading for the same one.
@@ -878,7 +880,10 @@ build icons:
 | Right-click (with the same modifiers) | remove one, five or ten |
 | Ctrl + left-click | start or stop **infinite production** |
 
-Each icon shows how many are queued. No progress bar is drawn over the building
+Each icon shows how many are queued, or **+++** under infinite production. Above
+the build menu, **TRAINING** names the unit being made and, in brackets, how many
+units are queued, that one included; under infinite production it reads **+++** too.
+No progress bar is drawn over the building
 (the original game drew none): the unit being made shows its own health bar as it
 grows, and the information panel shows its progress. A new unit is started on the building's pad
 only when there is room for its whole body there; if the last unit has not
@@ -904,12 +909,22 @@ building, nearest the door first and never in front of the door, and further
 out once the near spots are taken, so a busy building's output does not queue
 in a column and block the door.
 
+**Stance for new units.** While a building is producing, its **Offensive**,
+**Defensive** and **Passive** buttons set the stance its new units start with.
+None is lit at first, and then each new unit keeps its own usual stance; click
+one to give it to every unit made from then on, and click the lit one again to
+go back to each unit's own. A mobile builder on infinite production does the
+same (this engine's addition; the original game had no stance for new units).
+
 **Mobile production.** Some builders conjure units in the field (Zhon's Beast
 Handler, for example). They place what they build like a structure. A mobile
 builder running infinite production treats **Move**, **Patrol**, **Attack**
 and **fight-move** as rally orders for its output, just like a production
 building (the builder itself stays put and keeps producing); **Shift** adds
 rally steps and shows the route. Each new unit starts the rally straight away.
+With no rally point, each new unit moves to a spot around the builder, as new
+units do around a production building, so the output spreads out round it. A
+builder making a limited number of units steps each one a short way south.
 If idle units crowd the builder until there is no room for the next one, the
 ones at the edge walk out of the way.
 **Stop** ends production, clears the rally

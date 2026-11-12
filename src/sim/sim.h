@@ -1353,6 +1353,10 @@ struct alignas(64) Unit {
     int   stance = 1;      // combat stance: 0=offensive (chase freely), 1=defensive
                            // (leashed, the default/legacy behaviour), 2=passive
                            // (hold fire: no auto-acquire, only fights when ordered)
+    // Engine addition (owner, 2026-11-12): a factory's, or a mobile builder's on
+    // an infinite queue, stance for its output (World::setStance); -1 = none,
+    // the output keeps its own default. Hashed when set.
+    int8_t outputStance = -1;
     int lastHitPlayer = -1; // score attribution captured at impact; mission script input
     int   lastHitBy = 0;   // id of the unit that last damaged this one (for kill XP)
     // Blocked shots (engine deviation, see World::noteShotImpact): the target
@@ -3318,6 +3322,7 @@ public:
     void destroy(int unitId);
     void setWeapon(int unitId, int slot);   // choose the active weapon (0=primary)
     void setStance(int unitId, int stance); // combat stance 0=offensive/1=defensive/2=passive
+    static constexpr int kStanceNone=3;     // setStance on a producer: no stance for its output
     void setCloak(int unitId, bool on);     // canCloak unit: enable/disable cloaking
     void setActive(int unitId, bool on);    // onOffable unit: power on/off
     void setSquad(int unitId, int squad);   // control squad: 0 none, +N group N, -N formation N

@@ -3015,6 +3015,65 @@
             std::fprintf(stderr,"PASS: idle builders strip\n");
             return;
         }
+        if (tak::devFlag("TAK_AREA_GHOST_TEST")) {
+            // A lodestone area job ghosts every deposit it will build, not only the
+            // next (GameView::areaBuildPlan). An Elsin is given the box round the
+            // deposits nearest the map's centre; the frame is drawn and, with
+            // TAK_AREA_GHOST_CAPTURE, saved.
+            constexpr int W=1200,H=800;
+            winW_=W;winH_=H;noFog_=true;edgeScrollOn_=false;uiScale_=1.0f;
+            const float cx=float(mapView_.map().blocksX)*16.0f,cz=float(mapView_.map().blocksY)*16.0f;
+            std::vector<std::pair<float,float>> spots(world_.manaSpots().begin(),world_.manaSpots().end());
+            std::sort(spots.begin(),spots.end(),[&](const auto& a,const auto& b) {
+                return std::hypot(a.first-cx,a.second-cz)<std::hypot(b.first-cx,b.second-cz);
+            });
+            if (spots.size()<3) throw std::runtime_error("area ghosts: the map needs three mana spots");
+            // The deposit with the most others within 600 px, and those, up to five.
+            {
+                const auto near=[&](const auto& a,const auto& b) {
+                    return std::hypot(a.first-b.first,a.second-b.second)<=600.0f;
+                };
+                auto first=spots.front();size_t most=0;
+                for (const auto& a:spots) {
+                    const size_t n=size_t(std::count_if(spots.begin(),spots.end(),[&](const auto& b){return near(a,b);}));
+                    if (n>most) {most=n;first=a;}
+                }
+                std::erase_if(spots,[&](const auto& p) {return !near(p,first);});
+                std::sort(spots.begin(),spots.end(),[&](const auto& a,const auto& b) {
+                    return std::hypot(a.first-first.first,a.second-first.second)<std::hypot(b.first-first.first,b.second-first.second);
+                });
+                spots.resize(std::min<size_t>(spots.size(),5));
+                if (spots.size()<2) throw std::runtime_error("area ghosts: no two deposits near each other");
+            }
+            float x0=spots[0].first,x1=x0,z0=spots[0].second,z1=z0;
+            for (const auto& [x,z]:spots) {x0=std::min(x0,x);x1=std::max(x1,x);z0=std::min(z0,z);z1=std::max(z1,z);}
+            const int builder=spawn("araking",(x0+x1)*0.5f,(z0+z1)*0.5f+120,0,localPlayer_);
+            const auto* lode=registry_.find("aralode");
+            if (!builder || !lode) throw std::runtime_error("area ghosts: fixture");
+            writableWorld().queueManaBuildArea(builder,lode,x0-24,z0-24,x1+24,z1+24,false);
+            {
+                // See the whole box: zoom so it fits the view, centred on it.
+                const float zoom=std::clamp(std::min(float(W)*0.7f/(x1-x0+256),float(H)*0.8f/(z1-z0+256)),0.25f,1.0f);
+                mapView_.setZoom(zoom);
+                mapView_.setOffset((x0+x1)*0.5f-float(W)*0.4f/zoom,(z0+z1)*0.5f-float(H)*0.45f/zoom);
+            }
+            selection_={builder};
+            captureFrame();beginFrame();cosmeticStep(0);
+            size_t planned=0;
+            if (const UnitR* u=frameUnitP(builder))
+                for (const auto& o:areaBuildPlan(*u)) planned+=o.trailPreview && o.buildType && o.buildRectangle;
+            for (int i=0;i<20;++i) {beginFrame();prepare(W,H);draw(W,H);}   // terrain tiles stream in
+            if (const char* cap=tak::devEnv("TAK_AREA_GHOST_CAPTURE")) {
+                int ow=0,oh=0;SDL_GetRendererOutputSize(ren_,&ow,&oh);
+                std::vector<uint8_t> px4(size_t(ow)*size_t(oh)*4);
+                if (SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px4.data(),ow*4)==0)
+                    tak::png::write(cap,ow,oh,px4);
+            }
+            std::fprintf(stderr,"area ghosts: %zu deposits in the box, %zu planned ghosts\n",spots.size(),planned);
+            if (planned<spots.size()) throw std::runtime_error("area ghosts: not every deposit has a ghost");
+            std::fprintf(stderr,"PASS: an area lodestone job ghosts every deposit it will build\n");
+            return;
+        }
         if (tak::devFlag("TAK_AREA_DRAG_TEST")) {
             // Map drags through the real input() and draw(): a small right-drag with a
             // reclaimer is the ordinary order, only a deliberate box clears an area,

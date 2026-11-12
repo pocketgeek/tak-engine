@@ -111,7 +111,8 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
     // Assist is the exception: retail's HelpBuild has no repeat check, so a
     // repeating conjurer told to help an unfinished unit helps (its own output
     // waits meanwhile; see tickProduction).
-    if (repeatingMobile && c.kind!=Cmd::Stop && c.kind!=Cmd::Assist && c.kind!=Cmd::Move && c.kind!=Cmd::Patrol && c.kind!=Cmd::Attack && c.kind!=Cmd::AttackMove && c.kind!=Cmd::GiveUnit && c.kind!=Cmd::ShareMana && c.kind!=Cmd::Disco && c.kind!=Cmd::Headbang && c.kind!=Cmd::PowerCode) return;
+    // Stance sets the stance its output starts with (World::setStance's outputStance).
+    if (repeatingMobile && c.kind!=Cmd::Stop && c.kind!=Cmd::Assist && c.kind!=Cmd::Move && c.kind!=Cmd::Patrol && c.kind!=Cmd::Attack && c.kind!=Cmd::AttackMove && c.kind!=Cmd::GiveUnit && c.kind!=Cmd::ShareMana && c.kind!=Cmd::Disco && c.kind!=Cmd::Headbang && c.kind!=Cmd::PowerCode && c.kind!=Cmd::Stance) return;
     auto owns = [&](int id) {
         const auto* u = world.unit(id);
         return u && u->player == int(c.player);

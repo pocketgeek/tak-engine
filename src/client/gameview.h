@@ -401,6 +401,11 @@ public:
         std::vector<RenderOrder> orders;
     };
     std::array<OrderTrailCache,kTrailUnits> orderTrailCache_;
+    // Per builder: the predicted stops of its area lodestone jobs, for their
+    // ghosts (drawn for every own builder, selected or not).
+    std::unordered_map<int,OrderTrailCache> areaGhostCache_;
+    uint32_t areaGhostTargetsTick_=UINT32_MAX;   // the tick the shared targets were last refreshed for
+    const std::vector<RenderOrder>& areaBuildPlan(const UnitR& u);
     std::vector<tak::OrderTrailTarget> orderTrailTargets_;
     std::vector<tak::OrderTrailSite> orderTrailSites_;
     uint64_t orderTrailSceneSignature_=0;

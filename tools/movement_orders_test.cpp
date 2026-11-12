@@ -150,8 +150,10 @@ void exitRally(PathfindingMode mode,bool queued) {
         for(const auto& u:w.units())if(u.id!=id&&u.alive()&&!u.underConstruction){child=u.id;break;}
     }
     check(child!=0,"exit/rally fixture produced an output");if(!child)return;
-    check(w.unit(child)->orders[World::currentLeg(w.unit(child)->orders)].productionExit.has_value()==(mode==PathfindingMode::Legion),
-          "only automatic Legion exits receive birthplace clearance");
+    // A repeating mobile producer's output parks on the factory ring round it
+    // (engine deviation), in either mode, instead of the exit step.
+    check(w.unit(child)->orders[World::currentLeg(w.unit(child)->orders)].park.has_value(),
+          "a repeating mobile producer's output parks round it");
     w.stop(id);
     if(queued)w.order(child,1600,640,true);
     auto* u=w.unit(child);u->x=Fixed::fromInt(1000);u->z=Fixed::fromInt(900);u->bodyBlockStreak=2;

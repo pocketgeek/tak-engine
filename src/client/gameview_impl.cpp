@@ -1078,7 +1078,7 @@
         if (s.scenarioName != u.scenarioName) s.scenarioName = u.scenarioName;
         s.hp = u.hp.toFloat(); s.mana = u.mana; s.veteran = u.veteran; s.kills = u.kills;
         s.deadFor = u.deadFor < 0 ? -1.0f : float(u.deadFor) / 30.0f;   // ticks -> seconds
-        s.inTransport = u.inTransport; s.squad = u.squad; s.stance = u.stance;
+        s.inTransport = u.inTransport; s.squad = u.squad; s.stance = u.stance; s.outputStance = u.outputStance;
         s.standingOrder = u.standingOrder;
         s.weaponSlot = u.weaponSlot;
         for(size_t w=0;w<s.weaponReloads.size();++w)
@@ -1240,8 +1240,10 @@
         captureSlots_[slot].corpseFoot = std::max(s.corpseFootX, s.corpseFootZ);   // Frame::maxCorpseFoot
         captureSlots_[slot].step = std::max({std::fabs(s.x - s.px - s.pox), std::fabs(s.z - s.pz - s.poz),
                                              std::fabs(s.swap.ox), std::fabs(s.swap.oz)});   // Frame::maxInterpStep
+        // An area lodestone job (manaBuildArea) draws a ghost on each deposit it
+        // will still build (GameView::areaBuildGhosts).
         captureSlots_[slot].buildGhosts = std::any_of(s.orders.begin(), s.orders.end(),
-            [](const RenderOrder& o) { return o.buildType && !o.manaBuildArea; });   // Frame::buildGhostUnits
+            [](const RenderOrder& o) { return bool(o.buildType); });   // Frame::buildGhostUnits
     }
 
     void GameView::captureFrame() {

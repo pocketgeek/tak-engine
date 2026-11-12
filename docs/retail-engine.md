@@ -3182,6 +3182,21 @@ sweep picks another target; the written-off one is skipped only while the
 shooter and the target stay within 16 px of their spots. Tests:
 `naval_combat_test`.
 
+### Ours, not retail: a repeating mobile builder parks its output; output stances (owner decision)
+
+Retail gives a repeating mobile builder's output a PARK of its own (0x405c07:
+no target, so a ring round the output's own spot, padding (3 x rand(3) + 1) x
+16; not ported before). Ours (protocol 326): it releases its output as a
+factory does, the factory's PARK ring (`parkProductionOutput`) round the
+builder, so a stream of output spreads as a factory's does. A builder making a
+limited number keeps the exit step.
+
+`Unit::outputStance` (protocol 326): `setStance` on a factory, or a mobile
+builder on an infinite queue, of a human player stores the stance for its
+output (-1 = none; `World::kStanceNone` clears it), and each new unit that can
+take a stance is given it as it is finished. Retail has no such thing; a
+computer's own stance orders (squad assignment, 0x5198a0) never set it.
+
 ### Ours, not retail: an Activate waits for Create (owner decision)
 
 Every shipped factory and yard `Create` (all 27 scripts with a

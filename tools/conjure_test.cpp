@@ -363,8 +363,10 @@ int main(int argc, char** argv) {
                 check(world.stateHash()!=before,"infinite production lock participates in lockstep hash");
                 world.unit(id)->repeatType=output;
                 for (int kind=0;kind<=int(net::Cmd::SetSquad);++kind) {
+                    // Stance sets the stance its output starts with (checked below).
                     c.kind=net::Cmd(kind);if (c.kind==net::Cmd::Stop || c.kind==net::Cmd::Move || c.kind==net::Cmd::Patrol ||
-                                            c.kind==net::Cmd::Attack || c.kind==net::Cmd::AttackMove) continue;
+                                            c.kind==net::Cmd::Attack || c.kind==net::Cmd::AttackMove ||
+                                            c.kind==net::Cmd::Stance) continue;
                     c.targetId=enemy;c.x=1500;c.z=1500;
                     for (int queued : {0,1}) {
                         c.queue=uint8_t(queued);sim::applyCommand(world,registry,c);
@@ -382,6 +384,15 @@ int main(int argc, char** argv) {
                           world.unit(id)->orders.empty(),
                           "AttackGround is refused during infinite mobile production");
                 }
+            }
+            {
+                net::Command stance{};stance.kind=net::Cmd::Stance;stance.player=0;stance.unitId=id;stance.targetId=1;
+                sim::applyCommand(world,registry,stance);
+                check(world.unit(id)->outputStance==1 && world.unit(id)->repeatType==output,
+                      "a stance during infinite mobile production sets its output's and keeps it producing");
+                stance.targetId=sim::World::kStanceNone;sim::applyCommand(world,registry,stance);
+                check(world.unit(id)->outputStance==-1 && world.unit(id)->repeatType==output,
+                      "clearing it gives its output its own default again");
             }
             for (auto kind : {net::Cmd::Move, net::Cmd::Patrol, net::Cmd::Attack, net::Cmd::AttackMove}) {
                 world.unit(id)->rally.clear();
