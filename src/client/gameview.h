@@ -2822,9 +2822,10 @@ private:
         std::shared_ptr<const tak::tnt::Map> map;
     };
     static GenPreviewOut rollGenPreview(const std::string& id, const tak::hpi::Vfs& vfs);
-    // The generator preview's picture of a map (height-shaded land and sea, feature dots),
-    // 288 texels on the long side; a saved random map's .tnt has no radar picture of its own.
-    static std::vector<uint8_t> paintMapPreview(const tak::tnt::Map& m, int mapType, int& w, int& h);
+    // A map's large radar picture as RGBA (built from its tiles when it has none, as
+    // maps::saveGenerated and the Cartographer build it).
+    static std::vector<uint8_t> radarPicture(tak::tnt::Map& m, const tak::hpi::Vfs& vfs, const std::string& world,
+                                             int& w, int& h);
     void pollGenPreview();
     std::vector<std::pair<uint64_t, std::future<GenPreviewOut>>> genJobs_;
     uint64_t genSeq_ = 0;

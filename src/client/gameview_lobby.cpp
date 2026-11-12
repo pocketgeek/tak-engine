@@ -4,6 +4,7 @@
 #include "net/crypto.h"
 #include "net/matchconfig.h"
 #include "client/startmarkers.h"
+#include "terrain/minimap.h"
 #include <cctype>
 #include <set>
 #include <cstring>
@@ -762,13 +763,13 @@ std::string defaultGameName(const std::string& player) {
                 rgba[i * 4 + 0] = c[0]; rgba[i * 4 + 1] = c[1]; rgba[i * 4 + 2] = c[2]; rgba[i * 4 + 3] = 255;
             }
         } else {
-            // No radar picture (a saved random map has none): the generator's picture of
-            // its terrain, tinted by its kingdom.
+            // No radar picture (a random map saved before they were written): build it
+            // from the tiles, as the save now does.
             std::string kingdom = otaField(ota, "kingdom");
             for (auto& ch : kingdom) ch = char(std::tolower(uint8_t(ch)));
-            static const char* worlds[tak::mapgen::kMapTypes] = {"aramon", "taros", "veruna", "zhon", "creon"};
-            const int type = int(std::find(worlds, worlds + tak::mapgen::kMapTypes, kingdom) - worlds) % tak::mapgen::kMapTypes;
-            try { rgba = paintMapPreview(tak::tnt::Map::load(d, tntPath), type, w, h); } catch (const std::exception&) { return; }
+            if (kingdom.empty()) kingdom = "aramon";
+            try { auto m = tak::tnt::Map::load(d, tntPath); rgba = radarPicture(m, from, kingdom, w, h); }
+            catch (const std::exception&) { return; }
             if (rgba.empty()) return;
         }
         mapPreviewTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, w, h);
@@ -788,59 +789,30 @@ std::string defaultGameName(const std::string& player) {
         mapPreviewDims_ = size + (players.empty() ? "" : "   " + players + " PLAYER");
     }
 
-    std::vector<uint8_t> GameView::paintMapPreview(const tak::tnt::Map& m, int mapType, int& TW, int& TH) {
-        const int W = m.width, H = m.height, sea = m.seaLevel;
-        if (W <= 0 || H <= 0 || m.heights.size() < size_t(W) * H) return {};
-        // 288 texels on the long side: the CHANGE MAP panel's previews (220 and 336) and the
-        // room's (up to 360) show it sharp enough without rolling a larger picture.
-        const int cap = 288, mx = std::max(W, H);
-        TW = std::max(1, W * cap / mx); TH = std::max(1, H * cap / mx);
-        // World-flavoured land tint (loosely matches each world's ground section art).
-        static const uint8_t landRGB[tak::mapgen::kMapTypes][3] = {
-            {74, 118, 58}, {112, 84, 54}, {200, 172, 148}, {46, 92, 46}, {34, 80, 60}};
-        const uint8_t* lc = landRGB[mapType % tak::mapgen::kMapTypes];
-        std::vector<uint8_t> rgba(size_t(TW) * TH * 4, 255);
-        auto put = [&](int tx, int ty, uint8_t r, uint8_t gg, uint8_t b) {
-            if (tx < 0 || ty < 0 || tx >= TW || ty >= TH) return;
-            uint8_t* px = &rgba[(size_t(ty) * TW + tx) * 4];
-            px[0] = r; px[1] = gg; px[2] = b; px[3] = 255;
-        };
-        // Base: height-shaded water (deeper -> darker) / land (brighter with elevation).
-        for (int ty = 0; ty < TH; ++ty)
-            for (int tx = 0; tx < TW; ++tx) {
-                int h = m.heights[size_t(ty * H / TH) * W + (tx * W / TW)];
-                if (h < sea) {
-                    // Dark teal, matching the retail sea art the game actually draws.
-                    int d = std::clamp((sea - h) * 2, 0, 40);
-                    put(tx, ty, uint8_t(14 - d / 8), uint8_t(72 - d / 2), uint8_t(74 - d / 2));
-                } else {
-                    int e = std::clamp((h - sea) / 2, 0, 70);
-                    put(tx, ty, uint8_t(std::min(255, lc[0] + e)),
-                                uint8_t(std::min(255, lc[1] + e)), uint8_t(std::min(255, lc[2] + e)));
-                }
-            }
-        // Feature dots -- sparse, so plot every one lest the downsample drop it. A
-        // Sacred Stone (the mana spot) gets a bold 3x3 gold marker; Standing Stones
-        // (ruins) are muted; rocks grey; trees dark green.
-        for (int cz = 0; cz < H; ++cz)
-            for (int cx = 0; cx < W; ++cx) {
-                uint16_t fi = m.features[size_t(cz) * W + cx];
-                if (fi == 0xFFFF || fi >= m.featureNames.size()) continue;
-                const std::string& nm = m.featureNames[fi];
-                int tx = cx * TW / W, ty = cz * TH / H;
-                if (tak::hpi::MountSet::key(nm).find("mana") != std::string::npos) {          // sacred spot: gold
-                    for (int dy = 0; dy <= 2; ++dy)
-                        for (int dx = 0; dx <= 2; ++dx) put(tx + dx, ty + dy, 250, 224, 82);
-                } else if (nm.find("Henge") != std::string::npos) put(tx, ty, 176, 162, 132);  // ruins: stone
-                else if (nm.find("Rock") != std::string::npos) put(tx, ty, 150, 148, 140);      // rock: grey
-                else put(tx, ty, 28, 66, 28);                                                   // tree: dark green
-            }
+    std::vector<uint8_t> GameView::radarPicture(tak::tnt::Map& m, const tak::hpi::Vfs& vfs, const std::string& world,
+                                                int& w, int& h) {
+        // The large radar picture a saved map carries, built from the map's tiles as the
+        // Cartographer builds it, through the world's palette (index 9 transparent, as
+        // buildMapPreview draws a shipped map's).
+        if (m.overview.empty() || m.overviewW <= 0 || m.overviewH <= 0) {
+            tak::terrain::Compositor compositor(vfs);
+            tak::terrain::generateMinimaps(m, compositor, tak::terrain::loadWorldPalette(vfs, world));
+        }
+        w = m.overviewW; h = m.overviewH;
+        if (w <= 0 || h <= 0 || m.overview.size() < size_t(w) * h) return {};
+        const auto pal = tak::terrain::loadWorldPalette(vfs, world);
+        std::vector<uint8_t> rgba(size_t(w) * h * 4);
+        for (size_t i = 0; i < size_t(w) * h; ++i) {
+            const uint8_t p = m.overview[i];
+            if (p == 9) { rgba[i * 4 + 3] = 0; continue; }
+            std::copy(pal.rgba[p], pal.rgba[p] + 4, rgba.begin() + i * 4);
+        }
         return rgba;
     }
 
     GameView::GenPreviewOut GameView::rollGenPreview(const std::string& id, const tak::hpi::Vfs& vfs) {
-        // On a worker: roll the map from the seed and paint a downsampled height/water
-        // map with feature dots; pollGenPreview uploads it. Nothing here touches the view.
+        // On a worker: roll the map from the seed and build its radar picture from the
+        // tiles, as a saved map carries it; pollGenPreview uploads it. Nothing here touches the view.
         GenPreviewOut out;
         out.id = id;
         tak::mapgen::Params gp;
@@ -849,7 +821,8 @@ std::string defaultGameName(const std::string& player) {
         catch (const std::exception& e) { out.error = e.what(); return out; }
         const int W = g.map.width, H = g.map.height;
         int TW = 0, TH = 0;
-        auto rgba = paintMapPreview(g.map, gp.mapType, TW, TH);
+        static const char* worlds[tak::mapgen::kMapTypes] = {"aramon", "taros", "veruna", "zhon", "creon"};
+        auto rgba = radarPicture(g.map, vfs, worlds[gp.mapType % tak::mapgen::kMapTypes], TW, TH);
         if (rgba.empty()) return out;
         // Start positions: drawn over the thumbnail as numbered markers (drawStartMarkers),
         // in world px like a shipped map's -- the same cell -> px setupMatch applies.
@@ -888,7 +861,7 @@ std::string defaultGameName(const std::string& player) {
             if (!mapPreviewTex_) continue;
             SDL_SetTextureBlendMode(mapPreviewTex_, SDL_BLENDMODE_BLEND);
             SDL_UpdateTexture(mapPreviewTex_, nullptr, out.rgba.data(), out.w * 4);
-            SDL_SetTextureScaleMode(mapPreviewTex_, SDL_ScaleModeNearest);
+            SDL_SetTextureScaleMode(mapPreviewTex_, SDL_ScaleModeLinear);
             mapPreviewW_ = out.w; mapPreviewH_ = out.h;
         }
     }

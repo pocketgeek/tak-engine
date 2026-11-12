@@ -568,7 +568,7 @@ generator; **Pick** plays the map it shows:
   routes always stay on level, connected ground.
 - **Extra Mana Spots**: 0 to 6 extra spots per player, added fairly. Terrain can
   limit how many fair rounds fit, so a map can get fewer than the slider asks for
-  (the gold dots on the preview are its mana spots).
+  (click the preview to see the map full size, mana spots included).
 - **Scattered Mana**: a second slider, separate from the per-player extra spots,
   with five notches: None, Minimum, Medium, High or Max. Neutral spots spread
   over open ground away from the bases. It is a density, so a bigger map gets
