@@ -3030,15 +3030,15 @@
             if (spots.size()<3) throw std::runtime_error("area ghosts: the map needs three mana spots");
             // The deposit with the most others within 600 px, and those, up to five.
             {
-                const auto near=[&](const auto& a,const auto& b) {
+                const auto within600=[&](const auto& a,const auto& b) {
                     return std::hypot(a.first-b.first,a.second-b.second)<=600.0f;
                 };
                 auto first=spots.front();size_t most=0;
                 for (const auto& a:spots) {
-                    const size_t n=size_t(std::count_if(spots.begin(),spots.end(),[&](const auto& b){return near(a,b);}));
+                    const size_t n=size_t(std::count_if(spots.begin(),spots.end(),[&](const auto& b){return within600(a,b);}));
                     if (n>most) {most=n;first=a;}
                 }
-                std::erase_if(spots,[&](const auto& p) {return !near(p,first);});
+                std::erase_if(spots,[&](const auto& p) {return !within600(p,first);});
                 std::sort(spots.begin(),spots.end(),[&](const auto& a,const auto& b) {
                     return std::hypot(a.first-first.first,a.second-first.second)<std::hypot(b.first-first.first,b.second-first.second);
                 });
