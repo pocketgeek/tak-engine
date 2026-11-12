@@ -4,6 +4,7 @@
 
 #include "gaf/gaf.h"     // tak::gaf::Palette
 #include "tnt/tnt.h"
+#include "terrain/minimap.h"
 
 #include <string>
 #include <atomic>
@@ -15,22 +16,12 @@ namespace cart { class SectionLibrary; }
 
 namespace cart {
 
-// The world's 256-colour terrain palette (palettes/<world>.pcx), used to index
-// the minimaps. Falls back to a grayscale ramp if the PCX is absent.
-tak::gaf::Palette loadWorldPalette(const tak::hpi::Vfs& vfs, const std::string& world);
-
-// (Re)generate a map's small (126x126) and large overview minimaps from its
-// tiles: each 32px block is averaged to one colour, the grid is resampled to the
-// target size, and each pixel is matched to its nearest palette index. Retail's
-// exact downsample/overview-dims are inferred, so this is a functional (loadable,
-// visually faithful) minimap, not a byte-exact retail reproduction.
-void generateMinimaps(tak::tnt::Map& map, tak::terrain::Compositor& comp,
-                      const tak::gaf::Palette& pal, std::shared_ptr<const std::atomic_bool> stop={});
-
-struct MinimapPreview {int width=126,height=126;std::vector<uint8_t> rgba;};
-// Display-only preview; does not alter document minimap bytes or undo history.
-MinimapPreview minimapPreview(const tak::tnt::Map& map,tak::terrain::Compositor& comp,
-                              const tak::gaf::Palette& palette,std::shared_ptr<const std::atomic_bool> stop={});
+// The minimap builders live in the shared library (terrain/minimap.h): the client's
+// saved random maps get the same radar pictures.
+using tak::terrain::loadWorldPalette;
+using tak::terrain::generateMinimaps;
+using tak::terrain::MinimapPreview;
+using tak::terrain::minimapPreview;
 
 // Build a fresh flat map of wUnits x hUnits (1 Unit = 32 cells = 512px), tiled
 // with a default ground section for `world`, sea level from that side's

@@ -177,6 +177,7 @@ add_library(tak-formats
   src/util/appicon.cpp
   src/util/jpeg.cpp
   src/terrain/terrain.cpp
+  src/terrain/minimap.cpp
 )
 target_include_directories(tak-formats PUBLIC src)
 target_link_libraries(tak-formats PUBLIC ZLIB::ZLIB JPEG::JPEG tak-crypto Threads::Threads)

@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <functional>
+#include "util/virtualpath.h"
 #include <iostream>
 #include <map>
 #include <thread>
@@ -1061,7 +1062,16 @@ int main(int argc, char** argv) try {
         check(!path.empty(),"saved generated map absent from browser");
         auto generated=mapgen::generate(params,vfs);
         auto loaded=tnt::Map::load(saved.read(path));
-        check(loaded.save()==generated.map.save(),"saved generated geometry differs");
+        // The save adds the radar pictures the generator leaves out; the rest is the map as rolled.
+        const auto geometry=[](tnt::Map m) {m.minimap.clear();m.overview.clear();m.minimapW=m.minimapH=m.overviewW=m.overviewH=0;return m.save();};
+        check(loaded.minimapW==126 && loaded.minimap.size()==126u*126u && loaded.overviewW>0 &&
+              loaded.overview.size()==size_t(loaded.overviewW)*size_t(loaded.overviewH),"saved generated map has no radar pictures");
+        check(geometry(loaded)==generated.map.save(),"saved generated geometry differs");
+        {
+            const auto ota=saved.read(vpath::replaceExtension(path,".ota"));
+            const auto size="size="+std::to_string(generated.map.width/32)+" x "+std::to_string(generated.map.height/32)+";";
+            check(std::string(ota.begin(),ota.end()).find(size)!=std::string::npos,"saved generated map has no size");
+        }
         auto starts=sim::parseStartPositions(saved,path);
         check(starts.size()==generated.starts.size(),"saved start count");
         for(size_t i=0;i<starts.size();++i) check(starts[i].first==generated.starts[i].first*16 && starts[i].second==generated.starts[i].second*16,"saved start location");
@@ -1082,12 +1092,12 @@ int main(int argc, char** argv) try {
             for (const auto& [title,pth]:entries) {
                 if (pth==path) {
                     ++found;
-                    check(both.read(pth)==generated.map.save(),"original duplicate title changed geometry");
+                    check(geometry(tnt::Map::load(both.read(pth)))==generated.map.save(),"original duplicate title changed geometry");
                 }
                 if (title==otherName) {
                     ++found;
                     check(hpi::findMap(both,title)==pth,"duplicate title cannot be selected");
-                    check(both.read(pth)==mapgen::generate(other,vfs).map.save(),"duplicate title loaded wrong geometry");
+                    check(geometry(tnt::Map::load(both.read(pth)))==mapgen::generate(other,vfs).map.save(),"duplicate title loaded wrong geometry");
                     check(net::maps::build(both,title)->mapPath==hpi::MountSet::key(pth),"duplicate title package resolved wrong map");
                 }
             }

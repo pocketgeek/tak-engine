@@ -3,10 +3,13 @@
 #include "tnt/mapgen.h"
 #include "tdf/tdf.h"
 #include "tnt/ota.h"
+#include "terrain/terrain.h"
+#include "terrain/minimap.h"
 #include "crt/crt.h"
 #include "util/virtualpath.h"
 #include "util/storagequota.h"
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <set>
 #include <stdexcept>
@@ -354,11 +357,17 @@ std::filesystem::path saveGenerated(const std::filesystem::path& root, const hpi
     const auto usage=quota ? tak::storageUsage(root/"MapCache")+tak::storageUsage(root/"Maps","Generated-") : 0;
     tak::storageRoom(usage,1,quota);
     auto g = mapgen::generate(params, vfs);
-    std::vector<hpi::PackFile> files{{path + ".tnt", g.map.save()}};
     const char* worlds[] = {"Aramon","Taros","Veruna","Zhon","Creon"};
+    std::string world = worlds[params.mapType % 5];
+    for (auto& c : world) c = char(std::tolower(uint8_t(c)));
+    // The radar pictures the map lists and the in-game minimap show, as the Cartographer builds them.
+    terrain::Compositor compositor(vfs);
+    terrain::generateMinimaps(g.map, compositor, terrain::loadWorldPalette(vfs, world));
+    std::vector<hpi::PackFile> files{{path + ".tnt", g.map.save()}};
     std::string ota = "[GlobalHeader]\n{\nmissionname=" + name + ";\nmissiondescription=" +
         mapgen::friendlyLabel(params) + " Seed " + std::to_string(params.seed) + ";\nkingdom=" + worlds[params.mapType % 5] +
-        ";\nnumplayers=" + std::to_string(g.starts.size()) + ";\ngravity=112;\nminwindspeed=100;\nmaxwindspeed=2000;\n[Map Data]\n{\n[Specials]\n{\n";
+        ";\nnumplayers=" + std::to_string(g.starts.size()) + ";\nsize=" + std::to_string(g.map.width / 32) + " x " +
+        std::to_string(g.map.height / 32) + ";\ngravity=112;\nminwindspeed=100;\nmaxwindspeed=2000;\n[Map Data]\n{\n[Specials]\n{\n";
     for (size_t i = 0; i < g.starts.size(); ++i)
         ota += "[Special" + std::to_string(i) + "]\n{\nspecialwhat=StartPos" + std::to_string(i + 1) +
             ";\nxpos=" + std::to_string(g.starts[i].first) + ";\nzpos=" + std::to_string(g.starts[i].second) + ";\n}\n";
