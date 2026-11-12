@@ -555,9 +555,12 @@ Standby refusal (see "Mission target scan").
 Hold Position (Defensive: move 0, fire at will or return fire) whose auto
 slot holds a target in range, and that cannot fight from the ground, takes
 off as VTOL_Move does (416c50: Activate, BeginFlight). "Cannot" is one of
-two things: its script started a shot and never released it (no SET 23
-before the next FireWeapon, `Unit::unreleasedFires`: the Thirsha), or it is
-a hover attacker whose facing request is not met (52fff0 holds its fire).
+three things: its script started a shot and never released it (no SET 23
+before the next FireWeapon, `Unit::unreleasedFires`: the Thirsha), it is a
+hover attacker whose facing request is not met (52fff0 holds its fire), or
+its shots from the ground are written off (`noteShotImpact`: an Iron Beak's
+dropped Egg Bomb lands at its own feet). Taking off clears that write-off,
+which is taken between two ground spots and is blind to height.
 It holds over the spot it left at cruise altitude, turned to the target's
 SweetSpot through the navigator's controller heading as the hover ring's
 4e4330 turns it, and does not chase. `kHoldLiftQuiet` (90) ticks after its

@@ -3124,11 +3124,13 @@ bool World::tickHoldLift(Unit& u) {
     if (!u.holdLift) {
         if (!target || u.flightGroundMode!=1) return false;
         // Only a flyer that cannot fight from the ground lifts: its script
-        // started a shot and never released it, or it is a hover attacker
-        // whose request it cannot turn to (52fff0 holds its fire). One that
-        // can fire from where it stands keeps doing so (a Sea Dragon's Fire
-        // Breath would not reach from cruise altitude).
-        bool cannot=u.unreleasedFires>0;
+        // started a shot and never released it, it is a hover attacker whose
+        // request it cannot turn to (52fff0 holds its fire), or its shots
+        // from here are written off (noteShotImpact: an Iron Beak's Egg Bomb
+        // dropped from the ground lands at its own feet). One that can fire
+        // from where it stands keeps doing so (a Sea Dragon's Fire Breath
+        // would not reach from cruise altitude).
+        bool cannot=u.unreleasedFires>0 || shotBlockedHere(u,*target);
         if (!cannot && slotNeedsFacing(*u.type))
             for (int s=0;s<n && !cannot;++s) {
                 if (u.slotTarget[size_t(s)]!=target->id || (u.type->weaponSwitching && s!=u.weaponSlot)) continue;
@@ -3138,6 +3140,9 @@ bool World::tickHoldLift(Unit& u) {
             }
         if (!cannot) return false;
         u.holdLift=true;u.holdLiftX=u.x;u.holdLiftZ=u.z;
+        // From the air it is a new line of fire: the write-off (taken
+        // between two ground spots, blind to height) no longer holds.
+        if (u.blockedTarget) { u.blockedTarget=0;u.blockedShots=0;u.repositions=0;u.searchFailed=0; }
     }
     if (!idle) { u.holdLift=false;return false; }
     if (target) u.holdLiftUntil=tickCounter_+kHoldLiftQuiet;

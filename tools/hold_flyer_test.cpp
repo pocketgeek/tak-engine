@@ -169,6 +169,35 @@ int main(int argc,char** argv) {
             check(landed && !flew && !hurt,"a Passive (Hold Fire) Thirsha stays landed");
         }
     }
+    // An Iron Beak's Egg Bomb is dropped: from the ground it lands at its
+    // own feet. Facing the enemy straight ahead it has no facing reason to
+    // lift, so it lifts once its ground shots are written off, and from the
+    // air it hits without leaving its post.
+    {
+        const sim::UnitType* beak=registry.find("tarbeak");
+        if (!beak) check(false,"tarbeak loads");
+        else {
+            sim::World w;
+            w.setSerialThreads(true);w.setPlayerCount(2);
+            w.setTerrain(std::vector<uint8_t>(512*512,70),512,512,64);
+            w.buildNavClasses(registry);w.setPathService(true);
+            w.setPowerCodes(true);w.applyPowerCode(0,sim::PowerCode::NowISee,sim::PowerArg::None,0);
+            const int a=w.spawn(beak,4096,4096,0,0);
+            w.unit(a)->moveState=0;w.unit(a)->fireState=2;
+            for (int i=0;i<90;++i) w.tick(1.f/30);
+            const float postX=w.unit(a)->x.toFloat(),postZ=w.unit(a)->z.toFloat();
+            sim::UnitType target=*registry.find("araarch");
+            target.maxHp=30000;target.healTime=0;target.weapons.clear();target.weapon.damage=0;target.maxVel={};
+            const int t=w.spawn(&target,postX,postZ+140,0,1);   // straight ahead
+            const auto hp=w.unit(t)->hp;
+            float drift=0;
+            for (int i=0;i<1200;++i) {
+                w.tick(1.f/30);
+                drift=std::max(drift,std::hypot(w.unit(a)->x.toFloat()-postX,w.unit(a)->z.toFloat()-postZ));
+            }
+            check(w.unit(t)->hp<hp && drift<=24.f,"a landed Iron Beak on Hold Position lifts and bombs an enemy ahead from its post");
+        }
+    }
     std::printf("hold_flyer: %d failures\n",failures);
     return failures?1:0;
 }
