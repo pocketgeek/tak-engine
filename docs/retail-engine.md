@@ -3076,6 +3076,42 @@ slot's aim. Only a body over water whose origin is under the surface is
 queried; one standing on a shore or in shallows has its SweetSpot above the
 surface and is shot as before. Test: `naval_combat_test`.
 
+### Ours, not retail: no endless shots that cannot land (owner decision)
+
+A sweep of every ranged attacker against every unit that can be in water
+(2026-11-12, about 17,700 pairs in both balances) found attackers that held an
+attack for a minute without hurting the target. Retail does the same in each
+case; the owner asked for them fixed regardless (protocol 325):
+
+- **Weapon switchers and swimmers.** `canAttackTarget` accepts a target any
+  slot can use, but a switcher fires only its selected slot. A Thirsha with
+  Lightning (or a Neo Dragon with Blue Flame) took an order on a swimming Mer
+  Warrior because its `unitsonly` Wind Wave could, then hovered for good. A
+  switcher whose selected weapon has the aim point under water now refuses.
+- **Storms over the sea.** A Wandering storm is born at the terrain height
+  under it and keeps that height; over deep water that is the sea bed, 48 px
+  under a boat, beyond the Crusades Hurricane's 30 px splash. A storm that is
+  not a `waterweapon` now starts at the surface (unless `nosealeveltrigger`).
+- **SweetSpots off the body.** The Creon Submersible's SweetSpot lies 20 px
+  off its centre, outside its 2x2 cells, and `52a4d0` reaches a body only
+  through its cells and selection quad, so straight shots missed it whenever
+  its bow pointed the wrong way (see "Lightning at the Creon Submersible").
+  `queryUnitScriptPoint` now moves a ground body's SweetSpot that lies outside
+  its footprint over the body's centre, at its own height.
+- **Blocked attacks give up.** `noteShotImpact` now runs after `applyHit` and
+  also counts a shot that leaves a target standing still unhurt, wherever it
+  lands (shots have no spread, so it lands there again: an arrow dipping into
+  the ground at a wall's foot), and a straight, guided or beam shot that runs
+  out without striking. A ground mover whose shots are written off and that
+  finds no spot to move to (or has used its walks) now drops the target, an
+  ordered one too; Hold Position drops it without looking. Before, an ordered
+  attack and Hold Position fired on, as retail: a ship with its muzzle at the
+  waterline emptied its quiver into the bank under a unit on the shore.
+
+Tests: `naval_combat_test`. Not changed: the Basilisk's stone beam ends about
+160 px out though its range is 300, and the Fallen Angel misses many targets
+on land; neither is a water case.
+
 ### Ours, not retail: an Activate waits for Create (owner decision)
 
 Every shipped factory and yard `Create` (all 27 scripts with a

@@ -303,6 +303,58 @@ int main(int argc,char**argv) {
                        "a ship neither targets nor is ordered onto a swimming Mer Warrior");
         }
     }
+    // No endless shots (engine deviations, 2026-11-12). A Thirsha with its
+    // Lightning selected refuses a swimming Mer Warrior (only the selected
+    // weapon fires); a Crusades Wrath of Tammuz's storm runs on the surface
+    // and hurts a ship over deep water; a Creon Submersible facing either
+    // way is hit by a ship's arrows; a ship whose arrows stop in the bank
+    // under a cow on the shore gives the attack up.
+    if (!legion) {
+        tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,true);
+        auto still=[&](const char* id) {
+            auto t=*registry.find(id);
+            t.weapons.clear();t.weapon.damage=0;t.maxVel={};t.healTime=0;t.maxHp=100000;
+            return t;
+        };
+        auto sea=[&](bool shore) {
+            std::vector<uint8_t> heights(256*256,10);
+            if (shore) for (int z=0;z<256;++z) for (int x=128;x<256;++x) heights[size_t(z)*256+x]=70;
+            return heights;
+        };
+        {
+            auto mer=still("vermer");
+            tak::sim::World w;w.setTerrain(sea(false),256,256,58);w.buildNavClasses(registry);
+            const int a=w.spawn(registry.find("zonhunt"),1900,2000,0,0),b=w.spawn(&mer,2050,2000,0,1);
+            for (int i=0;i<60;++i) w.tick(1.f/30);
+            w.attack(a,b,false);
+            for (int i=0;i<30;++i) w.tick(1.f/30);
+            check(w.unit(a)->orders.empty() || w.unit(a)->orders.front().targetId!=b,
+                  "a Thirsha with Lightning selected refuses a swimming Mer Warrior");
+        }
+        auto hurtBy=[&](const char* attacker,tak::sim::UnitType& victim,float ax,float tx,bool shore,float heading) {
+            tak::sim::World w;w.setTerrain(sea(shore),256,256,58);w.buildNavClasses(registry);
+            const int a=w.spawn(registry.find(attacker),ax,2000,0,0),b=w.spawn(&victim,tx,2000,heading,1);
+            for (int i=0;i<60;++i) w.tick(1.f/30);
+            const auto hp=w.unit(b)->hp;
+            w.attack(a,b,false);
+            int orderTicks=0;
+            for (int i=0;i<1200;++i) {
+                w.tick(1.f/30);
+                if (!w.unit(b)) break;
+                orderTicks+=!w.unit(a)->orders.empty() && w.unit(a)->orders.front().targetId==b;
+            }
+            return std::pair{!w.unit(b) || w.unit(b)->hp<hp,orderTicks};
+        };
+        auto ship=still("verflag");
+        check(hurtBy("zongod",ship,1700,1850,false,0).first,"a Wrath of Tammuz storm hurts a ship over deep water");
+        for (float heading:{0.f,1.5708f,3.1416f,4.7124f}) {
+            auto sub=still("cresubm");
+            check(hurtBy("verflag",sub,1700,1850,false,heading).first,"a ship's arrows hit a Creon Submersible");
+        }
+        auto cow=still("lifcow");
+        const auto [hurt,held]=hurtBy("npcrixx",cow,2144-150,2144,true,0);
+        check(!hurt && held<300,"a ship whose arrows stop in the bank gives the attack up");
+    }
     // The naval combat mask changes no movement cell or ground raycast.
     tak::sim::World w;w.setTerrain(std::vector<uint8_t>(64*64,10),64,64,64);
     tak::sim::UnitType boat;boat.domain=tak::sim::UnitType::Domain::Water;

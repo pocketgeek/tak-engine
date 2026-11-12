@@ -24,7 +24,7 @@ namespace tak::net {
 // Bump it whenever the wire layout changes or the simulation can compute a different
 // result from the same inputs -- a peer or replay of another number would desync.
 // The CHANGELOG records what each release changed.
-constexpr uint32_t kNetVersion = 324;      // 324: water graves decompose; ranged weapons ignore targets aimed at under water
+constexpr uint32_t kNetVersion = 325;      // 325: no endless shots: switchers refuse swimmers, storms ride the surface, off-body aim points, blocked attacks give up
 constexpr uint32_t kMaxFrame = 1u << 18;   // 256 KB frame cap (hardening) -- headroom for a
                                            // big tick bundle when many units are ordered at once
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)

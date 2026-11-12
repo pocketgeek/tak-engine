@@ -117,10 +117,9 @@ int main(int argc, char** argv) {
         // from its centre, past its 2x2 cells, and the drawn offset turns with
         // its heading. Retail's 52a4d0 run on the game's own 47 bolts with the
         // drawn aim point hits sub 328 (heading 14493: 7 of 7) and still misses
-        // sub 106 (heading 4616: 0 of 20); the simulation must do the same from
-        // the recorded bearing. (Since protocol 307 AirToGroundHover answers a
-        // wasted shot at a target standing still by moving to a random point of
-        // its ring, 41e145: so only the first bolt at sub 106 is from there.)
+        // sub 106 (heading 4616: 0 of 20). Ours hits both (engine deviation,
+        // protocol 325): a SweetSpot outside the footprint is moved over the
+        // body's centre, so the bolts reach it whichever way the bow points.
         {
             const sim::UnitType* thirsha = reg.find("zonhunt");
             const sim::UnitType* subType = reg.find("cresubm");
@@ -133,7 +132,7 @@ int main(int argc, char** argv) {
             struct Setup { const char* what; float sx, sz; uint16_t heading; float mx, mz; bool hits; };
             const Setup setups[] = {
                 {"lightning hits sub 328 at heading 14493, as retail", 80, 2192, 14493, 197.10f, 2156.04f, true},
-                {"lightning misses sub 106 at heading 4616, as retail", 400.1f, 2032.28f, 4616, 516.42f, 2063.27f, false}};
+                {"lightning hits sub 106 at heading 4616 (retail misses)", 400.1f, 2032.28f, 4616, 516.42f, 2063.27f, true}};
             for (const auto& s : setups) {
                 sim::World w;
                 w.setTerrain(std::vector<uint8_t>(64 * 192, 0), 64, 192, 58);

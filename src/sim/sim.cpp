@@ -7078,7 +7078,10 @@ bool World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
         const int height=heights_.empty() ? 0 : retailTerrainHeight(s.x.v,s.z.v,terW_,terH_,[&](int x,int z) {
             return heights_[size_t(z)*size_t(terW_)+size_t(x)];
         });
-        s.y=Fixed::fromInt(height);s.baseVelocity=launch.baseVelocity;s.variation=launch.variation;
+        // Engine deviation: over water a storm runs on the surface, not on the
+        // sea bed, where its hits fell short of every boat and swimmer.
+        s.y=Fixed::fromInt(noSeaLevelTrigger_ || w.waterWeapon || heights_.empty() ? height : std::max(height,int(uint8_t(seaLevel_))));
+        s.baseVelocity=launch.baseVelocity;s.variation=launch.variation;
         s.player = u.player; s.fromId = u.id;
         s.id = ++stormSeq_;
         s.start = tickCounter_ + 1;
@@ -7359,6 +7362,10 @@ bool World::canAttackTarget(const Unit& from,const Unit& target) const {
         const int slot=std::clamp(from.weaponSlot,0,int(from.type->weapons.size())-1);
         const auto& selected=from.type->weapons[size_t(slot)];
         if (selected.mindControl) return usable(selected);
+        // Engine deviation: only the selected weapon fires, so a swimming
+        // target its shots cannot reach is refused even when another slot
+        // (a Thirsha's Wind Wave) could take it.
+        if (aimPointSubmerged(selected,target)) return false;
     }
     return std::any_of(from.type->weapons.begin(),from.type->weapons.end(),usable);
 }
@@ -7590,8 +7597,10 @@ bool World::slotClearShot(const Unit& u,const Unit& t,int slot) const {
 // crest a low arc clips, a tall feature that does not block movement, water
 // or a shot from below a ledge. So the sim watches where the shots land: an
 // impact on terrain, water or scenery this weapon cannot destroy, short of
-// the target and clear of it, counts against the target; a hit on it or a
-// miss beside it clears the count, and so does walking away from the spot.
+// the target and clear of it, counts against the target, and so does any
+// shot that leaves a still target unhurt (engine deviation, below); a hit on
+// it, splash that hurts it or a miss beside a moving target clears the count,
+// and so does walking away from the spot.
 // What is written off is the line between two spots, the shooter's and the
 // target's: retail keeps no memory of a blocked shot at all (nothing feeds
 // 52a4d0's impact back to the shooter, and the picker 412620 and the weapon
@@ -7649,7 +7658,7 @@ bool World::impactIndestructible(const Weapon& w,int cx,int cz) const {
     return true;   // bare terrain, water, or a map blocker with no feature record
 }
 
-void World::noteShotImpact(int fromId,int targetId,const Weapon& w,const std::array<int32_t,3>& impact,int hitUnit) {
+void World::noteShotImpact(int fromId,int targetId,const Weapon& w,const std::array<int32_t,3>& impact,int hitUnit,Fixed targetHp) {
     Unit* u=unit(fromId);
     const Unit* t=unit(targetId);
     if (!u || !u->alive() || !u->type || !t || !t->alive() || !t->type || targetId==fromId) return;
@@ -7669,7 +7678,16 @@ void World::noteShotImpact(int fromId,int targetId,const Weapon& w,const std::ar
     const int64_t ix=impact[0]>>16,iz=impact[2]>>16;
     const int64_t along=(ix-sx)*(tx-sx)+(iz-sz)*(tz-sz),line=(tx-sx)*(tx-sx)+(tz-sz)*(tz-sz);
     const bool shortOf=along<line && !nearBody(*t->type,ix-tx,iz-tz,8+24+int64_t(uint16_t(w.aoe))/2);
-    if (!shortOf || !impactIndestructible(w,int(impact[0]>>20),int(impact[2]>>20))) {
+    // Engine deviation: shots fly without spread, so one that lands beside
+    // or past a target standing still and leaves it unhurt will land there
+    // again (an arrow dipping into the ground at a wall's foot); it counts
+    // too. A shot whose splash hurt the target opened the line, as a hit.
+    if (t->hp<targetHp) {
+        if (u->blockedTarget==targetId) { u->blockedShots=0;u->repositions=0;u->searchFailed=0; }
+        return;
+    }
+    const bool besideStill=!shortOf && (t->type->isStructure() || t->speed==Fixed());
+    if ((!shortOf && !besideStill) || !impactIndestructible(w,int(impact[0]>>20),int(impact[2]>>20))) {
         if (u->blockedTarget==targetId) { u->blockedShots=0;u->searchFailed=0; }
         return;
     }
@@ -7774,12 +7792,11 @@ bool World::chordClear(const std::array<int64_t,3>& a,const std::array<int64_t,3
 // at, with a clear chord (and the 2D sight test the attack fires on). A plain
 // move leg is put in front of the attack, so each pathfinding mode walks it
 // its own way and the attack resumes on arrival. Each target gets
-// kMaxRepositions walks between hits on it; with the walks used up the unit
-// fires on as retail does. A search that finds no spot writes off the
-// moment, not the target: the unit fires on, and searches again after
-// another kBlockedShots blocked shots, since the target may have moved
-// (a hit, a miss that reached the target or the shooter moving restart the
-// count as usual).
+// kMaxRepositions walks between hits on it. With the walks used up, or
+// when a search finds no spot, the attack (World::tickCombat) drops the
+// target, an ordered one too: retail fires on (engine deviation, owner
+// 2026-11-12). The searchFailed rule below still spaces out searches for a
+// caller that keeps the target.
 static constexpr uint8_t kMaxRepositions=3;
 static constexpr int kRepositionReach=12;    // cells from the unit searched for a spot
 static constexpr int kRepositionChords=256;  // chord tests per search, nearest spots first
@@ -8864,16 +8881,19 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     // into a ridge for good after walking up to the target), and a Hold
     // Position unit whose auto target interrupted a movement order (an
     // attack-move, a patrol, a move queued behind it): it is on its way
-    // anyway. If no spot is left in reach it drops an auto target and goes on
-    // with that movement (the scans will not pick the target again from this
-    // spot). Hold Position with nothing to go on with stays and fires on at
-    // what it picked itself, as retail.
+    // anyway. If no spot is left in reach it drops the target and goes on
+    // with whatever is queued (the scans will not pick the target again from
+    // this spot). Engine deviation (owner, 2026-11-12): retail fires on, and
+    // so did we for an ordered attack and for Hold Position (a ship shooting
+    // into the bank under a unit on the shore); now each gives the target up,
+    // and Hold Position does so without looking for a spot.
     if (!airRun && !hovering && sel && !sel->melee && inReach && u.type->canMove &&
         !u.type->canFly && !u.type->isStructure() && shotBlockedHere(u,*target)) {
         const bool onTheWay = u.orders.front().autoTarget && movementQueued(u);
         const bool ordered = !u.orders.front().autoTarget;
-        if ((u.moveState != 0 || onTheWay || ordered) && repositionForShot(u,*target,slot)) return;
-        if (onTheWay && (u.searchFailed || u.repositions >= kMaxRepositions)) {
+        const bool mayMove = u.moveState != 0 || onTheWay || ordered;
+        if (mayMove && repositionForShot(u,*target,slot)) return;
+        if (!mayMove || u.searchFailed || u.repositions >= kMaxRepositions) {
             if(u.scriptAimTarget)clearScriptWeaponTarget(u);
             dropLeg(u);
             cancelPath(u);
@@ -17597,10 +17617,15 @@ void World::tickStraightProjectiles(std::span<const int> airGrid) {
                 if(hit.code!=2)continue;
                 struck=true;
                 p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
-                noteShotImpact(p.fromId,p.targetId,w,p.position,hit.unitId);
+                const Fixed shotHp=unit(p.targetId) ? unit(p.targetId)->hp : Fixed();
                 applyHit(w,p.x.toFloat(),p.z.toFloat(),p.fromPlayer,p.fromId,unit(hit.unitId),p.position,{},p.slot);
+                noteShotImpact(p.fromId,p.targetId,w,p.position,hit.unitId,shotHp);
             }
             p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
+            // A shot that runs out without striking anything missed its
+            // target as surely as one that landed past it.
+            if(!struck && !retire && tickCounter_>=p.end)
+                if(const Unit* t=unit(p.targetId))noteShotImpact(p.fromId,p.targetId,w,p.position,0,t->hp);
             if(struck || retire || tickCounter_>=p.end) {p.spent=true;p.life=0;}
             continue;
         }
@@ -17621,7 +17646,13 @@ void World::tickStraightProjectiles(std::span<const int> airGrid) {
         if(p.lightningEffect)
             effectAlive=p.lightningEffect->tick(emitting,[&]{return crtRand(0x4f3e3f);});
         p.age=int32_t(tickCounter_-p.start);
-        if(!emitting) {if(!effectAlive)p.life=0;continue;}
+        if(!emitting) {
+            // Emitted to the end without striking: a miss, as a straight shot's.
+            if(!p.spent && tickCounter_==p.end)
+                if(const Unit* t=unit(p.targetId))noteShotImpact(p.fromId,p.targetId,w,p.position,0,t->hp);
+            if(!effectAlive)p.life=0;
+            continue;
+        }
         const uint32_t flags=(w.unitsOnly?0x800u:0u)|(w.groundBounce?0x1000u:0u)|(w.waterWeapon?0x2000u:0u);
         for(uint32_t step=0;step<p.substeps;++step) {
             for(unsigned axis=0;axis<3;++axis)p.angles[axis]=uint16_t(p.angles[axis]+w.shotSpin[axis]);
@@ -17629,9 +17660,10 @@ void World::tickStraightProjectiles(std::span<const int> airGrid) {
                 uint32_t(p.position[axis])+uint32_t(p.velocity[axis]));
             const auto hit=projectileCollision(p.position,p.velocity[1],flags,p.fromPlayer,airGrid);
             if(hit.code==2) {
-                noteShotImpact(p.fromId,p.targetId,w,p.position,hit.unitId);
+                const Fixed shotHp=unit(p.targetId) ? unit(p.targetId)->hp : Fixed();
                 applyHit(w,Fixed::raw(p.position[0]).toFloat(),Fixed::raw(p.position[2]).toFloat(),
                     p.fromPlayer,p.fromId,unit(hit.unitId),p.position,{},p.slot);
+                noteShotImpact(p.fromId,p.targetId,w,p.position,hit.unitId,shotHp);
                 p.spent=true;break;
             }
         }
@@ -17672,9 +17704,10 @@ void World::tickFlames(std::span<const int> airGrid) {
                 uint32_t(flame.position[axis])+uint32_t(flame.velocity[axis]));
             const auto hit=collision(flame.position);
             if(hit.code==2) {
-                noteShotImpact(flame.fromId,flame.targetId,w,flame.position,hit.unitId);
+                const Fixed shotHp=unit(flame.targetId) ? unit(flame.targetId)->hp : Fixed();
                 applyHit(w,Fixed::raw(flame.position[0]).toFloat(),Fixed::raw(flame.position[2]).toFloat(),
                     flame.owner,flame.fromId,unit(hit.unitId),flame.position,{},flame.slot);
+                noteShotImpact(flame.fromId,flame.targetId,w,flame.position,hit.unitId,shotHp);
                 flame.impacted=true;break;
             }
         }
@@ -17839,6 +17872,14 @@ std::array<int32_t,3> World::queryUnitScriptPoint(int unitId,bool sweetSpot,int 
         retailPieceDrawnChain(chain,u->type->productionModel,it->peek().pieces,piece,
             portHeadingToRetail(u->heading),u->groundPitch,u->groundRoll);
         offset=it->sweetSpotCache.get(chain,u->type->scriptPieceVertices[size_t(piece)]);
+        // Engine deviation: a SweetSpot outside the body's footprint (the
+        // Creon Submersible's lies 20 px off its centre, past its 2x2 cells)
+        // is moved over the body's centre, at its own height. 52a4d0 reaches
+        // a body only through the cells it owns and its selection quad, so
+        // shots aimed past them missed it for good.
+        if(!u->type->canFly && u->type->footX>0 && u->type->footZ>0 &&
+           (std::abs(offset[0])>=(8*u->type->footX)<<16 || std::abs(offset[2])>=(8*u->type->footZ)<<16))
+            offset[0]=offset[2]=0;
     } else offset=retailPieceOrigin(u->type->productionModel,it->peek().pieces,piece,
         portHeadingToRetail(u->heading),u->groundPitch,u->groundRoll);
     for(size_t axis=0;axis<3;++axis)
@@ -19823,7 +19864,11 @@ void World::tick(float dt) {
                 if(!owner || !owner->alive() || owner->hp<=Fixed())p.life=0;
                 continue;
             }
-            if(tickCounter_>=p.end) {p.life=0;continue;}
+            if(tickCounter_>=p.end) {
+                // Run out without striking: a miss, as in the straight shots.
+                if(const Unit* t=unit(p.targetId);t && p.wsrc)noteShotImpact(p.fromId,p.targetId,*p.wsrc,p.position,0,t->hp);
+                p.life=0;continue;
+            }
             // 52e030 steers at a target that is alive (+0x130 0x1000000) and not
             // dying (0x1000), and tests nothing else: a carried target (its
             // attach, 51b5a0, keeps both bits; +0x114's carried bits are not
@@ -19851,9 +19896,10 @@ void World::tick(float dt) {
             p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
             p.age=int32_t(tickCounter_-p.start);
             if(hit) {
-                noteShotImpact(p.fromId,p.targetId,*p.wsrc,p.position,hitUnit);
+                const Fixed shotHp=unit(p.targetId) ? unit(p.targetId)->hp : Fixed();
                 applyHit(*p.wsrc,Fixed::raw(p.position[0]).toFloat(),
                     Fixed::raw(p.position[2]).toFloat(),p.fromPlayer,p.fromId,unit(hitUnit),p.position,{},p.slot);
+                noteShotImpact(p.fromId,p.targetId,*p.wsrc,p.position,hitUnit,shotHp);
                 p.spent=true;p.life=0;
             } else if(p.life>0)--p.life;
             continue;
@@ -19883,9 +19929,10 @@ void World::tick(float dt) {
                 p.position=state.position;p.velocity=state.velocity;p.angles=state.angles;
                 p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
                 if(hit.code==2) {
-                    noteShotImpact(p.fromId,p.targetId,*p.wsrc,state.position,hit.unitId);
+                    const Fixed shotHp=unit(p.targetId) ? unit(p.targetId)->hp : Fixed();
                     applyHit(*p.wsrc,p.x.toFloat(),p.z.toFloat(),p.fromPlayer,p.fromId,unit(hit.unitId),p.position,{},
                              p.slot);
+                    noteShotImpact(p.fromId,p.targetId,*p.wsrc,state.position,hit.unitId,shotHp);
                 }
                 // Native retires an out-of-map shell without damage and dispatches
                 // exactly one impact when collision returns 2.

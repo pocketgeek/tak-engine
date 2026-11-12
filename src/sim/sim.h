@@ -4104,7 +4104,8 @@ private:
     bool slotBadTarget(const Unit& u,int slot,const Unit& t) const;
     bool slotClearShot(const Unit& u,const Unit& t,int slot) const;
     // Blocked shots (engine deviation, see noteShotImpact in sim.cpp).
-    void noteShotImpact(int fromId,int targetId,const Weapon& w,const std::array<int32_t,3>& impact,int hitUnit);
+    // Called after the shot's applyHit, with the target's hit points from before it.
+    void noteShotImpact(int fromId,int targetId,const Weapon& w,const std::array<int32_t,3>& impact,int hitUnit,Fixed targetHp);
     void noteNoArc(Unit& u,const Unit& t);
     bool impactIndestructible(const Weapon& w,int cx,int cz) const;
     bool shotBlockedHere(const Unit& u,const Unit& t) const;
