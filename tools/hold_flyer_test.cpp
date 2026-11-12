@@ -133,6 +133,30 @@ int main(int argc,char** argv) {
     // once the enemy is gone. Its script releases a shot only in flight, and
     // a landed hover attacker cannot turn to a request. A Passive one (Hold
     // Fire) takes no target and stays down.
+    // Straight ahead, facing it, the Thirsha has no facing reason to lift: it
+    // lifts once a shot it started has gone unreleased for kHoldLiftNoRelease
+    // ticks, not a whole reload later at its next start.
+    {
+        const sim::UnitType* thirsha=registry.find("zonhunt");
+        sim::World w;
+        w.setSerialThreads(true);w.setPlayerCount(2);
+        w.setTerrain(std::vector<uint8_t>(512*512,70),512,512,64);
+        w.buildNavClasses(registry);w.setPathService(true);
+        w.setPowerCodes(true);w.applyPowerCode(0,sim::PowerCode::NowISee,sim::PowerArg::None,0);
+        const int a=thirsha ? w.spawn(thirsha,4096,4096,0,0) : 0;
+        if (a) {
+            w.unit(a)->mana=thirsha->maxMana;w.unit(a)->moveState=0;w.unit(a)->fireState=2;
+            for (int i=0;i<90;++i) w.tick(1.f/30);
+            sim::UnitType target=*registry.find("araarch");
+            target.maxHp=30000;target.healTime=0;target.weapons.clear();target.weapon.damage=0;target.maxVel={};
+            const int t=w.spawn(&target,w.unit(a)->x.toFloat(),w.unit(a)->z.toFloat()+192,0,1);
+            const auto hp=w.unit(t)->hp;
+            int first=-1;
+            for (int i=0;i<600 && first<0;++i) { w.tick(1.f/30);if (w.unit(t)->hp<hp) first=i; }
+            std::printf("  zonhunt Hold, enemy straight ahead: first hit at tick %d\n",first);
+            check(first>=0 && first<200,"a landed Thirsha facing an enemy lifts and hits it within 200 ticks");
+        }
+    }
     for (const uint8_t fireState:{uint8_t(2),uint8_t(0)}) {
         const sim::UnitType* thirsha=registry.find("zonhunt");
         if (!thirsha) { check(false,"zonhunt loads");break; }

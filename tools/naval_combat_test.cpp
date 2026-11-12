@@ -73,10 +73,18 @@ int main(int argc,char**argv) {
             // take only an enemy its player sees (4d8370, 40f330: list +5): a
             // submarine whose sight falls short of the target leaves it alone.
             if (order==0 && !seen) { ++cases;check(!fired,"an idle ship leaves an enemy its player cannot see");continue; }
-            // So does a fight-move's scan: a submarine whose sight (cresubm:
-            // 80) never reaches past its minimum range (180) never fires.
-            if (order==1 && (!seen || type->sight<=type->weapon.minRange)) {
-                ++cases;check(!fired,"a fight-moving ship takes only an enemy its player sees outside its minimum range");
+            // So does a fight-move's scan: an enemy its player never sees is
+            // left alone. One it sees inside its minimum range (a Crusades
+            // submarine's sight, 80, falls short of its minimum range, 180)
+            // it backs away from and then shoots (engine deviation; retail
+            // never fired).
+            if (order==1 && !seen) {
+                ++cases;check(!fired,"a fight-moving ship leaves an enemy its player never sees");
+                continue;
+            }
+            if (order==1 && type->sight<=type->weapon.minRange) {
+                ++cases;check(fired && actual>=float(type->weapon.minRange)-8.f,
+                              "a fight-moving ship backs out of its minimum range to shoot what it saw");
                 continue;
             }
             ++cases;check(fired,"ship acquires, attack-moves, and attacks across open water/shore");
@@ -308,7 +316,8 @@ int main(int argc,char**argv) {
     // weapon fires); a Crusades Wrath of Tammuz's storm runs on the surface
     // and hurts a ship over deep water; a Creon Submersible facing either
     // way is hit by a ship's arrows; a ship whose arrows stop in the bank
-    // under a cow on the shore gives the attack up.
+    // under a cow on the shore sails to a spot with a clear shot (its chord
+    // starts at its own height) or, finding none, gives the attack up.
     if (!legion) {
         tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,true);
         auto still=[&](const char* id) {
@@ -394,9 +403,19 @@ int main(int argc,char**argv) {
             auto sub=still("cresubm");
             check(hurtBy("verflag",sub,1700,1850,false,heading).first,"a ship's arrows hit a Creon Submersible");
         }
+        // A unit ordered onto a target inside its minimum range backs off to
+        // its range band and fires (engine deviation): a Crusades Trebuchet
+        // Ship 250 px from a boat (min 500), a Crusades Catapult 90 px from a
+        // swordsman (min 180).
+        {
+            auto boat=still("aratrans");
+            check(hurtBy("vertre",boat,1600,1850,false,0).first,"a Trebuchet Ship backs out of its minimum range and fires");
+            auto sword=still("arasword");
+            check(hurtBy("arapult",sword,2400,2490,true,0).first,"a Catapult backs out of its minimum range and fires");
+        }
         auto cow=still("lifcow");
         const auto [hurt,held]=hurtBy("npcrixx",cow,2144-150,2144,true,0);
-        check(!hurt && held<300,"a ship whose arrows stop in the bank gives the attack up");
+        check(hurt || held<300,"a ship whose arrows stop in the bank moves to a clear shot or gives the attack up");
     }
     // The naval combat mask changes no movement cell or ground raycast.
     tak::sim::World w;w.setTerrain(std::vector<uint8_t>(64*64,10),64,64,64);

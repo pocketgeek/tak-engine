@@ -555,8 +555,9 @@ Standby refusal (see "Mission target scan").
 Hold Position (Defensive: move 0, fire at will or return fire) whose auto
 slot holds a target in range, and that cannot fight from the ground, takes
 off as VTOL_Move does (416c50: Activate, BeginFlight). "Cannot" is one of
-three things: its script started a shot and never released it (no SET 23
-before the next FireWeapon, `Unit::unreleasedFires`: the Thirsha), it is a
+three things: its script started a shot and has not released it within
+`kHoldLiftNoRelease` (45) ticks (no SET 23; `Unit::fireStartPending`,
+`unreleasedFires`: the Thirsha), it is a
 hover attacker whose facing request is not met (52fff0 holds its fire), or
 its shots from the ground are written off (`noteShotImpact`: an Iron Beak's
 dropped Egg Bomb lands at its own feet). Taking off clears that write-off,
@@ -3160,6 +3161,21 @@ case; the owner asked for them fixed regardless (protocol 325):
   ordered one too; Hold Position drops it without looking. Before, an ordered
   attack and Hold Position fired on, as retail: a ship with its muzzle at the
   waterline emptied its quiver into the bank under a unit on the shore.
+
+- **Targets inside the minimum range.** 52fe30 refuses to aim inside a
+  weapon's `minrange`, and retail stands there for as long as the order
+  lasts: a Crusades Trebuchet Ship (min 500) ordered onto a boat 250 px off,
+  a Catapult (min 180) whose target walked up to it, the Tortoise, Beast
+  Rider, Submersible and Amazon Knight. A ground mover or boat whose every
+  firing weapon has the target inside its minimum range now backs off to a
+  spot in its range band with a clear shot (`repositionForShot`, searching
+  far enough to clear the minimum range), if it may move (an ordered
+  attack, a stance other than Hold Position, or an auto target on the way);
+  otherwise, or with no spot, it gives the target up.
+- **A boat's clear-shot chord** (`shotChordClear`) started from the sea bed
+  under the spot plus the muzzle's lift, so every chord met the surface and
+  a boat never found a spot to reposition to. It starts from the body's own
+  height now (sea level or its dive depth).
 
 A unit that gives a target up goes on with its queue, and its fire-at-will
 sweep picks another target; the written-off one is skipped only while the

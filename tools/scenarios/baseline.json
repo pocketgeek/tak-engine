@@ -119251,7 +119251,7 @@
      "reason": "An abandoned site decays at retail's pace and refunds, in every game (fx-sitedecay, protocol 312, 2026-11-05; docs/retail-engine.md \"The pace of that decay, ported for every game\"): Unit::conjureRate is gone from the hash and an unfinished site's GetBuilt timer (Unit::siteTimer, siteWorkLate) is hashed; every non-hash key of this fixture is identical to the base b6316fee (full gate-offset run of all 161 fixtures, both modes) (was 007f33a5954afca5). Before: A type without standingunitorder carries the composite standing order 2, as retail's parser stores it (4c00a7), not 3 (gap hunt 11, protocol 312, 2026-11-05; docs/retail-engine.md \"A type without standingunitorder is Offensive\"): the hashed Unit::standingOrder of such units changed; every non-hash key of this fixture is identical to the base 03238e41 (full gate-offset run of all 161 fixtures, both modes) (was ecc49a334d0ccd29). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was 3a1ed263d84e1acc). Before: Legion ~100 round 5 (2026-10-21, task-l5-land, from 47c09924): rings press into a wall's shadow from just outside reach and only a pressed body holds in reach out of sight (task-l5-ringB), late rings for fight columns, the reach edge in reach as tickCombat tests it (melee by contact) and the ring's stop origin (task-l5-fight); protocol 285; hash@-5 retaken (was d357429bed26eb01). Before: Legion ~100 round 4 (2026-10-20, task-l4-land, from 30813a73): lane order through turns (a lateral-rank ribbon through turns, lane exchange, settle-window slot wedge; task-l4-turnA), rings along walls (band-1 spots for waiting members, walks on through a still target's shadow, blind rings press into reach; task-l4-ringwall) and fight and guard members round still targets at travel speed (stillTarget, whole routes and fight-leg flow-around shuffles at speed, no shuffling without headway; task-l4-fight), with the round-4 repairs (big points keep the pinwheel, a blocked file is let go, the stall release counted from the rank; task-l4-fixturn; shadowed rings lift the still-window stop only for out-of-sight members, band-1 holders and band-0 holders still for 4 windows; task-l4-fixring) and room at a merge (members passing a queue head held 60 ticks at a corner's merge move over a lane; task-l4-funnelB); protocol 283; hash@-5 retaken (was b7da2800d9b6a6bd). Before: Legion ~100 rounds 1-3 (round 1 protocol 279: one admission per narrow passage, head-on meets near goals, friendly settled bodies stepping aside, long detours at travel speed, ring upkeep and press-in; round 2 protocol 280: sub-cell presses and ring bends, passage lanes, flow-around at travel speed; round 3 on 0.8.6, 2026-10-20: rings round still targets (travel-speed detours, spent closed-off spots by sight test, outer-band waits, flush presses), a passage's green scaled to its crossing and small groups admitted, funnel claims and own-slot arrivals at corridor mouths); hash@-5 retaken (was 940382280246c42d). Before: stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): no behaviour or work key of attackring-river-64 moved; new hashed state: a formation member's slot record, the label flag of routes of 8 or more members, groups' own entrants. Hash retaken (was bfb31c4f337bf112). Before: stage 5 (protocol 269, 2026-10-16, Legion route queries): no behaviour or work key of attackring-river-64 moved; progress measures no longer compare across route metrics: a metric transition is never a detour record (Member::nearestHere: a lost field's squared cells or a cheaper refresh no longer restart the detour back-off), the approach holder's gain is per route serial and its clock stops while the route gives no value instead of restarting the window, and a complete route built on older geometry no longer traps a body it does not reach (RouteView::reach: Unknown, the body waits for the refresh). Hash retaken (was 99143e5d51d3c6ec). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of attackring-river-64 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). Hash retaken (was 06fc84df45b0549e). Before: W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "SD312",
-     "value": "e6bd5eb0db709ce7"
+     "value": "cad99110fe39cb57"
     },
     "hash@0": {
      "dir": "lower",
@@ -120879,7 +120879,7 @@
      "reason": "An abandoned site decays at retail's pace and refunds, in every game (fx-sitedecay, protocol 312, 2026-11-05; docs/retail-engine.md \"The pace of that decay, ported for every game\"): Unit::conjureRate is gone from the hash and an unfinished site's GetBuilt timer (Unit::siteTimer, siteWorkLate) is hashed; every non-hash key of this fixture is identical to the base b6316fee (full gate-offset run of all 161 fixtures, both modes) (was b0f516d321be8c7e). Before: A type without standingunitorder carries the composite standing order 2, as retail's parser stores it (4c00a7), not 3 (gap hunt 11, protocol 312, 2026-11-05; docs/retail-engine.md \"A type without standingunitorder is Offensive\"): the hashed Unit::standingOrder of such units changed; every non-hash key of this fixture is identical to the base 03238e41 (full gate-offset run of all 161 fixtures, both modes) (was df2633edef5cbdd9). Before: Retail target search (fx-tsearch, protocol 312, 2026-11-03; docs/retail-engine.md \"Mission target scan\"): new hashed state in both modes (Unit::viewPlanes, RetailDeathSight::planes, the Attack_Melee retarget wake tick, Legion's Unit::aimWait) and the mission scan's RNG draws; every non-hash key of this fixture is identical to the branch base 2f04e112 (full gate-offset run of both modes) (was bf4910b61919c68d). Before: W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "SD312",
-     "value": "2af0853e1320532a"
+     "value": "ea1c7c2dac46a266"
     },
     "hash@0": {
      "dir": "lower",
@@ -399076,27 +399076,6 @@
   },
   {
    "cluster": "AR-06",
-   "key": "reach.ring.ever_end",
-   "median5": true,
-   "reason": "fails legion <= retail x1.1 at W5 step 0: legion 6 vs retail 16",
-   "scenario": "attackring-river-64"
-  },
-  {
-   "cluster": "AR-06",
-   "key": "reach.ring.ever_t1200",
-   "median5": true,
-   "reason": "fails legion <= retail x1.1 at W5 step 0: legion 6 vs retail 16",
-   "scenario": "attackring-river-64"
-  },
-  {
-   "cluster": "AR-06",
-   "key": "reach.ring.ever_t2400",
-   "median5": true,
-   "reason": "fails legion <= retail x1.1 at W5 step 0: legion 6 vs retail 16",
-   "scenario": "attackring-river-64"
-  },
-  {
-   "cluster": "AR-06",
    "key": "spins",
    "median5": true,
    "mode": "retail",
@@ -427084,6 +427063,30 @@
    "mode": "retail",
    "reason": "3-offset spread 112..126 exceeds the band at GR312 (Retail idle formation members re-form: Standby's group check, 407779); gated on median-of-5 offsets",
    "scenario": "deadend-w6-n120-room-squad"
+  },
+  {
+   "cluster": "AR-06",
+   "key": "reach.ring.ever_end",
+   "median5": true,
+   "mode": "retail",
+   "reason": "offset spread 0..61 exceeds the band; kept as a spread exception when the ratchet cleared its Retail-floor exception (2026-11-12T18:28:49Z: fails legion <= retail x1.1 at W5 step 0: legion 6 vs retail 16)",
+   "scenario": "attackring-river-64"
+  },
+  {
+   "cluster": "AR-06",
+   "key": "reach.ring.ever_t1200",
+   "median5": true,
+   "mode": "retail",
+   "reason": "offset spread 0..47 exceeds the band; kept as a spread exception when the ratchet cleared its Retail-floor exception (2026-11-12T18:28:49Z: fails legion <= retail x1.1 at W5 step 0: legion 6 vs retail 16)",
+   "scenario": "attackring-river-64"
+  },
+  {
+   "cluster": "AR-06",
+   "key": "reach.ring.ever_t2400",
+   "median5": true,
+   "mode": "retail",
+   "reason": "offset spread 0..61 exceeds the band; kept as a spread exception when the ratchet cleared its Retail-floor exception (2026-11-12T18:28:49Z: fails legion <= retail x1.1 at W5 step 0: legion 6 vs retail 16)",
+   "scenario": "attackring-river-64"
   }
  ],
  "history": [
@@ -451916,6 +451919,132 @@
    "ratchets": [],
    "reason": "DR317 accepted regressions: DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve; 60 keys on attackring-f1-64, -f2-64, -squad-64, -mob-100 and -wall-64 licensed at their gate values",
    "when": "2026-11-08"
+  },
+  {
+   "cleared_exceptions": [
+    "attackring-river-64/reach.ring.ever_end",
+    "attackring-river-64/reach.ring.ever_t1200",
+    "attackring-river-64/reach.ring.ever_t2400"
+   ],
+   "ratchets": [
+    {
+     "key": "attackring-river-64/legion/reach.ring.ever_end",
+     "new": 20,
+     "old": 12
+    },
+    {
+     "key": "attackring-river-64/legion/reach.ring.ever_t1200",
+     "new": 20,
+     "old": 11
+    },
+    {
+     "key": "attackring-river-64/legion/reach.ring.ever_t2400",
+     "new": 20,
+     "old": 12
+    },
+    {
+     "key": "attackring-river-64/legion/reach.ring.farthest_held",
+     "new": 16,
+     "old": 18
+    },
+    {
+     "key": "attackring-river-64/legion/reach.ring.now_end",
+     "new": 20,
+     "old": 12
+    },
+    {
+     "key": "attackring-river-64/legion/reach.ring.out600_end",
+     "new": 44,
+     "old": 49
+    },
+    {
+     "key": "attackring-river-64/legion/reach.ring.out600_peak",
+     "new": 44,
+     "old": 49
+    },
+    {
+     "key": "attackring-river-64/legion/work.crowd_window_ring_cells.max",
+     "new": 0,
+     "old": 144
+    },
+    {
+     "key": "attackring-river-64/legion/work.crowd_window_ring_cells.p99",
+     "new": 0,
+     "old": 144
+    },
+    {
+     "key": "attackring-river-64/legion/work.crowd_window_ring_cells.total",
+     "new": 0,
+     "old": 340776
+    },
+    {
+     "key": "attackring-river-64/legion/work.move_calls_by_state_5.max",
+     "new": 0,
+     "old": 1
+    },
+    {
+     "key": "attackring-river-64/legion/work.move_calls_by_state_5.total",
+     "new": 0,
+     "old": 1
+    },
+    {
+     "key": "attackring-river-64/legion/work.pass_scan_cells.max",
+     "new": 0,
+     "old": 6
+    },
+    {
+     "key": "attackring-river-64/legion/work.pass_scan_cells.total",
+     "new": 0,
+     "old": 36
+    },
+    {
+     "key": "attackring-river-64/legion/work.pass_scans.max",
+     "new": 0,
+     "old": 1
+    },
+    {
+     "key": "attackring-river-64/legion/work.pass_scans.total",
+     "new": 0,
+     "old": 6
+    },
+    {
+     "key": "attackring-river-64/legion/work.slides.max",
+     "new": 1,
+     "old": 4
+    },
+    {
+     "key": "attackring-river-64/legion/work.trapped.max",
+     "new": 0,
+     "old": 1
+    },
+    {
+     "key": "attackring-river-64/legion/work.trapped.total",
+     "new": 0,
+     "old": 1
+    },
+    {
+     "key": "attackring-river-64/retail/reach.ring.ever_end",
+     "new": 21,
+     "old": 16
+    },
+    {
+     "key": "attackring-river-64/retail/reach.ring.ever_t1200",
+     "new": 21,
+     "old": 16
+    },
+    {
+     "key": "attackring-river-64/retail/reach.ring.ever_t2400",
+     "new": 21,
+     "old": 16
+    },
+    {
+     "key": "attackring-river-64/retail/reach.ring.now_end",
+     "new": 14,
+     "old": 12
+    }
+   ],
+   "reason": "protocol 325 (2026-11-12): written-off shots move or end the attack; more ring bodies reach, none trapped",
+   "when": "2026-11-12T18:28:49Z"
   }
  ],
  "references": {
@@ -452349,20 +452478,35 @@
    "legion": {
     "follow_chain_mean_x100": 305,
     "parked_held": 103325,
-    "reach.ring.ever_end": 12,
-    "reach.ring.ever_t1200": 11,
-    "reach.ring.ever_t2400": 12,
-    "reach.ring.farthest_held": 18,
-    "reach.ring.now_end": 12,
-    "reach.ring.out600_end": 49,
-    "reach.ring.out600_peak": 49,
+    "reach.ring.ever_end": 20,
+    "reach.ring.ever_t1200": 20,
+    "reach.ring.ever_t2400": 20,
+    "reach.ring.farthest_held": 16,
+    "reach.ring.now_end": 20,
+    "reach.ring.out600_end": 44,
+    "reach.ring.out600_peak": 44,
     "stopped_permille": 690,
+    "work.crowd_window_ring_cells.max": 0,
+    "work.crowd_window_ring_cells.p99": 0,
+    "work.crowd_window_ring_cells.total": 0,
     "work.held_rechecks.total": 110885,
     "work.move_calls_by_state_2.total": 130519,
-    "work.pass_scan_cells.total": 36,
-    "work.pass_scans.total": 6,
+    "work.move_calls_by_state_5.max": 0,
+    "work.move_calls_by_state_5.total": 0,
+    "work.pass_scan_cells.max": 0,
+    "work.pass_scan_cells.total": 0,
+    "work.pass_scans.max": 0,
+    "work.pass_scans.total": 0,
     "work.pass_scans_skipped.total": 37356,
-    "work.slides.max": 4
+    "work.slides.max": 1,
+    "work.trapped.max": 0,
+    "work.trapped.total": 0
+   },
+   "retail": {
+    "reach.ring.ever_end": 21,
+    "reach.ring.ever_t1200": 21,
+    "reach.ring.ever_t2400": 21,
+    "reach.ring.now_end": 14
    }
   },
   "attackring-squad-64": {

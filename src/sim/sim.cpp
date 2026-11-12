@@ -3086,6 +3086,12 @@ bool World::tickLegionLift(Unit& u) {
         u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading);
     tickFlightBody(u);
     notifyFlightOccupancy(u);
+    // The caller skips the rest of the unit's update: the weapon timers still
+    // count down (52ae90), or a flyer lifted mid-reload could not fire until
+    // it landed again.
+    const bool reloadAll=!u.type->weaponSwitching && u.type->weapons.size()>1;
+    for (size_t slot=0;slot<std::min(size_t(3),u.type->weapons.size());++slot)
+        if ((reloadAll || int(slot)==u.weaponSlot) && u.reloads[slot]>0) --u.reloads[slot];
     return true;
 }
 
@@ -3130,7 +3136,11 @@ bool World::tickHoldLift(Unit& u) {
         // dropped from the ground lands at its own feet). One that can fire
         // from where it stands keeps doing so (a Sea Dragon's Fire Breath
         // would not reach from cruise altitude).
-        bool cannot=u.unreleasedFires>0 || shotBlockedHere(u,*target);
+        // A start counts as unreleased once kHoldLiftNoRelease ticks have
+        // passed without its SET 23 (a released shot leaves well inside an
+        // attack animation), not only at the next start a reload later.
+        bool cannot=u.unreleasedFires>0 || shotBlockedHere(u,*target) ||
+            (u.fireStartPending && tickCounter_-u.fireStartTick>=kHoldLiftNoRelease);
         if (!cannot && slotNeedsFacing(*u.type))
             for (int s=0;s<n && !cannot;++s) {
                 if (u.slotTarget[size_t(s)]!=target->id || (u.type->weaponSwitching && s!=u.weaponSlot)) continue;
@@ -7866,7 +7876,12 @@ bool World::shotChordClear(const Unit& u,Fixed fromX,Fixed fromZ,const Unit& t,i
     // The muzzle's height over the body's origin, as it stands now.
     const auto muzzle=queryUnitScriptPoint(u.id,false,slot);
     const int64_t lift=std::max<int64_t>(0,int64_t(muzzle[1])-int64_t(u.groundY.v));
-    const std::array<int64_t,3> a{fromX.v,ground(fromX,fromZ)+lift,fromZ.v};
+    // A boat or a hover body over water stands at its own height (sea level
+    // or its dive depth), not on the sea bed under the spot: from the sea bed
+    // every chord met the surface and a boat never found a spot to move to.
+    int64_t base=ground(fromX,fromZ);
+    if (u.type->domain!=UnitType::Domain::Ground) base=std::max<int64_t>(base,u.groundY.v);
+    const std::array<int64_t,3> a{fromX.v,base+lift,fromZ.v};
     const auto aim=queryUnitScriptPoint(t.id,true);
     return chordClear(a,{aim[0],aim[1],aim[2]},u.type->weapons[size_t(slot)],
                       8*std::max(u.type->footX,u.type->footZ),8*std::max(t.type->footX,t.type->footZ)+8,t);
@@ -7950,8 +7965,12 @@ bool World::repositionForShot(Unit& u,const Unit& t,int slot) {
             terrainY(footprintWaypoint(cx,foot),footprintWaypoint(cz,foot))+clearance;
     };
     std::vector<std::pair<int64_t,int>> spots;
-    if (hi>lo) for (int cz=ucz-kRepositionReach;cz<=ucz+kRepositionReach;++cz)
-        for (int cx=ucx-kRepositionReach;cx<=ucx+kRepositionReach;++cx) {
+    // Backing out of the minimum range may need further than kRepositionReach
+    // (a Crusades Trebuchet Ship's 500 px): far enough to clear it, plus four.
+    const int64_t tooClose=lo-int64_t(isqrt64(uint64_t((tx-ux)*(tx-ux)+(tz-uz)*(tz-uz))));
+    const int reach=std::max<int>(kRepositionReach,int(std::min<int64_t>(tooClose/16+4,64)));
+    if (hi>lo) for (int cz=ucz-reach;cz<=ucz+reach;++cz)
+        for (int cx=ucx-reach;cx<=ucx+reach;++cx) {
             if (cx<0 || cz<0 || cx>=terW_ || cz>=terH_) continue;
             const int64_t px=footprintWaypoint(cx,foot).floorInt(),pz=footprintWaypoint(cz,foot).floorInt();
             const int64_t rx=px-tx,rz=pz-tz,r2=rx*rx+rz*rz;
@@ -9169,6 +9188,34 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     // steps, and Kirenna stalls in 26 attack-sweep cases she fires in now:
     // retail's slots stay automatic until stage 1, so the fire-at-will sweep
     // aims during such a walk, and World's are manual for the whole order.
+    // Engine deviation (owner, 2026-11-12): a target inside the minimum range
+    // of every weapon the unit fights with gets no shot (52fe30 refuses to
+    // aim inside minrange), and retail stands there for as long as the order
+    // lasts (a Crusades Trebuchet Ship 250 px from its target, a Catapult
+    // whose target walked up to it). A ground mover or boat allowed to move
+    // (an ordered attack, a stance other than Hold Position, or an auto
+    // target taken on the way) backs off to a spot in its range band with a
+    // clear shot (repositionForShot, the blocked-shot search, whose band
+    // starts 16 px past the minimum range); with no spot, its walks used up
+    // or on Hold Position, it gives the target up.
+    if (!airRun && !hovering && sel && !sel->melee && u.type->canMove && !u.type->canFly &&
+        !u.type->isStructure() && sel->minRange>0 && dist<float(sel->minRange)) {
+        bool aims=false;
+        forEachSlot([&](int sl) { aims=aims || slotAims(sl); });
+        if (!aims) {
+            const bool onTheWay = u.orders.front().autoTarget && movementQueued(u);
+            const bool ordered = !u.orders.front().autoTarget;
+            const bool mayMove = u.moveState != 0 || onTheWay || ordered;
+            if (mayMove && repositionForShot(u,*target,slot)) return;
+            if (!mayMove || u.searchFailed || u.repositions >= kMaxRepositions) {
+                if(u.scriptAimTarget)clearScriptWeaponTarget(u);
+                dropLeg(u);
+                cancelPath(u);
+                u.routeStamp = -1;
+                return;
+            }
+        }
+    }
     bool aimHeld = false, facingHeld = false;
     if (chaseMission) {
         Order& o = u.orders.front();
@@ -18296,7 +18343,7 @@ bool World::tickScriptWeapon(Unit& u,const WeaponTarget& t,int slot,bool swept,c
         it->state().startArguments(file,fireScript,{uint32_t(slot),0,0,0},1);
         if(u.type->canFly) {
             if(u.fireStartPending && u.unreleasedFires<255)++u.unreleasedFires;
-            u.fireStartPending=true;
+            u.fireStartPending=true;u.fireStartTick=tickCounter_;
         }
     }
     if(aim.flags&16) {
@@ -21771,7 +21818,7 @@ uint64_t World::stateHash() const {
         if (u.legionLift) { mix(0x4c494654u); mix(u.legionLiftUntil); mix(uint32_t(u.legionLiftX.v)); mix(uint32_t(u.legionLiftZ.v)); mix(u.legionLiftSince); }
         if (u.legionLiftRest) { mix(0x52455354u); mix(u.legionLiftRest); }
         if (u.holdLift) { mix(0x484c4654u); mix(u.holdLiftUntil); mix(uint32_t(u.holdLiftX.v)); mix(uint32_t(u.holdLiftZ.v)); }
-        if (u.fireStartPending || u.unreleasedFires) { mix(0x46525354u); mix(uint32_t(u.fireStartPending)|uint32_t(u.unreleasedFires)<<8); }
+        if (u.fireStartPending || u.unreleasedFires) { mix(0x46525354u); mix(uint32_t(u.fireStartPending)|uint32_t(u.unreleasedFires)<<8); mix(u.fireStartTick); }
         if (u.legionWindow || u.legionStill || u.legionShuffle) {
             mix(0x5354494cu); mix(u.legionWindow); mix(u.legionStill); mix(u.legionShuffle);
             const auto& w=legionWindow_[size_t(u.id)];

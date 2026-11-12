@@ -1464,6 +1464,7 @@ struct alignas(64) Unit {
     // only; hashed when set.
     bool fireStartPending=false;
     uint8_t unreleasedFires=0;
+    uint32_t fireStartTick=0;   // the tick of the pending start
     std::array<tak::RetailAimState,3> weaponAim{{{0,0,0},{0,0,1},{0,0,2}}};
     std::array<std::array<int32_t,3>,3> weaponMuzzlePoints{}; // display-only captured QueryWeapon geometry
     std::array<std::array<int32_t,3>,3> weaponAimPoints{}; // display-only captured aim geometry
@@ -4729,6 +4730,7 @@ private:
     bool tickLegionLift(Unit& u);
     bool tickHoldLift(Unit& u);
     static constexpr uint32_t kHoldLiftQuiet=90;     // ticks hovering after its last target in range
+    static constexpr uint32_t kHoldLiftNoRelease=45; // ticks a started shot may go unreleased before a lift
     void leaveRetailGroupCentre(const Unit& u);
     Fixed retailGroupLimit(const Unit& u) const;
     // A finished output joins its maker's group (human owners): a factory's
