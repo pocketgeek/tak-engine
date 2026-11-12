@@ -127,6 +127,48 @@ int main(int argc,char** argv) {
     // Hold Position is not Hold Fire: the sweep's auto slots still shoot a
     // seen enemy in range from where the flyer stands by.
     check(firedFromPost*2>=cases,"on Hold Position most flyers fire from their post");
+    // Engine deviation (owner, 2026-11-12, World::tickHoldLift): a landed
+    // Thirsha on Hold Position with an enemy behind it takes off, turns to
+    // it and hits it from over its post, without chasing, and lands again
+    // once the enemy is gone. Its script releases a shot only in flight, and
+    // a landed hover attacker cannot turn to a request. A Passive one (Hold
+    // Fire) takes no target and stays down.
+    for (const uint8_t fireState:{uint8_t(2),uint8_t(0)}) {
+        const sim::UnitType* thirsha=registry.find("zonhunt");
+        if (!thirsha) { check(false,"zonhunt loads");break; }
+        sim::World w;
+        w.setSerialThreads(true);w.setPlayerCount(2);
+        w.setTerrain(std::vector<uint8_t>(512*512,70),512,512,64);
+        w.buildNavClasses(registry);w.setPathService(true);
+        w.setPowerCodes(true);w.applyPowerCode(0,sim::PowerCode::NowISee,sim::PowerArg::None,0);
+        const int a=w.spawn(thirsha,4096,4096,0,0);
+        w.unit(a)->mana=thirsha->maxMana;w.unit(a)->moveState=0;w.unit(a)->fireState=fireState;
+        for (int i=0;i<90;++i) w.tick(1.f/30);
+        const bool landed=w.unit(a)->flightGroundMode==1;
+        const float postX=w.unit(a)->x.toFloat(),postZ=w.unit(a)->z.toFloat();
+        sim::UnitType target=*registry.find("araarch");
+        target.maxHp=30000;target.healTime=0;target.weapons.clear();target.weapon.damage=0;target.maxVel={};
+        const int t=w.spawn(&target,postX,postZ-200,0,1);   // behind it
+        const auto hp=w.unit(t)->hp;
+        bool flew=false;float drift=0;
+        for (int i=0;i<600;++i) {
+            w.tick(1.f/30);
+            const auto& u=*w.unit(a);
+            flew|=u.flightGroundMode==2;
+            drift=std::max(drift,std::hypot(u.x.toFloat()-postX,u.z.toFloat()-postZ));
+        }
+        const bool hurt=w.unit(t)->hp<hp;
+        if (fireState==2) {
+            std::printf("  zonhunt Hold, enemy behind: took off %d, hurt %d, drift %.1f\n",int(flew),int(hurt),drift);
+            check(landed && flew && hurt,"a landed Thirsha on Hold Position takes off and hits an enemy behind it");
+            check(drift<=24.f && w.unit(a)->orders.empty(),"it does not chase: it stays over its post with no order");
+            w.unit(t)->hp=sim::Fixed();
+            for (int i=0;i<900;++i) w.tick(1.f/30);
+            check(w.unit(a)->flightGroundMode==1,"it lands again once the enemy is gone");
+        } else {
+            check(landed && !flew && !hurt,"a Passive (Hold Fire) Thirsha stays landed");
+        }
+    }
     std::printf("hold_flyer: %d failures\n",failures);
     return failures?1:0;
 }

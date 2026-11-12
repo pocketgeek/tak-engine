@@ -344,6 +344,36 @@ int main(int argc,char**argv) {
             check(w.unit(a)->orders.empty() || w.unit(a)->orders.front().targetId!=b,
                   "an attack its firing weapon cannot serve is refused");
         }
+        // A computer's switcher picks a weapon that serves (engine deviation,
+        // retailAiWeaponSwitch / aiSlotServes): a Mage Archer by an enemy
+        // Barracks no longer flips to its Paralyze Arrow (0 damage to a fort)
+        // and back for good, and a Fallen Angel ordered onto a ship takes its
+        // Fire Bomb, its Soul Stealer doing nothing to naval.
+        {
+            auto barracks=still("arakeep");
+            tak::sim::World w;w.setTerrain(sea(true),256,256,58);w.buildNavClasses(registry);
+            w.player(0).automaticGates=true;
+            const int a=w.spawn(registry.find("arabow"),2570,2000,0,0),b=w.spawn(&barracks,2400,2000,0,1);
+            const auto hp=w.unit(b)->hp;
+            int switches=0,last=w.unit(a)->weaponSlot;
+            for (int i=0;i<900;++i) {
+                w.tick(1.f/30);
+                if (w.unit(a)->weaponSlot!=last) { ++switches;last=w.unit(a)->weaponSlot; }
+            }
+            check(switches<20 && w.unit(b)->hp<hp,"a computer's Mage Archer settles on a weapon that hurts a Barracks");
+        }
+        {
+            auto flagship=still("verflag");
+            tak::sim::World w;w.setTerrain(sea(false),256,256,58);w.buildNavClasses(registry);
+            w.player(0).automaticGates=true;
+            const int a=w.spawn(registry.find("tarang"),1700,2000,0,0),b=w.spawn(&flagship,1850,2000,0,1);
+            w.unit(a)->mana=float(w.unit(a)->type->maxMana);
+            for (int i=0;i<30;++i) w.tick(1.f/30);
+            const auto hp=w.unit(b)->hp;
+            w.attack(a,b,false);
+            for (int i=0;i<900 && w.unit(b);++i) w.tick(1.f/30);
+            check(!w.unit(b) || w.unit(b)->hp<hp,"a computer's Fallen Angel ordered onto a ship switches to a weapon that hurts it");
+        }
         auto hurtBy=[&](const char* attacker,tak::sim::UnitType& victim,float ax,float tx,bool shore,float heading) {
             tak::sim::World w;w.setTerrain(sea(shore),256,256,58);w.buildNavClasses(registry);
             const int a=w.spawn(registry.find(attacker),ax,2000,0,0),b=w.spawn(&victim,tx,2000,heading,1);

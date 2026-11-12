@@ -3089,6 +3089,94 @@ bool World::tickLegionLift(Unit& u) {
     return true;
 }
 
+// Engine deviation (owner, 2026-11-12): retail's VTOL_Standby gives a
+// landed flyer on Hold Position no attack mission (4d7de0 refuses on Hold
+// Position), so its auto slots fire from the ground. Some scripts release a
+// shot only in flight: the Thirsha's attack animation and its SET 23 run
+// only while BeginFlight's flag is up (BeginLanding and Create clear it), so
+// a landed Thirsha on Hold Position went through FireWeapon for ever and
+// never shot. Here an idle landed flyer on Hold Position whose auto slot
+// holds a target (fire at will or return fire: a Passive one takes none)
+// takes off as VTOL_Move does (416c50: Activate, BeginFlight), holds over
+// the spot it left at cruise altitude, turning to the target through the
+// navigator's controller heading (as the hover ring's 4e4330 does), and
+// does not chase. kHoldLiftQuiet ticks after its last target in range it
+// hands over to the retail landing mission. An order takes over at once.
+static bool slotNeedsFacing(const UnitType& t);
+
+bool World::tickHoldLift(Unit& u) {
+    // Every unit passes here each tick: only a lifted flyer or a landed one
+    // with an auto target goes further.
+    if (!u.holdLift && (u.flightGroundMode!=1 || !u.type || !u.type->canFly ||
+        (!u.slotTarget[0] && !u.slotTarget[1] && !u.slotTarget[2]))) return false;
+    const bool idle=u.type && u.type->canFly && !u.type->isStructure() && u.baseSpeed>Fixed() &&
+        !u.underConstruction && !u.embarked() && u.orders.empty() && !u.buildSiteId && !u.repairId &&
+        !u.reclaimId && u.buildQueue.empty() && !u.repeatType && u.cargo.empty() && !u.retainedFlightGoal &&
+        !u.landing && !u.legionLift && u.moveState==0 && u.fireState!=0;
+    const int n=u.type ? int(std::min<size_t>(3,u.type->weapons.size())) : 0;
+    const Unit* target=nullptr;
+    for (int s=0;s<n && idle;++s) {
+        if (!(u.slotAuto>>s&1) || !u.slotTarget[size_t(s)]) continue;
+        if (u.type->weaponSwitching && s!=u.weaponSlot) continue;
+        const Unit* t=unit(u.slotTarget[size_t(s)]);
+        if (t && t->alive() && t->hp>Fixed() && slotInRange(u,*t,s)) { target=t;break; }
+    }
+    if (!u.holdLift) {
+        if (!target || u.flightGroundMode!=1) return false;
+        // Only a flyer that cannot fight from the ground lifts: its script
+        // started a shot and never released it, or it is a hover attacker
+        // whose request it cannot turn to (52fff0 holds its fire). One that
+        // can fire from where it stands keeps doing so (a Sea Dragon's Fire
+        // Breath would not reach from cruise altitude).
+        bool cannot=u.unreleasedFires>0;
+        if (!cannot && slotNeedsFacing(*u.type))
+            for (int s=0;s<n && !cannot;++s) {
+                if (u.slotTarget[size_t(s)]!=target->id || (u.type->weaponSwitching && s!=u.weaponSlot)) continue;
+                if (const auto aim=queryWeaponAim(u.id,target->id,s))
+                    cannot=!retailFacingAligned(portHeadingToRetail(u.heading),aim->facing,
+                                                uint16_t(u.type->weapons[size_t(s)].aimTol));
+            }
+        if (!cannot) return false;
+        u.holdLift=true;u.holdLiftX=u.x;u.holdLiftZ=u.z;
+    }
+    if (!idle) { u.holdLift=false;return false; }
+    if (target) u.holdLiftUntil=tickCounter_+kHoldLiftQuiet;
+    else if (tickCounter_>=u.holdLiftUntil) {
+        u.holdLift=false;
+        if (u.flightGroundMode==2) { u.standbyActive=false;u.landing.emplace(); }
+        return false;
+    }
+    if (u.flightGroundMode!=2) {
+        // 416c50, as VTOL_Move's stage 0.
+        if (auto script=unitScripts_.find(u.id);script!=unitScripts_.end() && !script->second.activated) {
+            script->second.activated=true;notifyUnitScript(u,"Activate");
+        }
+        notifyUnitScript(u,"BeginFlight");
+        u.standbyActive=false;
+        u.flightGroundMode=2;groundMove(u);   // 51b3b0: taking off unstamps
+    }
+    const int cruise=flightGround(u)+u.type->cruiseAlt;
+    RetailFlightGoal goal{{u.holdLiftX.v,Fixed::fromInt(std::min(cruise,511)).v,u.holdLiftZ.v}};
+    if (target) {
+        const auto sweetSpot=queryUnitScriptPoint(target->id,true);
+        goal.flags|=0x40;
+        goal.heading=uint16_t(retailDirection(Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.x.v)-uint32_t(sweetSpot[0]))),
+                                              Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.z.v)-uint32_t(sweetSpot[2])))).v);
+    }
+    const RetailFlightVector position{u.x.v,u.flightY.v,u.z.v};
+    u.flightNavigation=retailFlightNavigation(position,u.flightNavigation.destination,goal.point,
+        u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading);
+    tickFlightBody(u);
+    notifyFlightOccupancy(u);
+    // The caller skips the rest of the unit's update, as for the Legion lift;
+    // the weapon timers still count down and the auto slots fire (52ae90).
+    const bool reloadAll=!u.type->weaponSwitching && u.type->weapons.size()>1;
+    for (size_t slot=0;slot<std::min(size_t(3),u.type->weapons.size());++slot)
+        if ((reloadAll || int(slot)==u.weaponSlot) && u.reloads[slot]>0) --u.reloads[slot];
+    tickSlotWeapons(u);
+    return true;
+}
+
 // Cell quad extrema (+6 low, +5 high) from the corner lattice (50ed60).
 std::pair<int,int> World::cellHeightRange(size_t cell) const {
     if (heights_.empty() || hW_<=0) return {0,0};
@@ -7360,23 +7448,29 @@ bool World::statusCanTake(const Weapon& w,const Unit& t) const {
         !(stone ? t.type->cantBeStoned : t.type->cantBeFrozen);
 }
 
+// Can this weapon of `from` do anything to `target`? The order resolver's
+// layer test (4de7ec..4de817: a toairweapon slot refuses a target not in the
+// air, a noairweapon slot one in the air, its current layer, never its type)
+// and the damage table, then the engine deviations: a charm on a body it can
+// take, no aim point under water, a status the target can take.
+bool World::weaponServes(const Unit& from,const Weapon& weapon,const Unit& target) const {
+    return !(weapon.noAir && target.flightGroundMode==2) && !(weapon.toAir && target.flightGroundMode!=2) &&
+        weapon.damageVs(target.type)>0 &&
+        (!weapon.mindControl || canCaptureTarget(from.player,target)) && !aimPointSubmerged(weapon,target) &&
+        statusCanTake(weapon,target);
+}
+
 bool World::canAttackTarget(const Unit& from,const Unit& target) const {
     if (!from.type || !target.type) return false;
-    const auto usable=[&](const Weapon& weapon) {
-        // 4de7ec..4de817: the order resolver refuses a toairweapon slot against a
-        // target not in the air and a noairweapon slot against one in the air
-        // (+0x130 & 3 == 2), its current layer, never its type.
-        return !(weapon.noAir && target.flightGroundMode==2) && !(weapon.toAir && target.flightGroundMode!=2) &&
-            weapon.damageVs(target.type)>0 &&
-            (!weapon.mindControl || canCaptureTarget(from.player,target)) && !aimPointSubmerged(weapon,target) &&
-            statusCanTake(weapon,target);
-    };
-    // Engine deviation: a switcher fires only its selected weapon, so the
-    // order is refused when that weapon cannot touch the target, even when
-    // another slot could (a Fallen Angel's Death Sword does nothing to a
+    const auto usable=[&](const Weapon& weapon) { return weaponServes(from,weapon,target); };
+    // Engine deviation: a switcher fires only its selected weapon, so a
+    // player's order is refused when that weapon cannot touch the target, even
+    // when another slot could (a Fallen Angel's Death Sword does nothing to a
     // ship; a Thirsha's Lightning cannot reach a swimming Mer Warrior).
-    // Retail's resolver takes any slot and the unit then never hurts it.
-    if (from.type->weaponSwitching && !from.type->weapons.empty()) {
+    // Retail's resolver takes any slot and the unit then never hurts it. A
+    // computer's switcher takes it on any slot: its weapon choice
+    // (retailAiWeaponSwitch) moves to one that serves.
+    if (from.type->weaponSwitching && !from.type->weapons.empty() && !computerOwned(from.player)) {
         const int slot=std::clamp(from.weaponSlot,0,int(from.type->weapons.size())-1);
         return usable(from.type->weapons[size_t(slot)]);
     }
@@ -8344,9 +8438,27 @@ void World::tickFireSweep(int player) {
                         // 51a9a0 retires a dead or invalid target.
                         if (!t || !t->alive() || t->hp<=Fixed()) dropSlotTarget(*u,s);
                     }
-                    const int found=retailSelectTarget(*u,s,true);
-                    if (found) setSlotTarget(*u,s,found);
-                    else dropSlotTarget(*u,s);
+                    int found=retailSelectTarget(*u,s,true);
+                    // Engine deviation: a computer's switcher whose selected
+                    // weapon finds nothing looks with its others and takes
+                    // the first that does (a Fallen Angel holding its Death
+                    // Sword never saw a ship its Fire Bomb could burn).
+                    if (!found && aiOwner && u->type->weaponSwitching)
+                        for (int o=0;o<int(std::min<size_t>(3,u->type->weapons.size())) && !found;++o) {
+                            if (o==s || !(u->slotAuto>>o&1)) continue;
+                            const Weapon& ow=u->type->weapons[size_t(o)];
+                            const float cost=ow.manaCost/(u->type->noVeteran ? 1.0f : u->vetMul());
+                            if (cost>=0.01f && double(cost)>u->mana) continue;
+                            if (ow.cursorAirstrike || ow.commandFire) continue;
+                            if (const int other=retailSelectTarget(*u,o,true)) {
+                                dropSlotTarget(*u,s);
+                                switchWeaponSlot(*u,o,false);
+                                setSlotTarget(*u,o,other);
+                                found=-1;
+                            }
+                        }
+                    if (found>0) setSlotTarget(*u,s,found);
+                    else if (!found) dropSlotTarget(*u,s);
                 }
             }
         }
@@ -8444,12 +8556,18 @@ void World::retailAiWeaponSwitch(Unit& u) {
     const int n=int(std::min<size_t>(3,u.type->weapons.size()));
     if (sel<0 || sel>=n) return;
     int targetId=(u.slotAuto>>sel&1) ? u.slotTarget[size_t(sel)] : u.scriptAimTarget;
+    // Engine deviation: an ordered target counts before the selected weapon
+    // has aimed at it, which it never does when it cannot serve it.
+    if (!targetId && !(u.slotAuto>>sel&1) && !u.orders.empty()) targetId=u.orders.front().targetId;
     Unit* target=targetId ? unit(targetId) : nullptr;
     if (targetId && (!target || !target->alive() || !target->type)) {
         if (u.slotAuto>>sel&1) dropSlotTarget(u,sel);   // 51a9a0 retires it
         target=nullptr;
     }
     const bool live=target && target->hp>Fixed();
+    // A target the sweep handed an auto slot is fought from where the unit
+    // stands; an ordered one is closed on.
+    const bool swept=(u.slotAuto>>sel&1)!=0;
     const float costMult=u.type->noVeteran ? 1.0f : u.vetMul();
     RetailWeaponSwitchInput in;
     in.selected=sel;
@@ -8479,7 +8597,8 @@ void World::retailAiWeaponSwitch(Unit& u) {
             slot.usable=!(stone && (t.type->cantBeStoned || unfinished)) &&
                         !(freeze && (t.type->cantBeFrozen || unfinished)) &&
                         !(w.mindControl && (t.type->cantBeCaptured || unfinished)) &&
-                        !(paralyzer && (t.type->immuneToParalyzer || t.paralyzedFor>0));
+                        !(paralyzer && (t.type->immuneToParalyzer || t.paralyzedFor>0)) &&
+                        aiSlotServes(u,w,t,s,swept);
         }
     }
     auto count=[&](const std::vector<int>& list,int32_t radius) {
@@ -8496,7 +8615,40 @@ void World::retailAiWeaponSwitch(Unit& u) {
         [&](int32_t r){return count(owner.visibleEnemies,r);},
         [&](int32_t r){return count(owner.visibleAllies,r);},
         [&](int bound){return int(gameRand(int32_t(bound)));});
-    if (choice>=0) switchWeaponSlot(u,choice,false);
+    int pick=choice;
+    // Engine deviation: retail falls back on the primary, and keeps it when
+    // its raw damage would finish the target, whether or not it can touch
+    // it (a Fallen Angel's Death Sword at a ship). With a live target the
+    // unit keeps or takes a weapon that serves: the one chosen, else the one
+    // it holds, else the first that does.
+    if (live) {
+        auto serves=[&](int s) {
+            const Weapon& w=u.type->weapons[size_t(s)];
+            const float cost=w.manaCost/costMult;
+            return (cost<0.01f || double(cost)<=u.mana) && aiSlotServes(u,w,*target,s,swept) &&
+                (s==0 || in.slots[size_t(s)].usable);
+        };
+        if (!serves(pick<0 ? sel : pick)) {
+            pick=-1;
+            if (!serves(sel)) for (int s=0;s<n;++s) if (serves(s)) { pick=s;break; }
+        }
+        if (pick==sel) pick=-1;
+    }
+    if (pick>=0) switchWeaponSlot(u,pick,false);
+}
+
+// Engine deviation, for a computer's switcher: can this weapon do anything
+// to the target (weaponServes), can a melee weapon reach it at all (not a
+// boat on water the unit cannot walk), and, for a target the sweep found,
+// is it in this weapon's range from where the unit stands (retail's choice
+// tests no range: a Sea Dragon on Hold Position took its 450 px Tsunami
+// against an enemy 472 px off and never fired)?
+bool World::aiSlotServes(const Unit& u,const Weapon& w,const Unit& t,int slot,bool fromHere) const {
+    if (!weaponServes(u,w,t)) return false;
+    if (fromHere && (!slotInRange(u,t,slot) || slotInsideMinRange(u,t,slot))) return false;
+    if (w.melee && !u.type->canFly && !t.type->canFly && !navFor(u.type).walkable(t.x.floorInt()>>4,t.z.floorInt()>>4))
+        return false;
+    return true;
 }
 
 bool World::retailIssueAutoAttack(Unit& u,int targetId,bool forceReturn,bool forced) {
@@ -18137,8 +18289,13 @@ bool World::tickScriptWeapon(Unit& u,const WeaponTarget& t,int slot,bool swept,c
         // Native 530140 also starts FireWeapon with immediate=0. SET 23 can
         // therefore only be observed by a later common weapon update.
         it->state().startArguments(file,fireScript,{uint32_t(slot),0,0,0},1);
+        if(u.type->canFly) {
+            if(u.fireStartPending && u.unreleasedFires<255)++u.unreleasedFires;
+            u.fireStartPending=true;
+        }
     }
     if(aim.flags&16) {
+        u.fireStartPending=false;u.unreleasedFires=0;
         fire(u,t,slot,true);
         aim.projectileCreated();
         // 52af72: the fallback follows every release, shot or no shot.
@@ -20435,6 +20592,7 @@ void World::tick(float dt) {
         // not all ground missions before every other unit's activity.
         if (u.constructionHolding && (u.buildSiteId || u.repairId)) continue;
         if (u.legionLift && tickLegionLift(u)) continue;
+        if (tickHoldLift(u)) continue;
         // MobileBuild/FlyingBuild standing (or hovering) at its site, waiting
         // out mobile units on it (405824..405911, 41f301..41f3e5): navigation
         // has stopped (tickNavigationMovement only brakes or holds it); only
@@ -21607,6 +21765,8 @@ uint64_t World::stateHash() const {
         mix(u.standbyAllowed); mix(u.standbyActive);
         if (u.legionLift) { mix(0x4c494654u); mix(u.legionLiftUntil); mix(uint32_t(u.legionLiftX.v)); mix(uint32_t(u.legionLiftZ.v)); mix(u.legionLiftSince); }
         if (u.legionLiftRest) { mix(0x52455354u); mix(u.legionLiftRest); }
+        if (u.holdLift) { mix(0x484c4654u); mix(u.holdLiftUntil); mix(uint32_t(u.holdLiftX.v)); mix(uint32_t(u.holdLiftZ.v)); }
+        if (u.fireStartPending || u.unreleasedFires) { mix(0x46525354u); mix(uint32_t(u.fireStartPending)|uint32_t(u.unreleasedFires)<<8); }
         if (u.legionWindow || u.legionStill || u.legionShuffle) {
             mix(0x5354494cu); mix(u.legionWindow); mix(u.legionStill); mix(u.legionShuffle);
             const auto& w=legionWindow_[size_t(u.id)];

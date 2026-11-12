@@ -528,7 +528,14 @@ or moves, 31 of 37 fire from their post (the six that do not: the Taros
 priests' selected Lightning reaches 275 px, and the Fallen Angel takes no auto target
 on Maneuver either); on Maneuver 35 of 37 take the attack. Inferred, not
 emulated: that the sweep's fire from a landed flyer matches retail shot for
-shot.
+shot. The test counts a restarted reload as a shot, and a landed Thirsha's
+are not: its script's attack animations and their SET 23 run only while
+BeginFlight's flag (static 8) is up, which BeginLanding and Create clear,
+so in retail a landed Thirsha on Hold Position runs FireWeapon for ever and
+never shoots. A landed flyer also never turns to a target: `VTOLNavigator`'s
++0x38 is a bare `ret` (see "The facing request"), so a landed hover attacker
+(the Thirsha, the Taros priests) fires only within its `aimtolerance` of
+where it faces. Ours lifts such a flyer (next section).
 
 This is the shipped default for some flyers: `standingunitorder = 1` (the
 Thirsha `zonhunt`, the Ghost Ship `tarship`, the Dirigible `verball`, both Taros
@@ -541,6 +548,25 @@ so it is still hovering in when its order comes.
 
 `hold_flyer_test` and `flyer_combat_test` check the ground and flyer
 Standby refusal (see "Mission target scan").
+
+### Ours, not retail: a landed flyer on Hold Position lifts to fight (owner decision)
+
+`World::tickHoldLift` (2026-11-12, protocol 325): an idle landed flyer on
+Hold Position (Defensive: move 0, fire at will or return fire) whose auto
+slot holds a target in range, and that cannot fight from the ground, takes
+off as VTOL_Move does (416c50: Activate, BeginFlight). "Cannot" is one of
+two things: its script started a shot and never released it (no SET 23
+before the next FireWeapon, `Unit::unreleasedFires`: the Thirsha), or it is
+a hover attacker whose facing request is not met (52fff0 holds its fire).
+It holds over the spot it left at cruise altitude, turned to the target's
+SweetSpot through the navigator's controller heading as the hover ring's
+4e4330 turns it, and does not chase. `kHoldLiftQuiet` (90) ticks after its
+last target in range it hands over to the retail landing mission; any
+order takes over at once. A flyer that can fire from the ground keeps doing
+so (a Sea Dragon's Fire Breath would not reach from cruise altitude). A
+Passive flyer (Hold Fire) takes no target and stays down; on Offensive the
+standby's attack mission already takes off and closes, as in retail.
+Test: `hold_flyer_test`.
 
 ## Blocked shots: retail fires on, the engine walks to a clear shot
 
@@ -3097,6 +3123,21 @@ case; the owner asked for them fixed regardless (protocol 325):
   immunities, and the order resolver asked nothing, so a Basilisk ordered
   onto a ship stoned nothing for good. `World::statusCanTake` now gates the
   order and the picker, and `canCaptureTarget` refuses a building.
+- **A computer's weapon switching** (`retailAiWeaponSwitch`, 40f411). Retail
+  asks a slot only about status immunity, so a Mage Archer chose its
+  Paralyze Arrow (0 damage to a fort, a Monarch, a dragon, a god, a ship),
+  whose sweep then found nothing, and fell back to its Standard Arrow: about
+  170 switches in 30 s and no shot. It falls back on the primary even when
+  the primary does nothing (a Fallen Angel's Death Sword at a ship), and a
+  switcher's sweep looks only with its selected weapon. Now each slot must
+  also serve the target (`aiSlotServes`: `weaponServes`, and a melee weapon
+  must be able to walk to it); with a live target the unit keeps or takes a
+  weapon that serves; a sweep whose selected weapon finds nothing looks with
+  the others and switches to the first that finds a target; the ordered
+  target counts as the switch's target before the selected weapon has
+  aimed; and a computer's switcher is not held to the selected weapon by
+  the order gate, so its choice can move to one that serves. A player's
+  switcher still takes an order only on its selected weapon.
 - **Storms over the sea.** A Wandering storm is born at the terrain height
   under it and keeps that height; over deep water that is the sea bed, 48 px
   under a boat, beyond the Crusades Hurricane's 30 px splash. A storm that is

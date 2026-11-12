@@ -1451,6 +1451,19 @@ struct alignas(64) Unit {
     // Observation only (never hashed, never read by a decision): the tick the
     // flyer handed its last episode over to landing (the relift counter).
     uint32_t legionLiftEnded=0;
+    // Engine deviation (owner, 2026-11-12): a landed flyer on Hold Position
+    // whose auto slot has a target takes off and hovers over the spot it
+    // left, facing the target, without chasing (World::tickHoldLift); it lands
+    // again holdLiftQuiet ticks after its last target in range. Some flyers'
+    // scripts (the Thirsha's) release a shot only in flight. Hashed.
+    bool holdLift=false;
+    uint32_t holdLiftUntil=0;
+    Fixed holdLiftX,holdLiftZ;
+    // A flyer's FireWeapon starts that its script never released (no SET 23
+    // before the next start): the Thirsha's on the ground. Counted for flyers
+    // only; hashed when set.
+    bool fireStartPending=false;
+    uint8_t unreleasedFires=0;
     std::array<tak::RetailAimState,3> weaponAim{{{0,0,0},{0,0,1},{0,0,2}}};
     std::array<std::array<int32_t,3>,3> weaponMuzzlePoints{}; // display-only captured QueryWeapon geometry
     std::array<std::array<int32_t,3>,3> weaponAimPoints{}; // display-only captured aim geometry
@@ -4113,6 +4126,8 @@ private:
     // point (its SweetSpot is below the surface: a wading unit swimming).
     bool aimPointSubmerged(const Weapon& w,const Unit& t) const;
     bool statusCanTake(const Weapon& w,const Unit& t) const;
+    bool weaponServes(const Unit& from,const Weapon& w,const Unit& target) const;
+    bool aiSlotServes(const Unit& u,const Weapon& w,const Unit& t,int slot,bool fromHere) const;
     bool shotChordClear(const Unit& u,Fixed fromX,Fixed fromZ,const Unit& t,int slot);
     bool chordClear(const std::array<int64_t,3>& a,const std::array<int64_t,3>& b,const Weapon& w,
                     int64_t skipFrom,int64_t skipTo,const Unit& to) const;
@@ -4712,6 +4727,8 @@ private:
     // Returns whether the request started or extended the episode.
     bool requestLegionLift(Unit& flyer, bool blocked);
     bool tickLegionLift(Unit& u);
+    bool tickHoldLift(Unit& u);
+    static constexpr uint32_t kHoldLiftQuiet=90;     // ticks hovering after its last target in range
     void leaveRetailGroupCentre(const Unit& u);
     Fixed retailGroupLimit(const Unit& u) const;
     // A finished output joins its maker's group (human owners): a factory's

@@ -2,16 +2,16 @@
 // inside Fire Breath's 525 and Water Ball's 800, outside the Tsunami's 450.
 //   seadragon_hold_test <data> [trace]
 //
-// Owned by a computer player it never fires, as in the original
+// Owned by a computer player it never fired in the original
 // (tools/re/probe_seadragon_switch.py runs the sweep 40f330 and the switch
 // 51a8b0 natively). The AI weapon switch (40f411..40fb92) tests no range:
 // with Fire Breath holding a lone, tough enemy it takes the Tsunami
 // (aoe 180, no ally near the target), whose own sweep finds nothing in 450;
 // with no target the costly Tsunami goes back to the primary on
-// rand(10) == 0, Fire Breath takes the enemy again in that visit and leaves
-// it for the Tsunami on the next. 51a8b0 gives the new slot its
-// switchreloadtime (reloadtime by default, 90 ticks for Fire Breath), so
-// Fire Breath is never selected long enough to reload.
+// rand(10) == 0, and each return restarts Fire Breath's switchreloadtime,
+// so it never fired. Ours (engine deviation, World::aiSlotServes): a target
+// the sweep found must be in the chosen weapon's range from where the unit
+// stands, so it fights with a weapon that reaches and does not flip.
 //
 // Owned by a player (no AI switching) the same Sea Dragon keeps Fire Breath
 // and fires it.
@@ -93,10 +93,9 @@ int main(int argc,char** argv) {
         const Result ai=runCase(registry,tgt,472.5f,true,trace,900);
         std::printf("  %s, computer-owned: shots %d/%d/%d, %d switches, back to Fire Breath %d times, longest %d ticks\n",
                     tgt,ai.shots[0],ai.shots[1],ai.shots[2],ai.switches,ai.backToBreath,ai.longestBreath);
-        check(ai.shots[0]+ai.shots[1]+ai.shots[2]==0,std::string(tgt)+": the computer's Sea Dragon never fires, as in the original");
-        check(ai.backToBreath>=20,std::string(tgt)+": it keeps going back to Fire Breath and leaving it for the Tsunami");
-        check(ai.reloadRestarted && ai.longestBreath<int(dragon.weapons[0].switchReloadTicks),
-              std::string(tgt)+": each return restarts Fire Breath's reload, and it never stays selected for it");
+        check(ai.shots[0]+ai.shots[1]>0 && ai.shots[2]==0,
+              std::string(tgt)+": the computer's Sea Dragon fires with weapons that reach (the original never fired)");
+        check(ai.switches<20,std::string(tgt)+": it no longer flips between Fire Breath and the Tsunami");
         const Result player=runCase(registry,tgt,472.5f,false,trace,900);
         std::printf("  %s, player-owned: shots %d/%d/%d, %d switches\n",tgt,player.shots[0],player.shots[1],player.shots[2],player.switches);
         check(player.shots[0]>0 && player.switches==0,std::string(tgt)+": a player's Sea Dragon keeps Fire Breath and fires it");
