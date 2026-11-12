@@ -23,9 +23,9 @@ in the source of its tag.
 ## 1.0.4
 *2026-11-12 · protocol 326 · replay format 15 · does not play with 1.0.3, nor its replays*
 
-- **Choose the stance of new units.** A building that is training units, and a mobile
-  builder on infinite production, now shows the **Offensive**, **Defensive** and
-  **Passive** buttons. None is lit at first, and each new unit keeps its own usual
+- **Choose the stance of new units.** A production building, and a mobile builder on
+  infinite production, now shows the **Offensive**, **Defensive** and **Passive**
+  buttons. None is lit at first, and each new unit keeps its own usual
   stance; click one and every unit made from then on starts with that stance; click
   the lit one again to go back to each unit's own. The original game had no stance for
   new units.

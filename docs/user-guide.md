@@ -909,8 +909,8 @@ building, nearest the door first and never in front of the door, and further
 out once the near spots are taken, so a busy building's output does not queue
 in a column and block the door.
 
-**Stance for new units.** While a building is producing, its **Offensive**,
-**Defensive** and **Passive** buttons set the stance its new units start with.
+**Stance for new units.** A production building's **Offensive**, **Defensive**
+and **Passive** buttons set the stance its new units start with.
 None is lit at first, and then each new unit keeps its own usual stance; click
 one to give it to every unit made from then on, and click the lit one again to
 go back to each unit's own. A mobile builder on infinite production does the

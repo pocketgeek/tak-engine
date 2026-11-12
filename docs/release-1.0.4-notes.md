@@ -9,9 +9,8 @@ production and lodestone building.
 
 ## What's new
 
-- **Choose the stance of new units.** A building that is training units, and a mobile
-  builder on infinite production, shows the **Offensive**, **Defensive** and **Passive**
-  buttons. Click one and every unit made from then on starts with that stance; click it
+- **Choose the stance of new units.** A production building, and a mobile builder on
+  infinite production, shows the **Offensive**, **Defensive** and **Passive** buttons. Click one and every unit made from then on starts with that stance; click it
   again to go back to each unit's own. None is lit at first.
 - **A repeating builder's units spread out** on a ring round it, as units leaving a
   production building do, instead of each taking one step south.

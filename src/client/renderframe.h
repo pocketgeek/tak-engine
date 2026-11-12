@@ -123,6 +123,11 @@ struct UnitR {
     // Orders given to this unit set its output's rally instead (World::setRally):
     // a production building, or a mobile builder while it repeats production.
     bool holdsRally() const { return type && (type->producesUnits() || repeatType); }
+    // Its stance buttons set the stance its output starts with (outputStance):
+    // a finished production building, or a mobile builder on an infinite queue.
+    bool showsOutputStance() const {
+        return type && ((type->producesUnits() && !underConstruction) || repeatType);
+    }
     const std::vector<RenderOrder>& displayedOrders() const {
         return holdsRally() ? rally : orders;
     }

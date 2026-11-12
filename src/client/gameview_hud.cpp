@@ -1090,11 +1090,10 @@ namespace {
         // Combat stance radio: offensive/defensive/passive. Gated on the FBI's
         // unitstandorders, which is what retail's panel consults -- not on a
         // mobile-and-armed guess that only happens to agree on the shipped data.
-        // A factory that is building, or a mobile builder on an infinite queue,
-        // offers them too: they set the stance its output starts with
+        // A finished production building, or a mobile builder on an infinite
+        // queue, offers them too: they set the stance its output starts with
         // (World::setStance's outputStance); none is lit until one is chosen.
-        const bool outputStance = (!mobile && front->type->producesUnits() && !front->buildQueue.empty()) ||
-                                  front->repeatType;
+        const bool outputStance = front->showsOutputStance();
         if ((mobile && armed && front->type->canSetStance) || outputStance) {
             add("Offensive", 'O');
             add("Defensive", 'D');
@@ -1154,9 +1153,8 @@ namespace {
             else if (cmd == 'O' || cmd == 'D' || cmd == 'H') {
                 // A producer of units shows the stance chosen for its output.
                 const int want = cmd == 'O' ? 0 : cmd == 'D' ? 1 : 2;
-                active = selFront && (selFront->holdsRally() && (!selFront->type->canSetStance ||
-                                      selFront->repeatType) ? selFront->outputStance == want
-                                                            : selFront->stance == want);
+                active = selFront && (selFront->showsOutputStance() ? selFront->outputStance == want
+                                                                    : selFront->stance == want);
             }
             else if (cmd == 'K') active = selFront && selFront->cloakOn;
             else if (cmd == 'k') active = selFront && !selFront->cloakOn;
@@ -1300,8 +1298,7 @@ namespace {
                 // A producer's lit output stance clicked again is cleared: its
                 // output keeps its own default.
                 const UnitR* f = selection_.empty() ? nullptr : frameUnitP(selection_.front());
-                if (f && f->type && f->holdsRally() && (!f->type->canSetStance || f->repeatType) &&
-                    f->outputStance == st)
+                if (f && f->type && f->showsOutputStance() && f->outputStance == st)
                     st = tak::sim::World::kStanceNone;
                 issuePerUnit(tak::net::Cmd::Stance, st);
             } else if (cmd == 'K' || cmd == 'k') {

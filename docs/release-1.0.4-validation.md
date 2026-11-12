@@ -10,7 +10,7 @@ repeating mobile builder parks its output; output stances"):
 
 | Change | Game state |
 |---|---|
-| A factory that is building, or a mobile builder on an infinite queue, holds a stance for its output (`Unit::outputStance`, set by a human player's Stance, cleared by `World::kStanceNone`); a repeating builder's command gate lets Stance through | simulation |
+| A finished production building, or a mobile builder on an infinite queue, holds a stance for its output (`Unit::outputStance`, set by a human player's Stance, cleared by `World::kStanceNone`); a repeating builder's command gate lets Stance through | simulation |
 | A mobile builder on an infinite queue releases its output with the factory's PARK ring round it; a building it raises keeps the exit step, and under Legion its output keeps the plain ring | simulation |
 | A lodestone area job ghosts every deposit it is predicted to build (`GameView::areaBuildPlan`) | client only |
 | The TRAINING line reads (+++) under infinite production | client only |
@@ -31,7 +31,9 @@ Linux, Debug `-O2 -g` (`build-o2`):
   `setStance` and through the command path, cleared, refused to a computer; a repeating
   Beast Tamer's wolves parked on the ring with its stance), `production` and
   `legion_production`, `movement_orders` and `legion_movement_orders`, `conjure`,
-  `area_build_ghosts`, `area_drag_input`, `order_trail`.
+  `area_build_ghosts`, `area_drag_input`, `order_trail`, `output_stance_hud` (an idle
+  finished Barracks shows the stance buttons, none lit; the chosen one lit; its new
+  unit takes it).
 - **`--mpai` gates**, Inner Circle, seed 1, `TAK_SPEED=80`, all unchanged from 1.0.3:
 
   | Gate | Hash |
@@ -48,7 +50,9 @@ Linux, Debug `-O2 -g` (`build-o2`):
 - **`tools/check-determinism.sh`**: every build agrees on golden `dcef618cd2e4d558`.
 - **By hand:** the owner played a game with a repeating Beast Handler; its replay showed
   the stance reaching the simulation and being dropped by the repeating builder's command
-  gate, which led to the fix. Retested by the owner after it.
+  gate, which led to the fix. Retested by the owner after it. A later test found a
+  factory showed the buttons only while training, and lit its own stance rather than
+  its output's; both were fixed before the tag and are covered by `output_stance_hud`.
 
 Picture retaken with the 1.0.4 build: `docs/img/title.jpg` (VERSION 1.0.4).
 

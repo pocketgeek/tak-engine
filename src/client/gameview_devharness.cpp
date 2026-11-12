@@ -3015,6 +3015,41 @@
             std::fprintf(stderr,"PASS: idle builders strip\n");
             return;
         }
+        if (tak::devFlag("TAK_OUTPUT_STANCE_TEST")) {
+            // A finished production building offers the stance buttons, none lit
+            // until one is chosen; the chosen one is lit (its output stance, not
+            // the building's own), and a new unit takes it.
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("output stance: "+what);
+                std::fprintf(stderr,"PASS: output stance: %s\n",what.c_str());
+            };
+            const float cx=float(mapView_.map().blocksX)*16.0f,cz=float(mapView_.map().blocksY)*16.0f;
+            const int keep=spawn("arakeep",cx,cz,0,localPlayer_);
+            selection_={keep};
+            const auto publish=[&] {captureFrame();beginFrame();cosmeticStep(0);};
+            const auto lit=[&](char cmd) {
+                const UnitR* u=frameUnitP(keep);
+                const int want=cmd=='O' ? 0 : cmd=='D' ? 1 : 2;
+                return u && u->showsOutputStance() && u->outputStance==want;
+            };
+            publish();
+            const auto buttons=guiActiveButtons();
+            const auto has=[&](char c){return std::any_of(buttons.begin(),buttons.end(),[&](const auto& b){return b.second==c;});};
+            check(has('O') && has('D') && has('H'),"an idle finished Barracks shows Offensive, Defensive and Passive");
+            check(!lit('O') && !lit('D') && !lit('H'),"none is lit until one is chosen");
+            issuePerUnit(tak::net::Cmd::Stance,2);publish();
+            check(lit('H') && !lit('D'),"Passive chosen is lit");
+            writableWorld().player(localPlayer_).mana=1e6;
+            writableWorld().train(keep,registry_.find("arasword"),1);
+            int made=0;
+            for (int i=0;i<4000 && !made;++i) {
+                writableWorld().tick(1.f/30);
+                for (const auto& u:world_.units())
+                    if (u.alive() && !u.underConstruction && u.type==registry_.find("arasword") && u.player==localPlayer_) made=u.id;
+            }
+            check(made && world_.unit(made)->stance==2,"its new unit starts Passive");
+            return;
+        }
         if (tak::devFlag("TAK_AREA_GHOST_TEST")) {
             // A lodestone area job ghosts every deposit it will build, not only the
             // next (GameView::areaBuildPlan). An Elsin is given the box round the
