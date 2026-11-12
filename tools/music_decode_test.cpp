@@ -3,15 +3,23 @@
 // reason, and the custom-track registry names only the tracks that have a file.
 // The fixtures (tools/testdata/music) are half-second test tones generated with ffmpeg.
 #include "client/musicfile.h"
+#include "hpi/hpi.h"
 
 #include <SDL.h>
 
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
 #include <vector>
+#ifndef _WIN32
+#include <unistd.h>
+#else
+#include <process.h>
+#define getpid _getpid
+#endif
 
 static int g_fail = 0;
 static void check(bool ok, const std::string& what) {
@@ -52,6 +60,26 @@ int main(int argc, char** argv) {
     check(tak::music::customFile(15) == "/m/menu.mp3" && tak::music::customFile(3).empty(), "a chosen track plays its file, the rest the originals");
     tak::music::setCustom({});
     check(tak::music::customFile(15).empty(), "cleared: the original");
+    {
+        // A game plays the chosen file for track 15; the title screen and the lobby
+        // (loadTrack with custom off) keep the original. Original: tone.wav (mono),
+        // chosen: tone.ogg (stereo).
+        namespace fs = std::filesystem;
+        const fs::path root = fs::temp_directory_path() / ("tak-music-test-" + std::to_string(::getpid()));
+        fs::create_directories(root / "Music");
+        fs::copy_file(dir + "tone.wav", root / "Music" / "track15.wav", fs::copy_options::overwrite_existing);
+        tak::hpi::Vfs vfs;
+        vfs.addLayer(tak::hpi::MountSet(root / "Music",
+                         tak::hpi::MountConfig{.includeLoose = true, .archiveExts = {}, .keep = {}, .archiveNames = {}}),
+                     "music/");
+        tak::music::setCustom({{15, dir + "tone.ogg"}});
+        const auto game = tak::music::loadTrack(vfs, 15, 44100);
+        const auto menu = tak::music::loadTrack(vfs, 15, 44100, false);
+        check(game && game->channels == 2, "in games track 15 plays the chosen file");
+        check(menu && menu->channels == 1, "the title screen and lobby play the original");
+        tak::music::setCustom({});
+        fs::remove_all(root);
+    }
     // Optional: time a long file (tools/music_decode_test <file>).
     if (argc > 1) {
         const auto bytes = slurp(argv[1]);

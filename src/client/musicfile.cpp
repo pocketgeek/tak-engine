@@ -179,8 +179,8 @@ std::string customFile(int track) {
     return it == customTracks.end() ? std::string() : it->second;
 }
 
-std::optional<Pcm16> loadTrack(const hpi::Vfs& vfs, int track, int maxRate) {
-    if (const std::string file = customFile(track); !file.empty()) {
+std::optional<Pcm16> loadTrack(const hpi::Vfs& vfs, int track, int maxRate, bool custom) {
+    if (const std::string file = custom ? customFile(track) : std::string(); !file.empty()) {
         std::ifstream in(tak::u8path(file), std::ios::binary);
         std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         std::string why;

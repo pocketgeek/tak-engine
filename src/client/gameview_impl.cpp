@@ -202,7 +202,7 @@
         // The menu-launched front-end owns the lobby BGM (so it plays continuously
         // from the menu into the lobby); suppress ours there, but still switch to
         // faction music once the game proper begins.
-        if (want == 1) { if (!externalLobbyMusic_) sounds_.startMusic(vfs_, {15}); }
+        if (want == 1) { if (!externalLobbyMusic_) sounds_.startMusic(vfs_, {tak::music::kMenuTrack}, false); }
         else if (mp_ && mp_->isSpectator()) sounds_.startMusic(vfs_, allFactionMusicTracks());
         else sounds_.startMusic(vfs_, factionMusicTracks(side_));
     }

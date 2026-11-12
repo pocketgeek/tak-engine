@@ -896,13 +896,15 @@ public:
     // Begin playing a shuffled playlist of the given track numbers (a
     // faction's tracks, per sidedata.tdf). Empty = all 20. `dataRoot` is
     // the extracted data dir; music may live there or in the game install.
-    void startMusic(const tak::hpi::Vfs& vfs, const std::vector<int>& tracks) {
+    // `custom` false plays the originals only (the lobby: CUSTOM MUSIC is for games).
+    void startMusic(const tak::hpi::Vfs& vfs, const std::vector<int>& tracks, bool custom = true) {
         vfs_ = &vfs;
+        musicCustom_ = custom;
         std::vector<int> want = tracks;
         if (want.empty())
             for (int i = 1; i <= 20; ++i) want.push_back(i);
         for (int n : want)   // an original the install has, or a custom file for it
-            if (vfs.has("music/track" + std::to_string(n) + ".wav") || !tak::music::customFile(n).empty())
+            if (vfs.has("music/track" + std::to_string(n) + ".wav") || (custom && !tak::music::customFile(n).empty()))
                 playlist_.push_back(n);
         std::fprintf(stderr, "music: %zu faction tracks, audio=%s\n", playlist_.size(),
                      dev_ ? "yes" : "NO DEVICE");
@@ -974,14 +976,14 @@ private:
         // CUSTOM MUSIC: the player's own file for this track, if set (tak::music).
         std::optional<tak::music::Pcm16> pcm;
         if (nextMusic_.valid() && nextMusicIdx_ == idx) pcm = nextMusic_.get();
-        else if (vfs_) pcm = tak::music::loadTrack(*vfs_, playlist_[idx], kMixRate);
+        else if (vfs_) pcm = tak::music::loadTrack(*vfs_, playlist_[idx], kMixRate, musicCustom_);
         if (nextMusic_.valid()) nextMusic_.get();   // a stale prefetch (the list changed)
         if (!pcm) return;   // loadTrack said why
         // Decode the one after while this one plays.
         if (vfs_ && playlist_.size() > 1) {
             nextMusicIdx_ = (idx + 1) % playlist_.size();
-            nextMusic_ = std::async(std::launch::async, [vfs = vfs_, track = playlist_[nextMusicIdx_]] {
-                return tak::music::loadTrack(*vfs, track, kMixRate);
+            nextMusic_ = std::async(std::launch::async, [vfs = vfs_, track = playlist_[nextMusicIdx_], custom = musicCustom_] {
+                return tak::music::loadTrack(*vfs, track, kMixRate, custom);
             });
         }
         SDL_LockAudioDevice(dev_);
@@ -1010,6 +1012,7 @@ private:
     uint64_t musicPos_ = 0;        // 32.32 position in music_'s frames
     uint64_t musicStep_ = kUnitStep;   // music_.rate / kMixRate, 32.32
     size_t musicTrack_ = 0;
+    bool musicCustom_ = true;   // the playlist may play CUSTOM MUSIC files (not in the lobby)
     int musicVol_ = 128;  // out of 256 (BGM); 50% default
     int masterVol_ = 256; // out of 256, global gain over the whole mix
     int sfxVol_ = 256;    // out of 256, sound effects

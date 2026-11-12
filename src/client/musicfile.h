@@ -34,9 +34,9 @@ void setCustom(const std::map<int, std::string>& tracks);
 // The file playing for original track n, or "" for the original.
 std::string customFile(int track);
 
-// Original track n, ready to play: the custom file if one is set and decodes, else
-// music/track<n>.wav from the VFS. nullopt when neither plays.
-std::optional<Pcm16> loadTrack(const hpi::Vfs& vfs, int track, int maxRate);
+// Original track n, ready to play: the custom file if one is set and decodes (and
+// `custom` allows it), else music/track<n>.wav from the VFS. nullopt when neither plays.
+std::optional<Pcm16> loadTrack(const hpi::Vfs& vfs, int track, int maxRate, bool custom = true);
 
 // Each side's original tracks, as this install lists them (gamedata/sidedata.tdf
 // musictracks), in that file's order: ARAMON, TAROS, ... .
@@ -46,7 +46,8 @@ struct SideTracks {
 };
 std::vector<SideTracks> sideTracks(const hpi::Vfs& vfs);
 
-// The track the title screen and the lobby play.
+// The track the title screen and the lobby play. They always play the original:
+// a custom file for it plays only in games.
 constexpr int kMenuTrack = 15;
 
 }  // namespace tak::music

@@ -2042,8 +2042,9 @@ puts the sound settings back and every track back to its original music.
 does (*Aramon track 1* … *Creon track 5*; Iron Plague moves some tracks between
 sides). Each plays its **Original** music until you choose a file for it.
 **Choose** picks a file for a track: WAV, MP3, FLAC or Ogg Vorbis. It then
-plays wherever that track would, in games and for spectators, and *Veruna track 4
-(title)* also on the title screen and in the lobby. **Clear** goes back to the
+plays wherever that track would in games, for players and spectators. The title
+screen and the lobby always play their original music, even when you choose a file
+for the track they use. **Clear** goes back to the
 original. A file is tried when you choose it; one that will not play is marked
 **Will not play**, one that has been moved or deleted **Missing**, and either way
 the original plays instead. Long files are fine: the next track is prepared while

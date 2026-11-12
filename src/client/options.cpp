@@ -448,19 +448,20 @@ void OptionsScreen::buildAudio() {
 
 
     // CUSTOM MUSIC: a file of the player's own for any original track, played wherever that
-    // track plays (tak::music). ORIGINAL (CLEAR) plays the original.
+    // track plays in games (tak::music); the title screen and the lobby keep the original.
+    // ORIGINAL (CLEAR) plays the original.
     section("CUSTOM MUSIC");
     for (const auto& side : musicSides_)
         for (size_t k = 0; k < side.tracks.size(); ++k) {
             const int track = side.tracks[k];
-            std::string label = side.side + " TRACK " + std::to_string(k + 1);
-            if (track == music::kMenuTrack) label += " (TITLE)";   // also the title screen's and lobby's
+            const std::string label = side.side + " TRACK " + std::to_string(k + 1);
             ctls_.push_back({Control::MusicFile, label, 0, 0, {}, {}, {}, {}, {}});
             ctls_.back().track = track;
             ctls_.back().help = [track] {
                 std::vector<std::string> out{"PLAYS IN PLACE OF ORIGINAL TRACK " + std::to_string(track) +
-                                             " WHEREVER IT PLAYS. CHOOSE A WAV, MP3, FLAC OR OGG FILE, OR CLEAR TO PLAY THE ORIGINAL."};
-                if (track == music::kMenuTrack) out.push_back("THIS TRACK ALSO PLAYS ON THE TITLE SCREEN AND IN THE LOBBY.");
+                                             " IN GAMES. CHOOSE A WAV, MP3, FLAC OR OGG FILE, OR CLEAR TO PLAY THE ORIGINAL."};
+                if (track == music::kMenuTrack)
+                    out.push_back("THE TITLE SCREEN AND THE LOBBY KEEP PLAYING THE ORIGINAL OF THIS TRACK.");
                 return out;
             };
         }

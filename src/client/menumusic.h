@@ -40,16 +40,17 @@ public:
         if (dev_) SDL_UnlockAudioDevice(dev_);
     }
 
-    // Play original track n on a loop -- or the player's own file for it (CUSTOM MUSIC,
-    // tak::music). Idempotent: if this track is already playing, does nothing (so it does
-    // NOT restart across menu -> lobby) unless the file chosen for it changed.
+    // Play original track n on a loop. The front-end always plays the original: a
+    // CUSTOM MUSIC file for the track plays only in games (tak::music::kMenuTrack).
+    // Idempotent: if this track is already playing, does nothing (so it does NOT restart
+    // across menu -> lobby).
     void start(const hpi::Vfs& vfs, int track) {
-        const std::string file = music::customFile(track);
+        const std::string file;
         if (dev_ && track_ == track && file_ == file) return;
         stop();
         vfs_ = &vfs;
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return;
-        auto pcm = music::loadTrack(vfs, track, audio::kMixRate);
+        auto pcm = music::loadTrack(vfs, track, audio::kMixRate, false);
         if (!pcm) return;
         src_ = std::move(pcm->samples);
         rate_ = pcm->rate;
@@ -98,11 +99,8 @@ public:
 
     bool playing() const { return playing_.load(); }
 
-    // The AUDIO page changed CUSTOM MUSIC: the playing track switches to its new file (or
-    // back to the original) at once.
-    void refresh() {
-        if (vfs_ && track_ >= 0 && music::customFile(track_) != file_) start(*vfs_, track_);
-    }
+    // The AUDIO page changed CUSTOM MUSIC: nothing to do, the front-end plays originals.
+    void refresh() {}
 
 private:
     friend struct MenuMusicTestAccess;
