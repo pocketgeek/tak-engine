@@ -7353,7 +7353,7 @@ bool World::canAttackTarget(const Unit& from,const Unit& target) const {
         // (+0x130 & 3 == 2), its current layer, never its type.
         return !(weapon.noAir && target.flightGroundMode==2) && !(weapon.toAir && target.flightGroundMode!=2) &&
             weapon.damageVs(target.type)>0 &&
-            (!weapon.mindControl || canCaptureTarget(from.player,target));
+            (!weapon.mindControl || canCaptureTarget(from.player,target)) && !aimPointSubmerged(weapon,target);
     };
     if (from.type->weaponSwitching && !from.type->weapons.empty()) {
         const int slot=std::clamp(from.weaponSlot,0,int(from.type->weapons.size())-1);
@@ -7695,6 +7695,26 @@ void World::noteNoArc(Unit& u,const Unit& t) {
     u.blockedTX=int16_t(tx);u.blockedTZ=int16_t(tz);
 }
 
+// Engine deviation (not retail, owner's call 2026-11-11): retail aims every
+// ranged class at the target's SweetSpot (51aa50), and a shot that is not a
+// waterweapon strikes the sea surface (52a6f3). A wading unit swimming (a Mer
+// Warrior: sea - waterline, its swim pose's SweetSpot as deep) is then aimed
+// at under the water, and retail shoots at it for ever, every shot landing
+// short. Such a target is no target for that weapon: not picked, not kept,
+// not ordered on. On a shore or in the shallows the body stands higher, its
+// SweetSpot above the surface, and it is a target again. Only a body over
+// water whose origin is under the surface is queried.
+bool World::aimPointSubmerged(const Weapon& w,const Unit& t) const {
+    if (w.melee || w.waterWeapon || w.unitsOnly || noSeaLevelTrigger_ || !t.type || t.type->canFly) return false;
+    if (t.groundY.v>=int32_t(uint32_t(uint8_t(seaLevel_))<<16) || heights_.empty() || terW_<=0) return false;
+    // Water under it (511170's interpolated ground below the surface).
+    if (retailTerrainHeight(t.x.v,t.z.v,terW_,terH_,[&](int x,int z) {
+            return int(heights_[size_t(z)*size_t(terW_)+size_t(x)]);
+        })>=int(uint8_t(seaLevel_))) return false;
+    const auto aim=const_cast<World*>(this)->queryUnitScriptPoint(t.id,true);
+    return std::bit_cast<int16_t>(uint16_t(uint32_t(aim[1])>>16))<int(uint8_t(seaLevel_));
+}
+
 bool World::shotBlockedHere(const Unit& u,const Unit& t) const {
     return u.blockedTarget==t.id && u.blockedShots>=kBlockedShots &&
         !blockedSpotLeft(u,u.x.floorInt(),u.z.floorInt(),t.x.floorInt(),t.z.floorInt());
@@ -7924,6 +7944,7 @@ bool World::sweepKeepsTarget(const Unit& u,int slot,const Unit& t) const {
     if (w.status==Weapon::Status::Paralyzed && t.paralyzedFor>0) return false;
     if (w.mindControl && t.underConstruction) return false;   // see retailSelectTarget
     if (shotBlockedHere(u,t)) return false;   // engine deviation: see noteShotImpact
+    if (aimPointSubmerged(w,t)) return false;  // engine deviation, as is this
     return true;
 }
 
@@ -7998,6 +8019,7 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
         // never one (+0x130 & 3 == 2) -- a landed flyer is a ground target.
         if (w.toAir && t.flightGroundMode!=2) continue;
         if (w.noAir && t.flightGroundMode==2) continue;
+        if (aimPointSubmerged(w,t)) continue;   // engine deviation
         const bool insideMin=slotInsideMinRange(u,t,slot);
         if (insideMin && !mobile) continue;
         if (eff<=0) continue;   // 531e50
@@ -8918,6 +8940,7 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
         if (sw.mindControl && !canCaptureTarget(u.player,*target)) return false;
         if (sw.noAir && target->flightGroundMode==2) return false;
         if (sw.toAir && target->flightGroundMode!=2) return false;
+        if (aimPointSubmerged(sw,*target)) return false;   // engine deviation
         if (groundPair && sw.needsClearLine() && !los) return false;
         if (sw.melee ? !adj : sw.ballisticClass() ? !ballisticInRange(u,*target,sw) : dist > sw.range)
             return false;

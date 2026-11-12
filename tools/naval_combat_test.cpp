@@ -271,6 +271,38 @@ int main(int argc,char**argv) {
             }
         }
     }
+    // A swimming Mer Warrior (a wading body at sea - waterline, its SweetSpot
+    // as deep) is no target for a flagship's arrows, which would strike the
+    // surface short of it: the ship neither picks it nor is ordered onto it
+    // (engine deviation, World::aimPointSubmerged). Standing in the shallows
+    // of a shore, its SweetSpot above the surface, it is shot as before.
+    if (!legion) {
+        tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,true);
+        const auto* ship=registry.find("verflag");
+        auto mer=*registry.find("vermer");
+        check(ship && registry.find("vermer"),"the Crusades flagship and Mer Warrior load");
+        if (ship) for (bool shallow:{false,true}) {
+            mer.weapons.clear();mer.weapon.damage=0;mer.maxVel={};mer.healTime=0;
+            tak::sim::World w;
+            std::vector<uint8_t> heights(256*256,10);
+            // The shallows: ground 4 under the sea, so the body stands on it.
+            if (shallow) for (int z=0;z<256;++z) for (int x=128;x<256;++x) heights[size_t(z)*256+x]=54;
+            w.setTerrain(heights,256,256,58);w.buildNavClasses(registry);
+            const int a=w.spawn(ship,1900,2000,0,0),b=w.spawn(&mer,2200,2000,0,1);
+            for (int i=0;i<60;++i) w.tick(1.f/30);
+            const auto hp=w.unit(b)->hp;
+            w.attack(a,b,false);
+            bool targeted=false;
+            for (int i=0;i<600;++i) {
+                w.tick(1.f/30);
+                for (int s=0;s<3;++s) targeted|=w.unit(a)->slotTarget[size_t(s)]==b;
+            }
+            const bool hurt=w.unit(b) && w.unit(b)->hp<hp;
+            if (shallow) check(hurt,"a ship shoots a Mer Warrior standing in the shallows");
+            else check(!hurt && !targeted && (w.unit(a)->orders.empty() || w.unit(a)->orders.front().targetId!=b),
+                       "a ship neither targets nor is ordered onto a swimming Mer Warrior");
+        }
+    }
     // The naval combat mask changes no movement cell or ground raycast.
     tak::sim::World w;w.setTerrain(std::vector<uint8_t>(64*64,10),64,64,64);
     tak::sim::UnitType boat;boat.domain=tak::sim::UnitType::Domain::Water;

@@ -3060,6 +3060,22 @@ automatic gates' first tick would run a needless Deactivate and a player's
 first ON click would do nothing. `check_gate_lifecycle.py` passes for all
 four gates in both balances with retail's default.
 
+### Ours, not retail: no shots at an aim point under water (owner decision)
+
+Retail aims every ranged class at a unit target's SweetSpot (`51aa50`), and a
+shot that is not a `waterweapon` strikes the sea surface (`52a6f3`). A
+wading unit swimming stands at sea - waterline (`51b220`) and its swim pose
+puts its SweetSpot as deep: a Mer Warrior's head is 26 under the surface. A
+ship then shoots at it for ever, every arrow landing about 100 px short (seen
+in a 1.0.0 replay, 2026-11-11). Ours: `World::aimPointSubmerged` makes such a
+target no target for a ranged weapon that is not a waterweapon or
+`unitsonly` (and on a `nosealeveltrigger` map, where shots pass the surface,
+nothing changes): the fire-at-will pick and keep, the order gate
+(`canAttackTarget`, so an attack on it is refused or dropped) and each
+slot's aim. Only a body over water whose origin is under the surface is
+queried; one standing on a shore or in shallows has its SweetSpot above the
+surface and is shot as before. Test: `naval_combat_test`.
+
 ### Ours, not retail: an Activate waits for Create (owner decision)
 
 Every shipped factory and yard `Create` (all 27 scripts with a
