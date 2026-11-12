@@ -18497,7 +18497,20 @@ void World::updateLegionStill(Unit& u,Fixed beforeX,Fixed beforeZ) {
     // walk_in_place 0 -> 78 at offset 0 with facing, 2026-10-28).
     if (size_t(u.id)>=legionBodyWindow_.size()) legionBodyWindow_.resize(size_t(u.id)+1);
     auto& body=legionBodyWindow_[size_t(u.id)];
-    body.w.tick(body.ticks,u.legionStill,body.shuffle,beforeX.v,beforeZ.v,u.x.v,u.z.v,bodyTurn,u.baseSpeed.v,rate,foot);
+    // Its headway is measured against the pace it may walk at (a formation's
+    // slowest member's, if lower), not its own top speed: a Horseman held to a
+    // Rolling Tower's pace walks a fifth of its own, steadily, and read still,
+    // so it slid along without its gait (GET 29 0). The course's window keeps
+    // the base speed.
+    // Only while it walks at that pace (half of it or more): a jammed member
+    // creeping or shuffling at a fraction of it keeps its own speed's measure,
+    // or its legs would walk on the spot again.
+    int32_t pace=u.baseSpeed.v;
+    if (size_t(u.id)<legionPace_.size() && legionPace_[size_t(u.id)].first==tickCounter_) {
+        const int32_t given=legionPace_[size_t(u.id)].second;
+        if (given<pace && int64_t(u.speed.v)*2>=given) pace=given;
+    }
+    body.w.tick(body.ticks,u.legionStill,body.shuffle,beforeX.v,beforeZ.v,u.x.v,u.z.v,bodyTurn,pace,rate,foot);
     // A standing body requests no turn either: the display VM's TurnDirection
     // (the zontroll/zongob MoveWatcher walks on its last argument) stays quiet.
     // turnReqBam is display only, never hashed.
@@ -20973,6 +20986,9 @@ void World::tick(float dt) {
             }
         }
         if (pathfindingMode_==PathfindingMode::Retail) retailGroupMaximum_=retailGroupLimit(u);
+        // The pace it may walk at this tick, for its headway window (updateLegionStill).
+        if (size_t(u.id)>=legionPace_.size()) legionPace_.resize(size_t(u.id)+1);
+        legionPace_[size_t(u.id)]={tickCounter_,target.v};
         if (g_phase) {
             PhaseSpan span(g_moveMs,probe::kMovement);
             tickNavigationMovement(u,target);

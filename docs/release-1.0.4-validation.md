@@ -4,7 +4,7 @@ Protocol **326**, replay format **15**, random map generator version **10**.
 
 ## Scope and compatibility
 
-1.0.4 is 1.0.3 (tag `v1.0.3` -> `0a9221d7`) plus one change commit, `cae85cda`, listed in
+1.0.4 is 1.0.3 (tag `v1.0.3` -> `0a9221d7`) plus the changes below (from `cae85cda` on), listed in
 the CHANGELOG's 1.0.4 entry and described in `docs/retail-engine.md` ("Ours, not retail: a
 repeating mobile builder parks its output; output stances"):
 
@@ -13,6 +13,7 @@ repeating mobile builder parks its output; output stances"):
 | A finished production building, or a mobile builder on an infinite queue, holds a stance for its output (`Unit::outputStance`, set by a human player's Stance, cleared by `World::kStanceNone`); a repeating builder's command gate lets Stance through | simulation |
 | A mobile builder on an infinite queue releases its output with the factory's PARK ring round it; a building it raises keeps the exit step, and under Legion its output keeps the plain ring | simulation |
 | A lodestone area job ghosts every deposit it is predicted to build (`GameView::areaBuildPlan`) | client only |
+| Legion: a body's display headway window measures against the pace the mover gave it (`World::legionPace_`), so a formation member held to a slow member's pace keeps its gait | simulation (hashed `legionStill`) |
 | The TRAINING line reads (+++) under infinite production | client only |
 
 **Compatibility.** The simulation changed, so `kNetVersion` is 326: 1.0.4 does not play
@@ -26,7 +27,12 @@ Linux, Debug `-O2 -g` (`build-o2`):
   one failure, `conjure`, whose check that a repeating builder rejects every other command
   now has to let Stance through; the test was updated (Stance checked on its own) and
   passes.
-- **Legion suite** (`ctest -L legion`): 414 / 414.
+- **Legion suite** (`ctest -L legion`): 414 tests. The formation gait fix moved the final
+  hashes of the 14 formation ("squad") scenarios (`legionStill` is hashed and walk scripts
+  draw from the game's random stream); their hashes were retaken with `tools/legion_check.py
+  baseline --hashes` and their 195 improved metrics ratcheted. A first version of the fix
+  raised `walk_in_place` in the 120-unit room squad scenarios from 0 to 8-17 (creeping members
+  counted as walking); the fix uses the formation's pace only while the body walks at it.
 - **The change's own tests:** `production_exit` (274 cases: the output stance through
   `setStance` and through the command path, cleared, refused to a computer; a repeating
   Beast Tamer's wolves parked on the ring with its stance), `production` and

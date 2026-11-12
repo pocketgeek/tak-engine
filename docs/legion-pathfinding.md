@@ -569,7 +569,12 @@ ground body, whatever blocks it (another body of any player, terrain), and its s
 unit (the navigator reads the livelock). Whether the body stands in its scripts (`Unit::legionStill`: GET 29,
 MoveRate, the turn request) has a window of its own, `World::legionBodyWindow_`, judged by the steps and the turn the
 body shows, so a body that turned to face a slide and walks on while its course turns round is not counted as making
-headway. Flyers and Retail mode keep retail's rule. Walk scripts draw from the game's single random stream, so the
+headway. While the body walks at the speed the mover gave it this tick (`World::legionPace_`; at least half of it),
+that window's pace is a quarter of that speed, not of its base speed: a formation member held to its slowest member's
+speed (an Aramon Horseman with a Rolling Tower, a fifth of its own) walks steadily and must not stand (protocol 326;
+`movement_orders` `formationGait`). A jammed member creeping or shuffling at a fraction of it keeps the base speed's
+measure, or its legs walk on the spot (the n120 room squad scenarios' `walk_in_place` rose to 8-17 without that). Flyers and Retail
+mode keep retail's rule. Walk scripts draw from the game's single random stream, so the
 stand rule shifts later draws. `legion_still` tests the window alone: the to-and-fro motions stand, while genuine slow
 motion (a walker at a pace, a speed-matched follower, slow pivots, a start from rest) walks.
 

@@ -36,6 +36,10 @@ in the source of its tag.
 - **Lodestone areas show every lodestone.** Dragging a lodestone area now shows a
   faded lodestone on every spot the builder is going to build on, not just the next
   one.
+- **Fast units in a formation walk properly.** Under Legion pathfinding, a fast unit in a
+  formation with a much slower one (a Horseman with a Rolling Tower) slid along with its
+  legs still, because it moved too slowly for its own speed to count as walking. It now
+  plays its walk at the formation's pace.
 - **Infinite production reads +++.** The **TRAINING** line above the build menu shows
   **(+++)** under infinite production, as the unit's icon does, instead of a count of 1.
 

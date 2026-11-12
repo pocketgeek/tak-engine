@@ -4532,6 +4532,9 @@ private:
     // drifting at weaponvelocity and wobbling its heading every `variationtime`.
     // Damages everything it passes on a fixed cadence. Hashed.
     std::vector<Storm> storms_;
+    // Per unit id: the tick and the pace (raw Fixed px a tick) the mover was
+    // given, for its Legion headway window. Scratch, rewritten every tick.
+    std::vector<std::pair<uint32_t,int32_t>> legionPace_;
     int stormSeq_ = 0;        // id source, so the viewer can track a storm's life
     bool scoreAutomaticDisabled_=false;
     int scenarioParticipantCount_ = -1; // ninth owner is scenery, never a lobby participant

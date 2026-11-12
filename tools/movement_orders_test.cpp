@@ -638,6 +638,28 @@ void trollProduction(const char* data,bool open=false,bool mazeOnly=false) {
     }
 }
 }
+// A fast member of a Legion formation walks at its slowest member's pace,
+// steadily: its headway window measures against that pace, so its scripts see
+// it walking (legionStill false, GET 29 above 0). Measured against its own top
+// speed, a member held to under a quarter of it read still and slid along with
+// its legs standing (an Aramon Horseman with a Rolling Tower).
+void formationGait(PathfindingMode mode) {
+    World w;setup(w,mode);
+    auto fast=soldier(),slow=soldier();fast.id="fast";slow.id="slow";
+    slow.maxVel=Fixed::fromFloat(14.f/30);   // a fifth of the soldier's 70/30
+    const int a=w.spawn(&fast,400,640,0,0),b=w.spawn(&slow,400,720,0,0);
+    w.setSquad(a,-1);w.setSquad(b,-1);
+    ticks(w,10);
+    w.order(a,2400,640,false);w.order(b,2400,720,false);
+    int moving=0,still=0;
+    for(int t=0;t<600;++t) {
+        const auto x=w.unit(a)->x;w.tick(1.f/30);
+        if(t<60||w.unit(a)->x==x)continue;
+        ++moving;still+=w.unit(a)->legionStill;
+    }
+    std::printf("formation gait mode=%d moving=%d still=%d\n",int(mode),moving,still);
+    check(moving>300&&still*10<moving,"a formation's fast member held to its slowest member's pace walks, not stands");
+}
 int main(int argc,char** argv) {
     if(argc>1&&std::string(argv[1])=="--legion") {
         selectedMode=PathfindingMode::Legion;
@@ -662,7 +684,7 @@ int main(int argc,char** argv) {
         attackChase(mode,false);attackChase(mode,true);guardFollow(mode);workApproach(mode);
         const auto patrolHash=groupPatrol(mode,true);
         check(patrolHash==groupPatrol(mode,false),"group patrol hashes match serial and threaded preparation");
-        queuedMoves(mode);queuedFlyerPatrols(mode);
+        queuedMoves(mode);queuedFlyerPatrols(mode);formationGait(mode);
         const auto queuedHash=queuedGroupMoves(mode,true);
         check(queuedHash==queuedGroupMoves(mode,false),"queued group move hashes match serial and threaded preparation");
     }

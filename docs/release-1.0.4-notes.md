@@ -16,6 +16,8 @@ production and lodestone building.
   production building do, instead of each taking one step south.
 - **Lodestone areas show every lodestone**: a faded lodestone on every spot the builder
   is going to build on, not just the next one.
+- **Fast units in a formation walk properly** under Legion pathfinding, instead of
+  sliding along at a slow member's pace with their legs still.
 - **Infinite production reads +++** on the **TRAINING** line, as the unit's icon does.
 
 The [CHANGELOG](https://github.com/pocketgeek/tak-engine/blob/v1.0.4/CHANGELOG.md) has the
