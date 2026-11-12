@@ -331,6 +331,19 @@ int main(int argc,char**argv) {
             check(w.unit(a)->orders.empty() || w.unit(a)->orders.front().targetId!=b,
                   "a Thirsha with Lightning selected refuses a swimming Mer Warrior");
         }
+        // An order the weapon that would fire cannot serve is refused: a
+        // Basilisk's stone on a ship that cannot be stoned, a Fallen Angel's
+        // Death Sword (its selected weapon) on a ship it does no damage to.
+        for (const char* attacker:{"zonbasil","tarang"}) {
+            auto flagship=still("verflag");
+            tak::sim::World w;w.setTerrain(sea(false),256,256,58);w.buildNavClasses(registry);
+            const int a=w.spawn(registry.find(attacker),1900,2000,0,0),b=w.spawn(&flagship,2050,2000,0,1);
+            for (int i=0;i<60;++i) w.tick(1.f/30);
+            w.attack(a,b,false);
+            for (int i=0;i<30;++i) w.tick(1.f/30);
+            check(w.unit(a)->orders.empty() || w.unit(a)->orders.front().targetId!=b,
+                  "an attack its firing weapon cannot serve is refused");
+        }
         auto hurtBy=[&](const char* attacker,tak::sim::UnitType& victim,float ax,float tx,bool shore,float heading) {
             tak::sim::World w;w.setTerrain(sea(shore),256,256,58);w.buildNavClasses(registry);
             const int a=w.spawn(registry.find(attacker),ax,2000,0,0),b=w.spawn(&victim,tx,2000,heading,1);

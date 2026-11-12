@@ -411,11 +411,18 @@ int main(int argc, char** argv) {
             // the caster need only cast.
             const bool storm = w->kind == sim::Weapon::Kind::Wandering;
             const bool status = statusShot(*w);
+            // A stone or freeze class refuses the order: its callback refuses
+            // a building, so retail spent shots on it for good (engine
+            // deviation, World::statusCanTake).
+            if (status) {
+                check(!a.held && a.shots == 0 && a.damage == 0,
+                      std::string(c.what) + " ordered to attack a building refuses the order", describe(a));
+                continue;
+            }
             check(a.ok && (t->canFly || a.dist <= float(a.range) + 0.5f) &&
-                      (storm ? a.shots > 0 : status ? a.struck > 0 && a.damage == 0 : a.damage > 0),
+                      (storm ? a.shots > 0 : a.damage > 0),
                   std::string(c.what) + " ordered to attack a building " +
                       (t->canFly ? "damages it" : storm ? "closes to its plain range and casts"
-                                   : status ? "closes to its plain range and strikes it, harmlessly"
                                             : "closes to its plain range and damages it"),
                   describe(a));
         }

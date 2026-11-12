@@ -3083,11 +3083,20 @@ A sweep of every ranged attacker against every unit that can be in water
 attack for a minute without hurting the target. Retail does the same in each
 case; the owner asked for them fixed regardless (protocol 325):
 
-- **Weapon switchers and swimmers.** `canAttackTarget` accepts a target any
-  slot can use, but a switcher fires only its selected slot. A Thirsha with
-  Lightning (or a Neo Dragon with Blue Flame) took an order on a swimming Mer
-  Warrior because its `unitsonly` Wind Wave could, then hovered for good. A
-  switcher whose selected weapon has the aim point under water now refuses.
+- **Weapon switchers.** `canAttackTarget` accepts a target any slot can use,
+  but a switcher fires only its selected slot. A Thirsha with Lightning (or a
+  Neo Dragon with Blue Flame) took an order on a swimming Mer Warrior because
+  its `unitsonly` Wind Wave could, then hovered for good; a Fallen Angel with
+  its Death Sword (0 damage to naval, god, dragon, fort and more) took one on
+  a ship because its Fire Bomb could. A switcher now takes an order only when
+  its selected weapon can serve it.
+- **Status weapons on immune targets.** The stone and freeze callbacks
+  (`applyHit`) refuse a building (`bmcode` not 1), a Monarch, a unit with
+  construction left and one that is `cantbestoned` / `cantbefrozen`; the
+  charm callback refuses a building too. The picker skipped only the
+  immunities, and the order resolver asked nothing, so a Basilisk ordered
+  onto a ship stoned nothing for good. `World::statusCanTake` now gates the
+  order and the picker, and `canCaptureTarget` refuses a building.
 - **Storms over the sea.** A Wandering storm is born at the terrain height
   under it and keeps that height; over deep water that is the sea bed, 48 px
   under a boat, beyond the Crusades Hurricane's 30 px splash. A storm that is
@@ -3108,9 +3117,10 @@ case; the owner asked for them fixed regardless (protocol 325):
   attack and Hold Position fired on, as retail: a ship with its muzzle at the
   waterline emptied its quiver into the bank under a unit on the shore.
 
-Tests: `naval_combat_test`. Not changed: the Basilisk's stone beam ends about
-160 px out though its range is 300, and the Fallen Angel misses many targets
-on land; neither is a water case.
+A unit that gives a target up goes on with its queue, and its fire-at-will
+sweep picks another target; the written-off one is skipped only while the
+shooter and the target stay within 16 px of their spots. Tests:
+`naval_combat_test`.
 
 ### Ours, not retail: an Activate waits for Create (owner decision)
 

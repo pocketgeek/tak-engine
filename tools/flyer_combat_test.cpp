@@ -25,6 +25,15 @@ namespace tak::sim { struct RetailReplayProbe {
     }
 }; }
 
+// A switcher takes an order only when its selected weapon can serve it:
+// select the first weapon that hurts the target, as a player would.
+static void selectWeaponFor(tak::sim::World& w,int unit,int target) {
+    auto* u=w.unit(unit);const auto* t=w.unit(target);
+    if (!u || !t || !u->type->weaponSwitching) return;
+    for (size_t s=0;s<u->type->weapons.size() && s<3;++s)
+        if (u->type->weapons[s].damageVs(t->type)>0) { u->weaponSlot=int(s);return; }
+}
+
 int main(int argc,char** argv) {
     if (argc!=2) return 2;
     auto vfs=tak::hpi::mountRetailRoot(argv[1]);
@@ -225,6 +234,7 @@ int main(int argc,char** argv) {
             world.player(0).mana=100000;
             int target=world.spawn(&victim,x+distance,z,0,1);
             if (order==1) world.attackMove(flyer,x+distance,z,false);
+            if (order==2) selectWeaponFor(world,flyer,target);
             if (order==2) world.attack(flyer,target,false);
             bool fired=false,attacked=false,seen=false;
             for (int tick=0;tick<1200 && !fired;++tick) {
@@ -330,6 +340,7 @@ int main(int argc,char** argv) {
             w.buildNavClasses(registry);
             const int ground=w.spawn(&dummy,2300,2000,0,0),flyer=w.spawn(&type,2300,2600,0,1);
             const int lokken=w.spawn(&shooter,2150,2000,0,0);
+            selectWeaponFor(w,flyer,ground);
             w.attack(flyer,ground,false);
             const float range=type.weapons.front().range;
             const auto* g=w.unit(ground);

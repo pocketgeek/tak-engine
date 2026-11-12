@@ -7344,8 +7344,20 @@ bool World::canCaptureTarget(int player,const Unit& target) const {
     // override for commanders, unfinished units, protected units, passengers or
     // petrified units.
     return target.type && target.alive() && target.hp>Fixed() && !target.underConstruction &&
+        target.type->buildMovementCode==1 &&   // the callback refuses a building (engine deviation to ask)
         !target.embarked() && !target.type->commander && !target.type->cantBeCaptured &&
         target.stonedFor<=0 && !allied(player,target.player) && !atUnitCap(player);
+}
+
+// Engine deviation: can a stone or freeze weapon take on this target at
+// all? The status callback (applyHit) refuses a building, a Monarch, a unit
+// with construction left and one immune to the status; retail's order
+// resolver does not ask, so a Basilisk ordered onto a ship fired for ever.
+bool World::statusCanTake(const Weapon& w,const Unit& t) const {
+    const bool stone=w.status==Weapon::Status::Stoned,freeze=w.status==Weapon::Status::Frozen;
+    if (!stone && !freeze) return true;
+    return t.type && t.type->buildMovementCode==1 && !t.type->commander && !t.underConstruction &&
+        !(stone ? t.type->cantBeStoned : t.type->cantBeFrozen);
 }
 
 bool World::canAttackTarget(const Unit& from,const Unit& target) const {
@@ -7356,16 +7368,17 @@ bool World::canAttackTarget(const Unit& from,const Unit& target) const {
         // (+0x130 & 3 == 2), its current layer, never its type.
         return !(weapon.noAir && target.flightGroundMode==2) && !(weapon.toAir && target.flightGroundMode!=2) &&
             weapon.damageVs(target.type)>0 &&
-            (!weapon.mindControl || canCaptureTarget(from.player,target)) && !aimPointSubmerged(weapon,target);
+            (!weapon.mindControl || canCaptureTarget(from.player,target)) && !aimPointSubmerged(weapon,target) &&
+            statusCanTake(weapon,target);
     };
+    // Engine deviation: a switcher fires only its selected weapon, so the
+    // order is refused when that weapon cannot touch the target, even when
+    // another slot could (a Fallen Angel's Death Sword does nothing to a
+    // ship; a Thirsha's Lightning cannot reach a swimming Mer Warrior).
+    // Retail's resolver takes any slot and the unit then never hurts it.
     if (from.type->weaponSwitching && !from.type->weapons.empty()) {
         const int slot=std::clamp(from.weaponSlot,0,int(from.type->weapons.size())-1);
-        const auto& selected=from.type->weapons[size_t(slot)];
-        if (selected.mindControl) return usable(selected);
-        // Engine deviation: only the selected weapon fires, so a swimming
-        // target its shots cannot reach is refused even when another slot
-        // (a Thirsha's Wind Wave) could take it.
-        if (aimPointSubmerged(selected,target)) return false;
+        return usable(from.type->weapons[size_t(slot)]);
     }
     return std::any_of(from.type->weapons.begin(),from.type->weapons.end(),usable);
 }
@@ -8025,6 +8038,8 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
         if (w.status==Weapon::Status::Frozen && t.type->cantBeFrozen) continue;
         if (w.mindControl && t.type->cantBeCaptured) continue;
         if (status && t.underConstruction) continue;
+        // Engine deviation: nor a target the callback refuses (statusCanTake).
+        if (!statusCanTake(w,t)) continue;
         // 4128e1..4128ff, 412905..41292c: a paralyzer (damage type 4, WeaponType
         // +0xc8 & 0xf) skips a type with immunetoparalyzer (UnitDef +0x260 bit
         // 26) and a unit already paralyzed (+0x114 & 0x10).

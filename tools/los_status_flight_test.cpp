@@ -307,10 +307,11 @@ void flightCases(const tak::sim::TypeRegistry& registry) {
             }
         }
         if(kind!=LosStatus::Stone)continue;
-        // A Monarch and a building: the Basilisk spends its shot and the
-        // stone does nothing (the commander and mover gates of 52dca0). Every
-        // shipped Monarch is cantbestoned as well; the copy here is not, so
-        // only the commander gate stands between it and the stone.
+        // A Monarch and a building: the stone would do nothing (the commander
+        // and mover gates of 52dca0), so the Basilisk refuses the order
+        // (engine deviation, World::statusCanTake; retail spends its shots).
+        // Every shipped Monarch is cantbestoned as well; the copy here is
+        // not, so only the commander gate stands between it and the stone.
         const UnitType* monarch=nullptr;const UnitType* building=nullptr;
         for(const auto& [id,t]:registry.types()) {
             if(!monarch && t.commander && t.projectileQuad && !t.canFly && weapon.damageVs(&t)>0)monarch=&t;
@@ -334,7 +335,7 @@ void flightCases(const tak::sim::TypeRegistry& registry) {
                 fired|=w.unit(a)->justFired;
                 struck|=std::any_of(w.hits().begin(),w.hits().end(),[&](const auto& h){return h.weapon==&weapon && h.victimId==b;});
             }
-            check(fired && struck,name+" strikes "+target->id);
+            check(!fired && !struck,name+" refuses "+target->id);
             const Unit* struckUnit=w.unit(b);
             check(struckUnit && struckUnit->alive() && struckUnit->hp==hp,
                   name+": "+target->id+" is not petrified and takes no damage");

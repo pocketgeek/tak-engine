@@ -4112,6 +4112,7 @@ private:
     // Engine deviation: a shot of `w` would strike the water before `t`'s aim
     // point (its SweetSpot is below the surface: a wading unit swimming).
     bool aimPointSubmerged(const Weapon& w,const Unit& t) const;
+    bool statusCanTake(const Weapon& w,const Unit& t) const;
     bool shotChordClear(const Unit& u,Fixed fromX,Fixed fromZ,const Unit& t,int slot);
     bool chordClear(const std::array<int64_t,3>& a,const std::array<int64_t,3>& b,const Weapon& w,
                     int64_t skipFrom,int64_t skipTo,const Unit& to) const;
