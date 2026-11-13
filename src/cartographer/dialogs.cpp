@@ -194,10 +194,9 @@ void cart::Editor::applyNewMap(bool random) {
     std::transform(wld.begin(),wld.end(),wld.begin(),[](unsigned char c){return char(std::tolower(c));});
     if(random) {
         auto params=generatorParams;params.widthCells=uint16_t(wu*32);params.heightCells=uint16_t(hu*32);
-        const char* worlds[]={"aramon","taros","veruna","zhon","creon"};
-        for(uint8_t i=0;i<5;++i)if(wld==worlds[i])params.mapType=i;
+        for(uint8_t i=0;i<tak::mapgen::kMapTypes;++i)if(wld==tak::mapgen::worldKey(i))params.mapType=i;
         params=tak::mapgen::sanitize(params);
-        wld=worlds[params.mapType];
+        wld=tak::mapgen::worldKey(params.mapType);
         generatorDraft[3]=wld;
         generatorParams=params;
         generatingName=nm;generatingWorld=wld;cancelGeneration=quitAfterGeneration=false;
@@ -209,6 +208,8 @@ void cart::Editor::applyNewMap(bool random) {
             tak::terrain::Compositor compositor(vfs);
             cart::generateMinimaps(map.map,compositor,cart::loadWorldPalette(vfs,wld));
             int number=1;for(auto [x,z]:result.starts)map.starts.push_back({number++,x,z});
+            if(params.mountainDensity&&tak::mapgen::kitAvailable(params.mapType,tak::mapgen::KitMountains)&&!result.mountains)
+                map.note="No room for mountains on this map: try it larger or with fewer players.";
             return map;
         });
         modal=M_GENERATING;SDL_StopTextInput();return;
@@ -227,8 +228,7 @@ void cart::Editor::openGeneratorRecipe() {
     if(!cart::restoreGeneratorRecipe(scenario.generatorRecipe,params,error)) {openMessage("GENERATOR RECIPE",error);return;}
     generatorParams=params;
     regeneratingCurrent=true;
-    const char* worlds[]={"aramon","taros","veruna","zhon","creon"};
-    generatorDraft={mapName,std::to_string(params.widthCells/32),std::to_string(params.heightCells/32),worlds[params.mapType]};
+    generatorDraft={mapName,std::to_string(params.widthCells/32),std::to_string(params.heightCells/32),tak::mapgen::worldKey(params.mapType)};
     openModal(M_GENERATOR);
 }
 
@@ -839,6 +839,7 @@ void cart::Editor::drawModal() {
             cart::drawText(ren,std::to_string(start.number),int(x)+5,int(y)-3,1,255,240,120);
         }
         cart::drawText(ren,std::to_string(map.width/32)+" x "+std::to_string(map.height/32)+"  "+std::to_string(generatedPreview->starts.size())+" PLAYERS",ct.x,ct.y,1,230,235,245);
+        if(!generatedPreview->note.empty())cart::drawText(ren,generatedPreview->note,ct.x,ct.y+352,1,235,215,150);
         cart::drawText(ren,"Accept replaces terrain, objects, starts and scenario rules.",ct.x,ct.y+370,1,195,210,225);
         cart::drawText(ren,"Discard keeps your current map unchanged.",ct.x,ct.y+386,1,195,210,225);
         mRegenerate=cart::drawButton(ren,ct.x,ct.y+ct.h-20,100,18,"SETTINGS",false);

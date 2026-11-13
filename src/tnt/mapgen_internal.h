@@ -58,7 +58,9 @@ inline uint32_t fractal(uint64_t seed, int cx, int cz, int span) {
 // of flat dark-teal water in the top-left corner and pure-black padding elsewhere
 // (only Veruna's dgsea fills all 16x16) -- wallpapering them %16 sampled ~90%
 // padding, which is what made generated water look black.
-struct WorldArt { uint32_t ground, sea; uint8_t groundK, seaK; };
+// fills: whole 512px ground sections laid over the fill, one picked per dry section
+// for variety (the path up to the variant number, "1".."fillCount").
+struct WorldArt { uint32_t ground, sea; uint8_t groundK, seaK; const char* fills = nullptr; int fillCount = 0; };
 constexpr std::array<WorldArt, kMapTypes> kWorldArt = {{
     {0x868a8222u, 0x0c2e64b2u, 16, 5},    // Aramon: grass / asea
     {0xca4200f8u, 0xb8524a38u, 16, 5},    // Taros:  low_ground / taros_sea
@@ -71,6 +73,8 @@ constexpr std::array<WorldArt, kMapTypes> kWorldArt = {{
     // shipped Creon map is DRY -- IP never used a Creon deep-sea fill -- so water
     // borrows Veruna's dgsea (full 16x16 teal). CreWave01-16 exist for shores.
     {0x814dddc1u, 0x9a5c5436u, 16, 16},   // Creon:  turf / (Veruna sea stand-in)
+    // Volcano (IPSections, sections/volcano/flats): base01's ash plateau / lava_512.
+    {0xdb07f175u, 0x001000d8u, 16, 16, "sections/volcano/flats/base0", 3},
 }};
 
 // ---- coast prefab kits ---------------------------------------------------------
@@ -107,6 +111,11 @@ constexpr std::array<ShoreKit, kMapTypes> kShoreKit = {{
     {"sections/creon/shores/",
      {"n", "s", "e", "w", "nw", "ne", "se", "sw", "n_w", "e_n", "s_w", "e_s"},
      {"01", "02", "03"}, ".tnt"},
+    // The volcano's lava rim, named as Zhon's (checked on the authored heights); two
+    // variants each.
+    {"sections/volcano/base/",
+     {"n", "s", "e", "w", "1nw", "1ne", "1se", "1sw", "2nw", "2ne", "2sw", "2se"},
+     {"1", "2", "1"}, ".tnt"},
 }};
 
 // Marching case (bit0 NW, bit1 NE, bit2 SW, bit3 SE wet) -> kit role, -1 = none.
@@ -132,9 +141,10 @@ constexpr int kCaseRole[16] = {
 // Retail authoring levels the coast prefabs assume: {seaLevel, flat land level}.
 // Aramon + Creon kits are authored at land 80 (river-map style, sea 40); the
 // three sea worlds at land 62 (sea 58). Measured from the shipped prefabs/maps.
+// The volcano's ground is a plateau at 220 over lava at 0, under takx20's sea 56.
 struct WorldLevels { uint8_t sea, land; };
 constexpr std::array<WorldLevels, kMapTypes> kLevels = {{
-    {40, 80}, {58, 62}, {58, 62}, {58, 62}, {40, 80},
+    {40, 80}, {58, 62}, {58, 62}, {58, 62}, {40, 80}, {56, 220},
 }};
 
 // Per-world doodad + mana palette (names verified in features/<world>/*.tdf).
@@ -178,12 +188,18 @@ constexpr const char* kCreRock[] = {"CRERock12", "CRERock07", "CRERock09", "CRER
                                     "CRERock02", "CRERock03", "CRERock04", "CRERock06", "CRERock05",
                                     "CRERock13", "CRERock01", "CRERock08"};   // small->big
 
+// Volcano (features/volcano in IPData.hpi): no trees or rocks; takx20 and takx21
+// scatter Creon works, whole and ruined, which stand in for the rocks here.
+constexpr const char* kVolRock[] = {"CreInvent01a", "CreInvent04a", "CreInvent01", "CreInvent04", "CreInvent03a",
+                                    "CreInvent03", "CreInvent02a", "CreInvent02"};   // small->big
+
 constexpr std::array<WorldFeatures, kMapTypes> kWorldFeat = {{
     {{kAraTree, 10}, {kAraRock, 7},  {{"AraMana01", "AraMana02", "AraMana03"}}},
     {{kTarTree, 9},  {kTarRock, 7},  {{"TarMana01", "TarMana02", "TarMana03"}}},
     {{kVerTree, 9},  {kVerRock, 7},  {{"VerMana01", "VerMana02", "VerMana03"}}},
     {{kZonTree, 6},  {kZonRock, 7},  {{"ZonMana01", "ZonMana02", "ZonMana03"}}},
     {{kCreTree, 9},  {kCreRock, 13},  {{"CReMana01", "CREMana02", "CREMana03"}}},
+    {{nullptr, 0},   {kVolRock, 8},   {{"CReMana01", "CREMana02", "CREMana03"}}},
 }};
 
 // ---- mana-deposit henge rings --------------------------------------------------
@@ -251,12 +267,21 @@ constexpr std::array<RingSpec, kMapTypes> kRing = {{
     {kZonRing, 11, {0, 5, 24, 66, 91, 100},  2, {rNW, rSE, rN, rSW, rW, rNE, rE, rS}},
     // 21% of shipped Creon deposits are BARE (no ring at all) -- reproduced.
     {kCreRing, 14, {21, 27, 71, 96, 100, 100}, 1, {rW, rN, rNE, rSW, rS, rE, rNW, rSE}},
+    // The volcano ships no standing stones: its deposits are bare, as takx20's are.
+    {nullptr, 0, {100, 100, 100, 100, 100, 100}, 0, {rN, rNE, rE, rSE, rS, rSW, rW, rNW}},
 }};
+
+// Volcano Industrial Zone: retail's walkway sections (sections/volcano/roads), one
+// per section, named for the edges their walkway reaches (e_n_s01, end_w; trans_n
+// climbs from a plateau to its south), and the lava pads (isle1..4) that dot the rest.
+constexpr const char* kIndustrialRoads = "sections/volcano/roads/";
+constexpr const char* kIndustrialIsle = "sections/volcano/base/isle";
 
 // Standalone retail relief patches; candidates are checked against their world's
 // low-ground boundary before stamping artwork and heights together.
 constexpr const char* kReliefDir[]={"Sections/Aramon/Low Hills/","Sections/Taros/Low Specials/",
-    "Sections/Veruna/Low Specials/","Sections/Zhon/Low Specials Jungle/","sections/creon/low tile breakers/"};
+    "Sections/Veruna/Low Specials/","Sections/Zhon/Low Specials Jungle/","sections/creon/low tile breakers/",
+    "sections/volcano/tile breakers/"};
 
 // ---- v10 retail terrain kits ---------------------------------------------------
 // Every retail kit below is a set of whole 512px sections authored to interlock on
@@ -325,6 +350,9 @@ constexpr std::array<KitSpec, kMapTypes> kKitSpec = {{
      "sections/creon/snow line/", "sections/creon/flatties/snow256.tnt", nullptr,
      "sections/creon/low towns/", "sections/creon/flatties/chunglo.tnt",
      "sections/creon/high towns/", "sections/creon/flatties/chunghi.tnt", {kCreTown, 10}},
+    // The volcano ships no cliffs, mountains or towns: its plateau is the ground.
+    {220, 220, {nullptr, nullptr}, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+     nullptr, nullptr, nullptr, nullptr, {nullptr, 0}},
 }};
 // Every directory or file the kits read, for the multiplayer data hash.
 std::vector<std::string> kitDirectories();

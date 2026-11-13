@@ -46,9 +46,8 @@ cart::FreshMap cart::buildFreshMap(const tak::hpi::Vfs& vfs, cart::SectionLibrar
     FreshMap out;
     if (random) {
         tak::mapgen::Params gp=requested?*requested:tak::mapgen::Params{};
-        static const char* kW[] = {"aramon", "taros", "veruna", "zhon", "creon"};
         gp.mapType = tak::mapgen::Aramon;
-        for (uint8_t i = 0; i < 5; ++i) if (world == kW[i]) gp.mapType = i;
+        for (uint8_t i = 0; i < tak::mapgen::kMapTypes; ++i) if (world == tak::mapgen::worldKey(i)) gp.mapType = i;
         gp.widthCells = uint16_t(wUnits * 32);
         gp.heightCells = uint16_t(hUnits * 32);
         if(!requested) {gp.players=4;gp.seed=uint64_t(SDL_GetPerformanceCounter());}

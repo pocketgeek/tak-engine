@@ -17,6 +17,18 @@ using namespace detail;
 
 Result generateBalanced(const Params& p, const hpi::Vfs& vfs);
 
+const char* worldKey(uint8_t world) {
+    static const char* keys[kMapTypes] = {"aramon", "taros", "veruna", "zhon", "creon", "volcano"};
+    return keys[world < kMapTypes ? world : 0];
+}
+
+const char* worldTitle(uint8_t world) {
+    static const char* titles[kMapTypes] = {"ARAMON", "TAROS", "VERUNA", "ZHON", "CREON", "VOLCANO"};
+    return titles[world < kMapTypes ? world : 0];
+}
+
+bool lavaWorld(uint8_t world) { return world == Volcano; }
+
 std::vector<std::string> assetPaths(const hpi::Vfs& vfs) {
     std::vector<std::string> paths;
     for (const auto& kit : kShoreKit)
@@ -25,6 +37,13 @@ std::vector<std::string> assetPaths(const hpi::Vfs& vfs) {
                 std::string path = std::string(kit.dir) + name + variant + kit.ext;
                 if (vfs.has(path)) paths.push_back(std::move(path));
             }
+    for (const auto& art : kWorldArt)
+        for (int i = 1; i <= art.fillCount; ++i)
+            if (std::string path = art.fills + std::to_string(i) + ".tnt"; vfs.has(path)) paths.push_back(std::move(path));
+    for (const auto& path : vfs.list(kIndustrialRoads))
+        if (hpi::MountSet::key(path).ends_with(".tnt")) paths.push_back(path);
+    for (int i = 1; i <= 4; ++i)
+        if (std::string path = kIndustrialIsle + std::to_string(i) + ".tnt"; vfs.has(path)) paths.push_back(std::move(path));
     for (const auto* prefix : kReliefDir)
         for (const auto& path : vfs.list(prefix))
             if (hpi::MountSet::key(path).ends_with(".tnt")) paths.push_back(path);
@@ -57,6 +76,8 @@ Params sanitize(Params p) {
     p.layout = std::min<uint8_t>(p.layout, kLayouts-1);
     if (p.layout >= Maze) for (uint8_t world=0;world<kMapTypes;++world)
         if (themedLayout(world)==p.layout) p.mapType=world;
+    if (p.layout == IndustrialZone) p.mapType = Volcano;
+    if (!layoutAllowed(p.mapType, p.layout)) p.layout = Mainland;
     // What fits was measured, not assumed (2026-11-09): every layout, 2-8 players and
     // widths x heights of 8-64 sections, generated for 16 seeds, counting a size only when
     // every seed built a map that keeps its layout -- Maze walls and open exits, Highlands
@@ -73,6 +94,8 @@ Params sanitize(Params p) {
         /* Riverlands */ {0, 0, 8, 8, 12, 12, 12, 12, 16},
         /* Jungle     */ {0, 0, 8, 8, 8, 8, 8, 8, 8},
         /* Highlands  */ {0, 0, 8, 8, 8, 8, 8, 8, 8},
+        /* LavaFlows  */ {0, 0, 8, 8, 8, 8, 8, 8, 8},
+        /* Industrial */ {0, 0, 8, 8, 12, 16, 16, 16, 16},
     };
     const auto fits = [&](const Params& q) {
         if (std::min(q.widthCells, q.heightCells) / 32 < kMinSide[q.layout][q.players]) return false;
@@ -194,7 +217,7 @@ Params parseMapId(const std::string& id) {
 std::string friendlyLabel(const Params& pin) {
     Params p = sanitize(pin);
     if (!p.name.empty()) return p.name;
-    static const char* kNames[kMapTypes] = {"Aramon", "Taros", "Veruna", "Zhon", "Creon"};
+    static const char* kNames[kMapTypes] = {"Aramon", "Taros", "Veruna", "Zhon", "Creon", "Volcano"};
     int u = p.widthCells / 32, v = p.heightCells / 32;
     // ASCII only: the lobby draws this with the 5x7 block font, which has no glyph
     // for a middot and would render each byte of one as a blank.

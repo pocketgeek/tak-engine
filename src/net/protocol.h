@@ -24,7 +24,7 @@ namespace tak::net {
 // Bump it whenever the wire layout changes or the simulation can compute a different
 // result from the same inputs -- a peer or replay of another number would desync.
 // The CHANGELOG records what each release changed.
-constexpr uint32_t kNetVersion = 326;      // 326: repeating mobile builders park their output on the factory ring; producers hold an output stance
+constexpr uint32_t kNetVersion = 327;      // 327: random maps: compact mountain peaks, the Volcano world (Lava Flows, Industrial Zone)
 constexpr uint32_t kMaxFrame = 1u << 18;   // 256 KB frame cap (hardening) -- headroom for a
                                            // big tick bundle when many units are ordered at once
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)

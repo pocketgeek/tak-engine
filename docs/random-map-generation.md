@@ -14,7 +14,9 @@ generate a new map"), and nothing builds or saves a map from one; a game room
 whose remembered map is such a recipe opens on another map and says why, and the
 CHANGE MAP panel's RANDOM MAP tab starts from the default settings instead. A saved
 generated `.kmp` is an ordinary map and plays from its saved terrain whatever
-recipe it records. Clients and servers must run the same engine version.
+recipe it records. Clients and servers must run the same engine version. The same
+version-10 recipe built different terrain before protocol 327 (compact mountain peaks,
+below), so a recipe saved earlier may now come out with mountains it lacked.
 
 ## Layout and placement
 
@@ -41,8 +43,31 @@ recipe it records. Clients and servers must run the same engine version.
   lowland routes. The Highlands slider (in place of Hills) controls coverage;
   water is disabled, and Plateaus does not apply. Creon mountains may stand on
   the highlands.
+- **Volcano Lava Flows:** a lava river runs from a fifth of the way out to the map's
+  edge between each pair of neighbouring homes, meandering and varying in width; the
+  homes meet in the dry middle. Lava allocation is automatic.
+- **Volcano Industrial Zone:** lava everywhere but the home plateaus and a few
+  two-section plateau blocks out in it (at least one per player), joined by a maze
+  of retail walkways, after the Industrial Zone v1/v2 community maps. A seeded
+  spanning tree over one connected stretch of lava gets a few loops, and its
+  branches are cut back to the plateau ramps (two per home, one per block), one in
+  five left as a dead end. Each dead end finishes in a pad holding a sacred stone
+  (neutral mana, reached along the walkways, in the shipped tier mix). Lava pads
+  (*isle1–4*) dot about one lava section in six; nothing walks to them. Walkways,
+  ramp landings and a lane from each start to its ramps are kept clear of ruins.
 
-In the game room's CHANGE MAP panel (RANDOM MAP) each biome offers its own themed fourth layout.
+**Volcano** is Iron Plague's lava world (`kingdom=volcano`, the world of the
+campaign's takx20/takx21). Its ground is the plating plateau of *flats/base01–03*
+(mixed section by section) at height 220 over lava at 0, sea level 56; retail marks
+every lava cell 0xfffc, so lava is impassable to everything but aircraft (no ships,
+no harbors: it has no Islands layout). The lava rim is the *base* kit, named as
+Zhon's coast. It has no cliffs, mountains or towns, no trees and no standing stones:
+its deposits are bare, as the campaign's are, and Creon works, whole and ruined
+(*CreInvent01–04*), stand in for rocks. On Mainland and Lakes the WATER slider reads
+LAVA.
+
+In the game room's CHANGE MAP panel (RANDOM MAP) each biome offers four layouts:
+Mainland, Lakes, Islands (Industrial Zone on Volcano) and its own themed layout.
 Cartographer lists the themed layouts by faction; selecting one sets its biome.
 
 Width and height are set separately, each 8, 12, 16, 20, 24, 32, 40, 48, 56 or 64 sections
@@ -62,7 +87,8 @@ Islands and Ports). Two rules reproduce that with no size allowed that fails:
 
 | Layout | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Mainland, Maze, Jungle, Highlands | 8 | 8 | 8 | 8 | 8 | 8 | 8 |
+| Mainland, Maze, Jungle, Highlands, Lava Flows | 8 | 8 | 8 | 8 | 8 | 8 | 8 |
+| Industrial Zone | 8 | 8 | 12 | 16 | 16 | 16 | 16 |
 | Lakes | 8 | 8 | 8 | 12 | 12 | 12 | 12 |
 | Riverlands | 8 | 8 | 12 | 12 | 12 | 12 | 16 |
 | Islands | 8 | 12 | 12 | 16 | 16 | 20 | 20 |
@@ -137,7 +163,11 @@ The generator reads them that way:
   single peak, a ridge or a clump, and raised on a plateau of its own with a corner
   of open, walkable top around the range (two on Creon, for the snow line). The
   rings the range needs are whole; the outer margin is ragged, so mountain plateaus
-  are irregular rather than square. Plain plateaus then fill the rest of the
+  are irregular rather than square. When no range finds room (small or crowded
+  maps, where the homes and the routes kept open between them leave no block that
+  wide), a second pass places one compact peak: a single core needing only the moat
+  of high ground round it (Maze and Highlands: of their own high ground), the corners
+  beyond it clear of every home, its outer margin raised only where plateau may. Plain plateaus then fill the rest of the
   eligible ground, a corner clear of every mountain plateau: the Plateaus and
   Mountains sliders act independently, and Mountains 0 leaves the plain plateaus as
   they are.
@@ -154,6 +184,7 @@ The generator reads them that way:
 | Veruna | *Low to High Cliffs* (its walkable variants are the ramps), *int_200*, 62→200 | **none**: Veruna ships no mountain kit; its *High Specials* are craters and outcrops, not blocking mountains | *Low Towns* on *s_cobbflat*; *High Towns* on *i_cobbflat*; houses, huts, wells, lamps, fountain |
 | Zhon | *Low to High Cliffs Jungle*, *mountainplateau230*, 63→215 (ramps S/E/W) | standalone spires *High Specials/mt1–mt4*: Zhon's *High Mountains* (`mttp_`) are a ridge set crossing edge midpoints, not a marching kit | **villages**: Zhon has no settlement sections (*Low Plazas Jungle* are stepped temple platforms on a dirt palette that does not border the jungle fill), so a village is retail tents, huts and a bonfire in a clearing |
 | Creon | *hillsides* (all walkable slopes), *highland512*, 80→250 | *mountains* (+ *intmt512* centre) on snow: the 256-pixel *snow line* kit blends half a section of *snow256* around each range into the highland | *low towns* on *chunglo*; *high towns* on *chunghi*; houses and civic buildings |
+| Volcano | **none**: the plateau is the ground | **none** | **none** |
 
 **Placement and fairness.** Plateau corners come from a low-frequency noise field and
 are only allowed where no water corner touches them, more than 48 cells from every
@@ -189,7 +220,9 @@ plateaus, and Plateaus 0 left only the 245 mountain plateaus.
 **Controls.** The CHANGE MAP panel's RANDOM MAP tab shows the nine sliders in two columns: Forests,
 Rocks, Extra Mana, Scattered Mana, Water, Hills (Highlands on Creon Highlands),
 Plateaus, Mountains and Towns (Villages on Zhon). Plateaus reads AUTO on Maze and
-Highlands; Mountains reads NONE on Veruna. Defaults: Plateaus 96, Mountains 48,
+Highlands; Mountains reads NONE on Veruna and Volcano, and the recipe box reads
+MOUNTAINS: NO ROOM when the previewed roll placed none (Cartographer's preview says
+so too). Defaults: Plateaus 96, Mountains 48,
 Towns 64 of 255: on a 24×24 two-player map about three plain plateaus (one beside
 each start), one or two mountain plateaus and two or three towns. The game
 room lists the three amounts with the map seed in the recipe box over its map

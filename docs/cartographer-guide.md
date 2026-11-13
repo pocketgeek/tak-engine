@@ -151,7 +151,7 @@ window.
 | --- | --- |
 | **MAP NAME** | Any name that can be a file name: no `/ \ : * ? " < > \|`, no trailing dot or space, and not a reserved Windows name such as CON or COM1. |
 | **WIDTH**, **HEIGHT** | 8, 16, 24, 32, 48 or 64 map units. One unit is 512 game pixels, the size of one standard terrain section. Use [Resize](#resizing-the-map) later for other sizes from 1 to 64. |
-| **WORLD** | aramon, veruna, taros, zhon or creon. The world decides which terrain sections and features you can use. |
+| **WORLD** | aramon, veruna, taros, zhon, creon or volcano. The world decides which terrain sections and features you can use. |
 
 **CREATE** (or **Enter**) makes a flat map covered with the world's plain
 ground, with no start positions, features or units yet. **CANCEL** (or **Esc**)
@@ -1116,14 +1116,14 @@ uses for its random maps.
 | --- | --- |
 | **SEED (REPRODUCIBLE)** | The random number the map grows from. The same seed and settings always give the same map. A new seed is drawn each time you open New Map. |
 | **PLAYERS (2-8)** | How many start positions to make. |
-| **LAYOUT** | Mainland, Lakes, Islands, Taros Maze, Veruna Ports, Aramon Riverlands, Zhon Clearings or Creon Highlands. |
+| **LAYOUT** | Mainland, Lakes, Islands, Taros Maze, Veruna Ports, Aramon Riverlands, Zhon Clearings, Creon Highlands, Volcano Lava Flows or Volcano Industrial Zone (a walkway maze over lava; every dead end holds a mana spot). |
 | **TREES**, **ROCKS**, **MANA** | How many of each, from 0 to 255. More mana adds more mana sites per player. |
-| **WATER INTENSITY** | How strongly lakes appear, from 0 (dry) to 255. Used by Mainland, Lakes and Zhon Clearings. Ignored by Islands, Veruna Ports and Aramon Riverlands, which make their own water, and by Taros Maze and Creon Highlands. |
+| **WATER INTENSITY** | How strongly lakes appear, from 0 (dry) to 255. Used by Mainland, Lakes and Zhon Clearings. Ignored by Islands, Veruna Ports and Aramon Riverlands, which make their own water, by Taros Maze and Creon Highlands, and by the two Volcano layouts, which make their own lava. On the Volcano world it is lava, which nothing but aircraft crosses. |
 | **RELIEF** | How many hills, from 0 (flat) to 255. |
 | **WIDTH**, **HEIGHT** | 1 to 64 units, set separately (the generator makes at least 8; see below). |
-| **WORLD** | The world to use. |
+| **WORLD** | The world to use: aramon, veruna, taros, zhon, creon or volcano (Iron Plague's lava world). |
 | **SCATTERED MANA (BY MAP AREA)** | None, Minimum, Medium, High or Max neutral mana spots spread over open ground, by area. Max is as dense as a home with six spots; each lower level halves it. |
-| **PLATEAUS**, **MOUNTAINS**, **TOWNS** | 0 to 255: cliff-edged plateaus with ramps, mountain ranges and walled towns (Zhon: villages), built from the world's own retail sections. Ignored where a world has no such kit (Veruna has no mountains) and, for plateaus, by Taros Maze and Creon Highlands, which make their own high ground. All three at 0 build none of them. |
+| **PLATEAUS**, **MOUNTAINS**, **TOWNS** | 0 to 255: cliff-edged plateaus with ramps, mountain ranges and walled towns (Zhon: villages), built from the world's own retail sections. Ignored where a world has no such kit (Veruna has no mountains; Volcano has none of the three) and, for plateaus, by Taros Maze and Creon Highlands, which make their own high ground. All three at 0 build none of them. |
 
 The fields are in two columns.
 
@@ -1132,7 +1132,10 @@ size it really used:
 
 - The **themed layouts set their own world**: Taros Maze makes a Taros map,
   Veruna Ports a Veruna map, Aramon Riverlands an Aramon map, Zhon Clearings a
-  Zhon map and Creon Highlands a Creon map.
+  Zhon map, Creon Highlands a Creon map and both Volcano layouts a Volcano map.
+  Islands on the Volcano world becomes Mainland: lava has no harbours.
+- A map too small or crowded for a whole mountain range gets one compact peak;
+  where even that does not fit, the preview says there was no room for mountains.
 - A width or height under 8 units is raised to 8. If the map is still too small
   for its layout and players, the generator grows the shorter side (the width on
   a tie) through 12, 16, 20, 24, 32, 40, 48, 56 and 64 until it fits. It fits when
@@ -1142,7 +1145,8 @@ size it really used:
 
 | Layout | 2 players | 3 | 4 | 5 | 6 | 7 | 8 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Mainland, Taros Maze, Zhon Clearings, Creon Highlands | 8 | 8 | 8 | 8 | 8 | 8 | 8 |
+| Mainland, Taros Maze, Zhon Clearings, Creon Highlands, Volcano Lava Flows | 8 | 8 | 8 | 8 | 8 | 8 | 8 |
+| Volcano Industrial Zone | 8 | 8 | 12 | 16 | 16 | 16 | 16 |
 | Lakes | 8 | 8 | 8 | 12 | 12 | 12 | 12 |
 | Aramon Riverlands | 8 | 8 | 12 | 12 | 12 | 12 | 16 |
 | Islands | 8 | 12 | 12 | 16 | 16 | 20 | 20 |

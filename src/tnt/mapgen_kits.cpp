@@ -240,4 +240,19 @@ bool kitAvailable(uint8_t world, uint8_t kit) {
 
 bool automaticPlateaus(uint8_t layout) { return layout == Maze || layout == Highlands; }
 
+bool layoutAllowed(uint8_t world, uint8_t layout) {
+    if (layout == IndustrialZone) return lavaWorld(world);
+    return !(lavaWorld(world) && layout == Islands);
+}
+
+uint8_t layoutForSlot(uint8_t world, int slot) {
+    if (slot == 3) return themedLayout(world);
+    if (slot == 2 && lavaWorld(world)) return IndustrialZone;
+    return uint8_t(std::clamp(slot, 0, 2));
+}
+
+int slotOfLayout(uint8_t layout) {
+    return layout == IndustrialZone ? 2 : layout >= Maze ? 3 : layout;
+}
+
 }  // namespace tak::mapgen

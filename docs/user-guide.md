@@ -539,13 +539,18 @@ In the game room, **Change map...** and then the **Random map** tab open the
 generator; **Pick** plays the map it shows:
 
 - **Map type**: Mainland, Lakes or Islands, or a themed layout per world:
-  Aramon Riverlands, Taros Maze, Veruna Ports, Zhon Clearings or Creon Highlands.
+  Aramon Riverlands, Taros Maze, Veruna Ports, Zhon Clearings, Creon Highlands or
+  Volcano Lava Flows (lava rivers running out between the homes). The Volcano world
+  has **Industrial Zone** in place of Islands: lava everywhere but the plateaus, joined
+  by a maze of walkways whose dead ends each hold a mana spot.
   The themed layout is the fourth choice of **Layout**; changing the world while
   a themed layout is chosen switches to that world's theme. Ports always has
   connected deep-water harbour sites, and the land themes keep connected army
   routes. Maze corridors open onto all four map edges, and Lakes can reach the
   edge of the map.
-- **World**: the look of the map (Aramon, Taros, Veruna, Zhon or Creon terrain).
+- **World**: the look of the map (Aramon, Taros, Veruna, Zhon or Creon terrain, or
+  Volcano, Iron Plague's lava world). Lava is impassable to everything but aircraft,
+  so the Water slider reads **Lava** there.
 - **Players**, then **Width** and **Height**, each from 8 to 64 sections, set on their
   own. A size the layout cannot build fairly at that player count is skipped: most
   layouts go down to 8 × 8 for up to 5 players and 12 × 12 for 6–8, and Islands, Ports,
@@ -559,8 +564,10 @@ generator; **Pick** plays the map it shows:
   impassable ranges standing on their own plateau (Creon's on snow, Zhon's as
   rock spires); towns are walled settlements with houses, or tent-and-hut
   villages on Zhon. As in the original game, armies can cross a town's painted
-  walls. Veruna has no mountains in the original sections, so its Mountains
-  slider reads NONE; Taros Maze and Creon Highlands make their own high ground,
+  walls. Veruna and Volcano have no mountains in the original sections, so their
+  Mountains slider reads NONE (Volcano has no plateaus or towns either). A map too
+  small or crowded for a whole range gets a single compact peak; where even that
+  does not fit, the recipe box reads MOUNTAINS: NO ROOM; Taros Maze and Creon Highlands make their own high ground,
   so Plateaus reads AUTO there. Plateaus and Mountains are independent: plain
   plateaus (every player gets one nearby) and mountain plateaus (a range with open
   ground around it). Extra mana spots can sit on plateau tops, reached by the ramps,

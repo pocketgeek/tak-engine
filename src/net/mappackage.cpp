@@ -357,15 +357,15 @@ std::filesystem::path saveGenerated(const std::filesystem::path& root, const hpi
     const auto usage=quota ? tak::storageUsage(root/"MapCache")+tak::storageUsage(root/"Maps","Generated-") : 0;
     tak::storageRoom(usage,1,quota);
     auto g = mapgen::generate(params, vfs);
-    const char* worlds[] = {"Aramon","Taros","Veruna","Zhon","Creon"};
-    std::string world = worlds[params.mapType % 5];
-    for (auto& c : world) c = char(std::tolower(uint8_t(c)));
+    const std::string world = mapgen::worldKey(params.mapType);
+    std::string kingdom = world;
+    kingdom[0] = char(std::toupper(uint8_t(kingdom[0])));
     // The radar pictures the map lists and the in-game minimap show, as the Cartographer builds them.
     terrain::Compositor compositor(vfs);
     terrain::generateMinimaps(g.map, compositor, terrain::loadWorldPalette(vfs, world));
     std::vector<hpi::PackFile> files{{path + ".tnt", g.map.save()}};
     std::string ota = "[GlobalHeader]\n{\nmissionname=" + name + ";\nmissiondescription=" +
-        mapgen::friendlyLabel(params) + " Seed " + std::to_string(params.seed) + ";\nkingdom=" + worlds[params.mapType % 5] +
+        mapgen::friendlyLabel(params) + " Seed " + std::to_string(params.seed) + ";\nkingdom=" + kingdom +
         ";\nnumplayers=" + std::to_string(g.starts.size()) + ";\nsize=" + std::to_string(g.map.width / 32) + " x " +
         std::to_string(g.map.height / 32) + ";\ngravity=112;\nminwindspeed=100;\nmaxwindspeed=2000;\n[Map Data]\n{\n[Specials]\n{\n";
     for (size_t i = 0; i < g.starts.size(); ++i)

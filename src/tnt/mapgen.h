@@ -20,10 +20,18 @@ namespace tak::hpi { class Vfs; }
 namespace tak::mapgen {
 
 // One of the retail worlds; also selects the terrain section art + feature palette.
-// Matches matchsetup faction ids: 0=aramon 1=taros 2=veruna 3=zhon 4=creon.
-enum MapType : uint8_t { Aramon = 0, Taros = 1, Veruna = 2, Zhon = 3, Creon = 4, kMapTypes };
+// 0..4 match matchsetup faction ids (0=aramon 1=taros 2=veruna 3=zhon 4=creon);
+// Volcano is Iron Plague's lava world (kingdom=volcano), which no side calls home.
+enum MapType : uint8_t { Aramon = 0, Taros = 1, Veruna = 2, Zhon = 3, Creon = 4, Volcano = 5, kMapTypes };
+// The world's name as an OTA kingdom and as its features/ and palettes/ folder.
+const char* worldKey(uint8_t world);
+// The world's name for menus, in capitals.
+const char* worldTitle(uint8_t world);
+// Lava, not water: retail blocks every lava cell (0xfffc), so nothing walks or sails it.
+bool lavaWorld(uint8_t world);
 
-enum Layout : uint8_t { Mainland = 0, Lakes = 1, Islands = 2, Maze, Ports, Riverlands, Jungle, Highlands, kLayouts };
+enum Layout : uint8_t { Mainland = 0, Lakes = 1, Islands = 2, Maze, Ports, Riverlands, Jungle, Highlands, LavaFlows,
+                        IndustrialZone, kLayouts };
 const char* layoutName(uint8_t layout);
 uint8_t themedLayout(uint8_t world);
 bool automaticWater(uint8_t layout);
@@ -42,6 +50,13 @@ bool kitAvailable(uint8_t world, uint8_t kit);
 // Layouts that supply their own high ground (Maze walls, Creon highlands) ignore the
 // plateau amount; mountains and towns still apply.
 bool automaticPlateaus(uint8_t layout);
+// Whether a layout can be built on a world: a lava world has no Islands (no harbors),
+// and Industrial Zone is the volcano's alone.
+bool layoutAllowed(uint8_t world, uint8_t layout);
+// The menus' four layout choices per world (slot 0..3): Mainland, Lakes, Islands (a
+// lava world's Industrial Zone instead) and the world's themed layout.
+uint8_t layoutForSlot(uint8_t world, int slot);
+int slotOfLayout(uint8_t layout);
 
 struct Params {
     uint16_t formatVer = 10;         // the recipe version, the only one an id may carry
@@ -66,7 +81,7 @@ struct Params {
 struct Result {
     tak::tnt::Map map;
     int waterPercent = 0, reliefPatches = 0;
-    int scatteredMana = 0;   // neutral spots placed (not part of any player's rounds)
+    int scatteredMana = 0;   // neutral spots placed (not part of any player's rounds; Industrial Zone dead ends too)
     int plateaus = 0, mountains = 0, towns = 0;   // kit placements (components/ranges/towns)
     int mountainPlateaus = 0;   // plateaus carrying a range (the rest are plain)
     int plateauMana = 0, manaPlateaus = 0;   // deposits on plateau tops, and plateaus holding one

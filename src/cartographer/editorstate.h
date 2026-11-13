@@ -100,6 +100,7 @@ struct FreshMap {
     tak::tnt::Map map;
     std::string recipe;
     std::vector<tak::tnt::StartPos> starts;   // only for random terrain
+    std::string note;   // random terrain: what the generator could not fit (shown on its preview)
 };
 FreshMap buildFreshMap(const tak::hpi::Vfs& vfs, cart::SectionLibrary& sections,
                        tak::terrain::Compositor& comp, const std::string& world,
@@ -389,7 +390,7 @@ struct Editor : Session {
     SDL_Rect mAiProfiles{};                   // Scenario Properties: EDIT AI PROFILES...
     // Dropdown option lists (New Map): map sizes in units, and the four worlds.
     const std::vector<std::string> kSizeOpts = {"8", "16", "24", "32", "48", "64"};
-    const std::vector<std::string> kWorldOpts = {"aramon", "veruna", "taros", "zhon", "creon"};
+    const std::vector<std::string> kWorldOpts = {"aramon", "veruna", "taros", "zhon", "creon", "volcano"};
     const std::vector<std::string> kDisplayOpts={"WINDOWED","BORDERLESS FULLSCREEN"},kOnOffOpts={"OFF","ON"},
         kScaleOpts={"50%","75%","100%","125%","150%","175%","200%"};
     tak::mapgen::Params generatorParams;

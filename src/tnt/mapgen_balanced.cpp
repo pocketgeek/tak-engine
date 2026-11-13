@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <deque>
 #include <map>
 #include <stdexcept>
@@ -28,12 +29,14 @@ const char* layoutName(uint8_t layout) {
         case Riverlands: return "Aramon Riverlands";
         case Jungle: return "Zhon Clearings";
         case Highlands: return "Creon Highlands";
+        case LavaFlows: return "Volcano Lava Flows";
+        case IndustrialZone: return "Volcano Industrial Zone";
         default: return "Mainland";
     }
 }
 
 uint8_t themedLayout(uint8_t world) {
-    constexpr uint8_t layouts[]={Riverlands,Maze,Ports,Jungle,Highlands};
+    constexpr uint8_t layouts[]={Riverlands,Maze,Ports,Jungle,Highlands,LavaFlows};
     return layouts[world % kMapTypes];
 }
 const char* scatterName(uint8_t level) {
@@ -49,7 +52,8 @@ int scatterPitch(uint8_t level) {
 }
 
 bool automaticWater(uint8_t layout) {
-    return layout==Islands || layout==Ports || layout==Riverlands || layout==Maze || layout==Highlands;
+    return layout==Islands || layout==Ports || layout==Riverlands || layout==Maze || layout==Highlands || layout==LavaFlows ||
+           layout==IndustrialZone;
 }
 
 namespace {
@@ -57,8 +61,7 @@ using Point = std::pair<int,int>;
 struct FeatureSize { int x=1,z=1; bool blocking=false; };
 
 std::map<std::string,FeatureSize> featureSizes(const hpi::Vfs& vfs,uint8_t world) {
-    static const char* names[]={"aramon","taros","veruna","zhon","creon"};
-    auto paths=vfs.list(std::string("features/")+names[world]);
+    auto paths=vfs.list(std::string("features/")+worldKey(world));
     std::sort(paths.begin(),paths.end());
     std::map<std::string,FeatureSize> out;
     for (const auto& path:paths) {
@@ -102,6 +105,13 @@ std::vector<int> flood(const std::vector<uint8_t>& ok,int w,int h,Point start) {
         if (x>0) step(c-1);
     }
     return d;
+}
+
+// Integer square root (floor), for the generator's integer-only geometry.
+int64_t isqrt(int64_t v) {
+    if(v<=0)return 0;
+    int64_t r=int64_t(1)<<((std::bit_width(uint64_t(v))-1)/2+1);
+    while(true){const int64_t n=(r+v/r)/2;if(n>=r)return r;r=n;}
 }
 
 std::vector<int> distances(const sim::NavGrid& nav,Point start,int foot) {
@@ -200,7 +210,7 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
     for (auto s:r.starts) {
         mark(s.first,s.second,43,2); // home economy: terrain is flat; scenery allowed only outside base/routes
         mark(s.first,s.second,14,5); // bit 4: walkable lane home (see scattered mana)
-        if (p.layout!=Islands && p.layout!=Maze && p.layout!=Ports) reserveRoute(s,{w/2,h/2},8);
+        if (p.layout!=Islands && p.layout!=Maze && p.layout!=Ports && p.layout!=IndustrialZone) reserveRoute(s,{w/2,h/2},8);
     }
     if (p.layout==Ports) for (size_t i=0;i<r.starts.size();++i) {
         // Coastal settlements surround a shared basin. Keep the perimeter dry;
@@ -215,6 +225,58 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
     const int islandCols=p.players<=4?2:3;
     const int islandRows=(p.players+islandCols-1)/islandCols;
     const int islandRadius=48+32*std::max(0,(std::min(w/islandCols,h/islandRows)-192)/128);
+    // Volcano Lava Flows: a lava river runs from a fifth of the way out to the map's
+    // edge between each pair of neighbouring homes (the starts go round in order),
+    // meandering; the homes meet in the dry middle. Directions are scaled by 1000.
+    std::vector<std::pair<int64_t,int64_t>> flows;
+    if (p.layout==LavaFlows) for (size_t k=0;k<r.starts.size();++k) {
+        const auto a=r.starts[k],b=r.starts[(k+1)%r.starts.size()];
+        const int64_t ax=a.first-w/2,az=a.second-h/2,bx=b.first-w/2,bz=b.second-h/2;
+        const int64_t la=std::max<int64_t>(1,isqrt(ax*ax+az*az)),lb=std::max<int64_t>(1,isqrt(bx*bx+bz*bz));
+        int64_t dx=ax*1000/la+bx*1000/lb,dz=az*1000/la+bz*1000/lb;
+        if (dx*dx+dz*dz<200*200) {dx=-az*1000/la;dz=ax*1000/la;}   // opposite homes: square to them
+        const int64_t l=std::max<int64_t>(1,isqrt(dx*dx+dz*dz));
+        flows.emplace_back(dx*1000/l,dz*1000/l);
+    }
+    const auto lavaFlow=[&](int cx,int cz) {
+        const int64_t px=cx-w/2,pz=cz-h/2,inner=std::min(w,h)/5;
+        for (size_t k=0;k<flows.size();++k) {
+            const auto [dx,dz]=flows[k];
+            const int64_t along=(px*dx+pz*dz)/1000,across=(px*dz-pz*dx)/1000;
+            if (along<inner) continue;
+            const int64_t bend=(int64_t(noise(p.seed^0x6c617661ULL,int(along),int(k)*977,128))-128)*72/128;
+            const int64_t half=28+int64_t(noise(p.seed^0x77696465ULL,int(along),int(k)*977,80))*20/255;
+            if (std::abs(across-bend)<=half) return true;
+        }
+        return false;
+    };
+    // Volcano Industrial Zone: lava everywhere but the homes and a few plateau blocks
+    // (two sections square) out in it for expansions, every one at least three
+    // corners from the rest so a lava section, room for a walkway, runs between.
+    std::vector<uint8_t> izDry(size_t(sw+1)*(sh+1),0);
+    std::vector<Point> izDeadEnds;   // sections whose walkway ends in a pad: mana spots
+    if (p.layout==IndustrialZone) {
+        uint64_t rng=p.seed^0x696e647573ULL;
+        const auto homeGap=[&](int cx,int cz) {   // corners from the nearest home square
+            int gap=1<<20;
+            for (auto [sx,sz]:r.starts)
+                gap=std::min(gap,std::max(std::abs(cx*32-sx)-48,std::abs(cz*32-sz)-48)/32);
+            return gap;
+        };
+        const int want=std::max<int>(p.players,sw*sh/40);
+        for (int placed=0,attempt=0;placed<want&&attempt<want*60&&sw>4&&sh>4;++attempt) {
+            const int x0=int(splitmix(rng)%uint64_t(sw-1)),z0=int(splitmix(rng)%uint64_t(sh-1));
+            bool good=true;
+            for (int z=z0-3;good&&z<=z0+5;++z) for (int x=x0-3;x<=x0+5;++x) {
+                const bool inside=x>=x0&&x<=x0+2&&z>=z0&&z<=z0+2;
+                if (inside&&(x>sw||z>sh||homeGap(x,z)<3)) {good=false;break;}
+                if (x>=0&&z>=0&&x<=sw&&z<=sh&&izDry[size_t(z)*(sw+1)+x]) {good=false;break;}
+            }
+            if (!good) continue;
+            for (int z=z0;z<=z0+2;++z) for (int x=x0;x<=x0+2;++x) izDry[size_t(z)*(sw+1)+x]=1;
+            ++placed;
+        }
+    }
     // Coherent low-frequency water; legacy lakes stay inland, new lakes may
     // reach the map edge. Zero means genuinely dry. Amount is an intensity, not a coverage %.
     for (int z=0;z<=sh;++z) for (int x=0;x<=sw;++x) {
@@ -228,6 +290,8 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
             const int bend=int(noise(p.seed,x*32,0,w/3)%3)-1;
             water=std::abs(z-sh/2-bend)<=1 || std::abs(x-sw/2)<=1;
         }
+        if (p.layout==LavaFlows) water=lavaFlow(x*32,z*32);
+        if (p.layout==IndustrialZone) water=!izDry[size_t(z)*(sw+1)+x];
         for (auto [sx,sz]:r.starts) {
             const int dx=std::abs(x*32-sx),dz=std::abs(z*32-sz);
             const int radius=p.layout==Islands?islandRadius:48;
@@ -268,6 +332,10 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         const size_t i=size_t(z)*(w/2)+x;
         m.tileKeys[i]=sea?art.sea:art.ground;m.tileCols[i]=uint8_t(x%period);m.tileRows[i]=uint8_t(z%period);
     }
+    // Lava blocks everything that moves on the ground, as retail marks it (0xfffc on
+    // every cell of lava_512); the shore sections carry their own marks.
+    if (lavaWorld(p.mapType)) for (int z=0;z<h;++z) for (int x=0;x<w;++x)
+        if (cellCase(x/32,z/32)==15) {const size_t i=size_t(z)*w+x;m.features[i]=0xfffc;obstacles[i]=claim[i]=1;}
     const auto sizes=featureSizes(vfs,p.mapType);
     const auto sizeOf=[&](const std::string& name)->const FeatureSize* {
         auto it=sizes.find(hpi::MountSet::key(name));return it==sizes.end()?nullptr:&it->second;
@@ -308,6 +376,13 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
             m.tileKeys[dst]=piece.tileKeys[src];m.tileCols[dst]=piece.tileCols[src];m.tileRows[dst]=piece.tileRows[src];
         }
     };
+    // A world with several interchangeable ground sections mixes them over dry land.
+    if (art.fillCount) for (int z=0;z<sh;++z) for (int x=0;x<sw;++x) {
+        if (cellCase(x,z)!=0) continue;
+        const int pick=1+int(latticeVal(p.seed^0x66696c6cULL,x,z)%uint32_t(art.fillCount));
+        if (const auto* fill=load(art.fills+std::to_string(pick)+".tnt"); fill && fill->width==32 && fill->height==32)
+            stamp(*fill,x*32,z*32);
+    }
     const auto& kit=kShoreKit[p.mapType];
     for (int z=0;z<sh;++z) for (int x=0;x<sw;++x) {
         const int role=kCaseRole[cellCase(x,z)];if(role<0)continue;
@@ -318,6 +393,163 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         if(!piece||piece->width!=32||piece->height!=32)
             throw std::runtime_error("Random map needs the retail coastline sections for this world");
         stamp(*piece,x*32,z*32);
+    }
+    if (p.layout==IndustrialZone) {
+        // A walkway maze over the lava, from retail's road sections: a random spanning
+        // tree over one connected stretch of lava, a few loops, its branches cut back to
+        // the plateau ramps (some left as dead ends), and lava pads dotted elsewhere.
+        // Each plateau is reached by a ramp (trans_*) in place of a straight rim section.
+        uint64_t rng=p.seed^0x77616c6b77617973ULL;
+        constexpr int E=1,N=2,S=4,W=8;
+        const auto lava=[&](int x,int z){return x>=0&&z>=0&&x<sw&&z<sh&&cellCase(x,z)==15;};
+        std::vector<int> pool(size_t(sw)*sh,-1);int pools=0;
+        for (int at=0;at<sw*sh;++at) {
+            if (!lava(at%sw,at/sw)||pool[size_t(at)]>=0) continue;
+            std::vector<int> queue{at};pool[size_t(at)]=pools;
+            for (size_t head=0;head<queue.size();++head) {
+                const int x=queue[head]%sw,z=queue[head]/sw;
+                for (auto [dx,dz]:std::array<Point,4>{{{1,0},{0,1},{-1,0},{0,-1}}})
+                    if (lava(x+dx,z+dz)&&pool[size_t((z+dz)*sw+x+dx)]<0) {pool[size_t((z+dz)*sw+x+dx)]=pools;queue.push_back((z+dz)*sw+x+dx);}
+            }
+            ++pools;
+        }
+        // Plateaus: dry corners joined 8-ways; the homes are those holding a start.
+        std::vector<int> mesa(wet.size(),-1);int mesas=0;
+        for (int at=0;at<int(wet.size());++at) {
+            if (wet[size_t(at)]||mesa[size_t(at)]>=0) continue;
+            std::vector<int> queue{at};mesa[size_t(at)]=mesas;
+            for (size_t head=0;head<queue.size();++head) {
+                const int x=queue[head]%(sw+1),z=queue[head]/(sw+1);
+                for (int dz=-1;dz<=1;++dz) for (int dx=-1;dx<=1;++dx) {
+                    const int nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>sw||nz>sh)continue;
+                    const int n=nz*(sw+1)+nx;
+                    if (!wet[size_t(n)]&&mesa[size_t(n)]<0) {mesa[size_t(n)]=mesas;queue.push_back(n);}
+                }
+            }
+            ++mesas;
+        }
+        // Ramp candidates: a straight rim (lava on one side) whose lava neighbour is open.
+        struct Ramp {int x,z,mesa,pool,toward;const char* name;};
+        std::vector<Ramp> ramps;
+        for (int z=0;z<sh;++z) for (int x=0;x<sw;++x) {
+            const int c=cellCase(x,z);int nx=x,nz=z,corner,toward;const char* name;
+            if (c==3) {nz=z-1;corner=(z+1)*(sw+1)+x;toward=N;name="trans_n";}
+            else if (c==12) {nz=z+1;corner=z*(sw+1)+x;toward=S;name="trans_s";}
+            else if (c==5) {nx=x-1;corner=z*(sw+1)+x+1;toward=W;name="trans_w";}
+            else if (c==10) {nx=x+1;corner=z*(sw+1)+x;toward=E;name="trans_e";}
+            else continue;
+            if (lava(nx,nz)) ramps.push_back({x,z,mesa[size_t(corner)],pool[size_t(nz*sw+nx)],toward,name});
+        }
+        std::vector<int> homeMesa;
+        for (auto [sx,sz]:r.starts) homeMesa.push_back(mesa[size_t((sz/32)*(sw+1)+sx/32)]);
+        // The stretch of lava every home can ramp onto.
+        int main=-1;
+        for (int candidate=0;candidate<pools&&main<0;++candidate) {
+            bool all=true;
+            for (int home:homeMesa) {
+                bool reached=false;
+                for (const auto& ramp:ramps) reached|=ramp.mesa==home&&ramp.pool==candidate;
+                all&=reached;
+            }
+            if (all) main=candidate;
+        }
+        if (main<0) throw std::runtime_error("Random industrial zone has no walkway between the homes");
+        // Two ramps per home, one per other plateau, spread round each.
+        std::vector<Ramp> chosen;
+        for (int id=0;id<mesas;++id) {
+            std::vector<Ramp> mine;
+            for (const auto& ramp:ramps) if (ramp.mesa==id&&ramp.pool==main) mine.push_back(ramp);
+            const int want=std::find(homeMesa.begin(),homeMesa.end(),id)!=homeMesa.end()?2:1;
+            for (int got=0;got<want&&!mine.empty();) {
+                const size_t pick=size_t(splitmix(rng)%mine.size());
+                const auto ramp=mine[pick];mine.erase(mine.begin()+std::ptrdiff_t(pick));
+                bool spaced=true;
+                for (const auto& other:chosen) if (std::max(std::abs(other.x-ramp.x),std::abs(other.z-ramp.z))<3) spaced=false;
+                if (spaced||got==0) {chosen.push_back(ramp);++got;}
+            }
+        }
+        // Spanning tree over the main stretch by a seeded depth-first walk, then loops.
+        std::vector<uint8_t> link(size_t(sw)*sh,0),inTree(size_t(sw)*sh,0);
+        const auto join=[&](int x,int z,int dx,int dz) {
+            const int bit=dx>0?E:dx<0?W:dz>0?S:N,back=dx>0?W:dx<0?E:dz>0?N:S;
+            link[size_t(z*sw+x)]|=uint8_t(bit);link[size_t((z+dz)*sw+x+dx)]|=uint8_t(back);
+        };
+        const auto rampEnd=[](const Ramp& ramp){
+            return Point{ramp.x+(ramp.toward==E?1:ramp.toward==W?-1:0),ramp.z+(ramp.toward==S?1:ramp.toward==N?-1:0)};
+        };
+        {
+            const auto first=rampEnd(chosen.front());
+            std::vector<Point> stack{first};inTree[size_t(first.second*sw+first.first)]=1;
+            while (!stack.empty()) {
+                const auto [x,z]=stack.back();std::vector<Point> next;
+                for (auto [dx,dz]:std::array<Point,4>{{{1,0},{0,1},{-1,0},{0,-1}}})
+                    if (lava(x+dx,z+dz)&&pool[size_t((z+dz)*sw+x+dx)]==main&&!inTree[size_t((z+dz)*sw+x+dx)]) next.emplace_back(dx,dz);
+                if (next.empty()) {stack.pop_back();continue;}
+                const auto [dx,dz]=next[size_t(splitmix(rng)%next.size())];
+                join(x,z,dx,dz);inTree[size_t((z+dz)*sw+x+dx)]=1;stack.push_back({x+dx,z+dz});
+            }
+        }
+        for (int z=0;z<sh;++z) for (int x=0;x<sw;++x) {
+            if (!inTree[size_t(z*sw+x)]) continue;
+            if (lava(x+1,z)&&inTree[size_t(z*sw+x+1)]&&!(link[size_t(z*sw+x)]&E)&&splitmix(rng)%100<12) join(x,z,1,0);
+            if (lava(x,z+1)&&inTree[size_t((z+1)*sw+x)]&&!(link[size_t(z*sw+x)]&S)&&splitmix(rng)%100<12) join(x,z,0,1);
+        }
+        // Cut back every branch that leads nowhere, leaving one in five as a dead end.
+        std::vector<uint8_t> keep(size_t(sw)*sh,0);
+        for (const auto& ramp:chosen) {const auto [x,z]=rampEnd(ramp);keep[size_t(z*sw+x)]=1;}
+        for (bool cut=true;cut;) {cut=false;
+            for (int at=0;at<sw*sh;++at) {
+                const uint8_t l=link[size_t(at)];
+                if (keep[size_t(at)]||!(l==E||l==N||l==S||l==W)) continue;
+                if (splitmix(rng)%100<20) {keep[size_t(at)]=1;continue;}
+                const int x=at%sw,z=at/sw,dx=l==E?1:l==W?-1:0,dz=l==S?1:l==N?-1:0;
+                link[size_t(at)]=0;link[size_t((z+dz)*sw+x+dx)]&=uint8_t(~(l==E?W:l==W?E:l==S?N:S));cut=true;
+            }
+        }
+        for (const auto& ramp:chosen) {const auto [x,z]=rampEnd(ramp);
+            link[size_t(z*sw+x)]|=uint8_t(ramp.toward==N?S:ramp.toward==S?N:ramp.toward==E?W:E);}
+        const auto clearSection=[&](int x,int z) {
+            for (int dz=0;dz<32;++dz) for (int dx=0;dx<32;++dx) {
+                const size_t i=size_t(z*32+dz)*w+x*32+dx;m.features[i]=0xffff;obstacles[i]=claim[i]=0;
+            }
+        };
+        // A walkway is a lane: scenery and ruins keep off it (reserved, as a route is).
+        const auto place=[&](const std::string& path,int x,int z,bool lane) {
+            const auto* piece=load(path);
+            if (!piece||piece->width!=32||piece->height!=32) throw std::runtime_error("Industrial zone needs the retail volcano walkway sections");
+            clearSection(x,z);stamp(*piece,x*32,z*32);
+            if (lane) for (int dz=0;dz<32;++dz) for (int dx=0;dx<32;++dx) {
+                const size_t i=size_t(z*32+dz)*w+x*32+dx;
+                if (m.features[i]!=0xfffc&&m.heights[i]==land) reserved[i]|=1;
+            }
+        };
+        for (int z=0;z<sh;++z) for (int x=0;x<sw;++x) {
+            const uint8_t l=link[size_t(z*sw+x)];
+            if (l) {
+                std::string name;
+                if (l==E||l==N||l==S||l==W) {name=std::string("end_")+(l==E?"e":l==N?"n":l==S?"s":"w");izDeadEnds.emplace_back(x,z);}
+                else {
+                    for (auto [bit,part]:std::array<std::pair<int,const char*>,4>{{{E,"e"},{N,"n"},{S,"s"},{W,"w"}}})
+                        if (l&bit) name+=(name.empty()?"":"_")+std::string(part);
+                    name+="01";
+                }
+                place(std::string(kIndustrialRoads)+name+".tnt",x,z,true);
+            } else if (lava(x,z)&&splitmix(rng)%6==0)
+                place(std::string(kIndustrialIsle)+std::to_string(1+int(splitmix(rng)%4))+".tnt",x,z,false);
+        }
+        for (const auto& ramp:chosen) place(std::string(kIndustrialRoads)+ramp.name+".tnt",ramp.x,ramp.z,true);
+        // ...and so does the plateau section a ramp climbs onto, so no ruin walls it in,
+        // and a home keeps a lane from its start to each of its ramps.
+        for (const auto& ramp:chosen) {
+            const int x=ramp.x-(ramp.toward==E?1:ramp.toward==W?-1:0),z=ramp.z-(ramp.toward==S?1:ramp.toward==N?-1:0);
+            for (size_t k=0;k<r.starts.size();++k)
+                if (homeMesa[k]==ramp.mesa) reserveRoute(r.starts[k],{x*32+16,z*32+16},8);
+            if (x<0||z<0||x>=sw||z>=sh) continue;
+            for (int dz=0;dz<32;++dz) for (int dx=0;dx<32;++dx) {
+                const size_t i=size_t(z*32+dz)*w+x*32+dx;
+                if (m.heights[i]==land&&m.features[i]!=0xfffc) reserved[i]|=1;
+            }
+        }
     }
     // Themed uplands use complete authored cliff/hillside pieces, not painted
     // blockers or height-only walls. A low corner uses the shore kit's wet role.
@@ -498,14 +730,20 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         const bool spires=spireKit&&!rangeKit;
         const int seeds=std::max(1,(int(p.mountainDensity)*sw*sh+255*32)/(255*64));   // at most one per 64 sections
         const int longest=spires?0:1+int(p.mountainDensity)/64;               // up to 1..4 extra cores
-        const auto fits=[&](int x,int z) {
-            if(x<margin||z<margin||x>sw-margin||z>sh-margin)return false;
+        // inner: the corners round a core that must rise. A full range also wants the
+        // ring beyond them; a compact peak (the second pass, only when no range found
+        // room) needs just the moat, its outer ring kept clear of every home.
+        const auto fits=[&](int x,int z,bool compact) {
+            const int inner=compact?moat:margin;
+            if(x<inner||z<inner||x>sw-inner||z>sh-inner)return false;
             for(int dz=-margin-1;dz<=margin+1;++dz)for(int dx=-margin-1;dx<=margin+1;++dx) {
                 const int nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>sw||nz>sh)continue;
                 const size_t j=size_t(nz)*(sw+1)+nx;
-                const bool inside=std::abs(dx)<=margin&&std::abs(dz)<=margin;
+                const int ring=std::max(std::abs(dx),std::abs(dz));
+                const bool inside=ring<=inner;
                 if(ownPlateaus) {
                     if(inside&&!allowHigh[j])return false;
+                    if(compact&&ring==inner+1&&nearStart(nx,nz,48))return false;
                     if(kitHigh[j]||mountainHigh[j])return false;   // keep plain plateaus and other ranges apart
                 } else {
                     if(inside&&!high[j])return false;
@@ -515,25 +753,32 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
             return true;
         };
         static constexpr std::array<Point,4> steps={{{1,0},{0,1},{-1,0},{0,-1}}};
-        for(int placed=0,attempt=0;placed<seeds&&attempt<seeds*40&&sw>2*margin&&sh>2*margin;++attempt) {
+        int placed=0;
+        for(int compact=0;compact<2&&!placed;++compact)
+        for(int attempt=0;placed<seeds&&attempt<seeds*40&&sw>2*margin&&sh>2*margin;++attempt) {
             const int x0=margin+int(splitmix(kitRng)%uint64_t(sw-2*margin+1)),z0=margin+int(splitmix(kitRng)%uint64_t(sh-2*margin+1));
-            if(!fits(x0,z0))continue;
+            if(!fits(x0,z0,compact))continue;
             std::vector<Point> path{{x0,z0}};
-            const int length=longest?int(splitmix(kitRng)%uint64_t(longest+1)):0;
+            const int length=longest&&!compact?int(splitmix(kitRng)%uint64_t(longest+1)):0;
             int dir=int(splitmix(kitRng)%4);
             for(int step=0;step<length;++step) {
                 if(splitmix(kitRng)%3==0)dir=(dir+(splitmix(kitRng)%2?1:3))%4;   // ridges bend, clumps curl
                 const Point next{path.back().first+steps[size_t(dir)].first,path.back().second+steps[size_t(dir)].second};
-                if(std::find(path.begin(),path.end(),next)!=path.end()||!fits(next.first,next.second))break;
+                if(std::find(path.begin(),path.end(),next)!=path.end()||!fits(next.first,next.second,false))break;
                 path.push_back(next);
             }
             for(auto [x,z]:path) {
                 mountain[size_t(z)*(sw+1)+x]=1;
                 // The rings the range needs are whole; the open margin beyond them is
                 // ragged, so the plateau's outline is irregular rather than a square.
-                if(ownPlateaus)for(int dz=-margin;dz<=margin;++dz)for(int dx=-margin;dx<=margin;++dx)
-                    if(std::max(std::abs(dx),std::abs(dz))<margin||splitmix(kitRng)%100<55)
-                        mountainHigh[size_t(z+dz)*(sw+1)+x+dx]=1;
+                // A compact peak's margin rises only where plateau may.
+                if(ownPlateaus)for(int dz=-margin;dz<=margin;++dz)for(int dx=-margin;dx<=margin;++dx) {
+                    const int nx=x+dx,nz=z+dz;
+                    if(compact&&(nx<0||nz<0||nx>sw||nz>sh))continue;
+                    const size_t j=size_t(nz)*(sw+1)+nx;
+                    if(std::max(std::abs(dx),std::abs(dz))<margin) mountainHigh[j]=1;
+                    else if(splitmix(kitRng)%100<55&&(!compact||(allowHigh[j]&&!nearStart(nx,nz,48)))) mountainHigh[j]=1;
+                }
             }
             ++placed;
         }
@@ -957,6 +1202,7 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         const int level=m.heights[size_t(z)*w+x];
         const auto arcFits=[&](int ax,int az,int fx,int fz){return flatAt(ax,az,fx,fz,level,level!=land);};
         const auto& spec=kRing[p.mapType];
+        if(!spec.n)return;   // a world without standing stones leaves its deposits bare
         int count=0;
         bool occupiedSlots[8]={};
         for(int slot=0;slot<8&&count<3;++slot) {
@@ -1144,6 +1390,28 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         homeDistances=distancesFrom(ground,r.starts,6);
     }
     const size_t roundDeposits=deposits.size();
+    // Industrial Zone: the pad at the end of every dead-end walkway holds a sacred
+    // stone, in the shipped tier mix (223:446:537). They are reached along the
+    // walkways, and the final validation checks so, as for scattered mana.
+    if(!izDeadEnds.empty()) {
+        uint64_t padRng=p.seed^0x70616473ULL;
+        for(auto [sx,sz]:izDeadEnds) {
+            Point best={-1,-1};int bestScore=1<<30;
+            for(int z=sz*32+6;z<sz*32+26;++z)for(int x=sx*32+6;x<sx*32+26;++x) {
+                // Room round the 2x2 stone: open pad within the lodestones' slope.
+                bool level=true;
+                for(int dz=-3;level&&dz<5;++dz)for(int dx=-3;dx<5;++dx) {
+                    const size_t i=size_t(z+dz)*w+x+dx;
+                    if(std::abs(int(m.heights[i])-land)>2||claim[i]||m.features[i]==0xfffc){level=false;break;}
+                }
+                const int score=(x-sx*32-16)*(x-sx*32-16)+(z-sz*32-16)*(z-sz*32-16);
+                if(level&&score<bestScore){best={x,z};bestScore=score;}
+            }
+            if(best.first<0)continue;
+            const uint32_t roll=uint32_t(splitmix(padRng)%1206);
+            deposit(best.first,best.second,roll<223?0:roll<669?1:2);++r.scatteredMana;
+        }
+    }
     // Scattered neutral mana: a jittered grid at the level's pitch (one
     // candidate per pitch^2 cells, so the count follows map area), on flat open
     // ground away from every home economy and other deposits. Its own RNG
@@ -1224,10 +1492,12 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         const int forest=int(noise(p.seed^0x715921,x,z,24)) + (p.layout==Jungle?60:0);
         const int rocks=int(noise(p.seed^0x359742,x,z,18));
         const char* name=nullptr;
-        if(forest>125&&int(roll%10000)<int(p.treeDensity)*(forest-110)*4/160)
+        if(forest>125&&palette.trees.n&&int(roll%10000)<int(p.treeDensity)*(forest-110)*4/160)
             name=palette.trees.p[(roll>>24)%palette.trees.n];
         else if(rocks>145&&int((roll>>12)%10000)<int(p.rockDensity)*(rocks-130)*3/160)
             name=palette.rocks.p[std::min((roll>>24)%palette.rocks.n,(roll>>34)%palette.rocks.n)];
+        // The volcano's "rocks" are whole buildings: one in six, near takx20's density.
+        if(name&&lavaWorld(p.mapType)&&(roll>>44)%6)continue;
         if(!name)continue;
         const auto* f=sizeOf(name);if(!f||!flat(x-1,z-1,f->x+2,f->z+2))continue;
         bool good=true;
@@ -1245,10 +1515,12 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         const int forest=int(noise(p.seed^0x715921,x,z,24))+(p.layout==Jungle?60:0);
         const int rocks=int(noise(p.seed^0x359742,x,z,18));
         const char* name=nullptr;
-        if(forest>125&&int(roll%10000)<int(p.treeDensity)*(forest-110)*4/160)
+        if(forest>125&&palette.trees.n&&int(roll%10000)<int(p.treeDensity)*(forest-110)*4/160)
             name=palette.trees.p[(roll>>24)%palette.trees.n];
         else if(rocks>145&&int((roll>>12)%10000)<int(p.rockDensity)*(rocks-130)*3/160)
             name=palette.rocks.p[std::min((roll>>24)%palette.rocks.n,(roll>>34)%palette.rocks.n)];
+        // The volcano's "rocks" are whole buildings: one in six, near takx20's density.
+        if(name&&lavaWorld(p.mapType)&&(roll>>44)%6)continue;
         if(!name)continue;
         const auto* f=sizeOf(name);if(!f)continue;
         bool good=true;

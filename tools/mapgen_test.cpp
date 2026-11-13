@@ -160,6 +160,10 @@ void verify(const tak::mapgen::Params& input,const tak::mapgen::Result& r) {
     check(p.plateauDensity||p.mountainDensity||tak::mapgen::automaticPlateaus(p.layout)||r.plateaus==0,"zero plateaus produced plateaus");
     check(p.mountainDensity||r.mountains==0,"zero mountains produced mountains");
     check(p.townDensity||r.towns==0,"zero towns produced towns");
+    // Lava is never open ground: retail blocks every cell of it (0xfffc).
+    if(tak::mapgen::lavaWorld(p.mapType))
+        for(size_t i=0;i<m.heights.size();++i)
+            check(m.heights[i]>=m.seaLevel||m.features[i]==0xfffc,"open lava");
     for(size_t i=0;i<r.starts.size();++i) {
         const auto [x,z]=r.starts[i];
         for(size_t j=0;j<i;++j) {
@@ -197,7 +201,7 @@ void verify(const tak::mapgen::Params& input,const tak::mapgen::Result& r) {
             const auto r=m.features[size_t(nz)*m.width+nx];
             if(r<m.featureNames.size() && tak::hpi::MountSet::key(m.featureNames[r]).find("henge")!=std::string::npos) { ruins=true; break; }
         }
-        check(ruins,"mana spot has no surrounding ruins");
+        check(ruins||tak::mapgen::lavaWorld(p.mapType),"mana spot has no surrounding ruins");   // volcano deposits are bare
     }
     check(mana-r.scatteredMana>=p.players*3&&(mana-r.scatteredMana)%p.players==0,"unequal resource rounds");
     check((p.layout!=tak::mapgen::Islands&&p.layout!=tak::mapgen::Ports)||r.harbors.size()==p.players,"missing island harbors");
@@ -239,7 +243,8 @@ int main(int argc,char** argv) {
         for(int layout=Maze;layout<kLayouts;++layout) {
             Params p;p.layout=layout;p.name="Themed";
             const auto d=decodeMapId(encodeMapId(p));
-            check(d.layout==layout && themedLayout(d.mapType)==layout,"theme codec/world mismatch");
+            check(d.layout==layout && (themedLayout(d.mapType)==layout || (layout==IndustrialZone && d.mapType==Volcano)),
+                  "theme codec/world mismatch");
         }
         Params invalid;invalid.widthCells=0;invalid.heightCells=65535;invalid.players=255;invalid.layout=255;
         auto sane=sanitize(invalid);check(sane.players==8&&sane.widthCells>=256&&sane.heightCells==2048&&sanitize(sane).widthCells==sane.widthCells,"sanitize bounds");
@@ -356,7 +361,8 @@ int main(int argc,char** argv) {
                 Params p;p.mapType=uint8_t(world);p.widthCells=p.heightCells=768;p.seed=uint64_t(seed);
                 p.mountainDensity=0;
                 const auto plain=generate(p,vfs);verify(p,plain);
-                check(plain.mountainPlateaus==0&&plain.mountains==0&&plain.plateaus>0,"Mountains 0 lost the plain plateaus");
+                check(plain.mountainPlateaus==0&&plain.mountains==0&&(plain.plateaus>0||!kitAvailable(uint8_t(world),KitPlateaus)),
+                      "Mountains 0 lost the plain plateaus");
                 plateauMana+=plain.plateauMana;
                 p.plateauDensity=0;p.mountainDensity=255;
                 const auto ranges=generate(p,vfs);verify(p,ranges);
@@ -367,9 +373,20 @@ int main(int argc,char** argv) {
             }
             check(plateauMana>0,"no plateau ever carried mana");
             for(int world=0;world<kMapTypes;++world) {
-                check(seen[world][KitPlateaus]>0,"a world never raised a plateau");
-                check(seen[world][KitTowns]>0,"a world never built a town");
+                check((seen[world][KitPlateaus]>0)==kitAvailable(uint8_t(world),KitPlateaus),"plateaus disagree with the kit survey");
+                check((seen[world][KitTowns]>0)==kitAvailable(uint8_t(world),KitTowns),"towns disagree with the kit survey");
                 check((seen[world][KitMountains]>0)==kitAvailable(uint8_t(world),KitMountains),"mountains disagree with the kit survey");
+            }
+            // A map with no room for a whole range still gets a compact peak: 384 cells
+            // square, two players, raised mountains on one seed in six before.
+            {
+                int peaks=0;
+                for(int seed=1;seed<=6;++seed) {
+                    Params p;p.widthCells=p.heightCells=384;p.seed=uint64_t(seed*7919);
+                    const auto r=generate(p,vfs);verify(p,r);peaks+=r.mountains>0;
+                }
+                std::printf("compact peaks on 384-cell two-player maps: %d of 6\n",peaks);
+                check(peaks>=4,"a small map found no room for even a compact peak");
             }
             // All three at zero is the v9 terrain: no kit sections at all.
             Params zero;zero.plateauDensity=zero.mountainDensity=zero.townDensity=0;zero.widthCells=zero.heightCells=768;
@@ -445,6 +462,7 @@ int main(int argc,char** argv) {
         }
         check(edgeWet>0,"lakes still have a guaranteed dry rim");
         if(argc>2&&std::string(argv[2])=="--themes") {
+            int deadEndMana=0;
             for(int layout=Maze;layout<kLayouts;++layout)for(int players:{2,3,4,5,6,7,8})for(int seed=1;seed<=3;++seed) {
                 Params p;p.layout=layout;p.players=players;p.seed=seed;
                 if(seed==2)p.treeDensity=p.rockDensity=p.manaDensity=p.reliefDensity=0;
@@ -461,15 +479,20 @@ int main(int argc,char** argv) {
                     for(int z=96;z<=m.height-96;z+=128)
                         check(low(0,z)&&low(m.width-1,z),"maze west/east exits blocked");
                 }
-                if(layout==Ports||layout==Riverlands) check(r.waterPercent>0,"themed waterways absent");
+                if(layout==Ports||layout==Riverlands||layout==LavaFlows||layout==IndustrialZone) check(r.waterPercent>0,"themed waterways absent");
+                // An Industrial Zone's neutral mana is its dead-end pads (no scatter asked for).
+                if(layout==IndustrialZone) deadEndMana+=r.scatteredMana;
+                else if(!p.manaScatter) check(r.scatteredMana==0,"mana scattered unasked");
                 std::printf("theme=%s players=%d seed=%d water=%d harbors=%zu passed\n",layoutName(layout),players,seed,r.waterPercent,r.harbors.size());std::fflush(stdout);
             }
+            std::printf("industrial zone dead-end mana: %d\n",deadEndMana);
+            check(deadEndMana>=10,"industrial zone dead ends carry too little mana");
             return 0;
         }
         const bool sweep=argc>2&&std::string(argv[2])=="--sweep";
         const int seeds=sweep?5:1;int count=0,failures=0,patches=0;
         const auto begin=std::chrono::steady_clock::now();
-        for(int world=0;world<5;++world)for(int layout=0;layout<3;++layout)
+        for(int world=0;world<kMapTypes;++world)for(int layout=0;layout<3;++layout)
         for(int players=2;players<=8;++players)for(int seed=1;seed<=seeds;++seed)
         for(int size:(sweep?std::vector<int>{256,512,768}:std::vector<int>{384}))
         for(int density:(sweep?std::vector<int>{0,128,255}:std::vector<int>{128})) {

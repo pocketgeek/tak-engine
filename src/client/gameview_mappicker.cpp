@@ -197,7 +197,6 @@ int seatedHumans(const tak::net::RoomView& room) {
     }
 
     void GameView::drawGeneratorControls(float x, float y) {
-        static const char* kTypeName[tak::mapgen::kMapTypes] = {"ARAMON", "TAROS", "VERUNA", "ZHON", "CREON"};
         // One rhythm for the whole panel: every control is kRowH tall and every gap
         // is kGap. The rows used to step by 30, 30, 36 and then 44, so the buttons
         // sat tighter than the sliders and the run of sliders drifted out of line
@@ -207,14 +206,14 @@ int seatedHumans(const tak::net::RoomView& room) {
         const float kHalfW = (kBtnW - kGap) / 2;
         float px = x, py = y;
         lbField(px, py, kBtnW, "MAP NAME (OPTIONAL)", genParams_.name, 5); py += 44;
-        lbCycle(px, py, kBtnW, kRowH, std::string("TYPE:  ") + kTypeName[genParams_.mapType % tak::mapgen::kMapTypes],
+        lbCycle(px, py, kBtnW, kRowH, std::string("TYPE:  ") + tak::mapgen::worldTitle(genParams_.mapType),
               true, [this](int direction) { genParams_.mapType = uint8_t((genParams_.mapType + direction + tak::mapgen::kMapTypes) % tak::mapgen::kMapTypes);
-                             if(genParams_.layout>=tak::mapgen::Maze) genParams_.layout=tak::mapgen::themedLayout(genParams_.mapType);
+                             genParams_.layout=tak::mapgen::layoutForSlot(genParams_.mapType,tak::mapgen::slotOfLayout(genParams_.layout));
                              applyGenParams(); }); py += kRowH + kGap;
+        // Mainland, Lakes, Islands (the volcano's Industrial Zone) and the world's own layout.
         lbCycle(px, py, kBtnW, kRowH, std::string("LAYOUT:  ") + tak::mapgen::layoutName(genParams_.layout),
-              true, [this](int direction) { const int index=genParams_.layout>=tak::mapgen::Maze?3:genParams_.layout;
-                             const int next=(index+direction+4)%4;
-                             genParams_.layout=next==3?tak::mapgen::themedLayout(genParams_.mapType):uint8_t(next);
+              true, [this](int direction) { const int next=(tak::mapgen::slotOfLayout(genParams_.layout)+direction+4)%4;
+                             genParams_.layout=tak::mapgen::layoutForSlot(genParams_.mapType,next);
                              applyGenParams(); }); py += kRowH + kGap;
         char pl[32]; std::snprintf(pl, sizeof pl, "PLAYERS:  %d", int(genParams_.players));
         lbCycle(px, py, kBtnW, kRowH, pl, true, [this](int direction) {
@@ -277,7 +276,7 @@ int seatedHumans(const tak::net::RoomView& room) {
         // level, not a count: the same level puts four times as many on a map twice as
         // wide). Five notches, NONE..MAX; MAX = a six-spot home's density.
         slider(5, "SCATTERED MANA", uint8_t(genParams_.manaScatter * 255 / (tak::mapgen::kScatterLevels - 1)));
-        slider(3, "WATER", genParams_.waterDensity, !tak::mapgen::automaticWater(layout));
+        slider(3, tak::mapgen::lavaWorld(world) ? "LAVA" : "WATER", genParams_.waterDensity, !tak::mapgen::automaticWater(layout));
         slider(4, layout==tak::mapgen::Highlands?"HIGHLANDS":"HILLS", genParams_.reliefDensity, layout!=tak::mapgen::Maze);
         // v10 retail kits. Maze walls and Creon highlands are the layout's own high
         // ground; Veruna ships no mountain kit.

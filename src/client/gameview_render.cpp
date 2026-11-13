@@ -6424,6 +6424,7 @@
         // scatter them retail-style here. Display only: addFeature is a render
         // instance with no nav/mana/sim effect (nav blocking lives in the sim).
         if (!tak::mapgen::isGeneratedMapId(mapPath_)) return;   // authored maps ship their own
+        if (tak::mapgen::lavaWorld(tak::mapgen::decodeMapId(mapPath_).mapType)) return;   // lava has no surf
         const auto& map = mapView_.map();
         const int W = map.width, H = map.height, sea = map.seaLevel;
         if (W <= 0 || H <= 0 || map.heights.size() < size_t(W) * H) return;

@@ -75,7 +75,8 @@ tak::tnt::Map newBlankMap(const tak::hpi::Vfs& vfs, SectionLibrary& sections,
     m.height = std::max(1, hUnits) * 32;
     m.blocksX = m.width / 2;
     m.blocksY = m.height / 2;
-    m.seaLevel = (world == "aramon") ? 40 : 58;   // sidedata waterheight per side
+    // sidedata waterheight per side; the volcano's is takx20's (its lava lies at 0).
+    m.seaLevel = world == "aramon" ? 40 : world == "volcano" ? 56 : 58;
     size_t cells = size_t(m.width) * m.height;
     size_t blocks = size_t(m.blocksX) * m.blocksY;
     m.heights.assign(cells, uint8_t(m.seaLevel + 22));   // flat land above water

@@ -821,8 +821,8 @@ std::string defaultGameName(const std::string& player) {
         catch (const std::exception& e) { out.error = e.what(); return out; }
         const int W = g.map.width, H = g.map.height;
         int TW = 0, TH = 0;
-        static const char* worlds[tak::mapgen::kMapTypes] = {"aramon", "taros", "veruna", "zhon", "creon"};
-        auto rgba = radarPicture(g.map, vfs, worlds[gp.mapType % tak::mapgen::kMapTypes], TW, TH);
+        auto rgba = radarPicture(g.map, vfs, tak::mapgen::worldKey(gp.mapType), TW, TH);
+        out.mountains = g.mountains;
         if (rgba.empty()) return out;
         // Start positions: drawn over the thumbnail as numbered markers (drawStartMarkers),
         // in world px like a shipped map's -- the same cell -> px setupMatch applies.
@@ -855,7 +855,7 @@ std::string defaultGameName(const std::string& player) {
             mapPreviewWorldW_ = out.worldW; mapPreviewWorldH_ = out.worldH;
             mapPreviewDims_ = std::move(out.dims);
             genPreviewError_ = std::move(out.error);
-            if (out.map) { genPreviewMap_ = std::move(out.map); genPreviewMapId_ = out.id; }
+            if (out.map) { genPreviewMap_ = std::move(out.map); genPreviewMapId_ = out.id; genPreviewMountains_ = out.mountains; }
             if (out.w <= 0) continue;
             mapPreviewTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, out.w, out.h);
             if (!mapPreviewTex_) continue;
@@ -1205,7 +1205,7 @@ std::string defaultGameName(const std::string& player) {
         // of the CLICK band, or hung under it (over the mods and the chat) when the preview
         // is too short to hold it -- never past the bottom of the screen.
         if (roomMap && !picker_.open && lbHot(pv) && !genPreviewPending_ && mapPreviewTex_) {
-            const auto lines = packItems(genRecipeItems(room.mapId), 1.1f, colW - 12);
+            const auto lines = packItems(genRecipeItems(room.mapId, genPreviewMountainsFor(room.mapId)), 1.1f, colW - 12);
             if (!lines.empty()) {
                 constexpr float kPitch = 13;
                 const float h = float(lines.size()) * kPitch + 8;
@@ -1220,25 +1220,28 @@ std::string defaultGameName(const std::string& player) {
         }
     }
 
-    std::vector<std::vector<std::string>> GameView::genRecipeItems(const std::string& mapId) {
+    std::vector<std::vector<std::string>> GameView::genRecipeItems(const std::string& mapId, int mountains) {
         if (!tak::mapgen::isGeneratedMapId(mapId)) return {};
         const auto gp = tak::mapgen::decodeMapId(mapId);
         const auto level = [](uint8_t v) { return v == 0 ? "NONE" : v < 86 ? "LOW" : v < 171 ? "MED" : "HIGH"; };
         const auto kit = [&](uint8_t v, uint8_t which) { return tak::mapgen::kitAvailable(gp.mapType, which) ? level(v) : "NONE"; };
+        // Asked for, but the roll found no room (small or crowded maps): say so, not the amount.
+        const bool noRoom = gp.mountainDensity && tak::mapgen::kitAvailable(gp.mapType, tak::mapgen::KitMountains) &&
+                            mountains == 0;
         std::string scatter = tak::mapgen::scatterName(gp.manaScatter);
         for (char& ch : scatter) ch = char(std::toupper(static_cast<unsigned char>(ch)));
-        static const char* mapTypes[] = {"ARAMON", "TAROS", "VERUNA", "ZHON", "CREON"};
-        return {{std::string("MAP TYPE: ") + mapTypes[gp.mapType % tak::mapgen::kMapTypes],
+        return {{std::string("MAP TYPE: ") + tak::mapgen::worldTitle(gp.mapType),
                 std::string("LAYOUT: ") + tak::mapgen::layoutName(gp.layout),
                 "SIZE: " + std::to_string(gp.widthCells / 32) + " X " + std::to_string(gp.heightCells / 32),
                 "PLAYERS: " + std::to_string(gp.players),
                 std::string("FORESTS: ") + level(gp.treeDensity),
                 std::string("ROCKS: ") + level(gp.rockDensity),
                 std::string("MANA: ") + level(gp.manaDensity),
-                std::string("WATER: ") + (tak::mapgen::automaticWater(gp.layout) ? "AUTO" : level(gp.waterDensity)),
+                std::string(tak::mapgen::lavaWorld(gp.mapType) ? "LAVA: " : "WATER: ") +
+                    (tak::mapgen::automaticWater(gp.layout) ? "AUTO" : level(gp.waterDensity)),
                 std::string("HILLS: ") + level(gp.reliefDensity)},
                {std::string("PLATEAUS: ") + (tak::mapgen::automaticPlateaus(gp.layout) ? "AUTO" : kit(gp.plateauDensity, tak::mapgen::KitPlateaus)),
-                std::string("MOUNTAINS: ") + kit(gp.mountainDensity, tak::mapgen::KitMountains),
+                std::string("MOUNTAINS: ") + (noRoom ? "NO ROOM" : kit(gp.mountainDensity, tak::mapgen::KitMountains)),
                 std::string(gp.mapType == tak::mapgen::Zhon ? "VILLAGES: " : "TOWNS: ") + kit(gp.townDensity, tak::mapgen::KitTowns),
                 "SCATTERED MANA: " + scatter,
                 "MAP SEED: " + std::to_string(gp.seed)}};
@@ -1397,7 +1400,6 @@ std::string defaultGameName(const std::string& player) {
         const bool room = mapPreviewFor_.rfind("room:", 0) == 0;
         std::string path = room ? mpRoom().mapId : picker_.open ? (picker_.random ? picker_.gen : picker_.file).path : std::string();
         if (path.empty()) return;
-        static const char* kWorld[tak::mapgen::kMapTypes] = {"aramon", "taros", "veruna", "zhon", "creon"};
         try {
             if (tak::mapgen::isGeneratedMapId(path)) {
                 const auto params = tak::mapgen::parseMapId(path);
@@ -1406,7 +1408,7 @@ std::string defaultGameName(const std::string& player) {
                 auto map = genPreviewMap_ && genPreviewMapId_ == path ? *genPreviewMap_
                                                                       : tak::mapgen::generate(params, *view).map;
                 bigMap_ = std::make_unique<BigMapView>(ren_, std::move(view), std::move(map),
-                                                       kWorld[params.mapType % tak::mapgen::kMapTypes]);
+                                                       tak::mapgen::worldKey(params.mapType));
             } else {
                 auto view = std::make_unique<tak::hpi::Vfs>(&vfs_);
                 const auto pkg = room ? mp_->mapPackage() : nullptr;
@@ -1444,7 +1446,7 @@ std::string defaultGameName(const std::string& player) {
         const bool fromRoom = bigMapFor_.rfind("room:", 0) == 0;
         const std::string mapId = fromRoom ? mpRoom().mapId : picker_.open ? (picker_.random ? picker_.gen : picker_.file).id : std::string();
         constexpr float kRecipePx = 1.1f, kRecipePitch = 13;
-        const auto recipe = packItems(genRecipeItems(mapId), kRecipePx, lw - 2 * kCreateMargin);
+        const auto recipe = packItems(genRecipeItems(mapId, genPreviewMountainsFor(mapId)), kRecipePx, lw - 2 * kCreateMargin);
         const float recipeH = recipe.empty() ? 0 : float(recipe.size()) * kRecipePitch + 4;
         const SDL_FRect area{kCreateMargin * s, kCreateMargin * s, (lw - 2 * kCreateMargin) * s,
                              (lh - kCreateMargin - 50 - recipeH) * s};
