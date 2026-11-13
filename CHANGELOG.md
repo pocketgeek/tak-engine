@@ -20,6 +20,37 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports: the latest release's live in [`docs/`](docs/), every earlier one's
 in the source of its tag.
 
+## 1.0.5
+*2026-11-13 · protocol 327 · replay format 15 · does not play with 1.0.4, nor its replays*
+
+- **The Volcano world.** Random maps can use *The Iron Plague*'s lava world: steel
+  plating over lava, with ruined Creon buildings in place of rocks. Lava stops
+  everything but aircraft. Volcano has two layouts of its own: **Lava Flows**, rivers
+  of lava running out between the homes, and **Industrial Zone**, lava everywhere but
+  the plateaus, joined by a maze of walkways (after the community's Industrial Zone
+  maps). Every dead end of an Industrial Zone walkway holds a mana spot. Industrial
+  Zone's **Lava pads** slider sets how many square pads stand cut off in the lava, each
+  with a mana spot only flying builders can reach (NONE for none). Cartographer's
+  **New Map > Random** builds them too.
+- **Mountains on smaller random maps.** A map too small or crowded for a whole
+  mountain range now gets a single compact peak. Where even that does not fit, the
+  room's recipe box reads **MOUNTAINS: NO ROOM** (and Cartographer says so) instead of
+  the amount asked for.
+- **Random map sliders that do nothing read NONE.** A slider that cannot change the
+  map, such as Forests and Hills on Volcano or Hills on Veruna Ports, is greyed out
+  and reads NONE.
+- **Pin to CCDs.** On a processor with more than one CCD (a group of cores sharing
+  one level 3 cache, as on many AMD Ryzen chips), **Pin to CCDs** (**Settings > Game >
+  Performance**) keeps the game on one CCD and its local server on another, each
+  chosen with a slider that shows that CCD's cores, caches and clock. Both can share
+  one CCD. While it is on it replaces **Simulation threads** and **Pin simulation
+  threads**. `takserver` has a matching `--cpus` option.
+- **Watchers see kill counts.** A spectator, and anyone watching a replay, now sees the
+  selected unit's kill count, as its owner does.
+
+Full notes: [release-1.0.5-notes.md](docs/release-1.0.5-notes.md) ·
+validation: [release-1.0.5-validation.md](docs/release-1.0.5-validation.md)
+
 ## 1.0.4
 *2026-11-12 · protocol 326 · replay format 15 · does not play with 1.0.3, nor its replays*
 
@@ -51,8 +82,8 @@ in the source of its tag.
 - **Infinite production reads +++.** The **TRAINING** line above the build menu shows
   **(+++)** under infinite production, as the unit's icon does, instead of a count of 1.
 
-Full notes: [release-1.0.4-notes.md](docs/release-1.0.4-notes.md) ·
-validation: [release-1.0.4-validation.md](docs/release-1.0.4-validation.md)
+Full notes: [release-1.0.4-notes.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.4/docs/release-1.0.4-notes.md) ·
+validation: [release-1.0.4-validation.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.4/docs/release-1.0.4-validation.md)
 
 ## 1.0.3
 *2026-11-12 · protocol 325 · replay format 15 · does not play with 1.0.2, nor its replays*
