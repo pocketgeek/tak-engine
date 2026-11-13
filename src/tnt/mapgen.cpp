@@ -29,6 +29,14 @@ const char* worldTitle(uint8_t world) {
 
 bool lavaWorld(uint8_t world) { return world == Volcano; }
 
+bool worldHasForests(uint8_t world) { return world < kMapTypes && kWorldFeat[world].trees.n > 0; }
+
+bool worldHasHills(uint8_t world) { return world < kMapTypes && kReliefDir[world]; }
+
+bool hillsPossible(uint8_t world, uint8_t layout) {
+    return worldHasHills(world) && layout != Maze && layout != Ports;
+}
+
 std::vector<std::string> assetPaths(const hpi::Vfs& vfs) {
     std::vector<std::string> paths;
     for (const auto& kit : kShoreKit)
@@ -45,7 +53,7 @@ std::vector<std::string> assetPaths(const hpi::Vfs& vfs) {
     for (int i = 1; i <= 4; ++i)
         if (std::string path = kIndustrialIsle + std::to_string(i) + ".tnt"; vfs.has(path)) paths.push_back(std::move(path));
     for (const auto* prefix : kReliefDir)
-        for (const auto& path : vfs.list(prefix))
+        if (prefix) for (const auto& path : vfs.list(prefix))
             if (hpi::MountSet::key(path).ends_with(".tnt")) paths.push_back(path);
     for (const auto& prefix : kitDirectories())
         for (const auto& path : vfs.list(prefix))

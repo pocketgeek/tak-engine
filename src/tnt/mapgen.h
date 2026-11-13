@@ -29,6 +29,13 @@ const char* worldKey(uint8_t world);
 const char* worldTitle(uint8_t world);
 // Lava, not water: retail blocks every lava cell (0xfffc), so nothing walks or sails it.
 bool lavaWorld(uint8_t world);
+// Whether a world has trees for the Forests amount, and hill sections for Hills (the
+// volcano has neither; its Rocks are ruined Creon works).
+bool worldHasForests(uint8_t world);
+bool worldHasHills(uint8_t world);
+// Whether the Hills amount can place anything: Maze is all walls and corridors, and
+// Ports' land is a ring too narrow beside its kept-open routes for any hill section.
+bool hillsPossible(uint8_t world, uint8_t layout);
 
 enum Layout : uint8_t { Mainland = 0, Lakes = 1, Islands = 2, Maze, Ports, Riverlands, Jungle, Highlands, LavaFlows,
                         IndustrialZone, kLayouts };

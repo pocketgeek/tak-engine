@@ -157,6 +157,10 @@ void verify(const tak::mapgen::Params& input,const tak::mapgen::Result& r) {
     check(p.waterDensity||tak::mapgen::automaticWater(p.layout)||r.waterPercent==0,"zero water produced water");
     check(p.layout!=tak::mapgen::Lakes||!p.waterDensity||r.waterPercent>0,"lake layout has no water");
     check(p.reliefDensity||r.reliefPatches==0,"zero relief produced hills");
+    check(tak::mapgen::worldHasHills(p.mapType)||r.reliefPatches==0,"a world without hill sections got hills");
+    if(!tak::mapgen::worldHasForests(p.mapType))
+        for(const auto& name:r.map.featureNames)
+            check(tak::hpi::MountSet::key(name).find("tree")==std::string::npos,"a world without trees got a forest");
     check(p.plateauDensity||p.mountainDensity||tak::mapgen::automaticPlateaus(p.layout)||r.plateaus==0,"zero plateaus produced plateaus");
     check(p.mountainDensity||r.mountains==0,"zero mountains produced mountains");
     check(p.townDensity||r.towns==0,"zero towns produced towns");

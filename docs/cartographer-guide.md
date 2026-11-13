@@ -1119,7 +1119,7 @@ uses for its random maps.
 | **LAYOUT** | Mainland, Lakes, Islands, Taros Maze, Veruna Ports, Aramon Riverlands, Zhon Clearings, Creon Highlands, Volcano Lava Flows or Volcano Industrial Zone (a walkway maze over lava; every dead end holds a mana spot). |
 | **TREES**, **ROCKS**, **MANA** | How many of each, from 0 to 255. More mana adds more mana sites per player. |
 | **WATER INTENSITY** | How strongly lakes appear, from 0 (dry) to 255. Used by Mainland, Lakes and Zhon Clearings. Ignored by Islands, Veruna Ports and Aramon Riverlands, which make their own water, by Taros Maze and Creon Highlands, and by the two Volcano layouts, which make their own lava. On the Volcano world it is lava, which nothing but aircraft crosses. |
-| **RELIEF** | How many hills, from 0 (flat) to 255. |
+| **RELIEF** | How many hills, from 0 (flat) to 255. Ignored by Veruna Ports and the volcano world, which have no room or no sections for hills (the volcano has no trees either, and its rocks are ruined Creon buildings). |
 | **WIDTH**, **HEIGHT** | 1 to 64 units, set separately (the generator makes at least 8; see below). |
 | **WORLD** | The world to use: aramon, veruna, taros, zhon, creon or volcano (Iron Plague's lava world). |
 | **SCATTERED MANA (BY MAP AREA)** | None, Minimum, Medium, High or Max neutral mana spots spread over open ground, by area. Max is as dense as a home with six spots; each lower level halves it. |

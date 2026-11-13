@@ -220,7 +220,9 @@ plateaus, and Plateaus 0 left only the 245 mountain plateaus.
 **Controls.** The CHANGE MAP panel's RANDOM MAP tab shows the nine sliders in two columns: Forests,
 Rocks, Extra Mana, Scattered Mana, Water, Hills (Highlands on Creon Highlands),
 Plateaus, Mountains and Towns (Villages on Zhon). Plateaus reads AUTO on Maze and
-Highlands; Mountains reads NONE on Veruna and Volcano, and the recipe box reads
+Highlands; Hills reads NONE on Veruna Ports (its land ring is too narrow beside the
+kept-open routes for any hill section) and on Volcano, which also has no Forests (no
+trees) and calls Rocks RUINS; Mountains reads NONE on Veruna and Volcano, and the recipe box reads
 MOUNTAINS: NO ROOM when the previewed roll placed none (Cartographer's preview says
 so too). Defaults: Plateaus 96, Mountains 48,
 Towns 64 of 255: on a 24×24 two-player map about three plain plateaus (one beside

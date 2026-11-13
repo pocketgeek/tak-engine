@@ -1137,7 +1137,7 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
     // Authored relief: copy artwork AND its matching heights. Only self-contained
     // low-ground patches with near-level edges are admitted. No invisible mesas.
     std::vector<const tnt::Map*> hills;
-    if(p.reliefDensity && p.layout!=Maze && p.layout!=Highlands) {
+    if(p.reliefDensity && p.layout!=Maze && p.layout!=Highlands && worldHasHills(p.mapType)) {
         auto paths=vfs.list(kReliefDir[p.mapType]);std::sort(paths.begin(),paths.end());
         for(const auto& path:paths) {
             const auto key=hpi::MountSet::key(path);

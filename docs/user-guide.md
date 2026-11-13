@@ -557,7 +557,9 @@ generator; **Pick** plays the map it shows:
   Lakes and Riverlands need a little more room as players are added. Long, narrow maps
   are allowed where the starts fit.
 - **Forests**, **Rocks**, **Water** and **Hills** amounts (on Creon Highlands the
-  Hills slider is **Highlands**, the amount of high ground).
+  Hills slider is **Highlands**, the amount of high ground). A slider that cannot
+  change the map reads NONE: Hills on Veruna Ports, Forests and Hills on Volcano
+  (whose Rocks slider is **Ruins**, ruined Creon buildings).
 - **Plateaus**, **Mountains** and **Towns**: terrain built from the original
   game's own sections for that world. Plateaus are cliff-edged high ground with
   walkable ramps (Creon's are gentle, walkable hillsides); mountains are

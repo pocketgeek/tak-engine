@@ -269,15 +269,17 @@ int seatedHumans(const tak::net::RoomView& room) {
             if (++column == 2) { column = 0; py += kSliderH + kGap; }
         };
         const uint8_t world = genParams_.mapType, layout = genParams_.layout;
-        slider(0, "FORESTS", genParams_.treeDensity);
-        slider(1, "ROCKS", genParams_.rockDensity);
+        // The volcano has no trees or hill sections; its rocks are ruined Creon works.
+        slider(0, "FORESTS", genParams_.treeDensity, tak::mapgen::worldHasForests(world), "NONE");
+        slider(1, tak::mapgen::lavaWorld(world) ? "RUINS" : "ROCKS", genParams_.rockDensity);
         slider(2, "EXTRA MANA", genParams_.manaDensity);
         // Neutral spots scattered by AREA, apart from the per-player extra spots (a
         // level, not a count: the same level puts four times as many on a map twice as
         // wide). Five notches, NONE..MAX; MAX = a six-spot home's density.
         slider(5, "SCATTERED MANA", uint8_t(genParams_.manaScatter * 255 / (tak::mapgen::kScatterLevels - 1)));
         slider(3, tak::mapgen::lavaWorld(world) ? "LAVA" : "WATER", genParams_.waterDensity, !tak::mapgen::automaticWater(layout));
-        slider(4, layout==tak::mapgen::Highlands?"HIGHLANDS":"HILLS", genParams_.reliefDensity, layout!=tak::mapgen::Maze);
+        slider(4, layout==tak::mapgen::Highlands?"HIGHLANDS":"HILLS", genParams_.reliefDensity,
+               tak::mapgen::hillsPossible(world, layout), layout==tak::mapgen::Maze ? "AUTO" : "NONE");
         // v10 retail kits. Maze walls and Creon highlands are the layout's own high
         // ground; Veruna ships no mountain kit.
         slider(6, "PLATEAUS", genParams_.plateauDensity, !tak::mapgen::automaticPlateaus(layout) &&

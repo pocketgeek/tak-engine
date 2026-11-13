@@ -281,7 +281,7 @@ constexpr const char* kIndustrialIsle = "sections/volcano/base/isle";
 // low-ground boundary before stamping artwork and heights together.
 constexpr const char* kReliefDir[]={"Sections/Aramon/Low Hills/","Sections/Taros/Low Specials/",
     "Sections/Veruna/Low Specials/","Sections/Zhon/Low Specials Jungle/","sections/creon/low tile breakers/",
-    "sections/volcano/tile breakers/"};
+    nullptr};   // the volcano's tile breakers all rise off its plating: none sits level as a hill
 
 // ---- v10 retail terrain kits ---------------------------------------------------
 // Every retail kit below is a set of whole 512px sections authored to interlock on

@@ -1234,12 +1234,13 @@ std::string defaultGameName(const std::string& player) {
                 std::string("LAYOUT: ") + tak::mapgen::layoutName(gp.layout),
                 "SIZE: " + std::to_string(gp.widthCells / 32) + " X " + std::to_string(gp.heightCells / 32),
                 "PLAYERS: " + std::to_string(gp.players),
-                std::string("FORESTS: ") + level(gp.treeDensity),
-                std::string("ROCKS: ") + level(gp.rockDensity),
+                std::string("FORESTS: ") + (tak::mapgen::worldHasForests(gp.mapType) ? level(gp.treeDensity) : "NONE"),
+                std::string(tak::mapgen::lavaWorld(gp.mapType) ? "RUINS: " : "ROCKS: ") + level(gp.rockDensity),
                 std::string("MANA: ") + level(gp.manaDensity),
                 std::string(tak::mapgen::lavaWorld(gp.mapType) ? "LAVA: " : "WATER: ") +
                     (tak::mapgen::automaticWater(gp.layout) ? "AUTO" : level(gp.waterDensity)),
-                std::string("HILLS: ") + level(gp.reliefDensity)},
+                std::string("HILLS: ") + (tak::mapgen::hillsPossible(gp.mapType, gp.layout) ? level(gp.reliefDensity) :
+                                       gp.layout == tak::mapgen::Maze ? "AUTO" : "NONE")},
                {std::string("PLATEAUS: ") + (tak::mapgen::automaticPlateaus(gp.layout) ? "AUTO" : kit(gp.plateauDensity, tak::mapgen::KitPlateaus)),
                 std::string("MOUNTAINS: ") + (noRoom ? "NO ROOM" : kit(gp.mountainDensity, tak::mapgen::KitMountains)),
                 std::string(gp.mapType == tak::mapgen::Zhon ? "VILLAGES: " : "TOWNS: ") + kit(gp.townDensity, tak::mapgen::KitTowns),
