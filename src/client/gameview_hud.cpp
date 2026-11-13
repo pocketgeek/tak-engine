@@ -1483,9 +1483,10 @@ namespace {
                     bar(guiIdxLeft("ManaBar"), u->mana / u->type->maxMana, {90, 150, 255, 255});
             }
             // KillCount (4b28e8..4b2909): the unit's own kills, beside its bars, only
-            // for this player's unit and only once it has one.
+            // for this player's unit and only once it has one. A watcher (spectator or
+            // replay) sees the panel as the selected unit's owner, so their units count.
             int killSlot = -1;
-            if (int ki = guiIdx("KillCount"); ki >= 0 && u && !multi && u->player == localPlayer_ && u->kills > 0) {
+            if (int ki = guiIdx("KillCount"); ki >= 0 && u && !multi && int(u->player) == hudPlayer() && u->kills > 0) {
                 const SDL_FRect kr = place(ki);
                 const std::string k = std::to_string(u->kills);
                 const float px = std::max(1.0f, std::min(tpx, tpx * (kr.w - tpx) / std::max(1.0f, blockWidth(k, tpx))));

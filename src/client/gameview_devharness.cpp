@@ -886,6 +886,29 @@
             }
             untouched("selecting");
             check(artSide_=="tar","the panel art follows the selected side");
+            {
+                // The panel's KillCount: the watcher sees the panel as the owner, so the
+                // owner's unit shows its kills (not hashed, so the world stays unchanged).
+                const auto shot=[&] {
+                    // At the renderer's own size: the dummy driver reads back less than W x H.
+                    int ow=0,oh=0;SDL_GetRendererOutputSize(ren_,&ow,&oh);
+                    captureFrame();beginFrame();cosmeticStep(0);
+                    prepare(ow,oh);draw(ow,oh);
+                    std::vector<uint8_t> px(size_t(ow)*size_t(oh)*4);
+                    SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px.data(),ow*4);
+                    endFrame();
+                    // Only the panel strip at the bottom: the map above animates.
+                    px.erase(px.begin(),px.begin()+std::ptrdiff_t(size_t(oh-oh/10)*size_t(ow)*4));
+                    return px;
+                };
+                shot();   // settle
+                const auto none=shot();
+                writableWorld().unit(b1)->kills=7;
+                const auto seven=shot();
+                writableWorld().unit(b1)->kills=0;
+                const auto again=shot();
+                check(none==again && none!=seven,"the selected unit's kills show on its owner's panel");
+            }
             // Right clicks: on the ground, on an enemy, on a friend, on the minimap.
             clickAt(vw*0.5f,H*0.25f,SDL_BUTTON_RIGHT);
             clickUnit(a1,SDL_BUTTON_RIGHT);
