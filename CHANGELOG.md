@@ -40,6 +40,11 @@ in the source of its tag.
   formation with a much slower one (a Horseman with a Rolling Tower) slid along with its
   legs still, because it moved too slowly for its own speed to count as walking. It now
   plays its walk at the formation's pace.
+- **Computer armies fight their way to a building going up.** A computer player sending
+  its army at an enemy building still under construction ordered the attack from any
+  distance, so the army walked straight past the defenders without fighting and could
+  die on the way. It now fight-moves there and orders the attack on the building only
+  up close, at every difficulty (the Retail AI already did).
 - **Infinite production reads +++.** The **TRAINING** line above the build menu shows
   **(+++)** under infinite production, as the unit's icon does, instead of a count of 1.
 

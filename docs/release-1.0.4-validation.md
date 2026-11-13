@@ -14,6 +14,7 @@ repeating mobile builder parks its output; output stances"):
 | A mobile builder on an infinite queue releases its output with the factory's PARK ring round it; a building it raises keeps the exit step, and under Legion its output keeps the plain ring | simulation |
 | A lodestone area job ghosts every deposit it is predicted to build (`GameView::areaBuildPlan`) | client only |
 | Legion: a body's display headway window measures against the pace the mover gave it (`World::legionPace_`), so a formation member held to a slow member's pace keeps its gait | simulation (hashed `legionStill`) |
+| The computer's strike orders an attack on an enemy building under construction only up close, and fight-moves there from afar (`ai::Controller::strikeOrder`; the bug dated from `d5996336`, 0.9.12) | server AI only (no protocol change) |
 | The TRAINING line reads (+++) under infinite production | client only |
 
 **Compatibility.** The simulation changed, so `kNetVersion` is 326: 1.0.4 does not play
@@ -53,6 +54,11 @@ Linux, Debug `-O2 -g` (`build-o2`):
   | Crusades Legion 300 s | `ee9c38ff55448ab3` |
   | Ulasem | `e8b009af2418e33e` |
 
+- **The AI fix:** found in a spectated Absurd Creon versus Absurdly Defensive Aramon game
+  (Legion): the Creon side fired 0 shots in 17,079 ticks, its armies ordered at an Aramon
+  Stronghold going up from about 3000 px and killed on the way. `ai_behavior_test` now
+  checks every level of ours fight-moves at a far site being built (fails without the fix
+  on all six); the Retail AI's strike already sends a fight-move (move response mode -1).
 - **`tools/check-determinism.sh`**: every build agrees on golden `dcef618cd2e4d558`.
 - **By hand:** the owner played a game with a repeating Beast Handler; its replay showed
   the stance reaching the simulation and being dropped by the repeating builder's command

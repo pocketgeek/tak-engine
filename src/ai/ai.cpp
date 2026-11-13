@@ -1870,7 +1870,11 @@ bool Controller::strikeOrder(const tak::sim::World& world, const tak::sim::Unit&
             std::any_of(u.type->weapons.begin(), u.type->weapons.end(),
                         [](const auto& w) { return w.mindControl; });
         // A melee unit cannot reach an anchor in the air: it goes for the site.
-        if ((close || e->underConstruction) && !charmRefused && reachesNow(u, *e)) {
+        // Only up close, a site being built too: ordered on it from afar, the
+        // force walked past everything on the way without fighting (an Absurd
+        // Creon army sent 3000 px at an Aramon Stronghold going up died walking
+        // through the defenders); a fight-move gets it there fighting.
+        if (close && !charmRefused && reachesNow(u, *e)) {
             tak::net::Command c; c.kind = tak::net::Cmd::Attack; c.player = uint8_t(player_);
             c.unitId = u.id; c.targetId = e->id;
             sink(c);

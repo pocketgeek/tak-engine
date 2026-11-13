@@ -18,6 +18,8 @@ production and lodestone building.
   is going to build on, not just the next one.
 - **Fast units in a formation walk properly** under Legion pathfinding, instead of
   sliding along at a slow member's pace with their legs still.
+- **Computer armies fight their way to a building going up** instead of walking past the
+  defenders, at every difficulty.
 - **Infinite production reads +++** on the **TRAINING** line, as the unit's icon does.
 
 The [CHANGELOG](https://github.com/pocketgeek/tak-engine/blob/v1.0.4/CHANGELOG.md) has the

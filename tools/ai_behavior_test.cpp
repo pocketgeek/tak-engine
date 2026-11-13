@@ -2244,6 +2244,36 @@ int main(int argc,char** argv) {
         for (const auto& c:cs) sim::applyCommand(seen,empty,c);
         check(attacks(think(known,seen,5*60*30))==0,"Passive waits between attack waves");
     }
+    // An enemy building still going up, far off: every level's strike sends
+    // its force there by fight-move, so it fights what it meets on the way,
+    // and orders an attack on the site itself only up close. Ordered on it
+    // from afar, an Absurd Creon army walked through the Aramon defenders
+    // without fighting and died (2026-11-12 replay).
+    for (auto level : {ai::Difficulty::Easy,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd,
+                       ai::Difficulty::Defensive,ai::Difficulty::AbsurdlyDefensive}) {
+        sim::World w;terrain(w);w.player(0).income=20;
+        auto site=soldier;site.id="site";site.maxVel={};
+        for (int i=0;i<25;++i) w.spawn(&soldier,400+float(i)*32,800,0,0);
+        const int unfinished=w.spawn(&site,3400,800,0,1);w.unit(unfinished)->underConstruction=true;
+        // A lookout of its own keeps the site in sight, as the replay's army had it.
+        auto eye=site;eye.id="eye";eye.sight=750;eye.weapon.damage=0;eye.weapons.clear();w.spawn(&eye,3000,800,0,0);
+        w.setTeam(1,1);sight(w);pastStart(w);
+        ai::Controller controller(0,empty,profile,1,level,{{3400,800}});
+        bool farOrder=false;int sent=0;
+        for (uint32_t minute=0;minute<20 && !sent;++minute) {
+            const auto cs=think(controller,w,minute*60*30);
+            for (const auto& c:cs) {
+                if (c.kind!=net::Cmd::Attack && c.kind!=net::Cmd::AttackMove) continue;
+                ++sent;
+                const auto* u=w.unit(c.unitId);
+                if (c.kind==net::Cmd::Attack && c.targetId==unfinished && u &&
+                    std::hypot(u->x.toFloat()-3400.f,u->z.toFloat()-800.f)>1000.f) farOrder=true;
+            }
+        }
+        // The defensive levels attack out only once far ahead: they need not send here.
+        const bool defensive=level==ai::Difficulty::Defensive || level==ai::Difficulty::AbsurdlyDefensive;
+        check((sent>0 || defensive) && !farOrder,"every level fight-moves at a site being built from afar (attacks it only up close)");
+    }
     for (float income : {20.f,200.f}) {
         sim::World w;terrain(w);w.player(0).income=income;
         for (int i=0;i<25;++i) w.spawn(&soldier,400+float(i)*32,800,0,0);
