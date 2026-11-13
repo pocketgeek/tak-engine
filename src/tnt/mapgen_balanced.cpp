@@ -1406,15 +1406,32 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         for(size_t k=0;k<izDeadEnds.size();++k) {
             const auto [sx,sz]=izDeadEnds[k];
             if(k==deadEnds)padBegin=deposits.size();
+            // The pad's middle: the centre of its largest square of plating (a dead
+            // end's walkway is narrower), averaged over every square that size. The
+            // shipped pads sit off their sections' centres. In half cells.
+            int side[32][32]={},best2=0,cx2=0,cz2=0,count=0;
+            for(int dz=0;dz<32;++dz)for(int dx=0;dx<32;++dx) {
+                const size_t i=size_t(sz*32+dz)*w+sx*32+dx;
+                if(m.features[i]==0xfffc)continue;
+                side[dz][dx]=1+(dz&&dx?std::min({side[dz-1][dx],side[dz][dx-1],side[dz-1][dx-1]}):0);
+                const int n=side[dz][dx];
+                if(n>best2){best2=n;cx2=cz2=count=0;}
+                if(n==best2){cx2+=2*dx+2-n;cz2+=2*dz+2-n;++count;}
+            }
+            if(!count)continue;
+            cx2=2*sx*32+cx2/count;cz2=2*sz*32+cz2/count;
             Point best={-1,-1};int bestScore=1<<30;
-            for(int z=sz*32+6;z<sz*32+26;++z)for(int x=sx*32+6;x<sx*32+26;++x) {
-                // Room round the 2x2 stone: open pad within the lodestones' slope.
+            for(int z=sz*32+4;z<sz*32+28;++z)for(int x=sx*32+4;x<sx*32+28;++x) {
+                // The 2x2 stone and a cell round it on open pad, within ±4 of the
+                // plating (a lodestone, 2x2 too, takes a height spread of 10).
+                // The pads' raised trim stays out of the way without pushing the stone
+                // off the middle.
                 bool level=true;
-                for(int dz=-3;level&&dz<5;++dz)for(int dx=-3;dx<5;++dx) {
+                for(int dz=-1;level&&dz<3;++dz)for(int dx=-1;dx<3;++dx) {
                     const size_t i=size_t(z+dz)*w+x+dx;
-                    if(std::abs(int(m.heights[i])-land)>2||claim[i]||m.features[i]==0xfffc){level=false;break;}
+                    if(std::abs(int(m.heights[i])-land)>4||claim[i]||m.features[i]==0xfffc){level=false;break;}
                 }
-                const int score=(x-sx*32-16)*(x-sx*32-16)+(z-sz*32-16)*(z-sz*32-16);
+                const int score=(2*x+2-cx2)*(2*x+2-cx2)+(2*z+2-cz2)*(2*z+2-cz2);   // the stone's middle
                 if(level&&score<bestScore){best={x,z};bestScore=score;}
             }
             if(best.first<0)continue;

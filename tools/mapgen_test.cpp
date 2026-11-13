@@ -32,6 +32,31 @@ int manaCount(const tak::mapgen::Result& r) {
         if(f<r.map.featureNames.size() && tak::hpi::MountSet::key(r.map.featureNames[f]).find("mana")!=std::string::npos)++count;
     return count;
 }
+// Industrial Zone stones on a pad (lava within 20 cells on three or four sides): the
+// stone's middle sits midway (within a cell) between the lava on each side it closes in, so
+// it is in the pad's middle, not off to one side. Returns the stones checked.
+int padStonesCentred(const tak::mapgen::Result& r) {
+    const auto& m=r.map;int checked=0;
+    for(int z=0;z<m.height;++z)for(int x=0;x<m.width;++x) {
+        const auto f=m.features[size_t(z)*m.width+x];
+        if(f>=m.featureNames.size()||tak::hpi::MountSet::key(m.featureNames[f]).find("mana")==std::string::npos)continue;
+        // Cells from the stone's 2x2 middle to the first lava cell along a ray.
+        const auto reach=[&](int dx,int dz) {
+            for(int n=1;n<=20;++n) {
+                const int cx=dx<0?x-n:dx>0?x+1+n:x,cz=dz<0?z-n:dz>0?z+1+n:z;
+                if(cx<0||cz<0||cx>=m.width||cz>=m.height)return 99;
+                if(m.features[size_t(cz)*m.width+cx]==0xfffc)return n;
+            }
+            return 99;
+        };
+        const int west=reach(-1,0),east=reach(1,0),north=reach(0,-1),south=reach(0,1);
+        if((west<99)+(east<99)+(north<99)+(south<99)<3)continue;
+        ++checked;
+        if(west<99&&east<99)check(std::abs(west-east)<=1,"pad stone off its pad's middle (west-east)");
+        if(north<99&&south<99)check(std::abs(north-south)<=1,"pad stone off its pad's middle (north-south)");
+    }
+    return checked;
+}
 void manaSlider(const tak::hpi::Vfs& vfs) {
     using namespace tak::mapgen;
     for(const auto [size,players]:std::array<std::pair<int,int>,3>{{{256,2},{512,2},{2048,8}}}) {
@@ -468,7 +493,7 @@ int main(int argc,char** argv) {
         }
         check(edgeWet>0,"lakes still have a guaranteed dry rim");
         if(argc>2&&std::string(argv[2])=="--themes") {
-            int deadEndMana=0,padMana=0;
+            int deadEndMana=0,padMana=0,padStones=0;
             for(int layout=Maze;layout<kLayouts;++layout)for(int players:{2,3,4,5,6,7,8})for(int seed=1;seed<=3;++seed) {
                 Params p;p.layout=layout;p.players=players;p.seed=seed;
                 if(seed==2)p.treeDensity=p.rockDensity=p.manaDensity=p.reliefDensity=0;
@@ -489,6 +514,7 @@ int main(int argc,char** argv) {
                 // An Industrial Zone's neutral mana is its dead-end pads (no scatter asked for).
                 if(layout==IndustrialZone) {
                     deadEndMana+=r.scatteredMana;padMana+=r.padMana;
+                    padStones+=padStonesCentred(r);
                     // LAVA PADS at NONE: no pads, so no flyers' mana.
                     Params none=p;none.waterDensity=0;
                     const auto bare=generate(none,vfs);verify(none,bare);
@@ -498,7 +524,8 @@ int main(int argc,char** argv) {
                 std::printf("theme=%s players=%d seed=%d water=%d harbors=%zu passed\n",layoutName(layout),players,seed,r.waterPercent,r.harbors.size());std::fflush(stdout);
             }
             std::printf("industrial zone dead-end mana: %d\n",deadEndMana);
-            std::printf("industrial zone pad mana: %d\n",padMana);
+            std::printf("industrial zone pad mana: %d, centred pad stones: %d\n",padMana,padStones);
+            check(padStones>=padMana,"industrial zone pad stones not found");
             check(deadEndMana>=10,"industrial zone dead ends carry too little mana");
             check(padMana>=10,"industrial zone lava pads carry too little mana");
             return 0;

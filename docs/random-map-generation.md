@@ -57,7 +57,10 @@ below), so a recipe saved earlier may now come out with mountains it lacked.
   lava sections: one in six at the default 96, none at 0); nothing walks to them.
   Each pad holds a sacred stone too (`Result::padMana`, not counted as scattered
   mana), a bonus only flying builders claim, so the final reachability check leaves
-  them out. Walkways,
+  them out. A pad's stone sits in the middle of its largest square of plating (the
+  shipped pads sit off their sections' centres), on the stone's cells and a ring
+  round them within ±4 of the plating, so the pads' raised trim cannot push it
+  aside. Walkways,
   ramp landings and a lane from each start to its ramps are kept clear of ruins.
 
 **Volcano** is Iron Plague's lava world (`kingdom=volcano`, the world of the
