@@ -2675,6 +2675,16 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1200 800 --shot "${CMAKE_CURRENT_BINARY_DIR}/output-stance.png")
       set_tests_properties(output_stance_hud PROPERTIES TIMEOUT 120
           PASS_REGULAR_EXPRESSION "PASS: output stance: its new unit starts Passive")
+      # Units that die petrified or frozen stand as statues in stone or ice
+      # (the side's stoneanim/frozenanim texture on every face), not their colours.
+      add_test(NAME statue_texture COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_STATUE_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/statue-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/statue-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 900 600 --shot "${CMAKE_CURRENT_BINARY_DIR}/statue.png")
+      set_tests_properties(statue_texture PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: statue: the petrified archer is drawn in stone")
       add_test(NAME area_build_ghosts COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_AREA_GHOST_TEST=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/area-ghost-profile

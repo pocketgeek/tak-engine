@@ -4427,6 +4427,51 @@
         }
     }
 
+    void GameView::buildStatueMeta(const PieceMeta& meta, PieceMeta& statue, const std::string& texture) {
+        if (texture.empty() || !atlasRect_.count(texture)) {statue=meta;return;}   // no statue art: its own
+        statue.skip=meta.skip;
+        statue.animated=false;
+        const auto rect=atlasRect_.find(texture);
+        const auto mask=shadowMasks_.find(texture);
+        const size_t* frame=animatedTex_.count(texture) ? &modelTextureAnimations_.at(texture).frame : nullptr;
+        const size_t count=meta.primTex.size();
+        statue.primTex.assign(count,texture);
+        statue.primAtlas.assign(count,rect==atlasRect_.end() ? nullptr : &rect->second);
+        statue.primShadowMasks.assign(count,mask==shadowMasks_.end() ? nullptr : &mask->second);
+        statue.primAnimated.assign(count,frame!=nullptr);
+        if (frame && count) {
+            statue.animated=true;
+            statue.animationFrames={frame};statue.animationFrameMasks={uint8_t(mask!=shadowMasks_.end())};
+        }
+        statue.children.resize(meta.children.size());
+        for (size_t i=0;i<meta.children.size();++i) {
+            buildStatueMeta(meta.children[i],statue.children[i],texture);
+            if (statue.children[i].animated && !statue.animated) {
+                statue.animated=true;
+                statue.animationFrames=statue.children[i].animationFrames;
+                statue.animationFrameMasks=statue.children[i].animationFrameMasks;
+            }
+        }
+    }
+
+    std::string GameView::statueTexture(const std::string& model, bool frozen) {
+        if (!statueSidesLoaded_) {
+            statueSidesLoaded_=true;
+            if (const auto data=vfs_.tryRead("gamedata/sidedata.tdf")) try {
+                const auto sides=tak::tdf::parseText(std::string(data->begin(),data->end()),"gamedata/sidedata.tdf");
+                for (const auto& [key,node]:sides.children)
+                    statueSides_.push_back({tak::hpi::MountSet::key(node.valueOr("nameprefix","")),
+                                            tak::hpi::MountSet::key(node.valueOr("stoneanim","")),
+                                            tak::hpi::MountSet::key(node.valueOr("frozenanim",""))});
+            } catch (const std::exception&) {}
+        }
+        if (statueSides_.empty()) return {};
+        const std::string prefix=tak::hpi::MountSet::key(model.substr(0,3));
+        const auto side=std::find_if(statueSides_.begin(),statueSides_.end(),
+                                     [&](const auto& s){return !s[0].empty() && s[0]==prefix;});
+        return (side==statueSides_.end() ? statueSides_.front() : *side)[frozen ? 2 : 1];
+    }
+
     bool GameView::pieceWorldFx(const UnitR& u, const Anim& a, const std::string& pieceName,
                       float& outX, float& outZ, float& outAlt) {
         auto vt = visuals_.find(u.type ? u.type->id : std::string());

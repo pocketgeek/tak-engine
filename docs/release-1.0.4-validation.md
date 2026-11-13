@@ -15,6 +15,7 @@ repeating mobile builder parks its output; output stances"):
 | A lodestone area job ghosts every deposit it is predicted to build (`GameView::areaBuildPlan`) | client only |
 | Legion: a body's display headway window measures against the pace the mover gave it (`World::legionPace_`), so a formation member held to a slow member's pace keeps its gait | simulation (hashed `legionStill`) |
 | The computer's strike orders an attack on an enemy building under construction only up close, and fight-moves there from afar (`ai::Controller::strikeOrder`; the bug dated from `d5996336`, 0.9.12) | server AI only (no protocol change) |
+| A petrified or frozen statue is drawn with its side's stone or ice texture on every face (`GameView::Visual::statue`), as retail does, not a vertex tint of its own texture | client only |
 | The TRAINING line reads (+++) under infinite production | client only |
 
 **Compatibility.** The simulation changed, so `kNetVersion` is 326: 1.0.4 does not play
@@ -59,6 +60,10 @@ Linux, Debug `-O2 -g` (`build-o2`):
   Stronghold going up from about 3000 px and killed on the way. `ai_behavior_test` now
   checks every level of ours fight-moves at a far site being built (fails without the fix
   on all six); the Retail AI's strike already sends a fight-move (move response mode -1).
+- **The statue fix:** found in the owner's spectated game, where Aramon units killed while
+  turned to stone or ice stood in their own colours. Retail's statue drawing was
+  taken from the icd (texture swap, `docs/retail-engine.md`). `statue_texture` renders a
+  live, a frozen and a petrified archer and checks the colours (fails without the fix).
 - **`tools/check-determinism.sh`**: every build agrees on golden `dcef618cd2e4d558`.
 - **By hand:** the owner played a game with a repeating Beast Handler; its replay showed
   the stance reaching the simulation and being dropped by the repeating builder's command

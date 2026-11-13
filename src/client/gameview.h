@@ -1191,6 +1191,14 @@ private:
     }
     // Precompute the whole tree for a model (once, at registration).
     void buildPieceMeta(const tak::tdo::Object& o, PieceMeta& m, bool isRoot = true);
+    // `meta` with every primitive on one texture (a statue's stone or ice).
+    void buildStatueMeta(const PieceMeta& meta, PieceMeta& statue, const std::string& texture);
+    // The stone or ice texture of the side whose nameprefix starts `model`
+    // (retail matches a feature to its side by the first three letters,
+    // 493b5d..493bf0); the first side's when none does.
+    std::string statueTexture(const std::string& model, bool frozen);
+    std::vector<std::array<std::string,3>> statueSides_;   // nameprefix, stoneanim, frozenanim
+    bool statueSidesLoaded_ = false;
 
     // Per-worker scratch: evaluate each piece and unique vertex once, then
     // share the exact rotated coordinates between the body and shadow passes.
@@ -1236,6 +1244,11 @@ private:
     struct Visual {
         tak::tdo::Model model;
         PieceMeta meta;   // precomputed once; see collect()
+        // The statue a petrified [0] or frozen [1] death leaves: retail draws every
+        // face, untextured ones too, with its side's stone or ice texture (sidedata
+        // stoneanim/frozenanim, frame 0) in place of the face's own (feature draw
+        // 4fd862..4fd8bc, model draw 4ed934..4ed992). Built with `meta`.
+        PieceMeta statue[2];
     };
     // THE ONLY WAY TO CREATE A visuals_ ENTRY. An entry whose PieceMeta was left
     // default-constructed reports skip=false for every piece, and skip is what hides
@@ -1252,11 +1265,13 @@ private:
     tak::tdo::Model* loadVisual(const std::string& key, bool rootIsGround = true) {
         auto it = visuals_.find(key);
         if (it != visuals_.end()) return &it->second.model;
-        Visual v{tak::tdo::load(vread("objects3d/" + key + ".3do")), {}};
+        Visual v{tak::tdo::load(vread("objects3d/" + key + ".3do")), {}, {}};
         // Layout is built once and survives GPU target recreation. Rect pointers
         // remain valid for this view's lifetime, including unordered-map rehashes.
         if (!atlasLaidOut_) buildAtlasLayout();
         buildPieceMeta(v.model.root, v.meta, rootIsGround);   // fixed for the model's life
+        for (int frozen = 0; frozen < 2; ++frozen)
+            buildStatueMeta(v.meta, v.statue[frozen], statueTexture(key, frozen != 0));
         return &visuals_.emplace(key, std::move(v)).first->second.model;
     }
     struct EffectAnim;   // defined below; Anim only needs the pointer type
@@ -2129,6 +2144,7 @@ private:
     // stage keys: what the stages compute from.
     struct UnitGeomInputs {
         const Visual* visual=nullptr;
+        const PieceMeta* meta=nullptr;   // visual->meta, or its statue's
         const Anim* anim=nullptr;
         SDL_Texture* atlas=nullptr;
         float facing=0;

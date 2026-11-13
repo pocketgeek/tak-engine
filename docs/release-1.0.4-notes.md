@@ -18,6 +18,7 @@ production and lodestone building.
   is going to build on, not just the next one.
 - **Fast units in a formation walk properly** under Legion pathfinding, instead of
   sliding along at a slow member's pace with their legs still.
+- **Statues look like stone and ice** instead of like living units.
 - **Computer armies fight their way to a building going up** instead of walking past the
   defenders, at every difficulty.
 - **Infinite production reads +++** on the **TRAINING** line, as the unit's icon does.

@@ -3015,6 +3015,60 @@
             std::fprintf(stderr,"PASS: idle builders strip\n");
             return;
         }
+        if (tak::devFlag("TAK_STATUE_TEST")) {
+            // A unit that dies petrified or frozen stands as a statue drawn in its
+            // side's stone or ice texture (Visual::statue), not in its own colours.
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("statue: "+what);
+                std::fprintf(stderr,"PASS: statue: %s\n",what.c_str());
+            };
+            constexpr int W=900,H=600;winW_=W;winH_=H;noFog_=true;uiScale_=1.0f;
+            const float cx=float(mapView_.map().blocksX)*16.0f,cz=float(mapView_.map().blocksY)*16.0f;
+            const int alive=spawn("araarch",cx-80,cz,0,1);
+            const int frozen=spawn("araarch",cx,cz,0,1);
+            const int stoned=spawn("araarch",cx+80,cz,0,1);
+            for (int i=0;i<5;++i) writableWorld().tick(1.f/30);
+            // Petrified units take no damage: the stone one is petrified between
+            // the killing blow and the death, as when its Monarch falls.
+            writableWorld().unit(frozen)->frozenFor=300;
+            {tak::sim::Weapon k;k.damage=100000;k.range=100;
+             writableWorld().debugApplyHit(k,frozen,0);writableWorld().debugApplyHit(k,stoned,0);}
+            writableWorld().unit(stoned)->stonedFor=300;
+            for (int i=0;i<90;++i) writableWorld().tick(1.f/30);
+            check(world_.unit(alive)->alive() && world_.unit(frozen)->corpseStatue>=0 &&
+                  world_.unit(stoned)->corpseStatue>=0,"one archer lives, two died as statues");
+            mapView_.setZoom(2);mapView_.setOffset(cx-W*0.25f,cz-H*0.25f);
+            for (int i=0;i<5;++i) {captureFrame();beginFrame();cosmeticStep(0);prepare(W,H);draw(W,H);}
+            int ow=0,oh=0;SDL_GetRendererOutputSize(ren_,&ow,&oh);
+            std::vector<uint8_t> px(size_t(ow)*size_t(oh)*4);
+            check(SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px.data(),ow*4)==0,"frame read back");
+            if (const char* shot=tak::devEnv("TAK_STATUE_SHOT")) tak::png::write(shot,ow,oh,px);
+            // Pixels round each body: icy blue, neutral grey, or the archer's red.
+            struct Count {int ice=0,grey=0,red=0;};
+            const auto count=[&](int id) {
+                Count c;
+                const auto* r=frameUnitP(id);
+                if (!r) return c;
+                const SDL_FPoint at=unitScreen(*r);
+                for (int y=int(at.y-40);y<int(at.y+40);++y)
+                    for (int x=int(at.x-25);x<int(at.x+20);++x) {
+                        if (x<0 || y<0 || x>=ow || y>=oh) continue;
+                        const uint8_t* p=&px[(size_t(y)*size_t(ow)+size_t(x))*4];
+                        const int R=p[0],G=p[1],B=p[2];
+                        if (B>R+60 && B>G+30) ++c.ice;
+                        if (std::abs(R-G)<14 && std::abs(G-B)<18 && R>60 && R<190) ++c.grey;
+                        if (R>G+80 && R>B+80) ++c.red;
+                    }
+                return c;
+            };
+            const Count live=count(alive),ice=count(frozen),stone=count(stoned);
+            std::fprintf(stderr,"statue: live ice=%d grey=%d red=%d; frozen %d/%d/%d; stone %d/%d/%d\n",
+                         live.ice,live.grey,live.red,ice.ice,ice.grey,ice.red,stone.ice,stone.grey,stone.red);
+            check(live.red>40 && live.ice<10,"the live archer keeps its colours");
+            check(ice.ice>150 && ice.red<10,"the frozen archer is drawn in ice");
+            check(stone.grey>150 && stone.red<10 && stone.ice<10,"the petrified archer is drawn in stone");
+            return;
+        }
         if (tak::devFlag("TAK_OUTPUT_STANCE_TEST")) {
             // A finished production building offers the stance buttons, none lit
             // until one is chosen; the chosen one is lit (its output stance, not

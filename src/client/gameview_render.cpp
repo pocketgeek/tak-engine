@@ -4926,19 +4926,16 @@
             discoMix = bang * 0.5f;                                  // flash on the bang
             disco = true;                                            // reuse the tint path
         }
-        // Statue corpses: a petrified body renders stone-gray, a frozen one
-        // ice-blue (the isstone/isfrozen statue defs), through the same vertex
-        // tint mix the emotes use.
+        // Statue corpses: a petrified body is drawn in its side's stone texture, a
+        // frozen one in its ice (the isstone/isfrozen statue defs; Visual::statue).
+        // A vertex tint only scales the body's own texture, which kept a statue
+        // looking like the living unit.
+        const PieceMeta* meta = &vt->second.meta;
         if (u.corpsePhase && u.corpseFeat >= 0 &&
             size_t(u.corpseFeat) < worldTables().featureTypes().size()) {
             const auto& cf = worldTables().featureTypes()[size_t(u.corpseFeat)];
-            if (cf.isStone) {
-                discoCol = SDL_Color{145, 145, 150, 255};
-                discoMix = 0.65f; disco = true;
-            } else if (cf.isFrozen) {
-                discoCol = SDL_Color{160, 200, 255, 255};
-                discoMix = 0.55f; disco = true;
-            }
+            if (cf.isStone) meta = &vt->second.statue[0];
+            else if (cf.isFrozen) meta = &vt->second.statue[1];
         }
         SDL_Texture* atlas = (slot >= 0 && size_t(slot) < atlasTex_.size())
                                  ? atlasTex_[size_t(slot)] : nullptr;
@@ -4962,15 +4959,15 @@
         word(reinterpret_cast<uintptr_t>(&vt->second));
         word(reinterpret_cast<uintptr_t>(atlas));word(uint64_t(u.player));word(uint64_t(slot));
         word(u.bodyPitch);word(u.bodyRoll);word(u.underConstruction);
-        word(u.corpsePhase);word(u.corpseStatue);word(shadowsOnFrame_);word(floatBits(facing));
+        word(u.corpsePhase);word(reinterpret_cast<uintptr_t>(meta));word(shadowsOnFrame_);word(floatBits(facing));
 #ifndef NDEBUG
         if (key.size()!=kLocalKeyFixedWords) throw std::logic_error("local geometry key layout");
 #endif
         // Texture playback may hold one frame for multiple simulation ticks.
         // Use its actual inputs, so an unchanged frame retains exact geometry.
         if(!tak::devFlag("TAK_TEXTURE_TICK_REFERENCE"))
-            for(const auto* frame:vt->second.meta.animationFrames)word(*frame);
-        else if(vt->second.meta.animated)word(front().gameTick);
+            for(const auto* frame:meta->animationFrames)word(*frame);
+        else if(meta->animated)word(front().gameTick);
         const LocalKeyLayout layout{uint32_t(key.size())};
         if(anim) {
             word(reinterpret_cast<uintptr_t>(anim->pieceNames));
@@ -5001,7 +4998,7 @@
                                         materialKey==g.materialKey,conjuring);
         const bool cacheHit=stages==0;
         g.reused=cacheHit;
-        g.animatedTexture=vt->second.meta.animated;
+        g.animatedTexture=meta->animated;
         const bool verify=tak::devFlag("TAK_GEOMETRY_VERIFY");
         // Distant-image lookup before body generation (workstream G). When this
         // unit's image is shown without a repaint this frame (the cache reads
@@ -5020,7 +5017,7 @@
         g.bodyDeferred=deferBody;
 #ifndef NDEBUG
         if(verify) {
-            if(cacheHit && vt->second.meta.animated && g.verifiedTick!=front().gameTick)
+            if(cacheHit && meta->animated && g.verifiedTick!=front().gameTick)
                 ++animatedTextureChecks_;
             g.verifiedTick=front().gameTick;
         }
@@ -5043,7 +5040,7 @@
         }
 
         UnitGeomInputs in;
-        in.visual=&vt->second;in.anim=anim;in.atlas=atlas;in.facing=facing;
+        in.visual=&vt->second;in.meta=meta;in.anim=anim;in.atlas=atlas;in.facing=facing;
         in.reuse=!tak::devFlag("TAK_GEOMETRY_REFERENCE");
         in.body={zm,ax,ay,discoBob};
         // The shadow leans by the flyer's altitude from the same anchor.
@@ -5058,7 +5055,7 @@
         in.material.fade=u.corpseFade();
         // Body-only local change: the silhouette's own inputs are all unchanged.
         in.shadowValid=!localValid && !reference && !g.localKey.empty() &&
-            shadowInputsEqual(g.localKey,g.localLayout,key,layout,vt->second.meta.animationFrameMasks);
+            shadowInputsEqual(g.localKey,g.localLayout,key,layout,meta->animationFrameMasks);
 
         using MC=MissCause;
         if(!cacheHit) {
@@ -5255,18 +5252,18 @@
         // collected.
         if (in.reuse && ((bodyStages & kStageLocal) ||
                          ((stages & kStageLocal) && shadowsOnFrame_ && (!in.shadowValid || verify))))
-            preparePiece(visual.model.root,visual.meta,base,in.anim,
+            preparePiece(visual.model.root,*in.meta,base,in.anim,
                          std::cos(in.facing),std::sin(in.facing),prepared);
         if(bodyStages & kStageLocal) {
             g.verts.clear();g.runs.clear();g.localPos.clear();g.baseColor.clear();
             scratch.clear();
             collect(scratch, in.atlas, visual.model.root, base, in.anim, in.facing, u.player, false,
-                    true, false, nullptr, &visual.meta,false,in.reuse ? &prepared : nullptr,isStructure(u.type));
+                    true, false, nullptr, in.meta,false,in.reuse ? &prepared : nullptr,isStructure(u.type));
             if (verify) {
                 thread_local std::vector<Tri> reference;
                 reference.clear();
                 collect(reference,in.atlas,visual.model.root,base,in.anim,in.facing,u.player,false,
-                        true,false,nullptr,&visual.meta,false,nullptr,isStructure(u.type));
+                        true,false,nullptr,in.meta,false,nullptr,isStructure(u.type));
                 if (reference.size()!=scratch.size()) throw std::runtime_error("body geometry count mismatch");
                 for (size_t i=0;i<scratch.size();++i) {
                     const auto& a=scratch[i];const auto& b=reference[i];
@@ -5326,7 +5323,7 @@
                     thread_local UnitGeom collected;
                     collected.shadowLocal=g.shadowLocal;collected.maskedShadowLocal=g.maskedShadowLocal;
                     collected.maskedShadowVerts=g.maskedShadowVerts;collected.maskedShadowRuns=g.maskedShadowRuns;
-                    if ((shadowsOnFrame_ ? buildUnitShadow(u,collected,visual.model.root,visual.meta,in.anim,in.facing,
+                    if ((shadowsOnFrame_ ? buildUnitShadow(u,collected,visual.model.root,*in.meta,in.anim,in.facing,
                                                            scratch,in.reuse ? &prepared : nullptr)
                                          : !g.shadowLocal.empty() || !g.maskedShadowLocal.empty()))
                         throw std::runtime_error("a body-only local change altered the shadow silhouette");
@@ -5335,7 +5332,7 @@
 #endif
                 }
             } else if (shadowsOnFrame_)
-                shadowChanged=buildUnitShadow(u, g, visual.model.root, visual.meta, in.anim, in.facing,
+                shadowChanged=buildUnitShadow(u, g, visual.model.root, *in.meta, in.anim, in.facing,
                                               scratch,in.reuse ? &prepared : nullptr);
             else {
                 shadowChanged=!g.shadowLocal.empty() || !g.maskedShadowLocal.empty();
@@ -5370,7 +5367,7 @@
             const float sx=in.shadow.sx,sy=in.shadow.sy,zm=in.shadow.zoom;
             scratch.clear();
             collect(scratch,nullptr,visual.model.root,base,in.anim,in.facing,
-                    u.player,false,true,true,nullptr,&visual.meta,corpseCull);
+                    u.player,false,true,true,nullptr,in.meta,corpseCull);
             size_t opaque=0,masked=0,maskRun=0;
             int inRun=0;
             auto samePoint=[](SDL_FPoint a,SDL_FPoint b){return a.x==b.x && a.y==b.y;};

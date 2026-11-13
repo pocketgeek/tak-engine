@@ -40,6 +40,9 @@ in the source of its tag.
   formation with a much slower one (a Horseman with a Rolling Tower) slid along with its
   legs still, because it moved too slowly for its own speed to count as walking. It now
   plays its walk at the formation's pace.
+- **Statues look like stone and ice.** A unit that died petrified or frozen stood as a
+  statue drawn in its own colours, so it looked alive but could not be selected. It is
+  now drawn in its side's stone or ice texture, as in the original game.
 - **Computer armies fight their way to a building going up.** A computer player sending
   its army at an enemy building still under construction ordered the attack from any
   distance, so the army walked straight past the defenders without fighting and could

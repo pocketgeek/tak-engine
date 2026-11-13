@@ -2411,6 +2411,22 @@ features (statues, corpses) hand +0x2f, +0x2e and +0x30 to the model draw
 sinking grave, "What the feature update does with a corpse" above): a 3DO feature's reclaim fade is not
 drawn.
 
+**A statue is drawn in stone or ice** (static analysis, established). The feature
+loader sets type `+0x13c` bit 15 from `isstone` (`494292..4942bc`) and bit 18 from
+`isfrozen` (`4942b7..4942de`), and gives the type its side's statue textures: the side
+whose `nameprefix` matches the first three letters (`493b5d..493bf0`), its `stoneanim`
+(side `+0xcc`, type `+0x114`) and `frozenanim` (side `+0xd0`, type `+0x118`) from
+`gamedata/sidedata.tdf` (`4c2bb5..4c2c68`). The feature draw copies both bits and both
+textures to the model instance (`4fd862..4fd8bc`), and the model draw's face loop
+(`4ed934..4ed992`, again at `4edd60..4edd86`) draws EVERY face, untextured ones too,
+with frame 0 of that texture in place of the face's own (`5367a0` -> `5415a0`). No
+palette remap or tint. Every shipped side names `basiliskstone` (grey) and `creonice`
+(icy blue). Port: `GameView::Visual::statue` (each model's face table with every face
+on the side's stone or ice texture, `buildStatueMeta`/`statueTexture`), chosen for a
+statue body in the geometry stage. Until 1.0.4 we tinted the body's vertex colour, which
+only scaled its own texture: a statue looked like the living unit. Test:
+`statue_texture`.
+
 **The death playback** (static analysis; established unless marked). The loader resolves `seqnamedie` (string `611520`, read at `493ed3`)
 and `seqnamedieshad` (`611510`, `493f23`) in the feature's own `filename` GAF
 through `493700`, as it does `seqnameburn`, and forces both nonlooping
