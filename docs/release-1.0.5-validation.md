@@ -2,6 +2,10 @@
 
 Protocol **327**, replay format **15**, random map generator version **10**.
 
+Tag `v1.0.5` -> `8f8680a5` (the version commit); annotated tag object `b24f5f90`.
+Published 2026-11-13 16:44:07 UTC as the Latest release; 1.0.0 to 1.0.4 stay GitHub
+releases.
+
 ## Scope and compatibility
 
 1.0.5 is 1.0.4 (tag `v1.0.4` -> `9e8ff792`) plus the changes below (`a1693536` to
@@ -66,4 +70,23 @@ determinism workflow and builds every package.
 
 ## Tag CI and packages
 
-TAGCI
+Main's CI on `8f8680a5` (Determinism, macOS, Windows, Linux packages) was green before
+tagging. Tag CI on `v1.0.5`: Determinism (sim) 43459526846 (dispatched), Linux packages
+43459485581, Windows build 43459486251 and macOS build 43459486273 (both Sign + notarize
+jobs included) all green at the first attempt. The macOS signing jobs had failed on
+`be4d58b4` with an expired Apple Developer agreement (notary upload HTTP 403); the owner
+renewed it, and every macOS run since has notarized.
+
+39 assets, the same set as 1.0.4's. All 39 were downloaded and match the release's SHA-256
+digests. `takclient` from the x86_64 AppImage reports `1.0.5 (build v1.0.5)` and the
+Fedora 44 package's version is 1.0.5.
+Windows: on oden-win (scratch `C:/tak/w/rel105sig`), `Get-AuthenticodeSignature` reports
+**Valid** (timestamped, "Curtis Edge") for the x64 setup program and `takclient`,
+`takserver` and `cartographer` in both zips; the x64 `takclient.exe` and `takserver.exe`
+report `1.0.5 (build v1.0.5)`.
+macOS: on the MacBook, both DMGs and the two apps in each DMG and each zip pass `stapler
+validate`, `spctl` accepts each as "Notarized Developer ID", `codesign --verify --strict
+--deep` passes for the DMGs' apps, whose version reads 1.0.5, and the arm64 `takclient`
+reports `1.0.5 (build v1.0.5)`.
+The draft was created with the notes before the tag was pushed, and tag CI uploaded into
+it. Every link in the notes answers 200.
