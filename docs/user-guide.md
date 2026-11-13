@@ -542,7 +542,10 @@ generator; **Pick** plays the map it shows:
   Aramon Riverlands, Taros Maze, Veruna Ports, Zhon Clearings, Creon Highlands or
   Volcano Lava Flows (lava rivers running out between the homes). The Volcano world
   has **Industrial Zone** in place of Islands: lava everywhere but the plateaus, joined
-  by a maze of walkways whose dead ends each hold a mana spot.
+  by a maze of walkways whose dead ends each hold a mana spot. There the Water slider
+  is **Lava pads**: square pads cut off in the lava, each holding a mana spot that
+  only flying builders (Taros priestesses, Zhon hunters) can reach. Set it to NONE
+  for none.
   The themed layout is the fourth choice of **Layout**; changing the world while
   a themed layout is chosen switches to that world's theme. Ports always has
   connected deep-water harbour sites, and the land themes keep connected army

@@ -51,7 +51,7 @@ void cart::Editor::openModal(Modal m, int unitIdx) {
     } else if(m==M_GENERATOR) {
         mTitle="RANDOM MAP SETTINGS";mN=15;
         const auto fields=cart::generatorFields(generatorParams);
-        const char* labels[]={"SEED (REPRODUCIBLE)","PLAYERS (2-8)","LAYOUT","TREES (0-255)","ROCKS (0-255)","MANA (0-255)","WATER INTENSITY (0-255)","RELIEF (0-255)"};
+        const char* labels[]={"SEED (REPRODUCIBLE)","PLAYERS (2-8)","LAYOUT","TREES (0-255)","ROCKS (0-255)","MANA (0-255)","WATER / LAVA PADS (0-255)","RELIEF (0-255)"};
         for(int i=0;i<8;++i) {mf[i]=fields[i];mLabel[i]=labels[i];mfNumeric[i]=i!=2;}
         mfChoices[2]=&generatorLayouts;
         mLabel[8]="WIDTH (1-64 UNITS)";mf[8]=generatorDraft[1];mfNumeric[8]=true;

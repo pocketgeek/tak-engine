@@ -75,7 +75,8 @@ struct Params {
     uint8_t  treeDensity = 128;      // 0..255 (few..lots)
     uint8_t  rockDensity = 96;       // 0..255
     uint8_t  manaDensity = 128;      // 0..255 requests 0..6 extra spots per player
-    uint8_t  waterDensity = 96;      // mainland/lake intensity, not coverage; 0 = dry
+    uint8_t  waterDensity = 96;      // mainland/lake intensity, not coverage; 0 = dry. Industrial
+                                     // Zone: its cut-off lava pads (0 = none), each holding mana
     uint8_t  layout = Mainland;
     uint8_t  reliefDensity = 128;    // authored hill patch density; 0 = flat
     uint8_t  manaScatter = ScatterNone;   // ManaScatter level for neutral spots
@@ -89,6 +90,7 @@ struct Result {
     tak::tnt::Map map;
     int waterPercent = 0, reliefPatches = 0;
     int scatteredMana = 0;   // neutral spots placed (not part of any player's rounds; Industrial Zone dead ends too)
+    int padMana = 0;         // Industrial Zone deposits on cut-off lava pads: flyers' only, outside scatteredMana
     int plateaus = 0, mountains = 0, towns = 0;   // kit placements (components/ranges/towns)
     int mountainPlateaus = 0;   // plateaus carrying a range (the rest are plain)
     int plateauMana = 0, manaPlateaus = 0;   // deposits on plateau tops, and plateaus holding one

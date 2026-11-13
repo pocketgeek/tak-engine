@@ -207,7 +207,9 @@ void verify(const tak::mapgen::Params& input,const tak::mapgen::Result& r) {
         }
         check(ruins||tak::mapgen::lavaWorld(p.mapType),"mana spot has no surrounding ruins");   // volcano deposits are bare
     }
-    check(mana-r.scatteredMana>=p.players*3&&(mana-r.scatteredMana)%p.players==0,"unequal resource rounds");
+    mana-=r.scatteredMana+r.padMana;
+    check(mana>=p.players*3&&mana%p.players==0,"unequal resource rounds");
+    check(p.layout==tak::mapgen::IndustrialZone||r.padMana==0,"pad mana off Industrial Zone");
     check((p.layout!=tak::mapgen::Islands&&p.layout!=tak::mapgen::Ports)||r.harbors.size()==p.players,"missing island harbors");
 }
 }
@@ -466,7 +468,7 @@ int main(int argc,char** argv) {
         }
         check(edgeWet>0,"lakes still have a guaranteed dry rim");
         if(argc>2&&std::string(argv[2])=="--themes") {
-            int deadEndMana=0;
+            int deadEndMana=0,padMana=0;
             for(int layout=Maze;layout<kLayouts;++layout)for(int players:{2,3,4,5,6,7,8})for(int seed=1;seed<=3;++seed) {
                 Params p;p.layout=layout;p.players=players;p.seed=seed;
                 if(seed==2)p.treeDensity=p.rockDensity=p.manaDensity=p.reliefDensity=0;
@@ -485,12 +487,20 @@ int main(int argc,char** argv) {
                 }
                 if(layout==Ports||layout==Riverlands||layout==LavaFlows||layout==IndustrialZone) check(r.waterPercent>0,"themed waterways absent");
                 // An Industrial Zone's neutral mana is its dead-end pads (no scatter asked for).
-                if(layout==IndustrialZone) deadEndMana+=r.scatteredMana;
+                if(layout==IndustrialZone) {
+                    deadEndMana+=r.scatteredMana;padMana+=r.padMana;
+                    // LAVA PADS at NONE: no pads, so no flyers' mana.
+                    Params none=p;none.waterDensity=0;
+                    const auto bare=generate(none,vfs);verify(none,bare);
+                    check(bare.padMana==0,"lava pads at NONE still hold mana");
+                }
                 else if(!p.manaScatter) check(r.scatteredMana==0,"mana scattered unasked");
                 std::printf("theme=%s players=%d seed=%d water=%d harbors=%zu passed\n",layoutName(layout),players,seed,r.waterPercent,r.harbors.size());std::fflush(stdout);
             }
             std::printf("industrial zone dead-end mana: %d\n",deadEndMana);
+            std::printf("industrial zone pad mana: %d\n",padMana);
             check(deadEndMana>=10,"industrial zone dead ends carry too little mana");
+            check(padMana>=10,"industrial zone lava pads carry too little mana");
             return 0;
         }
         const bool sweep=argc>2&&std::string(argv[2])=="--sweep";

@@ -255,6 +255,7 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
     // corners from the rest so a lava section, room for a walkway, runs between.
     std::vector<uint8_t> izDry(size_t(sw+1)*(sh+1),0);
     std::vector<Point> izDeadEnds;   // sections whose walkway ends in a pad: mana spots
+    std::vector<Point> izPads;       // cut-off lava pads (the LAVA PADS amount): flyers' mana
     if (p.layout==IndustrialZone) {
         uint64_t rng=p.seed^0x696e647573ULL;
         const auto homeGap=[&](int cx,int cz) {   // corners from the nearest home square
@@ -534,8 +535,10 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
                     name+="01";
                 }
                 place(std::string(kIndustrialRoads)+name+".tnt",x,z,true);
-            } else if (lava(x,z)&&splitmix(rng)%6==0)
+            } else if (lava(x,z)&&splitmix(rng)%576<p.waterDensity) {   // the default 96: one section in six
                 place(std::string(kIndustrialIsle)+std::to_string(1+int(splitmix(rng)%4))+".tnt",x,z,false);
+                izPads.emplace_back(x,z);
+            }
         }
         for (const auto& ramp:chosen) place(std::string(kIndustrialRoads)+ramp.name+".tnt",ramp.x,ramp.z,true);
         // ...and so does the plateau section a ramp climbs onto, so no ruin walls it in,
@@ -1392,10 +1395,17 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
     const size_t roundDeposits=deposits.size();
     // Industrial Zone: the pad at the end of every dead-end walkway holds a sacred
     // stone, in the shipped tier mix (223:446:537). They are reached along the
-    // walkways, and the final validation checks so, as for scattered mana.
-    if(!izDeadEnds.empty()) {
+    // walkways, and the final validation checks so, as for scattered mana. Each
+    // cut-off pad holds one too, after them: only flying builders reach those, so
+    // the validation leaves them out.
+    size_t padBegin=0,padEnd=0;
+    if(!izDeadEnds.empty()||!izPads.empty()) {
         uint64_t padRng=p.seed^0x70616473ULL;
-        for(auto [sx,sz]:izDeadEnds) {
+        const size_t deadEnds=izDeadEnds.size();
+        izDeadEnds.insert(izDeadEnds.end(),izPads.begin(),izPads.end());
+        for(size_t k=0;k<izDeadEnds.size();++k) {
+            const auto [sx,sz]=izDeadEnds[k];
+            if(k==deadEnds)padBegin=deposits.size();
             Point best={-1,-1};int bestScore=1<<30;
             for(int z=sz*32+6;z<sz*32+26;++z)for(int x=sx*32+6;x<sx*32+26;++x) {
                 // Room round the 2x2 stone: open pad within the lodestones' slope.
@@ -1409,8 +1419,11 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
             }
             if(best.first<0)continue;
             const uint32_t roll=uint32_t(splitmix(padRng)%1206);
-            deposit(best.first,best.second,roll<223?0:roll<669?1:2);++r.scatteredMana;
+            deposit(best.first,best.second,roll<223?0:roll<669?1:2);
+            ++(k<deadEnds?r.scatteredMana:r.padMana);
         }
+        if(deadEnds==izDeadEnds.size())padBegin=deposits.size();
+        padEnd=deposits.size();
     }
     // Scattered neutral mana: a jittered grid at the level's pitch (one
     // candidate per pitch^2 cells, so the count follows map area), on flat open
@@ -1567,7 +1580,7 @@ Result generateOnce(const Params& p,const hpi::Vfs& vfs) {
         if(p.layout!=Islands)for(auto target:r.starts)
             if(d[size_t(target.second)*w+target.first]<0)throw std::runtime_error("Random map scenery blocks an army route");
         for(size_t j=roundDeposits;j<deposits.size();++j)
-            if(d[size_t(deposits[j].second)*w+deposits[j].first]>=0)scatterReached[j-roundDeposits]=1;
+            if((j>=padBegin&&j<padEnd)||d[size_t(deposits[j].second)*w+deposits[j].first]>=0)scatterReached[j-roundDeposits]=1;
     }
     if(std::find(scatterReached.begin(),scatterReached.end(),0)!=scatterReached.end())
         throw std::runtime_error("Random map scattered mana is unreachable");

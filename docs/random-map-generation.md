@@ -53,7 +53,11 @@ below), so a recipe saved earlier may now come out with mountains it lacked.
   branches are cut back to the plateau ramps (two per home, one per block), one in
   five left as a dead end. Each dead end finishes in a pad holding a sacred stone
   (neutral mana, reached along the walkways, in the shipped tier mix). Lava pads
-  (*isle1–4*) dot about one lava section in six; nothing walks to them. Walkways,
+  (*isle1–4*) dot the lava at the recipe's water amount (`waterDensity`/576 of the
+  lava sections: one in six at the default 96, none at 0); nothing walks to them.
+  Each pad holds a sacred stone too (`Result::padMana`, not counted as scattered
+  mana), a bonus only flying builders claim, so the final reachability check leaves
+  them out. Walkways,
   ramp landings and a lane from each start to its ramps are kept clear of ruins.
 
 **Volcano** is Iron Plague's lava world (`kingdom=volcano`, the world of the

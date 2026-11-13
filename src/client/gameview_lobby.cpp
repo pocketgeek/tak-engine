@@ -1237,6 +1237,7 @@ std::string defaultGameName(const std::string& player) {
                 std::string("FORESTS: ") + (tak::mapgen::worldHasForests(gp.mapType) ? level(gp.treeDensity) : "NONE"),
                 std::string(tak::mapgen::lavaWorld(gp.mapType) ? "RUINS: " : "ROCKS: ") + level(gp.rockDensity),
                 std::string("MANA: ") + level(gp.manaDensity),
+                gp.layout == tak::mapgen::IndustrialZone ? std::string("LAVA PADS: ") + level(gp.waterDensity) :
                 std::string(tak::mapgen::lavaWorld(gp.mapType) ? "LAVA: " : "WATER: ") +
                     (tak::mapgen::automaticWater(gp.layout) ? "AUTO" : level(gp.waterDensity)),
                 std::string("HILLS: ") + (tak::mapgen::hillsPossible(gp.mapType, gp.layout) ? level(gp.reliefDensity) :

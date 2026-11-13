@@ -277,7 +277,10 @@ int seatedHumans(const tak::net::RoomView& room) {
         // level, not a count: the same level puts four times as many on a map twice as
         // wide). Five notches, NONE..MAX; MAX = a six-spot home's density.
         slider(5, "SCATTERED MANA", uint8_t(genParams_.manaScatter * 255 / (tak::mapgen::kScatterLevels - 1)));
-        slider(3, tak::mapgen::lavaWorld(world) ? "LAVA" : "WATER", genParams_.waterDensity, !tak::mapgen::automaticWater(layout));
+        // Industrial Zone's lava is its own; the slider sets its cut-off pads instead.
+        const bool pads = layout == tak::mapgen::IndustrialZone;
+        slider(3, pads ? "LAVA PADS" : tak::mapgen::lavaWorld(world) ? "LAVA" : "WATER", genParams_.waterDensity,
+               pads || !tak::mapgen::automaticWater(layout));
         slider(4, layout==tak::mapgen::Highlands?"HIGHLANDS":"HILLS", genParams_.reliefDensity,
                tak::mapgen::hillsPossible(world, layout), layout==tak::mapgen::Maze ? "AUTO" : "NONE");
         // v10 retail kits. Maze walls and Creon highlands are the layout's own high
