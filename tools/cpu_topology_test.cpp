@@ -47,6 +47,29 @@ int main() {
         check(!cpus.canPin,"a system that cannot pin says so");
         check(!pinThisThread(cpus.order.empty() ? 0 : cpus.order.front()),"a pin is refused where the system cannot pin");
     }
+    // CCDs (PIN TO CCDS): every CPU in exactly one, and the whole process pinned to the
+    // first and back (Linux and Windows; macOS lists none and pins nothing).
+    const std::vector<Ccd> ccds=detectCcds();
+    for (size_t i=0;i<ccds.size();++i)
+        std::printf("CCD %zu: cpus %s, %u performance + %u efficiency cores, %u threads; L1 %u+%u KB, L2 %u KB per core, L3 %u KB; up to %u MHz\n",
+                    i+1,cpuRangesText(ccds[i].cpus).c_str(),ccds[i].perf,ccds[i].eff,ccds[i].threads,
+                    ccds[i].l1dKB,ccds[i].l1iKB,ccds[i].l2KB,ccds[i].l3KB,ccds[i].maxMHz);
+#if defined(__linux__) || defined(_WIN32)
+    check(!ccds.empty(),"the CPUs fall into at least one CCD");
+    unsigned grouped=0;
+    for (const Ccd& c:ccds) grouped+=unsigned(c.cpus.size());
+    check(grouped>=SimPool::usableCpus(),"every CPU is in a CCD");
+    if (!ccds.empty() && cpus.canPin) {
+        const std::vector<int> launch=launchCpus();
+        std::vector<int> first;
+        for (const int cpu:ccds.front().cpus) if (std::find(launch.begin(),launch.end(),cpu)!=launch.end()) first.push_back(cpu);
+        check(first.empty() || setProcessCpus(first),"pinning the process to the first CCD");
+        check(first.empty() || SimPool::usableCpus()==first.size(),"the process then uses that CCD's CPUs only");
+        check(setProcessCpus({}) && SimPool::usableCpus()==launch.size(),"and back to every CPU it had");
+    }
+#else
+    check(!setProcessCpus({0}),"a system that cannot pin refuses a process pin");
+#endif
     std::printf("%s\n",failures ? "FAILED" : "PASS: this machine's CPUs are detected and a thread pins to the first of them");
     return failures ? 1 : 0;
 }

@@ -246,6 +246,9 @@ Settings loadSettings(bool* fileFound) {
         // where the value is used, so a profile keeps a bigger machine's choice.
         else if (key == "simThreads")      s.simThreads = asInt(0, int(sim::SimPool::kMaxChoice));
         else if (key == "simPin")          s.simPin = asBool();
+        else if (key == "ccdPin")          s.ccdPin = asBool();
+        else if (key == "ccdGame")         s.ccdGame = asInt(-1, 63);
+        else if (key == "ccdServer")       s.ccdServer = asInt(-1, 63);
         else if (key == "playerName")      s.playerName = val;
         else if (key == "accountName")     s.accountName = val;
         else if (key == "streamRememberKey") s.streamRememberKey = asBool();
@@ -356,6 +359,9 @@ std::string serializeSettings(const Settings& s) {
     o << "smoothMotion = " << (s.smoothMotion ? 1 : 0) << "\n";
     o << "simThreads = " << std::clamp(s.simThreads, 0, int(sim::SimPool::kMaxChoice)) << "\n";
     o << "simPin = " << (s.simPin ? 1 : 0) << "\n";
+    o << "ccdPin = " << (s.ccdPin ? 1 : 0) << "\n";
+    o << "ccdGame = " << s.ccdGame << "\n";
+    o << "ccdServer = " << s.ccdServer << "\n";
     o << "playerName = " << s.playerName << "\n";
     o << "accountName = " << s.accountName << "\n";
     o << "streamRememberKey = " << (s.streamRememberKey ? 1 : 0) << "\n";

@@ -40,10 +40,44 @@ CpuTopology detectCpus();
 // are plain cores. A CPU whose topology cannot be read: every CPU is a core of its own.
 CpuTopology readLinuxCpus(const std::filesystem::path& root,std::vector<int> allowed);
 
+// A CCD (core complex die): the CPUs that share one L3 cache. PIN TO CCDS (Options >
+// GAME) keeps the game on one and its local server on one (the same, if chosen).
+struct Ccd {
+    std::vector<int> cpus;                    // logical CPU ids, lowest first
+    unsigned perf=0,eff=0,threads=0;          // its cores by kind (one kind: perf), and CPUs
+    unsigned l1dKB=0,l1iKB=0,l2KB=0;          // each core's own caches; 0: not known
+    unsigned l3KB=0;                          // the L3 its cores share; 0: not known
+    unsigned maxMHz=0;                        // its fastest core's top clock; 0: not known
+    constexpr unsigned cores() const { return perf+eff; }
+};
+// Every CPU the system has, grouped by the L3 each shares, by lowest CPU id: not only the
+// CPUs this process may use, so the list does not shrink once the game is pinned to one.
+// One entry for a CPU with a single L3 (or none reported); empty where the system says
+// nothing (macOS). Linux: sysfs cache/index*; Windows: GetLogicalProcessorInformationEx,
+// processor group 0. Debug builds: TAK_CPU_SYSFS reads a fixture tree, as detectCpus.
+std::vector<Ccd> detectCcds();
+// The Linux reader, on the sysfs tree at `root` (/sys; a fixture in tests).
+std::vector<Ccd> readLinuxCcds(const std::filesystem::path& root);
+// The threads a simulation gets on a CCD at AUTO: one for each performance core (each core,
+// without the split), as SimPool::autoThreads.
+inline unsigned ccdThreads(const Ccd& ccd) { return std::max(ccd.perf,1u); }
+// Index of the CCD with the largest L3 when one is larger than all the others (an X3D's
+// 3D V-Cache die), else -1.
+int largestL3(const std::vector<Ccd>& ccds);
+
+// The CPUs this process could use when it started (its affinity mask then), read on the
+// first call: each program calls it early, before any change.
+const std::vector<int>& launchCpus();
+// Every thread of this process, those running and those started later, on `cpus` (only
+// those it could use at launch); empty: back to launchCpus(). False, and nothing changed,
+// where the system cannot pin (macOS) or no listed CPU may be used.
+bool setProcessCpus(const std::vector<int>& cpus);
+
 // "1,3,5-7" (a kernel cpulist, and takserver --sim-cpus): the ids in the order given.
 // False for anything else, an empty text included.
 bool parseCpuList(std::string_view text,std::vector<int>& out);
 std::string cpuListText(const std::vector<int>& cpus);   // "1,3,5,6,7"
+std::string cpuRangesText(const std::vector<int>& cpus); // "1,3,5-7" (sorted ids, runs as ranges)
 // What a "sim threads:" log line says after its count: " pinned to cpus 4,6" for the
 // CPUs in `cpus` (already text; several games' joined by " / "), then how many of the
 // simulation's threads have none; nothing when `cpus` is empty.

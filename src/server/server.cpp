@@ -4039,6 +4039,20 @@ static int serverMain(int argc, char** argv) {
                 return 1;
             }
         }
+        else if (!std::strcmp(argv[i], "--cpus") && i + 1 < argc) {
+            // Every thread of this server on these CPUs (a game's PIN TO CCDS puts its
+            // local server on one CCD this way): set at once, before any thread starts.
+            std::vector<int> cpus;
+            if (!tak::sim::parseCpuList(argv[++i], cpus)) {
+                std::fprintf(stderr, "takserver: --cpus must be a list of CPU numbers such as 8-15,24-31\n");
+                return 1;
+            }
+            if (tak::sim::setProcessCpus(cpus))
+                std::fprintf(stderr, "takserver: running on cpus %s\n", tak::sim::cpuRangesText(cpus).c_str());
+            else
+                std::fprintf(stderr, "takserver: could not keep this server to cpus %s; it runs on every CPU it may use\n",
+                             tak::sim::cpuRangesText(cpus).c_str());
+        }
         else if (!std::strcmp(argv[i], "--sim-cpus") && i + 1 < argc) {
             // none (the default), auto (this process's CPUs in the order threads take
             // them: performance cores, efficiency cores, hyperthreads; none where the
@@ -4093,7 +4107,7 @@ static int serverMain(int argc, char** argv) {
                         "                 [--acme-email address] [--acme-state directory] [--acme-staging]\n"
                         "                 [--allow-plaintext] (trusted LAN/test networks only)\n"
                         "                 [--map-cache-dir <writable directory>]\n"
-                        "                 [--sim-threads <auto|N>] [--sim-cpus <list|auto|none>]\n"
+                        "                 [--sim-threads <auto|N>] [--sim-cpus <list|auto|none>] [--cpus <list>]\n"
                         "                 [--max-games N] [--max-running-games N] [--max-accounts N]\n"
                         "                 [--map-memory-mib N] [--map-storage-mib N]\n"
                         "                 [--replay-memory-mib N] [--replay-storage-mib N]\n"
@@ -4119,6 +4133,8 @@ static int serverMain(int argc, char** argv) {
                         "  then efficiency cores, then hyperthreads. Each running game takes the\n"
                         "  next CPUs of the list, one per thread; threads beyond the end of the\n"
                         "  list are not pinned.\n"
+                        "  --cpus keeps every thread of the server on those CPUs (a list such as\n"
+                        "  8-15,24-31); --sim-threads auto then counts only them.\n"
                         "  --seed N (0 included) pins every game's RNG seed, so a headless run is\n"
                         "  repeatable. Games are otherwise seeded randomly (which is what\n"
                         "  makes Random Start Locations differ game to game).\n"

@@ -89,6 +89,44 @@ static void checkCpus() {
     check(is(readLinuxCpus(roots.back()/"nothing-here",{3,5,9}),3,0,0,"3,5,9"),"unreadable sysfs: every usable CPU is a core",3);
     check(mixed.known && readLinuxCpus(roots.back(),{}).known && !readLinuxCpus(roots.back()/"nothing-here",{3,5,9}).known,
           "a tree that was read is known; the fallback of plain cores is not",0);
+    // CCDs (sim::readLinuxCcds): a 7950X3D's two dies, 8 hyperthreaded cores each, the
+    // first with 96 MB of L3 (3D V-Cache), the second 32 MB; and a CPU with one L3.
+    {
+        cpus.clear();
+        for (int i=0;i<32;++i) {
+            const int core=i%16;
+            cpus.push_back({i,std::to_string(core)+","+std::to_string(core+16),0,core,0});
+        }
+        roots.push_back(fakeSysfs("x3d",cpus,nullptr,nullptr));
+        auto put=[](const fs::path& file,const std::string& text) {
+            fs::create_directories(file.parent_path());
+            std::ofstream(file)<<text<<"\n";
+        };
+        for (int i=0;i<32;++i) {
+            const fs::path cpu=roots.back()/"devices"/"system"/"cpu"/("cpu"+std::to_string(i));
+            const bool first=i%16<8;
+            const char* levels[][3]={{"1","Data","32K"},{"1","Instruction","32K"},{"2","Unified","1024K"},
+                                     {"3","Unified",first ? "98304K" : "32768K"}};
+            for (int k=0;k<4;++k) {
+                const fs::path index=cpu/"cache"/("index"+std::to_string(k));
+                put(index/"level",levels[k][0]);put(index/"type",levels[k][1]);put(index/"size",levels[k][2]);
+                if (k==3) put(index/"shared_cpu_list",first ? "0-7,16-23" : "8-15,24-31");
+            }
+            put(cpu/"cpufreq"/"cpuinfo_max_freq",first ? "5250000" : "5759000");
+        }
+        const auto ccds=readLinuxCcds(roots.back());
+        check(ccds.size()==2 && cpuRangesText(ccds[0].cpus)=="0-7,16-23" && cpuRangesText(ccds[1].cpus)=="8-15,24-31",
+              "two CCDs, by the L3 their CPUs share",32);
+        check(ccds.size()==2 && ccds[0].perf==8 && ccds[0].eff==0 && ccds[0].threads==16 && ccdThreads(ccds[0])==8 &&
+              ccds[0].l1dKB==32 && ccds[0].l1iKB==32 && ccds[0].l2KB==1024 && ccds[0].l3KB==96*1024 &&
+              ccds[1].l3KB==32*1024 && ccds[0].maxMHz==5250 && ccds[1].maxMHz==5759,"each CCD's cores, caches and clock",32);
+        check(largestL3(ccds)==0,"the 3D V-Cache die has the largest L3",32);
+        // One L3 for every CPU (the hybrid tree has no cache files at all): one CCD.
+        const auto single=readLinuxCcds(roots[0]);
+        check(single.size()==1 && single[0].threads==24 && single[0].perf==8 && single[0].eff==16 && largestL3(single)==0 &&
+              largestL3({Ccd{},Ccd{}})==-1,"one L3: one CCD; equal L3s: none is the largest",24);
+        check(cpuRangesText({16,1,2,3,7,8})=="1-3,7,8,16" && cpuRangesText({})=="","CPU ranges for the eye",0);
+    }
     for (const fs::path& root:roots) { std::error_code ec;fs::remove_all(root.parent_path(),ec); }
     std::vector<int> list;
     check(parseCpuList("1,3,5-7",list) && cpuListText(list)=="1,3,5,6,7" && parseCpuList("4",list) && list==std::vector<int>{4} &&

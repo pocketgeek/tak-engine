@@ -3251,6 +3251,18 @@ if(TAK_BUILD_CLIENT)
           --shot "${CMAKE_CURRENT_BINARY_DIR}/options-datafolder.png")
       set_tests_properties(options_datafolder PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: Options data folder")
+      # Options > PIN TO CCDS on two-CCD and one-CCD sysfs fixtures (the test writes them
+      # and points TAK_CPU_SYSFS at them): offered or not, what it greys, each slider's
+      # CCD stats, and the session plan. Nothing is saved or pinned.
+      add_test(NAME options_ccd COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_OPTIONS_CCD_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/options-ccd-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/options-ccd-profile
+          TAK_SETTINGS_FILE=${CMAKE_CURRENT_BINARY_DIR}/options-ccd-settings.ini
+          $<TARGET_FILE:takclient> --data "${TAK_TEST_DATA}" --winsize 1280 960
+          --shot "${CMAKE_CURRENT_BINARY_DIR}/options-ccd.png")
+      set_tests_properties(options_ccd PROPERTIES TIMEOUT 90 LABELS quick
+          PASS_REGULAR_EXPRESSION "PASS: Options PIN TO CCDS")
       # RESTART NOW end to end: the client execs itself and the new process mounts the
       # new folder (POSIX exec; Windows starts a second process, not testable this way).
       if(Python3_EXECUTABLE AND NOT WIN32)

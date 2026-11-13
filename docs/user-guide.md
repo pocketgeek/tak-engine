@@ -243,7 +243,7 @@ The **Settings** button opens:
 
 | Entry | What it does |
 | --- | --- |
-| **Game** | Player name, game data folder, **Simulation threads** and **Pin simulation threads**. See [Options](#options) and [Performance](#performance). |
+| **Game** | Player name, game data folder, **Simulation threads**, **Pin simulation threads** and **Pin to CCDs**. See [Options](#options) and [Performance](#performance). |
 | **Graphics** | Display and graphics settings. See [Options](#options). |
 | **User Interface** | Interface, camera (with tactical dots and screen shake) and cursor settings. See [Options](#options). |
 | **Audio** | Sound device, volumes, speakers and custom music. See [Audio](#audio). |
@@ -1945,8 +1945,8 @@ at the bottom right). A
 slider is saved when you let go of it, a dropdown when you pick a choice, and your player name when you press
 Enter or click elsewhere. **Defaults** asks first (**Reset to defaults?**
 **Yes** / **No**), then puts that page's options back to their defaults; the
-**Game** page's puts **Simulation threads** back to Auto and **Pin simulation
-threads** back Off, and leaves your player name
+**Game** page's puts **Simulation threads** back to Auto, **Pin simulation
+threads** and **Pin to CCDs** back Off and both CCDs back to Auto, and leaves your player name
 and data folder alone, and no page touches
 key bindings, audio or voice chat. It also sets UI Scale and Cursor Size
 back to 100% and 1×, not to the display scale the
@@ -1994,6 +1994,8 @@ The **Performance** section of the **Game** page (**Settings → Game**, or
 | --- | --- | --- |
 | **Simulation threads** | Auto | How many of your processor's threads the game's simulations may use. The slider starts at **Auto** on the left, then goes from 1 up to twice the threads your computer has (at most 128). |
 | **Pin simulation threads** | Off | On keeps each simulation thread on a processor core of its own. Off lets the system place and move them. Greyed out on macOS, which does not let a game pin threads. |
+| **Pin to CCDs** | Off | On a processor with two or more CCDs, keeps every thread of the game on one CCD and every thread of its local server on one. Greyed out on a processor with one CCD, and on macOS. |
+| **Game CCD**, **Local server CCD** | Auto | Which CCD each runs on while **Pin to CCDs** is on. They may be the same one. |
 
 Many processors have two kinds of core, fast **performance cores** and slower
 **efficiency cores**, and some run two threads on a core (**hyperthreading**).
@@ -2045,6 +2047,34 @@ simulation threads**, applies from the next game
 you open (a game, a replay or a Benchmark), not to one already open. If your
 settings file comes from a computer with more threads than this one has, the
 slider shows this computer's highest value.
+
+#### Pin to CCDs
+
+Some processors, such as AMD's Ryzen 9 chips, are built from two or more **CCDs**
+(core complex dies): groups of cores, each with its own large **L3 cache**. On
+some X3D processors one CCD has much more L3 (3D V-Cache) than the other. A
+thread that moves between CCDs leaves its cached data behind, so keeping the
+game on one CCD and its local server on another can help in big battles.
+
+**Pin to CCDs** is offered only on a processor with two or more CCDs, and not on
+macOS. Turned on, it replaces **Simulation threads** and **Pin simulation
+threads**, which grey out: every thread of the game (drawing, sound and its
+simulation alike) stays on the **Game CCD**, and every thread of its local
+server on the **Local server CCD**, in single player, a [Local
+server](#local-server) you host and the [Benchmark](#benchmark). Each simulation
+gets a thread for each core of its CCD; if you put both on the same CCD, they
+get half each. A game on someone else's server, or a replay, runs on the Game
+CCD alone.
+
+Each slider steps through **Auto** and then each CCD, and the lines under it
+describe the CCD it is on: its processor numbers, cores and threads, top clock
+speed (Linux), and its caches: L1 and L2 for each core, and the L3 its cores
+share. The CCD with the largest L3 is marked, as it is usually the best one for
+the game. **Auto** puts the game on that CCD (or the first, when they are all
+alike) and the local server on the first other one. Like the other two
+settings, it never changes what happens in a game, and applies from the next
+game you open. Use the [Benchmark](#benchmark) to see whether it helps on your
+computer.
 
 ### Audio
 
@@ -3295,7 +3325,10 @@ threads the game (**Client**) and its local server (**Server**) each ran on, the
 the [Simulation threads](#performance) value the run was opened with, **Auto**
 or the number, so runs that differ only in that can be told apart. **Pin sim
 threads** under it reads **On** when the run's threads were pinned
-([Pin simulation threads](#performance)), else **Off**.
+([Pin simulation threads](#performance)), else **Off**. A run with [Pin to
+CCDs](#pin-to-ccds) on says **CCDs** after the thread counts instead, and lists
+**Pin to CCDs** with the game's and the server's CCD in place of **Pin sim
+threads**.
 
 **Save as JPG**, beside **Done**, saves the results screen as a picture: the
 whole window as shown, without the pointer. It goes in a `benchmarks` folder in

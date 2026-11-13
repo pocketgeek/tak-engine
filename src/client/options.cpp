@@ -1,4 +1,5 @@
 #include "client/options.h"
+#include "client/ccdpin.h"
 
 #include "client/uitext.h"
 #include "client/chatbox.h"   // wrap
@@ -527,6 +528,10 @@ void OptionsScreen::build(int channels) {
     section("PERFORMANCE");
     {
         const sim::CpuTopology cpus = sim::detectCpus();
+        // PIN TO CCDS (below) replaces both of these rows while it is on.
+        const std::vector<sim::Ccd> ccds = sim::detectCcds();
+        const bool ccdOffered = client::ccdPinningAvailable(ccds, cpus);
+        const auto ccdOn = [this, ccdOffered] { return ccdOffered && s_.ccdPin; };
         const int threads = int(cpus.threads());
         const int most = int(sim::SimPool::maxChoice(cpus.threads()));
         const bool split = cpus.eff > 0;
@@ -541,6 +546,7 @@ void OptionsScreen::build(int channels) {
         ctls_.back().band = [cpus](float v) {   // AUTO is the performance cores: blue
             return v < 0.5f ? 0 : int(sim::SimPool::band(unsigned(v + 0.5f), cpus));
         };
+        ctls_.back().enabled = [ccdOn] { return !ccdOn(); };
         ctls_.back().help = [cpus, split] {
             std::string colours = split ? "BLUE REACHES THE PERFORMANCE CORES" : "BLUE REACHES THE CORES";
             if (split) colours += ", GREEN THE EFFICIENCY CORES";
@@ -552,7 +558,8 @@ void OptionsScreen::build(int channels) {
                 colours + ". RED IS MORE THREADS THAN THIS COMPUTER HAS.",
                 "IT NEVER CHANGES A GAME'S OUTCOME. APPLIES FROM THE NEXT GAME YOU OPEN."};
         };
-        ctls_.push_back({Control::Info, "SIMULATION THREADS INFO", 0, 0, {}, {}, {}, {}, [this, cpus, threads, split, count] {
+        ctls_.push_back({Control::Info, "SIMULATION THREADS INFO", 0, 0, {}, {}, {}, {}, [this, cpus, threads, split, count, ccdOn] {
+            if (ccdOn()) return std::vector<std::string>{"PIN TO CCDS IS ON: EACH SIMULATION GETS A THREAD FOR EACH CORE OF ITS CCD."};
             const auto local = sim::SimPool::sessionThreads(s_.simThreads, cpus, true);
             return std::vector<std::string>{
                 "THIS COMPUTER HAS " +
@@ -568,14 +575,15 @@ void OptionsScreen::build(int channels) {
         const bool canPin = cpus.canPin;
         toggle("PIN SIMULATION THREADS", [this, canPin] { return s_.simPin && canPin ? 1.0f : 0.0f; },
                [this](float v) { s_.simPin = v > 0.5f; });
-        ctls_.back().enabled = [canPin] { return canPin; };
+        ctls_.back().enabled = [canPin, ccdOn] { return canPin && !ccdOn(); };
         ctls_.back().help = [canPin] {
             if (!canPin) return std::vector<std::string>{"OFF: MACOS DOES NOT LET A GAME PIN THREADS."};
             return std::vector<std::string>{
                 "KEEPS EACH SIMULATION THREAD ON A CPU CORE OF ITS OWN. OFF LETS THE SYSTEM MOVE THEM.",
                 "IT NEVER CHANGES A GAME'S OUTCOME. APPLIES FROM THE NEXT GAME YOU OPEN."};
         };
-        ctls_.push_back({Control::Info, "PIN SIMULATION THREADS INFO", 0, 0, {}, {}, {}, {}, [this, canPin, threads, split] {
+        ctls_.push_back({Control::Info, "PIN SIMULATION THREADS INFO", 0, 0, {}, {}, {}, {}, [this, canPin, threads, split, ccdOn] {
+            if (ccdOn()) return std::vector<std::string>{"PIN TO CCDS IS ON: THE GAME AND ITS LOCAL SERVER EACH STAY ON THEIR CCD."};
             if (!canPin) return std::vector<std::string>{"MACOS DOES NOT LET A GAME PIN THREADS, SO THE SYSTEM PLACES THEM."};
             if (!s_.simPin) return std::vector<std::string>{"THREADS ARE NOT PINNED: THE SYSTEM PLACES THEM."};
             return std::vector<std::string>{
@@ -584,6 +592,80 @@ void OptionsScreen::build(int channels) {
                            : "CORES FIRST, THEN HYPERTHREADS.") +
                     " THREADS BEYOND THE COMPUTER'S " + std::to_string(threads) + " ARE NOT PINNED."};
         }});
+
+        // PIN TO CCDS: a CPU of two or more CCDs (dies, each with its own L3 cache) keeps
+        // the game on one and its local server on one, which may be the same; each slider
+        // steps through the CCDs (AUTO first) and the lines under it describe the CCD it
+        // is on (client/ccdpin.h). Offered only where it can work; while on, the two rows
+        // above are greyed.
+        toggle("PIN TO CCDS", [this, ccdOffered] { return s_.ccdPin && ccdOffered ? 1.0f : 0.0f; },
+               [this](float v) { s_.ccdPin = v > 0.5f; });
+        ctls_.back().enabled = [ccdOffered] { return ccdOffered; };
+        ctls_.back().help = [ccdOffered, canPin] {
+            if (!canPin) return std::vector<std::string>{"OFF: MACOS DOES NOT LET A GAME PIN THREADS."};
+            if (!ccdOffered) return std::vector<std::string>{"OFF: ALL OF THIS CPU'S CORES SHARE ONE L3 CACHE (ONE CCD)."};
+            return std::vector<std::string>{
+                "KEEPS EVERY THREAD OF THE GAME ON ONE CCD AND EVERY THREAD OF ITS LOCAL SERVER ON ONE (THE SAME ONE IF YOU LIKE).",
+                "WHILE ON, IT REPLACES SIMULATION THREADS AND PIN SIMULATION THREADS: EACH SIMULATION GETS A THREAD FOR EACH CORE "
+                "OF ITS CCD, HALF EACH WHEN THEY SHARE ONE.",
+                "IT NEVER CHANGES A GAME'S OUTCOME. APPLIES FROM THE NEXT GAME YOU OPEN."};
+        };
+        if (!ccdOffered) {
+            ctls_.push_back({Control::Info, "PIN TO CCDS INFO", 0, 0, {}, {}, {}, {}, [canPin, n = ccds.size()] {
+                if (!canPin) return std::vector<std::string>{"MACOS DOES NOT LET A GAME PIN THREADS."};
+                return std::vector<std::string>{n <= 1 ? "THIS CPU HAS ONE CCD: ALL ITS CORES SHARE ONE L3 CACHE."
+                                                       : "THIS CPU'S CCDS COULD NOT BE READ."};
+            }});
+        } else {
+            const int n = int(ccds.size()), largest = sim::largestL3(ccds);
+            const auto size = [](unsigned kb) {
+                return kb >= 1024 && kb % 1024 == 0 ? std::to_string(kb / 1024) + " MB" : std::to_string(kb) + " KB";
+            };
+            // A CCD's stats: its CPUs, cores and clock; its caches; whether it is the V-Cache die.
+            const auto stats = [ccds, n, largest, size](int i) {
+                const sim::Ccd& c = ccds[size_t(i)];
+                std::string cores = c.eff ? std::to_string(c.perf) + " PERFORMANCE + " + std::to_string(c.eff) + " EFFICIENCY CORES"
+                                          : std::to_string(c.perf) + (c.perf == 1 ? " CORE" : " CORES");
+                std::string first = "CCD " + std::to_string(i + 1) + " OF " + std::to_string(n) + ": CPUS " + sim::cpuRangesText(c.cpus) +
+                                    ". " + cores + ", " + std::to_string(c.threads) + " THREADS";
+                if (c.maxMHz) first += ", UP TO " + std::to_string(c.maxMHz) + " MHZ";
+                std::vector<std::string> out{first + "."};
+                std::string cache;
+                if (c.l1dKB || c.l1iKB) cache += "L1 " + size(c.l1dKB) + " DATA + " + size(c.l1iKB) + " INSTRUCTION";
+                if (c.l2KB) cache += (cache.empty() ? "" : ", ") + std::string("L2 ") + size(c.l2KB);
+                if (!cache.empty()) cache += " PER CORE";
+                if (c.l3KB) cache += (cache.empty() ? "" : "; ") + std::string("L3 ") + size(c.l3KB) + " SHARED BY ITS CORES";
+                if (!cache.empty()) out.push_back("CACHE: " + cache + ".");
+                if (i == largest) out.push_back("THE LARGEST L3 OF THIS CPU (3D V-CACHE): USUALLY THE BEST CCD FOR THE GAME.");
+                return out;
+            };
+            const auto ccdSlider = [&](const char* label, int Settings::*field, bool game) {
+                slider(label, -1, float(n - 1),
+                       [this, field, n] { return float(s_.*field >= 0 && s_.*field < n ? s_.*field : -1); },
+                       [this, field, n](float v) { s_.*field = std::clamp(int(std::lround(v)), -1, n - 1); },
+                       [this, ccds, game](float v) {
+                           const auto c = client::resolveCcds(ccds, s_.ccdGame, s_.ccdServer);
+                           const int at = game ? c.game : c.server;
+                           return v < -0.5f ? "AUTO (CCD " + std::to_string(at + 1) + ")" : "CCD " + std::to_string(int(std::lround(v)) + 1);
+                       });
+                ctls_.back().enabled = ccdOn;
+                ctls_.back().help = [game] {
+                    return std::vector<std::string>{game
+                        ? "THE CCD EVERY THREAD OF THE GAME RUNS ON. AUTO IS THE ONE WITH THE LARGEST L3, ELSE THE FIRST."
+                        : "THE CCD EVERY THREAD OF THE LOCAL SERVER RUNS ON (SINGLE PLAYER, A LOCAL SERVER YOU HOST, THE BENCHMARK). "
+                          "AUTO IS THE FIRST ONE THE GAME IS NOT ON. IT MAY BE THE GAME'S OWN."};
+                };
+                ctls_.push_back({Control::Info, std::string(label) + " INFO", 0, 0, {}, {}, {}, {}, [this, ccds, stats, game] {
+                    const auto c = client::resolveCcds(ccds, s_.ccdGame, s_.ccdServer);
+                    auto lines = stats(game ? c.game : c.server);
+                    if (c.game == c.server) lines.push_back("THE GAME AND ITS LOCAL SERVER SHARE THIS CCD: HALF ITS CORES' THREADS EACH.");
+                    return lines;
+                }});
+                ctls_.back().enabled = ccdOn;
+            };
+            ccdSlider("GAME CCD", &Settings::ccdGame, true);
+            ccdSlider("LOCAL SERVER CCD", &Settings::ccdServer, false);
+        }
     }
 
     // DISPLAY: the window / output device itself.

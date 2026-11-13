@@ -190,7 +190,15 @@
         // SIMULATION THREADS as this run latched it (latchSimThreads): what its own
         // simulation and its local server's each ran on, then the setting they are the
         // halves of. Not the Options value now: a change in the Esc menu is for the next game.
-        {
+        if (ccdGame_) {   // PIN TO CCDS: each simulation a thread per core of its CCD
+            if (ccdServer_)
+                std::snprintf(b, sizeof b, "SIM THREADS CLIENT %u  SERVER %u  (CCDS)", simSession_.game, ccdServerThreads_);
+            else std::snprintf(b, sizeof b, "SIM THREADS CLIENT %u  (CCD)", simSession_.game);
+            settings.push_back(b);
+            if (ccdServer_) std::snprintf(b, sizeof b, "PIN TO CCDS  GAME CCD %d  SERVER CCD %d", ccdGame_, ccdServer_);
+            else std::snprintf(b, sizeof b, "PIN TO CCDS  GAME CCD %d", ccdGame_);
+            settings.push_back(b);
+        } else {
             char set[16] = "AUTO";
             if (simThreads_ > 0) std::snprintf(set, sizeof set, "%u", simSession_.total);
             if (simSession_.server)
@@ -200,7 +208,7 @@
         }
         // PIN SIMULATION THREADS as this run latched it: ON only if its threads really
         // were pinned (the setting on, and a system that can pin).
-        settings.push_back(std::string("PIN SIM THREADS ") + (simPin_ ? "ON" : "OFF"));
+        if (!ccdGame_) settings.push_back(std::string("PIN SIM THREADS ") + (simPin_ ? "ON" : "OFF"));
         std::snprintf(b, sizeof b, "RESOLUTION  %d X %d", winW, winH); settings.push_back(b);
         if (!benchGpuName_.empty()) settings.push_back(std::string("GPU         ") + benchGpuName_);
         {   // the backend that produced these numbers, and whether it was AUTO's pick

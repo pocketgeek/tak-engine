@@ -310,6 +310,7 @@ clients.
 | `--replay-storage-mib` | 4,096 | Each replay archive directory |
 | `--sim-threads` | `auto` | CPU threads the running games' simulations share |
 | `--sim-cpus` | `none` | CPUs those threads are pinned to: `none`, `auto` or a list |
+| `--cpus` | none | CPUs every thread of the server is kept on, a list such as `8-15,24-31` |
 
 A game limit refuses the request; it never disconnects the player. At `--max-games`
 the **CREATE** window says *CANNOT OPEN A GAME: server game capacity reached* and the
@@ -360,7 +361,10 @@ pin threads: there the option is ignored (a CPU list says so at startup,
 `auto` quietly pins nothing). A player's own single-player server and
 **Local server** are given the CPUs the game left them (every other one of
 the hand-out) when the player has turned **Pin simulation threads** on, and
-`none` while it is off, as it is by default.
+`none` while it is off, as it is by default. With **Pin to CCDs** on, the game
+starts its local server with `--cpus` set to the local server CCD's CPUs (every
+thread of the server stays on them, set before any thread starts; macOS ignores
+it) and `--sim-threads` set to its share, and no `--sim-cpus`.
 
 The packaged service passes neither option, so it runs the defaults (`auto`,
 `none`). To change them, put them in the settings drop-in's extra arguments (see

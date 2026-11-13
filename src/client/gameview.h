@@ -284,6 +284,9 @@ public:
     // thread where it ticks the World itself (a replay, the headless harness).
     // Scheduling only, never a hash.
     void latchSimThreads(int choice, bool localServer, bool pin);
+    // PIN TO CCDS as this session latched it (client/ccdpin.h), for the Benchmark's results:
+    // the CCDs (1-based; server 0 = no local server) and the server's simulation threads.
+    void latchCcds(int gameCcd, int serverCcd, unsigned serverThreads) { ccdGame_ = gameCcd; ccdServer_ = serverCcd; ccdServerThreads_ = serverThreads; }
     // "sim threads: ..." on stderr: what this session's simulation runs on, why, and the
     // CPUs its threads are pinned to. ownThread: the sim worker ticks it, not the main thread.
     void logSimThreads(bool ownThread) const;
@@ -2502,6 +2505,8 @@ private:
     tak::sim::SimPool::Session simSession_{1, 1, 0};  // ... as the threads set, this simulation's and its local server's (0: none)
     bool simDebugAuto_ = false;                       // ... AUTO decided by a debug build's TAK_SIM_WORKERS
     bool simPin_ = false;                             // ... pinned to CPUs (latchSimThreads)
+    int ccdGame_ = 0, ccdServer_ = 0;                 // latchCcds: PIN TO CCDS' CCDs (0 = off)
+    unsigned ccdServerThreads_ = 0;
     std::vector<int> simCpus_;                        // ... these, by slot: [0] the thread that ticks the World, then its pool's workers
     std::unique_ptr<tak::OptionsScreen> options_;     // in-game Options overlay
     std::unique_ptr<tak::HotkeysScreen> hotkeysScreen_;   // opened from Options -> CONTROLS

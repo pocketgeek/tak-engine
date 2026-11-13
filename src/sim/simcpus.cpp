@@ -6,6 +6,7 @@
 #include <charconv>
 #include <cstdio>
 #include <fstream>
+#include <map>
 #include <thread>
 #if defined(__linux__)
 #include <pthread.h>
@@ -195,6 +196,21 @@ std::string cpuListText(const std::vector<int>& cpus) {
     return text;
 }
 
+std::string cpuRangesText(const std::vector<int>& cpus) {
+    std::vector<int> ids=cpus;
+    std::sort(ids.begin(),ids.end());
+    ids.erase(std::unique(ids.begin(),ids.end()),ids.end());
+    std::string text;
+    for (size_t i=0;i<ids.size();) {
+        size_t j=i;
+        while (j+1<ids.size() && ids[j+1]==ids[j]+1) ++j;
+        text+=(text.empty() ? "" : ",")+std::to_string(ids[i]);
+        if (j>i) text+=(j==i+1 ? "," : "-")+std::to_string(ids[j]);
+        i=j+1;
+    }
+    return text;
+}
+
 std::string pinnedText(const std::string& cpus,unsigned unpinned) {
     if (cpus.empty()) return {};
     std::string text=" pinned to cpus "+cpus;
@@ -248,6 +264,188 @@ CpuTopology readLinuxCpus(const std::filesystem::path& root,std::vector<int> all
         for (size_t i=0;i<cores.size() && have;++i) cores[i].perf=capacity[i]==top;
     }
     return ordered(std::move(cores));
+}
+
+namespace {
+// A sysfs cache size ("32K", "1024K", "32M"; bare: bytes) in KB; 0 when unreadable.
+unsigned sizeKB(const std::string& text) {
+    unsigned value=0;
+    const auto [end,error]=std::from_chars(text.data(),text.data()+text.size(),value);
+    if (error!=std::errc{}) return 0;
+    const std::string_view unit(end,size_t(text.data()+text.size()-end));
+    return unit=="K" ? value : unit=="M" ? value*1024 : unit=="G" ? value*1024*1024 : unit.empty() ? value/1024 : 0;
+}
+}
+
+std::vector<Ccd> readLinuxCcds(const std::filesystem::path& root) {
+    namespace fs=std::filesystem;
+    const fs::path cpuDir=root/"devices"/"system"/"cpu";
+    std::vector<int> ids;
+    std::error_code ec;
+    for (fs::directory_iterator it(cpuDir,ec),end;!ec && it!=end;it.increment(ec)) {
+        const std::string name=it->path().filename().string();
+        int id=0;
+        if (name.rfind("cpu",0)==0 && parseInt(std::string_view(name).substr(3),id)) ids.push_back(id);
+    }
+    std::sort(ids.begin(),ids.end());
+    // Each CPU's caches, and the L3 it shares (its shared_cpu_list is the group's key).
+    struct Caches { unsigned l1d=0,l1i=0,l2=0,l3=0;std::string l3Key; };
+    std::map<std::string,std::vector<int>> groups;
+    std::map<int,Caches> caches;
+    for (const int cpu:ids) {
+        Caches c;
+        for (int index=0;index<16;++index) {
+            const fs::path dir=cpuDir/("cpu"+std::to_string(cpu))/"cache"/("index"+std::to_string(index));
+            const std::string level=firstLine(dir/"level"),type=firstLine(dir/"type");
+            const unsigned size=sizeKB(firstLine(dir/"size"));
+            if (level=="1" && type=="Data") c.l1d=size;
+            else if (level=="1" && type=="Instruction") c.l1i=size;
+            else if (level=="2") c.l2=size;
+            else if (level=="3") { c.l3=size;c.l3Key=firstLine(dir/"shared_cpu_list"); }
+        }
+        groups[c.l3Key].push_back(cpu);
+        caches[cpu]=std::move(c);
+    }
+    std::vector<Ccd> out;
+    for (auto& [key,cpus]:groups) {
+        Ccd ccd;
+        ccd.cpus=cpus;
+        ccd.threads=unsigned(cpus.size());
+        const CpuTopology kinds=readLinuxCpus(root,cpus);
+        ccd.perf=kinds.perf;ccd.eff=kinds.eff;
+        const Caches& first=caches[cpus.front()];
+        ccd.l1dKB=first.l1d;ccd.l1iKB=first.l1i;ccd.l2KB=first.l2;ccd.l3KB=first.l3;
+        for (const int cpu:cpus) {
+            int khz=0;
+            if (parseInt(firstLine(cpuDir/("cpu"+std::to_string(cpu))/"cpufreq"/"cpuinfo_max_freq"),khz))
+                ccd.maxMHz=std::max(ccd.maxMHz,unsigned(khz/1000));
+        }
+        out.push_back(std::move(ccd));
+    }
+    std::sort(out.begin(),out.end(),[](const Ccd& a,const Ccd& b) {return a.cpus.front()<b.cpus.front();});
+    return out;
+}
+
+std::vector<Ccd> detectCcds() {
+    if (const char* fixture=tak::devEnv("TAK_CPU_SYSFS"); fixture && *fixture) return readLinuxCcds(fixture);
+#if defined(__linux__)
+    return readLinuxCcds("/sys");
+#elif defined(_WIN32)
+    // Group 0, as nativeCpus: an L3 record per CCD, a core record per core (its
+    // EfficiencyClass: the highest class is a performance core), L1 and L2 records.
+    DWORD size=0;
+    GetLogicalProcessorInformationEx(RelationAll,nullptr,&size);
+    std::vector<unsigned char> buffer(size);
+    if (!size || !GetLogicalProcessorInformationEx(RelationAll,
+            reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()),&size))
+        return {};
+    struct Cache { unsigned level,kb;PROCESSOR_CACHE_TYPE type;DWORD_PTR mask; };
+    struct CoreMask { DWORD_PTR mask;unsigned kind; };
+    std::vector<Cache> cacheRecords;
+    std::vector<CoreMask> cores;
+    unsigned top=0;
+    for (DWORD at=0;at<size;) {
+        const auto* info=reinterpret_cast<const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buffer.data()+at);
+        if (!info->Size) break;
+        if (info->Relationship==RelationCache && info->Cache.GroupMask.Group==0)
+            cacheRecords.push_back({unsigned(info->Cache.Level),unsigned(info->Cache.CacheSize/1024),info->Cache.Type,
+                                    DWORD_PTR(info->Cache.GroupMask.Mask)});
+        else if (info->Relationship==RelationProcessorCore && info->Processor.GroupCount>=1 &&
+                 info->Processor.GroupMask[0].Group==0) {
+            cores.push_back({DWORD_PTR(info->Processor.GroupMask[0].Mask),unsigned(info->Processor.EfficiencyClass)});
+            top=std::max(top,unsigned(info->Processor.EfficiencyClass));
+        }
+        at+=info->Size;
+    }
+    std::vector<DWORD_PTR> l3;
+    for (const Cache& c:cacheRecords) if (c.level==3 && c.mask) l3.push_back(c.mask);
+    if (l3.empty()) {
+        DWORD_PTR all=0;
+        for (const CoreMask& c:cores) all|=c.mask;
+        if (all) l3.push_back(all);
+    }
+    bool split=false;
+    for (const CoreMask& c:cores) split|=c.kind!=top;
+    std::vector<Ccd> out;
+    for (const DWORD_PTR group:l3) {
+        Ccd ccd;
+        for (int bit=0;bit<int(sizeof(DWORD_PTR)*8);++bit) if (group>>bit&1) ccd.cpus.push_back(bit);
+        if (ccd.cpus.empty()) continue;
+        ccd.threads=unsigned(ccd.cpus.size());
+        for (const CoreMask& c:cores) if (c.mask&group) ++(!split || c.kind==top ? ccd.perf : ccd.eff);
+        const DWORD_PTR first=DWORD_PTR(1)<<ccd.cpus.front();
+        for (const Cache& c:cacheRecords) {
+            if (!(c.mask&first)) continue;
+            if (c.level==1 && c.type==CacheData) ccd.l1dKB=c.kb;
+            else if (c.level==1 && c.type==CacheInstruction) ccd.l1iKB=c.kb;
+            else if (c.level==2) ccd.l2KB=c.kb;
+            else if (c.level==3) ccd.l3KB=c.kb;
+        }
+        out.push_back(std::move(ccd));
+    }
+    std::sort(out.begin(),out.end(),[](const Ccd& a,const Ccd& b) {return a.cpus.front()<b.cpus.front();});
+    return out;
+#else
+    return {};
+#endif
+}
+
+int largestL3(const std::vector<Ccd>& ccds) {
+    int best=-1;
+    for (int i=0;i<int(ccds.size());++i)
+        if (best<0 || ccds[size_t(i)].l3KB>ccds[size_t(best)].l3KB) best=i;
+    for (int i=0;best>=0 && i<int(ccds.size());++i)
+        if (i!=best && ccds[size_t(i)].l3KB>=ccds[size_t(best)].l3KB) return -1;
+    return best;
+}
+
+const std::vector<int>& launchCpus() {
+    static const std::vector<int> cpus=[] {
+        std::vector<int> out;
+#if defined(__linux__)
+        cpu_set_t set;
+        if (processCpus(set))
+            for (int c=0;c<CPU_SETSIZE;++c) if (CPU_ISSET(c,&set)) out.push_back(c);
+#elif defined(_WIN32)
+        const DWORD_PTR mask=processCpus();
+        for (int bit=0;bit<int(sizeof(DWORD_PTR)*8);++bit) if (mask>>bit&1) out.push_back(bit);
+#endif
+        return out;
+    }();
+    return cpus;
+}
+
+bool setProcessCpus(const std::vector<int>& cpus) {
+    const std::vector<int>& launch=launchCpus();
+    std::vector<int> use;
+    if (cpus.empty()) use=launch;
+    else for (const int cpu:cpus) if (std::find(launch.begin(),launch.end(),cpu)!=launch.end()) use.push_back(cpu);
+    if (use.empty()) return false;
+#if defined(__linux__)
+    // sched_setaffinity sets one thread: set each of this process's (twice, for a thread
+    // started meanwhile by one not yet set; later ones take their creator's).
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    for (const int cpu:use) if (cpu<CPU_SETSIZE) CPU_SET(cpu,&set);
+    bool any=false;
+    for (int pass=0;pass<2;++pass) {
+        std::error_code ec;
+        for (std::filesystem::directory_iterator it("/proc/self/task",ec),end;!ec && it!=end;it.increment(ec)) {
+            int tid=0;
+            if (parseInt(it->path().filename().string(),tid) && sched_setaffinity(pid_t(tid),sizeof(set),&set)==0) any=true;
+        }
+    }
+    if (any) gPinned.store(true,std::memory_order_relaxed);
+    return any;
+#elif defined(_WIN32)
+    DWORD_PTR mask=0;
+    for (const int cpu:use) if (cpu<int(sizeof(DWORD_PTR)*8)) mask|=DWORD_PTR(1)<<cpu;
+    if (!mask || !SetProcessAffinityMask(GetCurrentProcess(),mask)) return false;
+    gPinned.store(true,std::memory_order_relaxed);
+    return true;
+#else
+    return false;
+#endif
 }
 
 CpuTopology detectCpus() {

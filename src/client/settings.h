@@ -175,6 +175,18 @@ struct Settings {
     // greyed and this is kept). Scheduling only; latched with simThreads. Persisted as
     // simPin.
     bool  simPin = false;
+    // PIN TO CCDS (Options > GAME), OFF by default, offered only on a CPU with two or more
+    // CCDs (dies, each with its own L3 cache) where the system pins threads: every thread
+    // of the game stays on the GAME CCD and every thread of its local server on the LOCAL
+    // SERVER CCD, which may be the same one. While on, it replaces SIMULATION THREADS and
+    // PIN SIMULATION THREADS: each simulation gets a thread per core of its CCD (half each
+    // when both share one). -1 = AUTO: the game on the CCD with the largest L3 (an X3D's
+    // V-Cache die; else the first), the server on the first other one. Scheduling only;
+    // applied when a game session opens (client/ccdpin.h). Persisted as ccdPin, ccdGame,
+    // ccdServer.
+    bool  ccdPin = false;
+    int   ccdGame = -1;
+    int   ccdServer = -1;
 
     // ---- misc ----
     std::string playerName;        // default name for new local / unauthenticated multiplayer games
@@ -296,6 +308,7 @@ struct Settings {
             && a.edgeScroll == b.edgeScroll && a.mouseZoom == b.mouseZoom && a.cursorScale == b.cursorScale
             && a.hardwareCursor == b.hardwareCursor && a.smoothMotion == b.smoothMotion
             && a.simThreads == b.simThreads && a.simPin == b.simPin
+            && a.ccdPin == b.ccdPin && a.ccdGame == b.ccdGame && a.ccdServer == b.ccdServer
             && a.playerName == b.playerName && a.accountName == b.accountName
             && a.streamRememberKey == b.streamRememberKey && a.streamLocalCopy == b.streamLocalCopy
             && a.streamBitrate == b.streamBitrate
@@ -465,6 +478,9 @@ inline Settings gameDefaults(const Settings& cur) {   // GAME: simulation thread
     Settings d = cur;
     d.simThreads = Settings{}.simThreads;
     d.simPin = Settings{}.simPin;
+    d.ccdPin = Settings{}.ccdPin;
+    d.ccdGame = Settings{}.ccdGame;
+    d.ccdServer = Settings{}.ccdServer;
     return d;
 }
 

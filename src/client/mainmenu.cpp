@@ -27,6 +27,7 @@
 #include "client/hotkeys.h"
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
+#include "client/ccdpin.h"
 #include "client/settings.h"
 #include "client/benchmarkpath.h"
 #include "client/voice.h"
@@ -534,6 +535,112 @@ struct MainMenu::Impl {
         }
         applyArtSettings(current);
         std::puts("PASS: title art smoothing applies live, restores pixels and releases textures");
+    }
+
+    // TAK_OPTIONS_CCD_TEST: Options > PERFORMANCE's PIN TO CCDS on sysfs fixtures (Linux
+    // trees, read through TAK_CPU_SYSFS, which this sets): two CCDs offer it, and while
+    // it is on the two sliders take input, SIMULATION THREADS and its pinning do not, and
+    // each slider's lines describe its CCD; one CCD greys it. Nothing is saved or pinned.
+    // TAK_OPTIONS_SHOT_DIR=<dir> writes the two-CCD page as ccd.png.
+    void testCcdOptions(const Settings& current, int width, int height) {
+        namespace fs = std::filesystem;
+        auto check = [](bool ok, const std::string& message) {
+            if (!ok) throw std::runtime_error("ccd option: " + message);
+        };
+        const fs::path scratch = fs::temp_directory_path() / ("tak-ccd-test-" + std::to_string(SDL_GetPerformanceCounter()));
+        auto put = [](const fs::path& file, const std::string& text) {
+            fs::create_directories(file.parent_path());
+            std::ofstream(file) << text << "\n";
+        };
+        // A 7950X3D: two dies of 8 hyperthreaded cores, 96 MB of L3 on the first. One L3: a single CCD.
+        auto tree = [&](const char* name, bool twoDies) {
+            const fs::path root = scratch / name;
+            for (int i = 0; i < 32; ++i) {
+                const int core = i % 16;
+                const bool first = !twoDies || core < 8;
+                const fs::path cpu = root / "devices" / "system" / "cpu" / ("cpu" + std::to_string(i));
+                put(cpu / "topology" / "thread_siblings_list", std::to_string(core) + "," + std::to_string(core + 16));
+                const fs::path l3 = cpu / "cache" / "index3";
+                put(l3 / "level", "3"); put(l3 / "type", "Unified");
+                put(l3 / "size", first ? "98304K" : "32768K");
+                put(l3 / "shared_cpu_list", !twoDies ? "0-31" : first ? "0-7,16-23" : "8-15,24-31");
+            }
+            return fs::absolute(root).string();
+        };
+        const std::string two = tree("two", true), one = tree("one", false);
+        auto use = [](const std::string& root) {
+#ifdef _WIN32
+            _putenv_s("TAK_CPU_SYSFS", root.c_str());
+#else
+            setenv("TAK_CPU_SYSFS", root.c_str(), 1);
+#endif
+        };
+        auto frame = [&](OptionsScreen& o) { render(width, height); o.render(width, height); };
+        use(two);
+        Settings on = current; on.ccdPin = true; on.ccdGame = -1; on.ccdServer = -1;
+        {
+            OptionsScreen opts(ren, on, [] {}, [] {}, 2);
+            frame(opts);
+            check(opts.rowEnabled("PIN TO CCDS"), "two CCDs offer it");
+            check(opts.rowEnabled("GAME CCD") && opts.rowEnabled("LOCAL SERVER CCD"), "while on, both sliders take input");
+            check(!opts.rowEnabled("SIMULATION THREADS") && !opts.rowEnabled("PIN SIMULATION THREADS"),
+                  "while on, SIMULATION THREADS and its pinning are greyed");
+            const auto game = opts.rowLines("GAME CCD INFO"), server = opts.rowLines("LOCAL SERVER CCD INFO");
+            auto has = [](const std::vector<std::string>& lines, const std::string& text) {
+                for (const auto& l : lines) if (l.find(text) != std::string::npos) return true;
+                return false;
+            };
+            check(has(game, "CCD 1 OF 2") && has(game, "CPUS 0-7,16-23") && has(game, "L3 96 MB") && has(game, "3D V-CACHE"),
+                  "AUTO puts the game on the V-Cache die and says so");
+            check(has(server, "CCD 2 OF 2") && has(server, "CPUS 8-15,24-31") && has(server, "L3 32 MB") && !has(server, "3D V-CACHE"),
+                  "AUTO puts the local server on the other die");
+            if (const char* dir = devEnv("TAK_OPTIONS_SHOT_DIR")) {
+                std::vector<uint8_t> px(size_t(width) * height * 4);
+                if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_RGBA32, px.data(), width * 4) == 0)
+                    png::write((fs::path(dir) / "ccd.png").string(), width, height, px);
+            }
+        }
+        {
+            Settings same = on; same.ccdGame = 1; same.ccdServer = 1;
+            OptionsScreen opts(ren, same, [] {}, [] {}, 2);
+            frame(opts);
+            bool shared = false;
+            for (const auto& l : opts.rowLines("LOCAL SERVER CCD INFO")) shared |= l.find("SHARE THIS CCD") != std::string::npos;
+            check(shared, "both on one CCD is allowed, and says they share it");
+            const auto plan = client::resolveCcds(sim::detectCcds(), same.ccdGame, same.ccdServer);
+            check(plan.game == 1 && plan.server == 1, "the chosen CCDs, not AUTO's");
+            // The session plan: a thread per core of each CCD apart, half each sharing one.
+            const auto apart = client::planCcds(on, true), together = client::planCcds(same, true);
+            check(apart.on && sim::cpuRangesText(apart.game) == "0-7,16-23" && sim::cpuRangesText(apart.server) == "8-15,24-31" &&
+                  apart.gameThreads == 8 && apart.serverThreads == 8, "apart: each simulation a thread per core of its CCD");
+            check(together.on && together.game == together.server && together.gameThreads == 4 && together.serverThreads == 4,
+                  "sharing a CCD: half each");
+            Settings offPlan = on; offPlan.ccdPin = false;
+            check(!client::planCcds(offPlan, true).on, "off: no plan");
+        }
+        {
+            Settings off = on; off.ccdPin = false;
+            OptionsScreen opts(ren, off, [] {}, [] {}, 2);
+            frame(opts);
+            check(!opts.rowEnabled("GAME CCD") && opts.rowEnabled("SIMULATION THREADS"), "off: the sliders are greyed, the old rows back");
+        }
+        use(one);
+        {
+            OptionsScreen opts(ren, on, [] {}, [] {}, 2);
+            frame(opts);
+            check(!opts.rowEnabled("PIN TO CCDS") && opts.rowEnabled("SIMULATION THREADS"),
+                  "one CCD: not offered, and a saved ON does not grey the old rows");
+            bool said = false;
+            for (const auto& l : opts.rowLines("PIN TO CCDS INFO")) said |= l.find("ONE CCD") != std::string::npos;
+            check(said, "one CCD says why");
+        }
+#ifdef _WIN32
+        _putenv_s("TAK_CPU_SYSFS", "");
+#else
+        unsetenv("TAK_CPU_SYSFS");
+#endif
+        std::error_code ec; fs::remove_all(scratch, ec);
+        std::puts("PASS: Options PIN TO CCDS offers, greys and describes the CCDs");
     }
 
     // TAK_OPTIONS_DATADIR_TEST: the Options GAME DATA FOLDER row, driven with real input
@@ -1642,6 +1749,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
 #ifndef NDEBUG
     if (settings && tak::devFlag("TAK_GUI_SMOOTH_TEST")) d_->testSmoothArt(*settings, w, h);
     if (settings && tak::devFlag("TAK_OPTIONS_DATADIR_TEST")) d_->testDataFolder(*settings, w, h);
+    if (settings && tak::devFlag("TAK_OPTIONS_CCD_TEST")) d_->testCcdOptions(*settings, w, h);
     if (settings && tak::devFlag("TAK_BENCH_MENU_TEST")) d_->testBenchPath(*settings, w, h);
 #endif
 

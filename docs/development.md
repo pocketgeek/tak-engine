@@ -365,7 +365,7 @@ settings file says `simPin = 1`. `TAK_SIM_PIN=0` stops a debug client pinning
 whatever the setting says, and ctest sets it for every test
 (`tak_isolate_test_profiles`), so that many clients run at once never all pin to
 the same cores; any other value, like the variable unset, leaves it to the
-setting, and no variable turns pinning on (a test of the pinning writes
+setting (Pin to CCDs included), and no variable turns pinning on (a test of the pinning writes
 `simPin = 1` and sets `TAK_SIM_PIN=1` over ctest's 0). The Benchmark results list
 what the run latched: `SIM THREADS CLIENT <n>  SERVER <m>` with the setting, and
 `PIN SIM THREADS ON` or `OFF`. Two more debug
@@ -382,6 +382,17 @@ container's cpuset) does not change a running game's width. No width changes a
 result: `simpool`, `simpool_passes`,
 `exploration_parallel`, `state_hash`, `aura_recipient` and `legion_parallel`
 compare widths from 0 to 63 workers against the serial run.
+
+**Pin to CCDs** (`ccdPin`, `ccdGame`, `ccdServer`; `client/ccdpin.h`) groups every
+CPU the system has by the L3 it shares (`sim::detectCcds`: sysfs `cache/index*` on
+Linux, `GetLogicalProcessorInformationEx` on Windows, nothing on macOS) and is
+offered with two or more groups where threads can be pinned. When a session opens,
+`planCcds` puts the whole client on its CCD (`sim::setProcessCpus`, every thread of
+the process; back to `sim::launchCpus()` when it is off) and passes the server
+`takserver --cpus <list>`; each simulation then gets `sim::ccdThreads` (half each
+on a shared CCD) and nothing is pinned per thread; `TAK_SIM_PIN=0` keeps it off. `options_ccd` checks the Options
+rows and the plan on sysfs fixtures, `simpool` the reader, and `cpu_topology` the
+process pin on the machine it runs on.
 
 A headless harness game ends with an `mp-headless done: tick=… hash=… end=… result=…`
 line. `end=timelimit` stops at exactly the `--time` tick; `end=concluded` stops at

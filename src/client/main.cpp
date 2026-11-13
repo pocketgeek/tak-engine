@@ -69,6 +69,7 @@
 #include "util/relaunch.h"
 #include "util/prefpath.h"
 #include "client/settings.h"
+#include "client/ccdpin.h"
 #include "client/hidpi.h"
 #include "client/waylandchoice.h"
 #include "client/waylandmeasure.h"
@@ -172,15 +173,17 @@ int pickFreePort() {
 // (0 = auto: only when a debug build's TAK_SIM_WORKERS decides AUTO, there as here).
 // simCpus: the CPUs that half is pinned to, as takserver --sim-cpus takes them (a list,
 // or "none" when this game pins nothing).
+// processCpus: PIN TO CCDS' CCD for every thread of the server (takserver --cpus), or none.
 bool spawnLocalServer(tak::LocalServer& server, const std::string& serverBin,
                       const std::string& dataRoot, int port, bool lan = false, int simThreads = 0,
-                      const std::string& simCpus = "none") {
+                      const std::string& simCpus = "none", const std::vector<int>& processCpus = {}) {
     // It shares this player's per-user map folder (hpi::userMapRoot): a map the client
     // verified (a download, a --play-map copy) is there for the referee too, and
     // nothing is written into the game data folder.
     std::vector<std::string> args{"--port", std::to_string(port), "--data", dataRoot,
                                   "--sim-threads", simThreads > 0 ? std::to_string(simThreads) : "auto",
                                   "--sim-cpus", simCpus};
+    if (!processCpus.empty()) args.insert(args.end(), {"--cpus", tak::sim::cpuListText(processCpus)});
     if (lan) args.push_back("--lan");
     else args.insert(args.end(), {"--no-auth", "--local"});
     if (const auto cache = tak::hpi::userMapRoot(); !cache.empty()) {
@@ -414,7 +417,14 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
     auto view = std::make_unique<GameView>(ren, std::move(rvfs), mapPath, dataRoot,
         tak::hpi::ModUse{}, false, false, true, "ara", "tar", rf.crusades);
     view->applySettings(settings); view->setSettings(&settings);
-    view->latchSimThreads(settings.simThreads, false, settings.simPin && tak::devFlag("TAK_SIM_PIN", true));   // one simulation: it gets them all
+    // One simulation: it gets them all, or its CCD's (PIN TO CCDS).
+    if (const auto ccd = tak::client::planCcds(settings, false); ccd.on && tak::devFlag("TAK_SIM_PIN", true)) {
+        tak::client::applyGameCcd(ccd);
+        view->latchSimThreads(int(ccd.gameThreads), false, false);
+    } else {
+        tak::client::applyGameCcd({});
+        view->latchSimThreads(settings.simThreads, false, settings.simPin && tak::devFlag("TAK_SIM_PIN", true));
+    }
     if (canReturn) view->setCanReturnToMenu();
     std::fprintf(stderr, "replay: %s -- map '%s', %zu ticks%s (format %u, recorded by %s, %zu hash checkpoints)\n",
                  path.c_str(), rf.mapId.c_str(), rf.bundles.size(), rf.crusades ? " (Crusades)" : "",
@@ -441,6 +451,7 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
 
 int main(int argc, char** argv) {
     SDL_SetMainReady();   // we defined SDL_MAIN_HANDLED; tell SDL our main is ready
+    tak::sim::launchCpus();   // the CPUs this game may use, read before PIN TO CCDS changes them
     if (argc >= 2 && (!std::strcmp(argv[1], "--version") || !std::strcmp(argv[1], "-v"))) {
         std::printf("takclient (TAK engine) %s (build %s)\n", tak::kVersion, tak::kBuildId);
         return 0;
@@ -1463,8 +1474,15 @@ int main(int argc, char** argv) {
     // (a suite runs many clients at once, and they would share the same cores); no
     // variable turns pinning on.
     const bool simPin = settings.simPin && tak::devFlag("TAK_SIM_PIN", true);
+    // PIN TO CCDS (Options > GAME): this game on its CCD now, its local server on its own
+    // (takserver --cpus); while on, it replaces SIMULATION THREADS and its pinning. The
+    // same TAK_SIM_PIN=0 keeps a debug build off it.
+    const bool hostsLocal = mode == "game" && serverHost.empty() && !mpHeadless && !localHarness;
+    tak::client::CcdPlan ccdPlan = tak::client::planCcds(settings, hostsLocal);
+    if (!tak::devFlag("TAK_SIM_PIN", true)) ccdPlan = {};
+    tak::client::applyGameCcd(ccdPlan);
     std::string serverBin;
-    if (mode == "game" && serverHost.empty() && !mpHeadless && !localHarness) {
+    if (hostsLocal) {
         // Single-player: auto-launch a private local server and play a 1-v-AI game
         // on it (the AI runs server-side). Not visible to other players.
         int p = lanHosting ? pickLanPort() : 0;
@@ -1484,8 +1502,11 @@ int main(int argc, char** argv) {
         const SimPool::Session session = SimPool::session(settings.simThreads, cpus, true, &debugAuto);
         const std::string serverCpus = tak::sim::cpuListText(
             SimPool::handOut(cpus.order, session, true, simPin && cpus.canPin).server);
-        if (p <= 0 || !spawnLocalServer(localServer, serverBin, dataRoot, p, lanHosting, debugAuto ? 0 : int(session.server),
-                                        serverCpus.empty() ? "none" : serverCpus)) {
+        const bool launched = ccdPlan.on
+            ? p > 0 && spawnLocalServer(localServer, serverBin, dataRoot, p, lanHosting, int(ccdPlan.serverThreads), "none", ccdPlan.server)
+            : p > 0 && spawnLocalServer(localServer, serverBin, dataRoot, p, lanHosting, debugAuto ? 0 : int(session.server),
+                                        serverCpus.empty() ? "none" : serverCpus);
+        if (!launched) {
             std::fprintf(stderr, "single-player: could not launch a local server (%s)\n",
                          serverBin.c_str());
             if (failLaunch("could not start the local server (" + serverBin + ")")) continue;
@@ -1739,7 +1760,11 @@ int main(int argc, char** argv) {
             gameView->applySettings(settings);   // audio / camera / UI-scale prefs
             gameView->setSettings(&settings);     // in-game Options edits + persists these
             // SIMULATION THREADS: half with a local server of its own (which got the other), else all.
-            gameView->latchSimThreads(settings.simThreads, localServer.started(), simPin);
+            if (ccdPlan.on) {   // its CCD's share
+                gameView->latchSimThreads(int(ccdPlan.gameThreads), false, false);
+                gameView->latchCcds(ccdPlan.gameCcd + 1, localServer.started() ? ccdPlan.serverCcd + 1 : 0, ccdPlan.serverThreads);
+            }
+            else gameView->latchSimThreads(settings.simThreads, localServer.started(), simPin);
             gameView->setVoice(voiceOwner.get()); // voice chat in multiplayer rooms (none for replays/benchmarks)
             if (std::string n = tak::renderdriver::pendingNotice(); !n.empty()) {
                 gameView->showNotice(n, 10);   // launched straight into a game: say it here
