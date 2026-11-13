@@ -2,6 +2,13 @@
 
 Protocol **326**, replay format **15**, random map generator version **10**.
 
+Tag `v1.0.4` -> `9e8ff792` (the statue fix, the last code commit); annotated tag object
+`bc7bc0cd`. Published 2026-11-13 04:02:01 UTC as the Latest release; 1.0.0 to 1.0.3 stay
+GitHub releases. A first `v1.0.4` tag on `f8f49f29` was built and checked but never
+published: the owner reported the computer's armies walking past defenders and statues
+drawn in their units' colours, and chose to fix both in 1.0.4. That draft and tag were
+deleted and remade on `9e8ff792`.
+
 ## Scope and compatibility
 
 1.0.4 is 1.0.3 (tag `v1.0.3` -> `0a9221d7`) plus the changes below (from `cae85cda` on), listed in
@@ -77,3 +84,25 @@ Picture retaken with the 1.0.4 build: `docs/img/title.jpg` (VERSION 1.0.4).
 
 The full suite, the desync sweeps and the Windows and macOS test runs. Tag CI runs the
 determinism workflow and builds every package.
+
+## Tag CI and packages
+
+Main's CI on `9e8ff792` (Determinism, macOS, Windows, Linux packages) was green before
+tagging. Tag CI on `v1.0.4`: Determinism (sim) 43358337375 (dispatched), Linux packages
+43358298280, Windows build 43358298242 and macOS build 43358298239 (both Sign + notarize
+jobs included) all green at the first attempt.
+
+39 assets, the same set as 1.0.3's. All 39 were downloaded and match the release's SHA-256
+digests. `takclient` from the x86_64 AppImage reports `1.0.4 (build v1.0.4)` and the
+Fedora 44 package's version is 1.0.4.
+Windows: on oden-win (scratch `C:/tak/w/rel104sig`, removed afterwards),
+`Get-AuthenticodeSignature` reports **Valid** (timestamped, "Curtis Edge") for the x64
+setup program and `takclient`, `takserver` and `cartographer` in both zips; the x64
+`takclient.exe` and `takserver.exe` report `1.0.4 (build v1.0.4)`.
+macOS: **the MacBook was offline**, so the DMGs and apps were not checked on a Mac. The
+Sign + notarize jobs' logs show six notarization submissions Accepted, "The staple and
+validate action worked!" six times, and both DMGs and both apps of each architecture
+accepted by `spctl` as "Notarized Developer ID"; the downloaded DMGs are those jobs'
+uploads (digests above). Both zips' apps carry `_CodeSignature`.
+The draft was created with the notes before the tag was pushed, and tag CI uploaded into
+it. Every link in the notes answers 200.
