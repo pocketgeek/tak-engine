@@ -62934,6 +62934,167 @@
    "mode": "legion",
    "reason": "DR317 deep firing rings (legion-deep-rings, protocol 317; owner accepted 2026-11-08; docs/legion-pathfinding.md \"Deep firing rings\"): more bodies stand and fire in reach (engaged/stopped/still/spins/hold counts), ring planning repeats per band depth (slot_search_cells, field work), wall-64 damage_t1200 151->129 while damage_end rises; reach and damage keys improve: work.ring_swaps.total 8 at the DR317 gate, licensed at the head's value: higher than allowed (per-step vs head base 7 x1.10; cumulative vs reference 7 x1.10), got 8",
    "scenario": "attackring-wall-64"
+  },
+  {
+   "key": "g.B.complete_outside_radius",
+   "max": 43,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: g.B.complete_outside_radius 43 at the LLOCKS gate: higher than allowed (per-step vs head base 0 x1.10; cumulative vs reference 0 x1.10), got 43",
+   "scenario": "doorplug-112"
+  },
+  {
+   "key": "reversals",
+   "max": 70,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: reversals 70 at the LLOCKS gate: higher than allowed (per-step vs head base 56 x1.10; cumulative vs reference 44 x1.10), got 70",
+   "scenario": "doorplug-112"
+  },
+  {
+   "key": "work.rechoice_bfs_cells.max",
+   "max": 1685,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.rechoice_bfs_cells.max 1685 at the LLOCKS gate: higher than allowed (per-step vs head base 498 x1.10; cumulative vs reference 531 x1.10), got 1685",
+   "scenario": "doorplug-112"
+  },
+  {
+   "key": "work.rechoice_bfs_cells.total",
+   "max": 8664,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.rechoice_bfs_cells.total 8664 at the LLOCKS gate: higher than allowed (per-step vs head base 1592 x1.10; cumulative vs reference 4112 x1.10), got 8664",
+   "scenario": "doorplug-112"
+  },
+  {
+   "key": "work.slot_search_cells.total",
+   "max": 18315,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.slot_search_cells.total 18315 at the LLOCKS gate: higher than allowed (per-step vs head base 11449 x1.10; cumulative vs reference 12794 x1.10), got 18315",
+   "scenario": "doorplug-112"
+  },
+  {
+   "key": "follow_chain_mean_x100",
+   "max": 802,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: follow_chain_mean_x100 802 at the LLOCKS gate: higher than allowed (per-step vs head base 714 x1.10; cumulative vs reference 714 x1.10), got 802",
+   "scenario": "goalblock-200"
+  },
+  {
+   "key": "work.move_calls_by_state_5.max",
+   "max": 37,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.move_calls_by_state_5.max 37 at the LLOCKS gate: higher than allowed (per-step vs head base 12 x1.10; cumulative vs reference 12 x1.10), got 37",
+   "scenario": "goalblock-200"
+  },
+  {
+   "key": "work.move_calls_by_state_5.p99",
+   "max": 37,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.move_calls_by_state_5.p99 37 at the LLOCKS gate: higher than allowed (per-step vs head base 12 x1.10; cumulative vs reference 12 x1.10), got 37",
+   "scenario": "goalblock-200"
+  },
+  {
+   "key": "work.move_calls_by_state_5.total",
+   "max": 49837,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.move_calls_by_state_5.total 49837 at the LLOCKS gate: higher than allowed (per-step vs head base 30892 x1.10; cumulative vs reference 30892 x1.10), got 49837",
+   "scenario": "goalblock-200"
+  },
+  {
+   "key": "work.slides.total",
+   "max": 96,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.slides.total 96 at the LLOCKS gate: higher than allowed (per-step vs head base 78 x1.10; cumulative vs reference 78 x1.10), got 96",
+   "scenario": "goalblock-200"
+  },
+  {
+   "key": "work.trapped.p99",
+   "max": 1,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.trapped.p99 1 at the LLOCKS gate: higher than allowed (per-step vs head base 0 x1.10; cumulative vs reference 0 x1.10), got 1",
+   "scenario": "goalblock-200"
+  },
+  {
+   "key": "work.trapped.total",
+   "max": 37,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.trapped.total 37 at the LLOCKS gate: higher than allowed (per-step vs head base 12 x1.10; cumulative vs reference 12 x1.10), got 37",
+   "scenario": "goalblock-200"
+  },
+  {
+   "key": "work.move_calls_by_state_5.max",
+   "max": 44,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.move_calls_by_state_5.max 44 at the LLOCKS gate: higher than allowed (per-step vs head base 14 x1.10; cumulative vs reference 14 x1.10), got 44",
+   "scenario": "goalblock-fight-200"
+  },
+  {
+   "key": "work.move_calls_by_state_5.p99",
+   "max": 44,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.move_calls_by_state_5.p99 44 at the LLOCKS gate: higher than allowed (per-step vs head base 14 x1.10; cumulative vs reference 14 x1.10), got 44",
+   "scenario": "goalblock-fight-200"
+  },
+  {
+   "key": "work.move_calls_by_state_5.total",
+   "max": 54400,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.move_calls_by_state_5.total 54400 at the LLOCKS gate: higher than allowed (per-step vs head base 35003 x1.10; cumulative vs reference 35003 x1.10), got 54400",
+   "scenario": "goalblock-fight-200"
+  },
+  {
+   "key": "work.trapped.p99",
+   "max": 1,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.trapped.p99 1 at the LLOCKS gate: higher than allowed (per-step vs head base 0 x1.10; cumulative vs reference 0 x1.10), got 1",
+   "scenario": "goalblock-fight-200"
+  },
+  {
+   "key": "work.trapped.total",
+   "max": 44,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.trapped.total 44 at the LLOCKS gate: higher than allowed (per-step vs head base 14 x1.10; cumulative vs reference 14 x1.10), got 44",
+   "scenario": "goalblock-fight-200"
+  },
+  {
+   "key": "g.A.complete_dist_max",
+   "max": 75,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: g.A.complete_dist_max 75 at the LLOCKS gate: higher than allowed (per-step vs head base 58 x1.10; cumulative vs reference 58 x1.10), got 75",
+   "scenario": "pocket-615-wall"
+  },
+  {
+   "key": "g.A.complete_outside_radius",
+   "max": 83,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: g.A.complete_outside_radius 83 at the LLOCKS gate: higher than allowed (per-step vs head base 28 x1.10; cumulative vs reference 28 x1.10), got 83",
+   "scenario": "pocket-615-wall"
+  },
+  {
+   "key": "work.aware_pairs.total",
+   "max": 178,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.aware_pairs.total 178 at the LLOCKS gate: higher than allowed (per-step vs head base 157 x1.10; cumulative vs reference 159 x1.10), got 178",
+   "scenario": "pocket-615-wall"
+  },
+  {
+   "key": "work.completion_dist_7.max",
+   "max": 4,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.completion_dist_7.max 4 at the LLOCKS gate: higher than allowed (per-step vs head base 2 x1.10; cumulative vs reference 2 x1.10), got 4",
+   "scenario": "pocket-615-wall"
+  },
+  {
+   "key": "work.line_sweeps.total",
+   "max": 1807504,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.line_sweeps.total 1807504 at the LLOCKS gate: higher than allowed (cumulative vs reference 1463362 x1.10), got 1807504",
+   "scenario": "pocket-615-wall"
+  },
+  {
+   "key": "work.slides.total",
+   "max": 49943,
+   "mode": "legion",
+   "reason": "LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc: work.slides.total 49943 at the LLOCKS gate: higher than allowed (cumulative vs reference 32840 x1.10), got 49943",
+   "scenario": "pocket-615-wall"
   }
  ],
  "entries": {
@@ -427172,6 +427333,54 @@
    "mode": "retail",
    "reason": "offset spread 802..951 exceeds the band; kept as a spread exception when the ratchet cleared its Retail-floor exception (2026-11-12T23:13:43Z: fails legion <= retail x1.1 at W3: legion 835 vs retail 588)",
    "scenario": "deadend-w4-n40-room-squad"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "g.B.complete_n",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 15..60 exceeds band 1.10 at LLOCKS (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it); gated on median-of-5 offsets",
+   "scenario": "doorplug-112"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "g.B.complete_outside_radius",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 15..60 exceeds band 1.10 at LLOCKS (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it); gated on median-of-5 offsets",
+   "scenario": "doorplug-112"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "g.A.complete_dist_max",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 22..107 exceeds band 1.10 at LLOCKS (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it); gated on median-of-5 offsets",
+   "scenario": "goalblock-200"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "g.A.complete_outside_radius",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 0..1 exceeds band 1.10 at LLOCKS (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it); gated on median-of-5 offsets",
+   "scenario": "goalblock-200"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "g.A.complete_dist_max",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 22..109 exceeds band 1.10 at LLOCKS (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it); gated on median-of-5 offsets",
+   "scenario": "goalblock-fight-200"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "g.A.complete_outside_radius",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 0..1 exceeds band 1.10 at LLOCKS (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it); gated on median-of-5 offsets",
+   "scenario": "goalblock-fight-200"
   }
  ],
  "history": [
@@ -453122,6 +453331,12 @@
    "cleared_exceptions": [],
    "ratchets": [],
    "reason": "LLOCKS: Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it; retaken on the fixtures in which the rules fire (attackring-fight-60, doorplug-112, goalblock-200, goalblock-fight-200, mazeapproach, pocket-304-wall, pocket-615-wall): their Legion hashes (56), the new work classes stand_downs, give_ways, late_swaps and escape_steps (12 entries) and the Legion keys that improved past the band (60); the keys that got worse are not retaken (they are licensed apart); no Retail key or hash moved",
+   "when": "2026-11-14"
+  },
+  {
+   "cleared_exceptions": [],
+   "ratchets": [],
+   "reason": "LLOCKS accepted regressions (pending the owner's acceptance at landing): 23 keys on doorplug-112, goalblock-200, goalblock-fight-200, pocket-615-wall recorded at their gate values, and 6 offset-spread exceptions: LLOCKS: the trade of the stand-down on this fixture, licensed at the head's gate value pending the owner's acceptance at landing (Legion bodies that stand for good give way or end their order (fix/llocks, 2026-11-14; docs/legion-pathfinding.md \"Bodies that stand for good\"): a body for which nothing it waits on has made progress ends its order where it stands (the stand-down: after 600 dead ticks against bodies that will never move, after 4,800 otherwise), two bodies in each other's way give way, the swap serves fight and patrol legs after 600 dead ticks, a lone waiter at a narrow passage takes its turn, and a body on an illegal origin walks off it): bodies that used to stand with their orders now walk, shuffle, re-choose slots and end their orders outside the arrival disc",
    "when": "2026-11-14"
   }
  ],
