@@ -1046,7 +1046,12 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
                 if (sustained && cat == BuildCat::Factory && mobileProduction(ut->side))
                     limit = std::max(limit, needs.desiredFactories);
             } else {
-                if (sustained && cat == BuildCat::Army) limit = std::max(limit, needs.desiredArmy);
+                // Only the troops the army routines command (sendWaves' pool:
+                // a primary weapon that does damage). An unarmed scout or a
+                // transport keeps its profile limit: 310 Spyhawks and 71 Rocs
+                // were built in one game and never given an order.
+                if (sustained && cat == BuildCat::Army && ut->weapon.damage > 0)
+                    limit = std::max(limit, needs.desiredArmy);
                 if (sustained && cat == BuildCat::Factory) limit = std::max(limit, needs.desiredFactories);
                 if (sustained && cat == BuildCat::Defense) limit = std::max(limit, needs.desiredDefenses);
             }

@@ -519,7 +519,7 @@ centre, radius, counts, firepower, shot cost, draw, busy-deposit test and placer
 | 5 | Dynamic priority 0x410810 (~210-tick refresh) | none (static desire ladder per category) | **missing** |
 | 6 | One weighted draw over the whole menu, then reject another faction's pick | category planner, draw within the top category | **different** |
 | 7 | Separate lodestone draw every think, replacing the ordinary pick | manaShort trigger, priority 96, home radius gate (Hard and Absurd: any safe deposit their own expansion reaches) | different |
-| 8 | Hard limits (count incl. unfinished >= limit) | limits x limitScale; Hard/defensive lift them | different |
+| 8 | Hard limits (count incl. unfinished >= limit) | limits x limitScale; the defensive levels lift them, Hard and Absurd lift them for troops that fight (an unarmed scout or transport keeps its scaled limit) and hold lodestones to a quarter of the unit cap | different |
 | 9 | No affordability check; allocation gates (0.7, 0.7/3, cost deferral) | affordability gate, over-commit throttle (mana < 50), income < 20 rule | **different** |
 | 10 | Squads: base/strike/backup/VTOL/naval; assignment every rand(7)+3 | none (pools computed per think) | **missing** |
 | 11 | Event clocks: base rand(30)+15, strike rand(60)+15, backup 150, VTOL rand(30)+15 | a fixed thinkPeriod of 20/30/90 | different |

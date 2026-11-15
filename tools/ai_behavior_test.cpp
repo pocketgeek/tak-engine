@@ -2459,6 +2459,13 @@ int main(int argc,char** argv) {
         file("canbuild/handler/lode.tdf","[CANBUILD]{sortbias=0;}");
         hpi::Vfs vfs;vfs.setMapFiles(files);
         sim::TypeRegistry reg;reg.loadDir(vfs,"units");reg.loadBuildTree(vfs,"canbuild");
+        // The soldier fights: Hard and Absurd lift the profile limit only of troops
+        // their army routines command (a primary weapon that does damage); an
+        // unarmed type keeps its limit (tools/ai_economy_test.cpp).
+        {
+            auto* soldier=const_cast<sim::UnitType*>(reg.find("soldier"));
+            soldier->weapon.damage=10;soldier->weapon.range=120;soldier->weapons={soldier->weapon};
+        }
         for (auto difficulty : {ai::Difficulty::Defensive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
             sim::World w;terrain(w);w.buildNavClasses(reg);w.setUnitCap(250);
             w.player(0).mana=10000;w.player(0).income=200;

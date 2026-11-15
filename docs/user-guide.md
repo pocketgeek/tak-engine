@@ -3238,8 +3238,10 @@ own built-in profile**: a line replaces that unit's value in every level, and
 every unit the file does not name keeps each level's own built-in values.
 The built-in profiles all hold the same values (Passive uses Easy's), so the
 file sets the same weights and limits for every level. The levels still play differently, and
-each treats a limit its own way: Easy halves it, Hard and Absurd raise it,
-and Defensive and Absurdly Defensive ignore limits (but not a limit of
+each treats a limit its own way: Easy halves it, Hard and Absurd raise it
+(only the unit cap holds their fighting troops; an unarmed scout or a
+transport, which their armies never use, stays at one and a half times its
+limit), and Defensive and Absurdly Defensive ignore limits (but not a limit of
 0). `limit <unit> 0` stops every level building the unit. The file also
 reaches the AI that takes over a disconnected player's seat. Names are not case-sensitive; when the file names a
 unit twice, the later line wins. When two ticked packs have the file, the

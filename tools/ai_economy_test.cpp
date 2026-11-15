@@ -350,6 +350,27 @@ static void zhonProducers(const Roster& r) {
     }
 }
 
+// Hard and Absurd lift the profile limit of the troops their armies use; a
+// type no army routine commands (an unarmed scout) keeps its limit.
+static void unarmedLimits(const Roster& r) {
+    auto trains=[&](ai::Difficulty difficulty,const char* factory,const char* unit,int standing) {
+        sim::World w;terrain(w);w.buildNavClasses(r.reg);
+        w.player(0).storage=20000;w.player(0).mana=6000;w.player(0).income=300;
+        w.spawn(r(factory),800,800,0,0);
+        for (int i=0;i<standing;++i) w.spawn(r(unit),1600+float(i%10)*40,1600+float(i/10)*40,0,0);
+        ai::Controller controller(0,r.reg,r.profile,1,difficulty);
+        return orders(think(controller,w),net::Cmd::Train,unit)==1;
+    };
+    for (auto level : {ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
+        // Their limits are the profile's times 150%: six of a limit of four.
+        check(trains(level,"araeyrie","arahawk",5),"an unarmed scout is trained up to its profile limit");
+        check(!trains(level,"araeyrie","arahawk",6),"an unarmed scout keeps its profile limit at Hard/Absurd");
+        check(trains(level,"ararange","arabow",40),"a fighter's profile limit is still lifted at Hard/Absurd");
+    }
+    check(!trains(ai::Difficulty::Normal,"araeyrie","arahawk",4),"Normal keeps the scout's limit, as before");
+    check(trains(ai::Difficulty::Defensive,"araeyrie","arahawk",40),"the defensive levels still take no profile limit");
+}
+
 int main() {
     const Roster roster;
     factoryTarget(roster);
@@ -359,6 +380,7 @@ int main() {
     safeDeposits(roster);
     zhonAllowance(roster);
     zhonProducers(roster);
+    unarmedLimits(roster);
     std::printf("%s (%d failed)\n",fails ? "FAILED" : "OK",fails);
     return fails ? 1 : 0;
 }
