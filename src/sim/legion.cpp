@@ -89,12 +89,14 @@ constexpr uint32_t kAsidePassage=600;  // ... a passage's waiter while the other
 constexpr uint32_t kGivenCool=300;     // ticks after a give-way in which the gains of the body given way to are no progress
 constexpr int kGiveReach=4;            // origins a body steps clear at most
 constexpr uint32_t kLiveGain=8;        // px nearer its own goal than ever before: progress
+constexpr size_t kLiveTrail=8;         // origins a body remembers standing on (the route record's re-base, see move)
 constexpr uint32_t kEscapeUpdates=60;  // updates of a walk off an illegal origin (see move)
 static_assert(kStandDown<=kStandSwap&&kStandDown<=kStandPair&&kStandPair<=kStandPairMove&&kStandPairMove<kStandLong&&
               (kStandPairMove-kStandPair)%kGiveRetry==0,
               "the dead age's thresholds: kStandDown is the least (the checksum folds the clocks from it), and every "
               "give-way falls on one retry grid (restDue)");
 static_assert(kStandPairMove+kGivenCool<kStandLong,"a body given way to walks its way live again before the long stand-down");
+static_assert(kLiveTrail==8,"Member::liveTrail's initialiser and the checksum's fold (two origins a word) are written for eight");
 // Process-wide hooks (see legion.h): the rest stride for the settlelatency
 // probe, TAK_LEGION_VERIFY and the LPROBE line. Set by tools before a run.
 // A debug build also starts with the verify hook on when TAK_LEGION_VERIFY
@@ -1086,6 +1088,15 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // was held from by bodies (-1 none); admitWait: the label of the passage it waits for (0 none).
         // Hashed once a rule can read them (see checksum).
         uint32_t liveTick=0,liveSeen=0,liveBest=0xffffffffu;int liveGoal=-1,blockCell=-1;uint16_t admitWait=0;
+        // Liveness's record on the route (see move): liveLeft, the least distance still to go, in the stall
+        // clock's measure (progressKind, progressSerial), read where this body had not been nearer before;
+        // liveCell, the origin it was read on (-1 none yet); liveTrail, the origins the body last stood on,
+        // newest first (-1 none); liveSeeded, it has stood on a seed of its route. Unlike `progress` the record
+        // outlives a change of measure: it is then the least value the new measure gives those origins, so a
+        // body that walks back to where it has been gains nothing, whatever refreshed its route. Restarted with
+        // the goal, as liveBest. Hashed with the clocks.
+        uint32_t liveLeft=0xffffffffu;int liveCell=-1;bool liveSeeded=false;
+        std::array<int,kLiveTrail> liveTrail{-1,-1,-1,-1,-1,-1,-1,-1};
         // The walk off an illegal origin (see move): the legal origin beside the body it walks to (-1 none)
         // and the updates walked. Hashed while set.
         int escapeTo=-1;uint32_t escapeTicks=0;
@@ -7492,6 +7503,9 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         for(const auto& [id,m]:members) {
             if(m.liveSeen>w.tickCounter_||m.liveTick>w.tickCounter_)fail("a liveness clock runs ahead of the tick");
+            for(size_t k=0;k<kLiveTrail;++k)
+                for(size_t j=k+1;j<kLiveTrail;++j)
+                    if(m.liveTrail[j]>=0&&(m.liveTrail[j]==m.liveTrail[k]||m.liveTrail[k]<0))fail("a member's remembered origins repeat or have a gap");
             if(m.escapeTo<0)continue;
             const Unit* u=w.unit(id);
             if(u&&u->type&&(std::abs(m.escapeTo%width()-footprintOrigin(u->x,u->type->footX))>1||std::abs(m.escapeTo/width()-footprintOrigin(u->z,u->type->footZ))>1))
@@ -9822,6 +9836,51 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         m.liveTick=std::min(v.tick,w.tickCounter_);
         if(const uint32_t seen=std::min(v.seen,w.tickCounter_);seen>m.liveSeen)liveRise(m,seen);
     }
+    // The route record (Member::liveLeft). A gain on the route is progress only below the least distance still
+    // to go the body has read at a place it stood on. The stall clock's own record (Member::progress) cannot say
+    // that: it is re-based to where the body stands whenever its measure changes -- a refresh of the group's
+    // route swapped in (every static change that touches the route asks for one, and so does a blocked
+    // re-request), the field reaching or leaving the body, a step on or off a seed -- so a body that stood one
+    // step back from its best place at that moment read its next step forward as a gain, was live, and handed
+    // that on to every body waiting on it: a knot's dead age restarted with every refresh, and with the map
+    // changing more often than every kStandLong ticks its orders never ended (the audited crowd with one 1x1
+    // feature toggled every 300 or 1,500 ticks: 4 of its 147 orders held for good). Values of two measures
+    // cannot be compared (a refresh with other soft charges reads higher or lower everywhere, and a closed gap
+    // adds its whole way round), but places can: under a new measure the record is the least value that measure
+    // gives the origins the body remembers standing on -- the record's own and the last kLiveTrail -- and where
+    // it stands. A body that walks on reads its next step as a gain as before (the origins behind it stand
+    // higher); one whose way was turned round gains once it has passed the best of them, at most kLiveTrail
+    // origins on; one that shuffles among them gains nothing.
+    // The origin a full update finds the body on: remembered, newest first.
+    static void liveStood(Member& m,int here) {
+        auto& t=m.liveTrail;
+        if(t[0]==here)return;
+        size_t k=1;
+        while(k+1<t.size()&&t[k]!=here)++k;
+        for(;k>0;--k)t[k]=t[k-1];
+        t[0]=here;
+    }
+    // The record restarts (a new goal: Member::liveBest restarts with it).
+    static void liveForget(Member& m) {m.liveLeft=0xffffffffu;m.liveCell=-1;m.liveSeeded=false;m.liveTrail.fill(-1);}
+    // The least value of the stall clock's measure (kind 1: route f's potential x64, final values only; kind 2:
+    // squared cells to the goal origin) where the body stands (`left`) and on the origins it remembers. A seed
+    // reads 0 on the route: off the seeds again, a body that stood on one gains nothing by walking back at them.
+    uint32_t liveRecord(const Member& m,RouteView f,uint8_t kind,uint32_t left,int goalX,int goalZ) const {
+        const int W=width();
+        uint32_t least=left;
+        auto read=[&](int c) {
+            if(c<0)return;
+            if(kind==1) {
+                if(const uint32_t v=f.known(size_t(c));v!=kUnreached)least=std::min(least,uint32_t(std::min<int64_t>(0xfffffff,int64_t(v)*64)));
+            } else {
+                const int64_t dx=goalX-c%W,dz=goalZ-c/W;
+                least=std::min(least,uint32_t(std::min<int64_t>(0xfffffff,dx*dx+dz*dz)));
+            }
+        };
+        read(m.liveCell);
+        for(const int c:m.liveTrail)read(c);
+        return least;
+    }
     // The members the rules below end or move: on a leg that completes at a point, no approach to an
     // unreachable goal (it has its own ending, see trapped) and no production exit or PARK (the exit rules end
     // those and keep the door lane clear).
@@ -12113,6 +12172,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         } else {m.slot=-1;m.goal=m.requested;}
         m.lineCell=-1;m.line=false;m.route.clear();m.routeTicks=0;
         m.progress=m.nearest=m.nearestHere=0xffffffffu;m.rechoices=0;m.pivotCell=-1;m.pivotAim=-1;m.gateCell=-1;
+        liveForget(m);
         markPass(u,m);
     }
     // An illegal goal (AR-07): a slot member gives its slot back and claims
@@ -12133,6 +12193,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         const int near=nearestLegal(p,m.goal%W,m.goal/W,region);
         if(near<0||compAt(p,near)!=region)return false;
         m.goal=near;m.lineCell=-1;m.line=false;m.route.clear();m.progress=m.nearest=m.nearestHere=0xffffffffu;
+        liveForget(m);
         markPass(u,m);
         return true;
     }
@@ -12428,7 +12489,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(m.givenTick!=kNoTick&&w.tickCounter_-m.givenTick>=kGivenCool)m.givenTick=kNoTick;
         m.blockCell=-1;m.admitWait=0;
         if(m.goal>=0&&policy(m.kind).completes) {
-            if(m.liveGoal!=m.goal) {m.liveGoal=m.goal;m.liveBest=0xffffffffu;}
+            if(m.liveGoal!=m.goal) {m.liveGoal=m.goal;m.liveBest=0xffffffffu;liveForget(m);}
             const int lw=width();
             const int64_t dx=(int64_t(u.x.v)>>16)-(int64_t(m.goal%lw)*16+u.type->footX*8),dz=(int64_t(u.z.v)>>16)-(int64_t(m.goal/lw)*16+u.type->footZ*8);
             const uint32_t d=uint32_t(std::min<uint64_t>(0xfffffff0u,isqrtFloor(uint64_t(dx*dx+dz*dz))));
@@ -12497,6 +12558,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // none is left in the region.
         if(!legal(p,m.goal%W,m.goal/W)&&!regoal(u,m,g,p,ox,oz)) {registerNow(u);w.brakeGround(u);return;}
         const int here=oz*W+ox;
+        liveStood(m,here);
         // The route this body steers by: a complete one, or one whose
         // frontier has settled this cell (a first field still building, or
         // paused, already steers the bodies it has passed: no standing still
@@ -12765,10 +12827,17 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             const uint64_t serial=onField?f.metric():0;
             const bool fresh=m.progress!=0xffffffffu&&(kind!=m.progressKind||serial!=m.progressSerial);
             const bool ontoSeed=fresh&&at==0&&m.headSerial==f.metric()&&m.headBest>0;
+            // Liveness reads its own record (liveRecord): under a new measure, the least value it gives the
+            // origins the body remembers; and a first step onto a seed counts once for a goal, not once for
+            // every route (a body that twitches on and off another body's goal -- the goals of one command
+            // tick share a field -- stepped onto that seed anew after every refresh).
+            if(fresh)m.liveLeft=liveRecord(m,f,kind,left,goalX,goalZ);
+            const bool seeded=m.liveSeeded;
+            if(f&&at==0)m.liveSeeded=true;
             if(fresh&&!ontoSeed) {m.progress=left;m.progressKind=kind;m.progressSerial=serial;}
             else if(ontoSeed||left<m.progress) {
                 m.progress=left;m.progressKind=kind;m.progressSerial=serial;m.stallTick=w.tickCounter_;
-                liveGain(u,m);
+                if(ontoSeed?!seeded:left<m.liveLeft) {m.liveLeft=left;m.liveCell=here;liveGain(u,m);}
             }
             // A metric transition is never a record (stage 5): a record needs a
             // gain within the current metric (nearestHere) as well as a new low
@@ -16150,6 +16219,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(liveFolded(m)) {
                 h=mix(h,0x6c697665ull);h=mix(h,uint64_t(m.liveTick)<<32|m.liveSeen);h=mix(h,uint64_t(m.liveBest)<<32|uint32_t(m.liveGoal));
                 h=mix(h,uint64_t(uint32_t(m.blockCell))<<16|m.admitWait);
+                h=mix(h,uint64_t(m.liveLeft)<<32|uint32_t(m.liveCell));h=mix(h,m.liveSeeded);
+                for(size_t k=0;k<kLiveTrail;k+=2)h=mix(h,uint64_t(uint32_t(m.liveTrail[k]))<<32|uint32_t(m.liveTrail[k+1]));
             }
             if(m.escapeTo>=0) {h=mix(h,0x657363617065ull);h=mix(h,uint64_t(uint32_t(m.escapeTo))<<32|m.escapeTicks);}
             if(m.givenTick!=kNoTick&&w.tickCounter_-m.givenTick<kGivenCool) {h=mix(h,0x676976656eull);h=mix(h,m.givenTick);}

@@ -614,11 +614,11 @@ foreach(legion_scn aware-cross aware-headon aware-seen aware-unseen aware-attack
 endforeach()
 # Bodies that stand for good (2026-11-14; the bounds are legion_settledcrowd, legion_passage_starve, legion_lateswap,
 # legion_escapestep, legion_idleplug, legion_siegegap, legion_siegegap_move, legion_filetrade, legion_plugleaves,
-# legion_knotthree and legion_guardplug below): the same run as part A, so serial == workers and both modes on the
-# rules' fixtures. headon-attack has no bounds: it is a known limit (its header says which), kept as a fixture so
-# that the limit has a measure.
+# legion_knotthree, legion_guardplug, legion_churnknot and legion_routeopens
+# below): the same run as part A, so serial == workers and both modes on the rules' fixtures. headon-attack has no
+# bounds: it is a known limit (its header says which), kept as a fixture so that the limit has a measure.
 foreach(legion_scn settled-crowd passage-starve headon-fight escape-step idle-plug siege-gap siege-gap-move file-trade
-                   plug-leaves knot-three guard-plug headon-attack)
+                   plug-leaves knot-three guard-plug headon-attack churn-knot)
   add_test(NAME legion_scenario_${legion_scn}
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
@@ -1317,9 +1317,30 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios guard-plug
                    --max g.B.complete_n=0 --max g.C.complete_n=0)
+  # churn-knot: pairs in each other's way while a 1x1 feature beside a lane's mouth is placed and lifted every 1,500
+  # ticks. Each change refreshes the routes it touches and re-bases the stall clock's record to where the body
+  # stands; a body one step back from its best place then read its next step forward as a gain, and its knot's dead
+  # age restarted: on move orders (lane M) the pair held its orders for good, with a change every 150 to 4,500 ticks
+  # alike. Liveness now keeps a route record of its own, re-based on the origins the body remembers standing on
+  # (Member::liveLeft), and both orders end (K's too, as before). At offset -1 the pair's give-way works and the
+  # test passed before as well; at 0 and 1 it failed (two stuck). Asset-free.
+  add_test(NAME legion_churnknot
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios churn-knot --offsets 0,1,-1
+                   --min g.MB.complete_n=1 --min g.MS.complete_n=1 --min g.KB.complete_n=1 --min g.KS.complete_n=1
+                   --max scale.stuck_end=0)
+  # ... and its lane O, a route that opens under a pair that has stood dead some 2,500 ticks: the big body turns
+  # round, walks the new way (back over ground it remembers first) and arrives near tick 7,000, some 1,700 ticks
+  # past the tick the long stand-down would have ended its order at; the small one arrives behind it. A guard for
+  # the record (it passes without the stand-down as well): with a body's own gains not counted the big body's order
+  # ends on the way. Read at offset 0 (the file's header says where the meets fall at the others).
+  add_test(NAME legion_routeopens
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios churn-knot
+                   --min g.OB.arrived=1 --min g.OS.arrived=1)
   set_tests_properties(legion_doorwaypair legion_doorwaypair_move legion_lateswap legion_settledcrowd legion_escapestep
                        legion_idleplug legion_siegegap legion_siegegap_hold legion_siegegap_move legion_filetrade
-                       legion_plugleaves legion_knotthree legion_guardplug
+                       legion_plugleaves legion_knotthree legion_guardplug legion_churnknot legion_routeopens
                        PROPERTIES LABELS legion TIMEOUT 300)
   # crowdlock: the audited game's standing crowd rebuilt on its real ground (246 bodies among the wrecks of a base,
   # 147 attack-move orders). Stock Legion ended 53 of the orders in 9,000 ticks and left 85 bodies standing with
@@ -1328,7 +1349,15 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios crowdlock --data "${TAK_TEST_DATA}"
                    --min scale.complete.n=147 --max scale.stuck_end=0 --max open_still900=0 --min work.stand_downs.total=1)
-  set_tests_properties(legion_crowdlock PROPERTIES LABELS legion TIMEOUT 300 SKIP_RETURN_CODE 77)
+  # crowdlock-churn: the same crowd while a 1x1 feature in its area is placed and lifted every 300 ticks (a real game
+  # changes its map all the time). Each change restarted the dead age of a knot that had a body one step back from
+  # its best place (legion_churnknot): the doorway pair and two bodies queued on it held their orders for good, 143
+  # of 147 ended, at tick 20,000 as at 9,000. Every order ends now, the last at tick 7,528.
+  add_test(NAME legion_crowdlock_churn
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios crowdlock-churn --data "${TAK_TEST_DATA}"
+                   --min scale.complete.n=147 --max scale.stuck_end=0 --max open_still900=0)
+  set_tests_properties(legion_crowdlock legion_crowdlock_churn PROPERTIES LABELS legion TIMEOUT 300 SKIP_RETURN_CODE 77)
   # Corner lanes (protocol 313): a column turning from one corridor into another keeps its files (at least 3.0 past
   # the corner at offsets 0, +-1..3 and a median t90 of at most 1,400; main 2.22..2.62 files, t90 1,507;
   # tools/legion_corner_test.py). Asset-free.
