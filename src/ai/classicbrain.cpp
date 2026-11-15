@@ -568,17 +568,19 @@ const ClassicZoneLabels* ClassicBrain::unitLabels(const tak::sim::World& world, 
 }
 
 bool ClassicBrain::siteOpen(const tak::sim::World& world, uint16_t t, int16_t x, int16_t z) const {
-    // 0x507d10(type, 0, cell, 1, 0): the World's placement test at the
-    // footprint's centre. Retail's 0x507400 refuses a site any live entity
-    // stands on, and has no in-place upgrade; the World lets a Divine
-    // Lodestone replace the player's own finished lodestone (a human's
-    // order), which the Classic AI must not do: it takes the next free site.
+    // 0x507d10(type, 0, cell, 1, 0): the World's site test at the
+    // footprint's centre (canPlaceSite: a mobile type by its footprint cells
+    // too, as the builder will place it). Retail's 0x507400 refuses a site
+    // any live entity stands on, and has no in-place upgrade; the World lets
+    // a Divine Lodestone replace the player's own finished lodestone (a
+    // human's order), which the Classic AI must not do: it takes the next
+    // free site.
     const auto* type = t < catalogue_.types.size() ? catalogue_.types[t] : nullptr;
     if (!type) return false;
     const ClassicTypeInfo& f = info_[t];
     const auto c = classicSiteCentre({x, z}, int16_t(f.footX), int16_t(f.footZ));
     const float px = float(c.first) / 65536.0f, pz = float(c.second) / 65536.0f;
-    return world.canPlace(type, px, pz, player_) && !world.lodestoneUpgradeSource(type, px, pz, player_);
+    return world.canPlaceSite(type, px, pz, player_) && !world.lodestoneUpgradeSource(type, px, pz, player_);
 }
 
 std::optional<std::pair<int16_t, int16_t>> ClassicBrain::depositSite(const tak::sim::World& world, uint16_t t,

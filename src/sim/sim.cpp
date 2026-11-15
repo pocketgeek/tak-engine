@@ -11580,11 +11580,23 @@ bool World::canPlace(const UnitType* type, float x, float z, int player) const {
     return placementCheck(type,x,z,player,nullptr);
 }
 
-bool World::canPlaceOrder(const UnitType* type, float x, float z, int player) const {
+bool World::canPlaceSite(const UnitType* type, float x, float z, int player) const {
+    return placementCheck(type,x,z,player,nullptr,nullptr,0,false,-1,true);
+}
+
+bool World::canPlaceOrder(const UnitType* type, float x, float z, int player, int builderId) const {
+    if (!type) return false;
+    // The site the order stores (makeBuildOrder), which is the one startBuild
+    // tests: a click's own point can pass where its snapped site does not.
+    const float sx=footprintSnap(Fixed::fromFloat(x),type->footX).toFloat();
+    const float sz=footprintSnap(Fixed::fromFloat(z),type->footZ).toFloat();
     // The plain test first: it reads the body index, the yielding one walks
-    // every unit and only runs for a site something stands on.
-    return placementCheck(type,x,z,player,nullptr) ||
-           (player>=0 && placementCheck(type,x,z,player,nullptr,nullptr,0,false,player));
+    // every unit and only runs for a site something stands on. A conjurer
+    // never stands on its own site when it goes down (its approach ends at
+    // the site's edge, a flyer's in the air), so there it does not count.
+    return placementCheck(type,sx,sz,player,nullptr,nullptr,0,false,-1,true) ||
+           (player>=0 && placementCheck(type,sx,sz,player,nullptr,nullptr,
+                                        type->isStructure() ? 0 : builderId,false,player,true));
 }
 
 std::vector<uint8_t> World::placementCells(const UnitType* type,const std::atomic_bool* cancel) {
@@ -11634,7 +11646,7 @@ std::vector<uint8_t> World::placementCells(const UnitType* type,const std::atomi
 
 bool World::placementCheck(const UnitType* type, float x, float z, int player,
                            std::vector<int>* clearFeatures,const std::vector<int>* candidates,int ignoreId,
-                           bool ignoreMobile,int yieldPlayer) const {
+                           bool ignoreMobile,int yieldPlayer,bool site) const {
     if (!type) return false;
     const Unit* replacing=lodestoneUpgradeSource(type,x,z,player);
     // Lodestones must sit on a mana deposit — but only on maps that have any
@@ -11788,24 +11800,32 @@ bool World::placementCheck(const UnitType* type, float x, float z, int player,
             for (int i = 0; i < type->footX; ++i)
                 if (sacredYard ? !sacredCell(cx + i, cz + j) : !walkable(grid,cx + i, cz + j)) return false;
     }
-    if (type->isStructure()) {
+    if (type->isStructure() || site) {
         // Retail's building branch (507400) checks occupied footprint cells.
         // A radius based on the longest side rejects builders standing beside
         // a rectangular building after they reach its construction perimeter.
+        // MobileBuild places a mobile type by its cells as well (`site`):
+        // 405824 calls 507d10(type, 0, cell, 1, 0), the mobile footprint loop
+        // with no body left out. The centre radius below is sized for the new
+        // unit alone: it refused a conjurer its own site from the edge its
+        // approach ends at (32 to 48 px from a 3x3 site's centre, inside the
+        // 36 px radius), and admitted a site over a larger body whose centre
+        // lay outside it.
         const auto tested=[&](size_t i) {
             if (!type->yardMap.empty() && type->yardMap[i]=='.') return false;
             // Native Y has no occupancy bits; w and C both test bodies.
             return !(waterOnlyYard && type->yardMap[i]=='Y');
         };
-        if (ignoreMobile || yieldPlayer>=0) {
+        if (ignoreMobile || yieldPlayer>=0 || ignoreId) {
             // MobileBuild's second test (405824..405911) ignores every mobile
             // unit: only another building's occupied cells refuse the site.
             // The body plane keeps one occupant per cell, which a unit
             // standing in a yard would hide, so stamp buildings alone. A
             // build order's test (canPlaceOrder) stamps the mobile bodies too,
-            // as searchBodyRect does, but not the player's own that step aside.
+            // as searchBodyRect does, but not the player's own that step aside
+            // nor (`ignoreId`) the conjurer the order is for.
             for (const auto& u:units_) {
-                if ((replacing && u.id==replacing->id) || !u.alive() || u.embarked() || !u.type) continue;
+                if ((replacing && u.id==replacing->id) || u.id==ignoreId || !u.alive() || u.embarked() || !u.type) continue;
                 const bool mobile=!u.type->isStructure();
                 if (mobile && (ignoreMobile || (u.type->canFly && u.flightGroundMode!=1) ||
                                yieldsToSite(u,yieldPlayer))) continue;
@@ -11848,8 +11868,10 @@ bool World::clearableForPlacement(const UnitType* type, float x, float z,
                                   std::vector<int>& out, int player) const {
     out.clear();
     if (!type || !type->isStructure()) return false;
-    // A build order's test: the player's own units that step aside do not count.
-    if (placementCheck(type,x,z,player,&out,nullptr,0,false,player)) return true;
+    // A build order's test, at the site the order stores (as canPlaceOrder):
+    // the player's own units that step aside do not count.
+    if (placementCheck(type,footprintSnap(Fixed::fromFloat(x),type->footX).toFloat(),
+                       footprintSnap(Fixed::fromFloat(z),type->footZ).toFloat(),player,&out,nullptr,0,false,player)) return true;
     out.clear();
     return false;
 }
@@ -11881,9 +11903,9 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
     const Unit* replacing=lodestoneUpgradeSource(type,x,z,b->player);
     if (!replacing && atUnitCap(b->player)) return 0;
     if (atTypeCap(b->player, type)) return 0;   // totalallowed: already fielding one
-    if (!canPlace(type, x, z, b->player)) {
+    if (!canPlaceSite(type, x, z, b->player)) {
         if (mobileBlocked)
-            *mobileBlocked=placementCheck(type,x,z,b->player,nullptr,nullptr,0,true);
+            *mobileBlocked=placementCheck(type,x,z,b->player,nullptr,nullptr,0,true,-1,true);
         return 0;
     }
     std::optional<Unit::LodestoneReplacement> replacement;
@@ -11943,7 +11965,7 @@ void World::queueBuild(int builderId, const UnitType* type, float x, float z, bo
     if (!b || !b->alive() || !b->type || !b->type->isBuilder || b->type->isStructure() ||
         b->underConstruction || !type) return;
     std::vector<int> clearing;
-    if (!canPlaceOrder(type,x,z,b->player) &&
+    if (!canPlaceOrder(type,x,z,b->player,builderId) &&
         (!b->type->canReclaim || !b->type->canMove ||
          !clearableForPlacement(type,x,z,clearing,b->player))) return;
     // Stable nearest-first order, computed authoritatively on every peer.
@@ -13489,32 +13511,17 @@ void World::leaveFactoryYard(int helperId) {
 // the builder wait as before.
 void World::clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, Fixed z) {
     if (!type) return;
-    int left,right,top,bottom;   // the site's rectangle, world px
+    // The site's footprint, a conjured unit's as a building's (placementCheck).
+    const int cx=footprintOrigin(x,type->footX),cz=footprintOrigin(z,type->footZ);
+    const int left=cx*16,right=(cx+type->footX)*16,top=cz*16,bottom=(cz+type->footZ)*16;   // world px
     const auto blocks=[&](const Unit& k) {
-        if (!type->isStructure()) {
-            // placementCheck's circle for a mobile site, which counts a
-            // flyer in the air too (overlaps), so canPlaceOrder accepted it.
-            // In raw 16.16 units: whole-pixel floors would round a body a
-            // fraction inside the circle on its low side out of it.
-            const int64_t dx=int64_t(k.x.v)-x.v,dz=int64_t(k.z.v)-z.v;
-            const int64_t min=int64_t(8*std::max(type->footX,type->footZ)+12)<<16;
-            return dx*dx+dz*dz<min*min;
-        }
         if (k.type->canFly && k.flightGroundMode!=1) return false;   // searchBodyRect's bodies
-        const int cx=footprintOrigin(x,type->footX),cz=footprintOrigin(z,type->footZ);
         const int ux=footprintOrigin(k.x,k.type->footX),uz=footprintOrigin(k.z,k.type->footZ);
         for (int j=std::max(cz,uz);j<std::min(cz+type->footZ,uz+k.type->footZ);++j)
             for (int i=std::max(cx,ux);i<std::min(cx+type->footX,ux+k.type->footX);++i)
                 if (type->yardMap.empty() || type->yardMap[size_t(j-cz)*type->footX+i-cx]!='.') return true;
         return false;
     };
-    if (type->isStructure()) {
-        const int cx=footprintOrigin(x,type->footX),cz=footprintOrigin(z,type->footZ);
-        left=cx*16;right=(cx+type->footX)*16;top=cz*16;bottom=(cz+type->footZ)*16;
-    } else {
-        const int min=8*std::max(type->footX,type->footZ)+12;
-        left=x.floorInt()-min;right=x.floorInt()+min;top=z.floorInt()-min;bottom=z.floorInt()+min;
-    }
     std::vector<int> movers;
     for (const auto& k:units_)
         if (k.id!=builder.id && yieldsToSite(k,builder.player) && blocks(k)) movers.push_back(k.id);
@@ -19503,7 +19510,9 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
     // it (405824..405911): the body brakes and stays for the 10-tick retry.
     // FlyingBuild (41f2a8) has no controller left after arrival: the flyer
     // hovers where it arrived, held as a scripted wait is.
-    if (!u.orders.empty() && u.orders.front().buildType && u.orders.front().placementFailures) {
+    // (A ground builder sent off its own site again has its rectangle back.)
+    if (!u.orders.empty() && u.orders.front().buildType && !u.orders.front().buildRectangle &&
+        u.orders.front().placementFailures) {
         if (u.type->canFly) holdFlight(u);
         else brakeGround(u);
         return;
@@ -20855,6 +20864,26 @@ void World::tick(float dt) {
                         // and its hold starts with this update's skipped body.
                         order.flightGoal.reset();
                         if (builder.type->canFly) holdFlight(builder);
+                        else if (order.placementFailures%5==1) {
+                            // Ours: a ground builder that still stands on its
+                            // own site (its approach failed within reach,
+                            // hemmed in on it) is one of the bodies in the
+                            // way, and nothing else moves it. On the first
+                            // failed try and every fifth after it, its
+                            // approach starts again instead of the wait, so
+                            // it walks off once the units round it have made
+                            // room; the tries still count to 31.
+                            const int sx=footprintOrigin(order.buildX,order.buildType->footX);
+                            const int sz=footprintOrigin(order.buildZ,order.buildType->footZ);
+                            const RetailRectGoal rectangle{sx-builder.type->footX,sx+order.buildType->footX,
+                                                           sz-builder.type->footZ,sz+order.buildType->footZ};
+                            const int bx=footprintOrigin(builder.x,builder.type->footX);
+                            const int bz=footprintOrigin(builder.z,builder.type->footZ);
+                            if (bx>rectangle.minX && bx<rectangle.maxX && bz>rectangle.minZ && bz<rectangle.maxZ) {
+                                order.buildRectangle=rectangle;
+                                order.mission.stage=0;
+                            }
+                        }
                     } else popBuildOrder(builder);
                 }
                 // spawn invalidates references; re-establish slot order before

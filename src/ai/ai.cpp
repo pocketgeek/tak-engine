@@ -1209,10 +1209,14 @@ bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
             if (u.alive() && u.player == player_ && u.type && u.type->isStructure() &&
                 !registry_.buildable(u.type->id).empty() &&
                 footprintRect(u.type, u.x.toFloat(), u.z.toFloat()).overlaps(body)) return false;
+        // The site each ring point snaps to, under the test the conjurer will
+        // place it by (World::canPlaceSite): a point's own position passed a
+        // test its site then failed, with the conjurer itself in the way.
         for (float r = 40; r < 170; r += 20)
             for (float a = 0; a < 6.28f; a += 0.6f) {
-                float x = p.x.toFloat() + detmath::cos(a) * r, z = p.z.toFloat() + detmath::sin(a) * r;
-                if (world.canPlace(pick, x, z) && (pick->canFly || !layout.blocks(footprintRect(pick, x, z)))) {
+                const float x = tak::sim::footprintSnap(tak::sim::Fixed::fromFloat(p.x.toFloat() + detmath::cos(a) * r),pick->footX).toFloat();
+                const float z = tak::sim::footprintSnap(tak::sim::Fixed::fromFloat(p.z.toFloat() + detmath::sin(a) * r),pick->footZ).toFloat();
+                if (world.canPlaceSite(pick, x, z) && (pick->canFly || !layout.blocks(footprintRect(pick, x, z)))) {
                     emit(sink, tak::net::Cmd::Build, p.id, pick->id, x, z);
                     return true;
                 }
@@ -1340,7 +1344,7 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
     auto usable=[&](float x,float z) {
         const float dx=x-home.first,dz=z-home.second;
         if (dx*dx+dz*dz>radius*radius || !knowsGround(world,x,z)) return false;
-        if (!world.canPlace(t,x,z,player_)) { learnSiteBlockers(world,t,x,z); return false; }
+        if (!world.canPlaceSite(t,x,z,player_)) { learnSiteBlockers(world,t,x,z); return false; }
         if (dx*dx+dz*dz>ownRadius*ownRadius && enemySide(x,z,home.first,home.second)) return false;
         if (std::any_of(refusedSites_.begin(),refusedSites_.end(),[&](const RefusedSite& r) {
                 return std::abs(r.x-x)<float(t->footX)*8+16 && std::abs(r.z-z)<float(t->footZ)*8+16; }) ||

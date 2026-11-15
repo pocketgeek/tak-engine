@@ -2519,11 +2519,20 @@ public:
     void startHeadbang(int player, int unitId, bool append = false);
     bool headbangTarget(int player, int unitId = 0) const;
     bool canPlace(const UnitType* type, float x, float z, int player = -1) const;
+    // A builder's placement test for a site of `type` at (x,z), the one
+    // startBuild runs. A building's is canPlace. A mobile type's, a conjured
+    // unit, is retail's footprint test (405824 -> 507d10(type, 0, cell, 1, 0)):
+    // any body on a footprint cell refuses the site, the conjurer's own too.
+    // canPlace's centre radius for a mobile type is not that test.
+    bool canPlaceSite(const UnitType* type, float x, float z, int player = -1) const;
     // Placement for a player's build ORDER (queueBuild and the build cursor):
-    // canPlace, except that the player's own units that would step aside for
-    // the builder (yieldsToSite) do not refuse the site. Engine deviation:
-    // retail's cursor test (429787 -> 507400) refuses any visible body.
-    bool canPlaceOrder(const UnitType* type, float x, float z, int player) const;
+    // canPlaceSite at the site the order stores (makeBuildOrder snaps the
+    // point to the footprint grid), except that the player's own units that
+    // would step aside for the builder (yieldsToSite) do not refuse the site,
+    // nor does the conjurer `builderId` itself on a mobile type's site: it
+    // has left the site before it places it. Engine deviation: retail's
+    // cursor test (429787 -> 507400) refuses any visible body.
+    bool canPlaceOrder(const UnitType* type, float x, float z, int player, int builderId = 0) const;
     // Observational whole-map query at cell centers. Returns empty on cancellation.
     // Reuses placementCheck with spatially bounded occupant candidates.
     std::vector<uint8_t> placementCells(const UnitType* type,const std::atomic_bool* cancel=nullptr);
@@ -3500,9 +3509,11 @@ public:
 
 private:
     bool canPlaceProduction(int builderId,const UnitType* type,float x,float z) const;
+    // `site`: a builder's site, where a mobile type is tested on its footprint
+    // cells like a building (canPlaceSite) instead of canPlace's centre radius.
     bool placementCheck(const UnitType* type, float x, float z, int player,
                         std::vector<int>* clearFeatures,const std::vector<int>* candidates=nullptr,
-                        int ignoreId=0,bool ignoreMobile=false,int yieldPlayer=-1) const;
+                        int ignoreId=0,bool ignoreMobile=false,int yieldPlayer=-1,bool site=false) const;
     // The player's own units in a build site step aside for its builder
     // (engine deviation, user-requested; retail's MobileBuild only waits for
     // them, 405824..405911). A unit yields when it is the player's, mobile,

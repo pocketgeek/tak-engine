@@ -4642,6 +4642,59 @@ build order and cursor accept such a site (`canPlaceOrder`). Other players'
 units and own units with other orders still make the builder wait as retail.
 `pathblock_test` checks both modes.
 
+**A conjured unit's site (icd, S; ours where marked).** MobileBuild and
+VTOL_MobileBuild place a mobile type with the same two calls as a building:
+`507d10(type, 0, cell, 1, 0)` (`40589e`, `41f372`) and, when that refuses,
+`507d10(type, 0, cell, 1, 1)` (`4058b5`, `41f389`), whose answer chooses
+between the 10-tick retry and the drop. The cell is the footprint's origin
+(`(x - foot*8 + 8) >> 4` on each axis, `405863..405890`). For a mobile type
+(`bmcode` 1) `507d10` runs its own footprint loop (`sim/retailplacement.h`,
+emulated by `tools/re/check_mobile_placement.py`): a live body on any
+footprint cell refuses the site, the own-id argument 0 leaves no body out
+(so the conjurer refuses a site it stands on), and the second call lets
+mobile bodies through. Nothing there measures a distance between unit
+centres. Ours did until 2026-11-14: a circle of 8*max(foot)+12 px on unit
+centres, the engine's first placement test (2026-09-01) and no port. It
+counted the conjurer where its approach leaves it, on the edge of the site's
+rectangle (above: 32 to 48 px from a 3x3 site's centre, inside the 36 px
+circle), so the site was refused 31 times and the order dropped with no
+message: 444 of 13,563 conjure orders in one recorded game of eight computer
+players. It also admitted a site over a larger body whose centre lay outside
+the circle (a 2x2 unit 30 px from a 4x4 one), and the footprint-strict mover
+then held both for good. `World::canPlaceSite` is the footprint test now (the
+nav grid's cells as before, then no body on any of them: `searchBodyRect`'s
+bodies, so ground units and landed flyers), and `startBuild` places by it.
+`World::canPlace` keeps the centre radius for its other callers (the editor's
+validation, the computer player's parking and launch-room spots, a flying or
+unscripted factory output's pad), none of which places through a build order.
+
+Ours, not retail:
+
+- The order's test (`canPlaceOrder`: `queueBuild` and the build cursor) is
+  taken at the site the order stores, snapped to the footprint grid
+  (`makeBuildOrder`), not at the clicked point, so the order and the placement
+  cannot disagree (a lodestone's distance to its deposit is measured there
+  too). On a conjured unit's site it leaves out the conjurer the order is for,
+  besides the player's own units that step aside: the conjurer walks to the
+  rectangle's edge before it places, and a flying one hovers. Retail's cursor
+  refuses a site the conjurer stands on. A body that will not step aside
+  (another player's, an unfinished unit, a builder at work, any unit with
+  orders) refuses the order when it is given.
+- `clearBuildSite` moves the player's idle units off the site's footprint.
+- A ground builder still standing on its own site when a try fails (its
+  approach failed within reach, 0x200, hemmed in on the site) starts its
+  approach again on the first failed try and every fifth after it, instead of
+  waiting where nothing would ever move it. The tries still count to 31.
+- The computer player's ring search round a conjurer
+  (`ai::Controller::produce`) tests `canPlaceSite` at the site each ring point
+  snaps to, counting the conjurer; its site search (`placeSite`) and the
+  Classic AI's `siteOpen` test `canPlaceSite` too.
+
+`conjure_site_test` covers every site round an idle
+Beast Lord, Beast Handler, Beast Tamer and flying monarch, a second conjurer
+at work or arriving, standing units of the player and of another, a conjurer
+among idle units, and the computer player's picks.
+
 **Room for the next output (a deliberate deviation).** A mobile producer's exit
 step carries an output out of the 12-cell area its next output may be made in.
 A rally that starts at once does not: one that ends close by, or lies out of
