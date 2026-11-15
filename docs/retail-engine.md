@@ -5548,6 +5548,45 @@ initializer appends the anchor (return) as a mission of its own, so the toggle's
 first match is the outbound leg alone (I, from `0x4d7a30`'s match rule; not
 emulated) -- ours keeps that.
 
+**A Load is two missions, and ours can queue the passenger's.** Retail's order
+call gives the selected carrier GROUND_PICKUP on the passenger (VTOL_PICKUP for
+a flyer, `0x4def6b..0x4def96`) with the click's queue flag, and then gives the
+passenger Move_Seek_Pickup on the carrier with queue 0
+(`0x4d7c18..0x4d7c84`): a replacement whatever the click's modifiers, so that
+mission leads the passenger's list from the start. Move_Seek_Pickup
+(`0x403430`) runs for as long as any mission in the carrier's list is a pickup
+(`0x40349a..0x4034d5` walks it from `+0x60`), so the passenger follows a
+carrier whose pickup is still queued behind other orders. Both carrier
+handlers end the pickup (8) at any dispatch where the passenger's head mission
+is not the Move_Seek_Pickup on this carrier (`0x4088cf..0x4088eb`,
+`0x41a84f..0x41a86b`) (all S). Ours (`Cmd::Load`, `World::loadInto`): the order
+names the passenger, as our boarding click does, and its queue flag applies to
+both lists, so the passenger's Load can wait behind its other orders (Shift),
+behind an order put ahead of it (Ctrl) or behind a mobile builder's
+production. The carrier's pickup then waits with it (`World::tickTransport`;
+ours, not retail): while the passenger's list still holds the Load on this
+carrier, the pickup stays at stage 0 and polls every 15 ticks, the carrier
+holding where it is; a pickup next in the carrier's list whose passenger is
+ready goes ahead of it; and it ends at the first poll after the Load has gone
+(the passenger's list replaced or stopped, the passenger dead, aboard another
+carrier or no longer fitting). A pickup that waits behind the carrier's other
+orders is checked when it leads, as in retail. A Load that Ctrl put behind
+another order starts again at stage 0 with its retries cleared, like any
+rewound leg (`World::insertOrderFront`). Before, the carrier ended the pickup
+at its first wake, as retail's handler does, and the Load found no pickup when
+its turn came and ended at once: a Load queued behind a Move, an Attack,
+another Load or production never started unless the carrier's own list
+happened to keep the pickup queued for long enough. An unqueued Load is
+unchanged. Unload is one mission and had no such gap. Left as retail has it:
+an order put ahead of the carrier's pickup while its transfer runs finds the
+passenger's Move_Seek_Pickup in its retry stage (`0x40350e`: five waits of 30
+ticks, then 8), which gives up unless the carrier is back in time (I, from the
+handlers; not emulated). `queued_load_test` (Retail and `--legion`, a ground
+and a flying carrier): a Load behind a Move, an Attack and another Load, a
+Move put ahead of a running Load, a carrier with four pickups, the pickup
+ending with the passenger's Load, and an Unload queued behind a Move and
+behind a waiting pickup; `transport_roster` has the production cases.
+
 ## Drag boxes: world-anchored corners and the 32-pixel test (icd)
 
 Retail keeps a map drag box as two WORLD points (game state `+0x175fc..+0x17614`,
@@ -6087,12 +6126,11 @@ the mover before its first chase tick (one that began in range and that
 Legion's `walkOnShot` walks on, for example). The other kinds that follow a
 unit or a wreck (Guard, Repair, Assist, Reclaim, Resurrect) store a real point
 when issued and were not affected; flyers fly their own goals and were not
-either. Load also stores no point, but its mission installs its own approach;
-a Load queued behind another order does not start at all (the carrier drops
-its pickup while the passenger's Load is still queued), which is a separate
-gap. `queued_target_test` (Retail and `--legion`) queues a melee, ranged and
-flyer Attack, Guard, Repair and Assist behind an Attack, and an Attack behind a
-Guard whose ward dies, a finished Repair and a Move.
+either. Load also stores no point, but its mission installs its own approach
+(a queued Load: "A Load is two missions", under the order modifiers above).
+`queued_target_test` (Retail and `--legion`) queues a melee, ranged and flyer
+Attack, Guard, Repair and Assist behind an Attack, and an Attack behind a Guard
+whose ward dies, a finished Repair and a Move.
 
 ## Kirenna on an attack-move (icd static + emulation)
 

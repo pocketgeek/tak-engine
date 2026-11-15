@@ -2093,6 +2093,9 @@ void World::insertOrderFront(int unitId, bool rally, const std::function<void()>
         const uint32_t flags = o.mission.flags;
         o.mission = RetailMissionState{};
         o.mission.flags = flags;
+        // A Load's stage and retries are its transportMission's: stage 0 too,
+        // so that it walks to its carrier again when the head ends.
+        if (o.load && !o.transportPickup) { o.transportMission = RetailMissionState{}; o.transportApproachAttempts = 0; }
         o.hasSegment = false;
         o.navigationConsumed = o.navigationExhausted = false;
         o.flightGoal.reset();
@@ -5500,10 +5503,42 @@ bool World::tickTransport(Unit& u, float dt) {
         // 4d8450 only enters the carrier handler after an admitted wake.
         // A passenger order change must not bypass this sleep, and event 8
         // explicitly aborts both native pickup handlers before stage dispatch.
-        if((events&8u) || !passenger || !canLoadInto(passenger->id,u.id) || passenger->orders.empty() ||
-            !passenger->orders.front().load || passenger->orders.front().transportProductionAhead ||
-            passenger->orders.front().targetId!=u.id) {
+        if((events&8u) || !passenger || !canLoadInto(passenger->id,u.id)) {
             removePickup();return true;
+        }
+        // Both native handlers end the pickup unless the passenger's head
+        // mission is the Move_Seek_Pickup on this carrier (4088cf, 41a84f).
+        // Retail's order call always gives the passenger that mission as a
+        // replacement (4d7c62: queue 0), so there it leads from the start.
+        // Ours, not retail: the passenger's Load may wait behind its other
+        // orders (Shift), behind an order put ahead of it (Ctrl) or behind
+        // its production. While the Load is still in the passenger's list
+        // the pickup waits for it, back at stage 0 and polling: the pickup
+        // next in line whose passenger is ready goes first, and the poll
+        // that finds the Load gone (the list replaced or stopped; a dead or
+        // embarked passenger fails the test above) ends the pickup.
+        if(passenger->orders.empty() || !passenger->orders.front().load ||
+            passenger->orders.front().transportProductionAhead ||
+            passenger->orders.front().targetId!=u.id) {
+            if(std::none_of(passenger->orders.begin(),passenger->orders.end(),
+                    [&](const Order& p){return p.load && !p.transportPickup && p.targetId==u.id;})) {
+                removePickup();return true;
+            }
+            mission.stage=0;o.controller=0;o.navigationExhausted=true;
+            mission.waitMask=8;mission.sleep(tickCounter_,15);
+            const bool handled=advancePickup();
+            cancelPath(u);
+            if(pickupLeg)u.orders.erase(u.orders.begin(),u.orders.begin()+long(pickupLeg));
+            for(size_t i=1;i<u.orders.size() && u.orders[i].transportPickup;++i) {
+                const Unit* candidate=unit(u.orders[i].targetId);
+                if(!candidate || !canLoadInto(candidate->id,u.id) || candidate->orders.empty())continue;
+                const auto& request=candidate->orders.front();
+                if(!request.load || request.transportProductionAhead || request.targetId!=u.id)continue;
+                u.orders.front().transportMission.waitMask=0;
+                std::rotate(u.orders.begin(),u.orders.begin()+long(i),u.orders.begin()+long(i)+1);
+                break;
+            }
+            return handled;
         }
         // Both native carrier handlers initialize, then wait one tick before
         // approach. The passenger's Move_Seek_Pickup never owns this timer.

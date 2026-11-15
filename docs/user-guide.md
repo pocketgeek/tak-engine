@@ -1705,6 +1705,10 @@ repair, reclaim, area reclaim, load, unload and building.
   one straight away. A queued attack (Shift-right-click an enemy, or a
   right-drag attack box) heads straight for its target from wherever the unit
   stands when the order before it ends, the target dying included.
+- **A queued load waits its turn.** A unit told to board a transport with Shift
+  finishes the orders before it and then boards. The transport holds the pickup
+  for it until then and takes the passengers that are ready first. Give the unit
+  a different order, or stop it, and the transport lets that pickup go.
 - **Hold Shift to see the plan.** The selected units show a dotted line through
   their queued orders, including building sites and area jobs.
 - **Queued buildings show as see-through outlines** on their sites until a

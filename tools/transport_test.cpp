@@ -1656,27 +1656,31 @@ static void retailRoster(const char* root) {
             for(int tick=0;tick<30;++tick)w.tick(1.f/30);
             check(!w.unit(cid)->embarked() && w.unit(cid)->buildProgress>0,
                   "queued boarding cannot overtake earlier finite production");
-            check(std::none_of(w.unit(tid)->orders.begin(),w.unit(tid)->orders.end(),
-                  [](const auto& order){return order.transportPickup;}),
-                  "carrier rejects pickup while passenger's earlier production owns its turn");
+            // Ours, not retail: the idle carrier's pickup waits for the
+            // passenger's turn instead of ending at its first wake.
+            check(w.unit(tid)->orders.size()==1 && w.unit(tid)->orders.front().transportPickup &&
+                  w.unit(tid)->orders.front().targetId==cid &&
+                  w.unit(tid)->orders.front().transportMission.stage==0,
+                  "carrier's pickup waits while passenger's earlier production owns its turn");
             w.dequeue(cid,&product,2);
-            for(int tick=0;tick<30;++tick)w.tick(1.f/30);
-            check(w.unit(cid)->buildQueue.empty() &&
-                  std::none_of(w.unit(cid)->orders.begin(),w.unit(cid)->orders.end(),
-                    [](const auto& order){return order.load;}),
-                  "canceling preceding production releases boarding to retire its missing pickup");
-            product.buildTime=10;product.buildCost=1;
-            w.orderWait(tid,3,false);
-            w.train(cid,&product,1);
-            w.loadInto(cid,tid,true);
             for(int tick=0;tick<300 && !w.unit(cid)->embarked();++tick)w.tick(1.f/30);
-            if(!w.unit(cid)->embarked() || !w.unit(cid)->buildQueue.empty())
+            check(w.unit(cid)->buildQueue.empty() && w.unit(cid)->inTransport==tid &&
+                  w.unit(tid)->orders.empty(),
+                  "canceling preceding production releases the queued boarding");
+            World done;setTestPathfinding(done);
+            done.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
+            product.buildTime=10;product.buildCost=1;
+            const int doneCarrier=done.spawn(&carrier,400,400),doneBuilder=done.spawn(builder,430,400);
+            done.train(doneBuilder,&product,1);
+            done.loadInto(doneBuilder,doneCarrier,true);
+            for(int tick=0;tick<300 && !done.unit(doneBuilder)->embarked();++tick)done.tick(1.f/30);
+            if(!done.unit(doneBuilder)->embarked() || !done.unit(doneBuilder)->buildQueue.empty())
                 std::printf("queued-production air=%d balance=%d cargo=%d queue=%zu progress=%d site=%d mana=%.1f passengerOrders=%zu carrierOrders=%zu\n",
-                    air,crusades,w.unit(cid)->inTransport,w.unit(cid)->buildQueue.size(),
-                    w.unit(cid)->buildProgress,w.unit(cid)->productionSiteId,w.player(0).mana,
-                    w.unit(cid)->orders.size(),w.unit(tid)->orders.size());
-            check(w.unit(cid)->embarked() && w.unit(cid)->buildQueue.empty(),
-                  "completed finite production releases queued boarding when carrier pickup is still pending");
+                    air,crusades,done.unit(doneBuilder)->inTransport,done.unit(doneBuilder)->buildQueue.size(),
+                    done.unit(doneBuilder)->buildProgress,done.unit(doneBuilder)->productionSiteId,done.player(0).mana,
+                    done.unit(doneBuilder)->orders.size(),done.unit(doneCarrier)->orders.size());
+            check(done.unit(doneBuilder)->inTransport==doneCarrier && done.unit(doneBuilder)->buildQueue.empty(),
+                  "completed finite production releases queued boarding on an idle carrier");
         }
         int carriers=0;
         for(const auto& [name,type]:registry.types()) {
