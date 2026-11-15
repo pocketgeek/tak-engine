@@ -415,7 +415,10 @@ links the sim, data loaders, `net` and the `ai` module only.
   the game is the bundles that were closed. The room is erased as soon as no
   watcher is still being sent the log (a watcher that joined late, or is still
   fetching the map, gets all of it first); until then it refuses new watchers
-  ("game not found or ended"). It does not wait for ever: once no watcher has
+  ("game not found or ended") and is no running game any more: it is left out
+  of the game list and the LAN announcement, and does not count against
+  `--max-running-games`, in the `--sim-threads` shares or in `--status`
+  (`Room::playing`). It does not wait for ever: once no watcher has
   taken another bundle for 120 s (a silent watcher's own timeout;
   `TAK_OVER_DRAIN_MS` on a test server) the room goes anyway, so a watcher
   that never takes the map cannot hold an ended game's room. `GameOver` is
@@ -1177,7 +1180,8 @@ the `gameMods` byte with the shared package's `modDigest`. The
 - Game end (§4): `room_standing` (the standing a tick reports, on constructed
   worlds), `server_endgame` (a real server at protocol level: a seated human's
   room plays on, the match-over and all-players-gone ends, `GameOver`, the
-  replay's length, a watcher still catching up) and `watch_end` (real clients:
+  replay's length, a watcher still catching up from a room that is no longer
+  listed or counted as running) and `watch_end` (real clients:
   an all-AI game watched by its host ends on the tick it is decided, a game
   whose player left moments later; the watcher's three seconds, its plate,
   both replays).

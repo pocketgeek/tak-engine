@@ -4039,7 +4039,8 @@ if(TAK_TEST_DATA)
     # The end of a game nobody is seated in: a decided match with a human seated plays on;
     # with none the server ends it on that tick, tells the watchers (Msg::GameOver) and its
     # replay ends there; abandoned games tell their watcher; a watcher still catching up
-    # gets the whole log before the room goes.
+    # gets the whole log before the room goes, which meanwhile is no longer listed or
+    # counted as a running game.
     add_test(NAME server_endgame COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_endgame_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --map-tool "$<TARGET_FILE:map_transfer_test>")

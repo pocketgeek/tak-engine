@@ -455,6 +455,11 @@ struct Room {
         return false;
     }
     bool held() const { return paused || over || waiting(); }   // no tick closes
+    // In play: started and not ended. An ended room (over) is no game any more, only
+    // the log its last watchers are still being sent, and a Watch on it is refused: the
+    // game list, the LAN beacon and every count of running games (--max-running-games,
+    // each game's share of --sim-threads, --status) go by this, not by `running`.
+    bool playing() const { return running && !over; }
     int usedSlots() const {
         int n = 0;
         for (int i = 0; i < kMaxSlots; ++i) if (slots[i].type == 1 || slots[i].type == 2) ++n;
@@ -569,7 +574,7 @@ private:
     std::vector<int> simCpus_;   // --sim-cpus (setSimCpus)
     size_t runningGames() const {
         size_t running = 0;
-        for (const auto& [id, room] : rooms_) { (void)id; running += room.running; }
+        for (const auto& [id, room] : rooms_) { (void)id; running += room.playing(); }
         return running;
     }
     unsigned simShare(size_t running) const {
@@ -1267,12 +1272,14 @@ void Server::authMsg(Client& c, const Frame& f) {
 void Server::sendGameList(Client& c) {
     Writer w;
     uint64_t t = nowMs();
-    // Private (single-player) games are not advertised in the browser.
+    // Private (single-player) games are not advertised in the browser, nor is a game
+    // that has ended and only waits for its watchers' logs (Room::over): it would show
+    // as running, and a Watch on it is refused.
     uint32_t n = 0;
-    for (auto& [id, r] : rooms_) if (!r.priv) ++n;
+    for (auto& [id, r] : rooms_) if (!r.priv && !r.over) ++n;
     w.u32(n);
     for (auto& [id, r] : rooms_) {
-        if (r.priv) continue;
+        if (r.priv || r.over) continue;
         w.u32(r.id);
         w.str(r.name);
         w.str(r.mapId);
@@ -2285,7 +2292,7 @@ void Server::tryStart(Client& c) {
     if (!r || r->hostId != c.id || r->running) return;
     // The server's limit on running games refuses this START and nothing more: the room
     // stays as it is, and its host may press START again later.
-    if(uint64_t(std::count_if(rooms_.begin(),rooms_.end(),[](const auto& entry){return entry.second.running;}))>=limits_.running) {
+    if(uint64_t(runningGames())>=limits_.running) {
         refuseStart(c,*r,"server running-game capacity reached; retry later");return;
     }
     if (!mapsReady(*r)) {
@@ -3622,7 +3629,7 @@ void Server::onFrame(Client& c, const Frame& f) {
 // The game (not private) announced once a second: its name, the host's name, the map,
 // seats taken and the room's capacity, whether it is locked, started and watchable.
 // One waiting in its room first; else a started one that allows spectators. Nothing
-// before the host creates it.
+// before the host creates it, nor for a game that has ended (Room::over).
 void Server::announceLan(uint64_t now) {
     if (now < beaconAtMs_) return;
     beaconAtMs_ = now + 1000;
@@ -3630,7 +3637,7 @@ void Server::announceLan(uint64_t now) {
     const Room* pick = nullptr;
     for (const auto& [id, r] : rooms_) {
         (void)id;
-        if (r.priv || (r.running && !r.opts.allowSpectators)) continue;
+        if (r.priv || r.over || (r.running && !r.opts.allowSpectators)) continue;
         if (!pick || (pick->running && !r.running)) pick = &r;
     }
     if (pick) {
@@ -3789,8 +3796,8 @@ int Server::run() {
         if (statusFd >= 0 && (pfds[1].revents & POLLIN)) {
             tak::srv::StatusCounts counts;
             for (const auto& [id, room] : rooms_) {
-                if (room.running) ++counts.runningGames;
-                else ++counts.lobbyGames;
+                if (room.playing()) ++counts.runningGames;
+                else if (!room.running) ++counts.lobbyGames;
             }
             // Count established player/spectator/browser sessions, not sockets
             // still authenticating. Status queries never create such sessions.
@@ -3952,7 +3959,7 @@ int Server::run() {
         size_t games=0;
         for(auto& [id,room]:rooms_) {
             (void)id;
-            const size_t game=room.running?games++:0;   // its turn among the running games
+            const size_t game=room.playing()?games++:0;   // its turn among the running games
             // A pause or a wait is not a seat's hold: suspend those running (trackHolds).
             if(room.running && room.held())for(auto& seen:room.holdSeen)seen=0;
             if(!room.running || room.held() || room.tickJob.valid() ||

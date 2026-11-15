@@ -457,7 +457,9 @@ sides unable to reach each other, runs for as long as someone watches it:
 there is no stalemate rule and no time limit, and what it can cost is bounded
 by `--max-running-games` and the replay memory budget. An ended game's room
 stays only while a watcher who joined late is still being sent its history, and
-goes once that has not moved for 120 s (`TAK_OVER_DRAIN_MS` in tests). See
+goes once that has not moved for 120 s (`TAK_OVER_DRAIN_MS` in tests); from the
+moment the game ended it is off the game list and no longer counts as a running
+game (`--max-running-games`, `--sim-threads`, `--status`). See
 [game end](multiplayer-design.md#4-the-server-takserver);
 `server_endgame_test.py` checks each of these against a real server.
 

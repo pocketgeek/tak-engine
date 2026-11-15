@@ -27,7 +27,9 @@ Each scenario runs on its own and every failure is reported:
   catchup    (needs --map-tool) a second watcher has not taken the room's map yet
              when the game ends, so it has none of the bundles: it is told the game is
              over, the room stays (refusing new watchers) until it has been sent the
-             whole log, and only then goes.
+             whole log, and only then goes. Waiting, it is no running game any more:
+             it is not in the game list, and it does not count against the server's
+             limit on running games (--max-running-games 1 here).
   stuck      (needs --map-tool) a watcher that never takes the map does not hold the
              ended game's room: it goes once that watcher has taken none of the log for
              the drain time (TAK_OVER_DRAIN_MS, shortened here).
@@ -179,6 +181,28 @@ def refused_watch(port, h, name, room):
         return r.field()
     finally:
         with_peer.close()
+
+
+def start_refusals(port, h, name):
+    """A lone host creates a room and presses START at once: what the server refuses it
+    with. The limit on running games is checked first; under it the START only fails on
+    the room itself (its map not verified yet, one seat taken) or is ignored."""
+    host = login(port, h, name)
+    try:
+        host.send('CreateGame', auth.field('another') + auth.field('') + auth.field(recipe()) + auth.field('') +
+                  options() + bytes([2, 0, 0]))
+        assert host.receive('JoinResult').num('<B') == 1, 'CreateGame refused'
+        host.send('StartGame')
+        host.send('Ping')
+        host.receive('Pong')   # answered once the START has been dealt with
+        reasons = []
+        for body in host.pending[auth.MSG['MapError']]:
+            r = auth.Reader(body)
+            r.num('<I')
+            reasons.append(r.field())
+        return reasons
+    finally:
+        host.close()
 
 
 def lose(loser, others):
@@ -350,6 +374,11 @@ def scenario_catchup(port, h, root, packages):
         assert log_says(root, 'game %d over after %d ticks (match over)' % (room, ticks))
         assert not log_says(root, 'game %d ended' % room, seconds=1), 'the room went before its watcher had the log'
         assert refused_watch(port, h, 'Carol', room) == b'game not found or ended', 'a game that is over took a new watcher'
+        # ... and no running game: not listed (a Watch on it is refused), and not held
+        # against the server's limit of one running game.
+        assert room not in listed(port, h), 'a game that is over is still listed while its watcher catches up'
+        assert not [why for why in start_refusals(port, h, 'Carol') if b'capacity' in why], \
+            'a game that is over still counts against --max-running-games'
         ready_map(late, room)
         whole_game(late, ticks)
         assert all(late.bundles[t][0] == wendy.bundles[t][0] for t in range(ticks)), 'the two watchers were sent different games'
@@ -408,7 +437,9 @@ def main():
             subprocess.run([str(a.map_tool.resolve()), '--export-package', str(a.data.resolve()), str(out), 'Inner Circle'],
                            check=True)
             packages['Inner Circle'] = out.read_bytes()
-        with server(a.server.resolve(), a.data.resolve(), root, '--replaydir', str(root / 'replays')) as (port, h, process):
+        # One running game at a time: every scenario's game has ended before the next starts.
+        with server(a.server.resolve(), a.data.resolve(), root, '--replaydir', str(root / 'replays'),
+                    '--max-running-games', '1') as (port, h, process):
             for scenario in SCENARIOS:
                 name = scenario.__name__[len('scenario_'):].replace('seated_then_leave', 'leave')
                 if scenario in (scenario_catchup, scenario_stuck) and not packages:
@@ -430,7 +461,8 @@ def main():
           'ends the match on the result\'s tick, tells the watchers the length and the winner, and its replay '
           'ends there; a taken-over seat is not a human\'s; abandoned and walked-over games tell their watcher; '
           'a game nobody is connected to is torn down; a watcher still catching up gets the whole log first, '
-          'and one that never takes the map does not hold the room')
+          'from a room that is no longer listed or counted as a running game, and one that never takes the map '
+          'does not hold the room')
 
 
 if __name__ == '__main__':
