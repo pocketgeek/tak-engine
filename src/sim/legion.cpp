@@ -3551,21 +3551,60 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // Nearest statically legal origin to a requested one. Past the near
     // search radius, like Retail, settle for the nearest origin the unit can
     // actually reach (its own static component); -1 only if there is none.
+    // Square rings outward; the first ring that holds a candidate decides
+    // (minimum squared distance, ties to the lower cell index). Only the part
+    // of a ring that can hold one is walked: its cells on the map and, past
+    // the near radius, inside the region's bounding box (as nearestReachable).
+    // A goal off the map starts at its Chebyshev distance to the map, and the
+    // search stops once no ring can reach the box, so a goal far outside (an
+    // attack on a flyer far off the map) costs nothing: it walked every ring,
+    // 16.8 million cells on a 2048-cell map, to find none. The answers are
+    // unchanged.
     // Cells the goal searches below visited (scratch for registerMove's accounting; never hashed).
+    // nearestLegal charges a ring its whole perimeter (8r), as the unclipped walk
+    // did, from the first ring that touches the map to the one the search ends
+    // on: for a goal on the map exactly the old charge (registerCharged spends
+    // it from the registration budget, so it must not move).
     mutable uint64_t searchCells=0;
     int nearestLegal(const Plane& p,int x,int z,int reach=-1) const {
         if(legal(p,x,z))return z*width()+x;
+        const int W=width(),H=height();
         int best=-1;int64_t bestD=0;
-        const int far=reach>=0?std::max(width(),height()):kGoalSearchCells;
-        for(int r=1;r<=far&&best<0;++r)
-            for(int dz=-r;dz<=r;++dz)for(int dx=-r;dx<=r;dx+=(dz==-r||dz==r||dx==r)?1:2*r) {
-                ++searchCells;
-                if(!legal(p,x+dx,z+dz))continue;
-                if(r>kGoalSearchCells&&compAt(p,(z+dz)*width()+x+dx)!=reach)continue;
-                const int64_t d=int64_t(dx)*dx+int64_t(dz)*dz;
-                const int index=(z+dz)*width()+x+dx;
+        const int far=reach>=0?std::max(W,H):kGoalSearchCells;
+        const int r0=std::max({1,-x,x-(W-1),-z,z-(H-1)});
+        if(r0>far)return -1;
+        // Past the near radius only the region's own origins count.
+        std::array<int,4> box{0,0,W-1,H-1};
+        if(reach>=0&&size_t(reach)<p.compBox.size()) {
+            const auto& b=p.compBox[size_t(reach)];
+            box={std::max(b[0],0),std::max(b[1],0),std::min(b[2],W-1),std::min(b[3],H-1)};
+        }
+        const int boxFar=std::max({x-box[0],box[2]-x,z-box[1],box[3]-z});
+        int r=r0;
+        for(;r<=far&&best<0;++r) {
+            const bool own=r>kGoalSearchCells;
+            if(own&&r>boxFar)break;   // no ring from here on reaches the region
+            const int x0=std::max(x-r,own?box[0]:0),x1=std::min(x+r,own?box[2]:W-1);
+            const int z0=std::max(z-r,own?box[1]:0),z1=std::min(z+r,own?box[3]:H-1);
+            auto visit=[&](int cx,int cz) {
+                const int index=cz*W+cx;
+                if(!p.legal[size_t(index)])return;
+                if(own&&compAt(p,index)!=reach)return;
+                const int64_t d=int64_t(cx-x)*(cx-x)+int64_t(cz-z)*(cz-z);
                 if(best<0||d<bestD||(d==bestD&&index<best)) {best=index;bestD=d;}
+            };
+            for(int cz=z0;cz<=z1;++cz) {
+                if(cz==z-r||cz==z+r) {
+                    for(int cx=x0;cx<=x1;++cx)visit(cx,cz);
+                } else {
+                    if(x-r>=x0)visit(x-r,cz);
+                    if(x+r<=x1)visit(x+r,cz);
+                }
             }
+        }
+        // `r` is one past the last ring considered (the one that held the answer, or `far`).
+        const uint64_t last=uint64_t(r-1),first=uint64_t(r0);
+        if(last>=first)searchCells+=4*(last*(last+1)-(first-1)*first);
         return best;
     }
     // Nearest origin of component `comp` to (x,z): minimum squared distance,

@@ -200,6 +200,15 @@ the unit starts on an illegal origin. Goal resolutions are cached per (plane, re
 the current static epoch. The cache is a pure function of the plane, so it is not hashed; it is cleared on an epoch
 change, on plane reuse and at 4096 entries.
 
+Only the part of a ring that can hold an origin is walked: its cells on the map and, past the 24 cells, inside the
+start component's bounding box (as `nearestReachable` does). A goal off the map (an order's point is kept as given,
+and a ground unit may be sent after a flyer that is off the map) starts at its Chebyshev distance to the map, and
+the search stops once no ring can reach the box. The answers are the same as the full walk's. That walk tested
+every cell of every ring: for a goal 2048 cells or more off a 2048-cell map, 16.8 million cells (12 ms) to find
+nothing, each time it was asked. The registration budget is still charged a ring's whole perimeter (8r units), from
+the first ring that touches the map to the one the search ends on, which for a goal on the map is exactly what the
+full walk charged (`map_edge_test`).
+
 **Nearest reachable approach.** If the resolved goal lies in a different static component from the unit, and the
 unit's own component has at least 256 origins (`kApproachRegion`), the unit becomes an **approach member**. Its goal
 becomes the component's nearest origin to the requested one (`nearestReachable`: exact minimum squared distance, ties

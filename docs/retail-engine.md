@@ -3919,8 +3919,9 @@ ports' points and the navigator's steering; the reach test and the level aim
 at 42,000 px; guards, patrols and a move at the east and south edges and the
 corner (no step longer than the flyer's speed, no coordinate on the far side,
 still flying after 2000 ticks, the spatial hash within the map plus 2048 px);
-a group move ordered 10 px from each edge; and a plain shot whose last step
-passes the edge.
+a group move ordered 10 px from each edge; a plain shot whose last step passes
+the edge; and Legion's goal search for a Move ordered far off the map
+(legion-pathfinding.md, "Goal resolution").
 With the shipped units, eight Gryphons fly attack runs at targets on the east
 and south edges for 3000 ticks, and every target is hit in both halves of the
 run; before the change the same flyers step 65,534 px in a tick. The recorded

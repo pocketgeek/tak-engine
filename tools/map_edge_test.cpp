@@ -12,6 +12,7 @@
 //   map_edge_test <data dir>   Gryphons on attack runs at targets on the east and south edges
 #include "hpi/hpi.h"
 #include "net/lockstep.h"
+#include "sim/legion.h"
 #include "sim/matchsetup.h"
 #include "sim/retailairattack.h"
 #include "sim/retailanimationqueries.h"
@@ -250,6 +251,41 @@ void shotAtTheEdge() {
     }
 }
 
+// ---- Legion: a goal off the map costs no whole-map scan ----------------------------------
+// The order point of a Move is kept as given (retail). Legion resolves it to the
+// nearest origin the unit can stand on: square rings outward from the goal's cell.
+// Every ring that lay wholly off the map was walked cell by cell.
+void legionGoalOffTheMap() {
+    for(const float goalX:{-30000.f,-32768.f}) {
+        World w;
+        w.setGameSeed(7);w.setSerialThreads(true);w.setPathService(true);
+        w.setPathfindingMode(PathfindingMode::Legion);
+        w.setPlayerCount(2);w.setTeam(0,0);w.setTeam(1,1);
+        w.setTerrain(std::vector<uint8_t>(size_t(kCells)*kCells,100),kCells,kCells,20);
+        w.setMapPlacementFeatures(std::vector<uint16_t>(size_t(kCells)*kCells,0xffff),{{"wall",1,1,true,true,false,0}});
+        const UnitType foot=walker("foot",2);
+        const int id=w.spawn(&foot,2000,16000,std::nullopt,0);
+        w.tick(1.f/30);
+        w.updateNavigationExploration();
+        auto& explored=w.editNavigationExploration();
+        std::fill(explored.begin(),explored.end(),0xffff);
+        const auto registration=[&] {
+            return w.legionNavigator() ? w.legionNavigator()->accounting().total[size_t(NavWork::Registration)] : ~uint64_t(0);
+        };
+        const uint64_t before=registration();
+        const Fixed startX=w.unit(id)->x;
+        w.order(id,goalX,16000,false);
+        for(int tick=0;tick<120;++tick)w.tick(1.f/30);
+        const uint64_t spent=registration()-before;
+        std::printf("  goal x %.0f: registration work %llu units, unit moved %.1f px west\n",double(goalX),
+                    static_cast<unsigned long long>(spent),px(startX)-px(w.unit(id)->x));
+        // One ring of the map's own size is 8 x 2048 units; the whole-map scan was 4 x 2048 x 2049.
+        check(spent<200000,"a Move to x "+std::to_string(int(goalX))+" resolves its goal without scanning the map");
+        if(goalX>-32000)   // within reach of the ring walk: the nearest origin is at the west edge
+            check(px(w.unit(id)->x)<px(startX)-50,"...and the unit walks toward the west edge");
+    }
+}
+
 // ---- Gryphons on attack runs at the east and south edges (shipped units) ------------------
 int gryphons(const char* data) {
     auto vfs=tak::hpi::mountRetailRoot(data);
@@ -321,6 +357,7 @@ int main(int argc,char** argv) {
         flyersAtTheEdge();
         groupMoveAtTheEdge();
         shotAtTheEdge();
+        legionGoalOffTheMap();
     }
     std::printf("%s: %d failure(s)\n",failures ? "FAILED" : "OK",failures);
     return failures ? 1 : 0;
