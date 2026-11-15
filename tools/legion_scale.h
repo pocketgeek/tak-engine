@@ -71,6 +71,14 @@
 //                                              stage 6: tile chains built; shared tiles built, found, evicted;
 //                                              the tile cache's peak; regions left off (nothing to lead into /
 //                                              relabelled); halo repairs; hits by routes to other goals
+//   route.full_plans, route.seed_plans, route.seed_bound, route.seed_bound_restores
+//                                              plans made for a group whose bounded window had failed (a large
+//                                              component); plans over the seeds' own cells (every member cut off);
+//                                              windows charged for their buried seeds, and charged in full after all
+//   static.cut_traps, static.trapped_resumed, sched.awaited_ticks
+//                                              members trapped by their component; trapped members that went on in
+//                                              place once their goals rejoined it; member-ticks standing off a
+//                                              touched corridor or chain (their refresh a Waiting job)
 // Everything is integer and in body order, so every compiler reports the same numbers.
 #include "legion_observe.h"
 #include "sim/legion.h"
@@ -364,6 +372,13 @@ public:
                 k.emplace_back(p + "static.trapped_reopened", int64_t(a.trappedReopened));
                 k.emplace_back(p + "static.chain_resolves", int64_t(a.chainResolves));
                 k.emplace_back(p + "static.plan_repairs", int64_t(a.planRepairs));
+                k.emplace_back(p + "route.full_plans", int64_t(a.fullPlans));
+                k.emplace_back(p + "route.seed_plans", int64_t(a.seedPlans));
+                k.emplace_back(p + "route.seed_bound", int64_t(a.seedBoundStarts));
+                k.emplace_back(p + "route.seed_bound_restores", int64_t(a.seedBoundRestores));
+                k.emplace_back(p + "static.cut_traps", int64_t(a.cutTraps));
+                k.emplace_back(p + "static.trapped_resumed", int64_t(a.trappedResumed));
+                k.emplace_back(p + "sched.awaited_ticks", int64_t(a.awaitedTicks));
                 k.emplace_back(p + "traffic.sectors", int64_t(a.trafficSectors));
                 k.emplace_back(p + "traffic.charges", int64_t(a.trafficCharges));
                 k.emplace_back(p + "traffic.jam_stamps", int64_t(a.jamStamps));

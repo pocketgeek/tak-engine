@@ -164,6 +164,16 @@ struct NavAccounting {
     uint64_t passAdmits = 0, admitWaits = 0, admitTurns = 0, admitClosings = 0;
     uint64_t sharedAreas = 0;   // member registrations that joined an earlier order's destination area (one crowd)
     uint64_t groupEntrances = 0;   // entrances found for a point's further groups (their own plane, field and way in)
+    // ---- Route requests on large maps (docs/legion-pathfinding.md "Hierarchical routes and tiles", "Static changes
+    // and routes") ----
+    // Plans made for a group whose bounded window had failed, where the whole component's window is large; plans
+    // over the seeds' own cells (every member cut off from the goals); window builds charged for their buried seeds'
+    // tiles, and those charged for the window after all (a step opened before the first slice).
+    uint64_t fullPlans = 0, seedPlans = 0, seedBoundStarts = 0, seedBoundRestores = 0;
+    // Members trapped because their static component holds none of their group's goals, trapped members that went
+    // on as the member they were when an improvement joined their component to the goals again, and member-ticks
+    // spent standing off a touched corridor or chain (the refresh they wait for is a Waiting job).
+    uint64_t cutTraps = 0, trappedResumed = 0, awaitedTicks = 0;
 };
 
 // Per-tick budgets (constants: the same on every peer). The reference cost per unit was measured on an

@@ -590,6 +590,12 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         void detach() {if(totals) {--totals->fields;totals->chains-=kind==2;totals->cells-=counted;totals->inflight-=inflightBytes;totals=nullptr;}}
         FieldTotals* totals=nullptr;      // set once the window is sized (startField)
         size_t counted=0;                 // its cells in FieldTotals::cells (the window's)
+        // A window started while no seed had a legal step (a goal buried under a building: startField): the build
+        // cannot leave its seeds, so it is charged for their tiles, not for its window. Cleared, and the window
+        // charged, when a seed has a step after all (advance: a change opened one before the first slice). Hashed
+        // while set on an unfinished build; on a finished one it decides nothing more (what it left is `counted`,
+        // derived as before).
+        bool seedBound=false;
         // The scheduler's job state (Legion 10,000 stage 4; a field is one job however many groups
         // share it): its deficit round robin credit and the last tick it was given work (its start
         // tick until then). Hashed with the field. inflightBytes: its frontier's share of
@@ -772,6 +778,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         int bodyMinX=0,bodyMinZ=0,bodyMaxX=-1,bodyMaxZ=-1;
         bool full=false;
         uint32_t waited=~0u-1;           // last tick a member stood still waiting for the field
+        // The last tick a member stood off its corridor or chain waiting for the refresh a static change made due
+        // (move: the touched route does not reach it, and nothing else will): that refresh is a Waiting job and its
+        // request a Waiting request while the stamp is fresh (awaitedNow). Hashed once set.
+        static constexpr uint32_t kNeverAwaited=~0u-8;
+        uint32_t awaited=kNeverAwaited;
         bool approach=false;             // seeds are approach points of unreachable goals
         // The command its members belong to (player, the point's issue
         // tick): their own settled arrivals are never soft obstacles to it.
@@ -3930,6 +3941,69 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                                         std::min(box[2],x1+margin),std::min(box[3],z1+margin)};
         return bounded;
     }
+    // The origins a route to g's goals starts from: every legal seed, and for a seed that is not legal (a building
+    // or a corpse went up on it) the origins its steps open -- the cells a field's first relaxation writes from it
+    // (advance). Sorted, unique; g.seeds itself when every seed is legal.
+    std::vector<int> seedEntries(const Group& g,const Plane& p) const {
+        const int W=width();
+        std::vector<int> out;
+        out.reserve(g.seeds.size());
+        for(const int sd:g.seeds) {
+            const int x=sd%W,z=sd/W;
+            if(legal(p,x,z)) {out.push_back(sd);continue;}
+            const uint32_t open=steps(p,x,z);
+            for(size_t k=0;k<kDirections.size();++k)
+                if(open>>k&1)out.push_back((z+kDirections[k][1])*W+x+kDirections[k][0]);
+        }
+        std::sort(out.begin(),out.end());
+        out.erase(std::unique(out.begin(),out.end()),out.end());
+        return out;
+    }
+    // Can a route to g's goals reach origin `c`, by the static components? Joined: an entry of the group's seeds
+    // (seedEntries) lies in c's component. Cut: none does, and the seeds have an entry at all. Unknown: c has no
+    // component (an illegal origin: a body inside a yard leaves it first, see escape), or no seed has an entry (a
+    // group whose every seed is buried is left to its field, see seedsBuried). Cut is exactly what a complete,
+    // untouched field over the whole component would prove (RouteView::reach: Unreachable) -- on the labels,
+    // which are exact and current (plane), where such a field is touched by the next change anywhere and proves
+    // nothing. Every seed is asked, not the group's one component cell (groupComp): a closure can split a group's
+    // seeds, and a member beside any of them is not cut off. The first seed answers for a member that is joined.
+    enum class SeedReach : uint8_t {Unknown,Joined,Cut};
+    SeedReach seedReach(const Group& g,const Plane& p,int c) const {
+        const int mc=compAt(p,c);
+        if(mc<0)return SeedReach::Unknown;
+        const int W=width();
+        bool any=false;
+        for(const int sd:g.seeds) {
+            const int x=sd%W,z=sd/W;
+            if(legal(p,x,z)) {
+                if(compAt(p,sd)==mc)return SeedReach::Joined;
+                any=true;
+                continue;
+            }
+            const uint32_t open=steps(p,x,z);
+            for(size_t k=0;k<kDirections.size();++k)
+                if(open>>k&1) {
+                    if(compAt(p,(z+kDirections[k][1])*W+x+kDirections[k][0])==mc)return SeedReach::Joined;
+                    any=true;
+                }
+        }
+        return any?SeedReach::Cut:SeedReach::Unknown;
+    }
+    bool cutOff(const Group& g,const Plane& p,int c) const {return seedReach(g,p,c)==SeedReach::Cut;}
+    // The bounding box of g's seeds (cells, inclusive).
+    std::array<int,4> seedBox(const Group& g) const {
+        const int W=width();
+        std::array<int,4> box{W,height(),-1,-1};
+        for(const int sd:g.seeds)box={std::min(box[0],sd%W),std::min(box[1],sd/W),std::max(box[2],sd%W),std::max(box[3],sd/W)};
+        return box;
+    }
+    // No seed of g has a legal step: a field from them cannot leave them (a goal buried under a building).
+    bool seedsBuried(const Group& g,const Plane& p) const {
+        if(g.seeds.empty()||p.legal.empty())return false;
+        const int W=width();
+        for(const int sd:g.seeds)if(steps(p,sd%W,sd/W))return false;
+        return true;
+    }
     // ---- stage 6: corridors over the routing hierarchy ----------------------------------------------------------
     // A route's plan: the window field as before (kind Window), or a CORRIDOR -- the window cut down to the sectors
     // round the hierarchy's region tree from the goals to the members (sim/legion_hier.h's search), each dilated by
@@ -3965,22 +4039,37 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         std::vector<uint8_t> dAllow;       // chain: the destination's tiles (its own field)
         std::vector<ChainNode> nodes;      // chain: the transit regions, every parent before its children, then the halo
         size_t transit=0;                  // chain: how many of nodes are transit regions
+        bool fixedBox=false;               // window: the box is the plan's own (the seeds' cells: no member can be
+                                           // reached, planRoute), not the group's window; hashed with the plan
     };
     static constexpr size_t kCorridorWindow=131072;  // windows smaller than this keep the window build
     static constexpr uint8_t kMaxWiden=3;            // corridor rebuilds for members outside it, then the window
+    // A group whose bounded window failed (Group::full) still plans its routes where the whole component's window
+    // would take more than 1 / kLargeWindowDiv of the field allowance (planRoute): over 1,048,576 cells at 128 MiB.
+    static constexpr uint64_t kLargeWindowDiv=32;
     static constexpr size_t kRouteExpand=1u<<16;     // regions the abstract search may expand for one plan
     static constexpr int kCorridorHalo=32;           // cells of halo round the tree's sectors
     static constexpr int kDestMargin=8;              // cells round a chain destination's packed disc (its own field)
     // Chains or fields by demand (deterministic, with hysteresis): the bodies that would read the route -- this
-    // group's members and those of every other group with the same goals on the plane (they share one field) -- at
-    // most kChainDemand take a chain; a group that took a field keeps fields until the demand falls to
-    // kChainDemandLow. A route of fewer than kChainMinNodes transit regions is a short trip: its corridor or window.
+    // group's members and those of every other group of its command with the same goals on the plane (the parts of
+    // one order: a subgroup split off for another passage reads its parent's crowd) -- at most kChainDemand take a
+    // chain; a group that took a field keeps fields until the demand falls to kChainDemandLow. A route of fewer than
+    // kChainMinNodes transit regions is a short trip: its corridor or window.
+    // Another command's group with the same goals is not counted: startField has tried its field before it plans
+    // (sharedField), so when planRoute runs none of its bodies will read this route. Counting it made every later
+    // batch of units sent to a point another batch still walked to a high-demand route with a whole-component
+    // window of its own (the audited 2048x2048 game: 11,763 such plans, 12.5 members each, 92.6 counted). Without
+    // the own command's groups bridges-1000 gridlocks (964 -> 672 arrivals): the 32-48-body parts of one order
+    // would take chains.
     static constexpr int kChainDemand=48,kChainDemandLow=24;
     static constexpr size_t kChainMinNodes=2;
     int routeDemand(const Group& g) const {
         int n=g.members;
         if(const auto found=routeIndex.find({g.plane,seedsKey(g.seeds)});found!=routeIndex.end())
-            for(const int id:found->second)if(id!=g.id) {const auto o=groups.find(id);if(o!=groups.end()&&o->second.seeds==g.seeds)n+=o->second.members;}
+            for(const int id:found->second)if(id!=g.id) {
+                const auto o=groups.find(id);
+                if(o!=groups.end()&&o->second.command==g.command&&o->second.seeds==g.seeds)n+=o->second.members;
+            }
         return n;
     }
     // ---- stage 7: traffic in coarse route selection ------------------------------------------------------------------
@@ -4790,7 +4879,18 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         RoutePlan rp;
         rp.box=box;
         const size_t windowCells=size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
-        if(g.full||windowCells<kCorridorWindow||g.plane<0)return rp;
+        // A full group (a bounded window of its own failed a member: its window is the whole component's now) takes
+        // that window -- unless it is large (kLargeWindowDiv) and the group has widenings left: then it plans a
+        // chain or a corridor like any group, each failed plan is one widening (move), and the whole component
+        // comes only after kMaxWiden of them. On a 2048x2048 map the whole component is an eighth of the field
+        // allowance and 87 ticks of the whole quota; eight unfinished ones hold all of it, every other start waits
+        // behind the reservation of the ninth, and a lone builder whose 250 KB window did not see round a wall
+        // asked for one (the audited game: 1,279 such builds, a third of all field cells). Where the component is
+        // not large the window is cheap and exact and stays: sched-load (480x480) lost 16% of its arrivals
+        // without the size test, and many-10000 (832x832) 4% with the line at 1/64.
+        const bool replan=g.full&&g.widens<kMaxWiden&&uint64_t(windowCells)*NavSize::kCell32*kLargeWindowDiv>fieldAllowance();
+        if((g.full&&!replan)||windowCells<kCorridorWindow||g.plane<0)return rp;
+        acct.fullPlans+=replan;
         auto& p=planes[size_t(g.plane)];
         if(!p.hier.ready()||p.legal.empty()||p.stage>0)return rp;
         // The demand rule first (it alone moves the hysteresis state): a high-demand route keeps the window -- one
@@ -4818,20 +4918,42 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             rp=RoutePlan{};rp.box=box;
         }
         const int W=width();
+        // The targets: every live member's origin, but not a member cut off from the goals (cutOff: no route on this
+        // plane reaches it, and move traps it by its component) -- the search would run out of regions looking for
+        // it and the plan fall back to the window. (A member on an illegal origin has no component: it stays, and
+        // the search skips it, as before.)
         std::vector<int> targets;
         targets.reserve(g.ids.size());
+        size_t live=0;
         for(const int id:g.ids) {
             const Unit* u=w.unit(id);
             if(!u||!u->type||!u->alive())continue;
-            targets.push_back(footprintOrigin(u->z,u->type->footZ)*W+footprintOrigin(u->x,u->type->footX));
+            const int c=footprintOrigin(u->z,u->type->footZ)*W+footprintOrigin(u->x,u->type->footX);
+            ++live;
+            if(!cutOff(g,p,c))targets.push_back(c);
         }
+        // Every live member is cut off: the route is the seeds' own cells, a field nobody can read, instead of the
+        // whole component built (and, touched by the next change anywhere, rebuilt) to prove it.
+        if(live&&targets.empty()) {
+            rp.box=seedBox(g);
+            rp.fixedBox=true;
+            ++acct.seedPlans;
+            return rp;
+        }
+        // The goals: the seeds, an illegal one (a building or a corpse on the goal) entered through the origins its
+        // steps open, as the field enters it (seedEntries). The search skips an illegal goal; with none left it
+        // found nothing, the plan fell back to the window, and that window is the whole map (fieldWindow: an
+        // unlabelled seed) -- 22,463 fallbacks and 27% of all field cells in the audited game.
+        std::vector<int> entered;
+        const std::vector<int>* goals=&g.seeds;
+        if(std::any_of(g.seeds.begin(),g.seeds.end(),[&](int sd) {return !legal(p,sd%W,sd/W);})) {entered=seedEntries(g,p);goals=&entered;}
         uint64_t work=0;
         // Stage 7: traffic as the route's command sees it in the coarse search (trafficPenalty).
         const uint64_t trafficCommand=g.soft?g.command:kNoSoft;
         // Stage 8: and a chokepoint's queue (the delay of crossing an opening the way the bodies walk: from the
         // neighbour toward the goals) for a group whose members are entrants (kOpeningMembers or more).
         const bool queues=g.members>=kOpeningMembers&&g.soft&&!openings.empty();
-        const auto tree=p.hier.search(g.seeds,targets,p.legal.data(),kRouteExpand,work,
+        const auto tree=p.hier.search(*goals,targets,p.legal.data(),kRouteExpand,work,
             [&](int s,uint16_t r,uint64_t step,const hier::Portal& q,bool aSide) {
                 uint64_t extra=trafficPenalty(p,s,r,step,trafficCommand,work);
                 if(queues)
@@ -5009,7 +5131,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             g.plan=std::make_shared<RoutePlan>(planRoute(g,window));
             g.planTick=now;g.planEpoch=epoch;g.planMembers=g.members;
         }
-        if(g.plan->kind==KindWindow)g.plan->box=window;   // a window plan follows the window (it moves with the bodies)
+        // A window plan follows the window (it moves with the bodies), unless its box is its own (fixedBox).
+        if(g.plan->kind==KindWindow&&!g.plan->fixedBox)g.plan->box=window;
         return *g.plan;
     }
     // Another group's field that serves this group as well as its own
@@ -5194,7 +5317,14 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(plan.kind!=KindWindow)
             if(auto shared=sharedField(g,plan.box,command,own,&plan))return install(std::move(shared));
         const auto box=plan.box;
-        const size_t cells=plan.kind!=KindWindow?plan.cells:size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
+        size_t cells=plan.kind!=KindWindow?plan.cells:size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
+        // A window whose seeds have no legal step (a goal buried under a building; its window is the whole map,
+        // fieldWindow) cannot leave them: the field holds its seeds' cells, is complete after its first slice and
+        // reaches nobody. It is charged for the tiles it writes, one a seed, not for the window (Field::seedBound);
+        // charged in full it took an eighth of the allowance on a 2048x2048 map for one cell, and waited for that
+        // room. What its members read is unchanged.
+        const bool seedBound=plan.kind==KindWindow&&seedsBuried(g,planes[size_t(g.plane)]);
+        if(seedBound)cells=std::min(cells,g.seeds.size()<<(2*gSectorShift));
         if(cells/NavBudget::kInitDiv>initRoom)return Start::NoBudget;
         const uint64_t want=uint64_t(cells)*NavSize::kCell32+uint64_t(g.seeds.size())*NavSize::kKeyed,allowance=fieldAllowance();
         const bool chainStart=plan.kind==KindChain;
@@ -5275,7 +5405,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             f->bind();
             ++acct.chains;
         } else f->initTiles(width(),box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1,gSectorShift);
-        f->counted=cells;
+        f->counted=cells;f->seedBound=seedBound;acct.seedBoundStarts+=seedBound;
         navc.initCells+=cells;acct.initMax=std::max<uint64_t>(acct.initMax,cells);
         startCharge+=cells/NavBudget::kInitDiv;
         f->totals=&fieldTotals;++fieldTotals.fields;fieldTotals.cells+=cells;fieldTotals.chains+=f->kind==KindChain;
@@ -5319,6 +5449,15 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             const uint32_t g=f.cellAt(x,z);
             if(g+f.heuristic(x,z)!=f.current)continue;   // stale entry
             const uint32_t open=steps(p,x,z);
+            // A seed-bound window (startField) whose seed has a step after all -- a static change opened one between
+            // the start and this slice -- leaves its seeds: its window is charged from here on, before it writes.
+            if(f.seedBound&&open) {
+                f.seedBound=false;++acct.seedBoundRestores;
+                if(const size_t window=size_t(f.fw)*size_t(f.fh);window>f.counted) {
+                    if(f.totals)f.totals->cells+=window-f.counted;
+                    f.counted=window;
+                }
+            }
             // The relaxation of neighbour (nx,nz), whose estimate is `slot`, by a step of cost `base` from the popped
             // cell: its improved potential, or kUnreached when the step improves nothing. `label` is the opening the
             // step crosses (stage 8). Shared by the two neighbour loops below.
@@ -5462,9 +5601,14 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         for(int z=f.z0;z<f.z0+f.fh;++z)for(int x=f.x0;x<f.x0+f.fw;++x) {
             const uint32_t v=f.cellAt(x,z);
             if(v==kUnreached||v==0)continue;
+            // A legal step down -- or the cell beside a seed that is not legal (a building went up on the goal),
+            // which the build entered from that seed by this very step: the route ends there.
             bool lower=false;
-            for(const auto& d:kDirections)
-                if(step(p,x,z,d[0],d[1])&&f.cellAt(x+d[0],z+d[1])<v) {lower=true;break;}
+            for(const auto& d:kDirections) {
+                const int nx=x+d[0],nz=z+d[1];
+                const uint32_t nv=f.cellAt(nx,nz);
+                if(nv<v&&(step(p,x,z,d[0],d[1])||(nv==0&&!legal(p,nx,nz)&&step(p,nx,nz,-d[0],-d[1])))) {lower=true;break;}
+            }
             if(!lower) {
                 std::fprintf(stderr,"TAK_LEGION_VERIFY: chain %llu cell (%d,%d) estimate %u has no lower neighbour\n",
                              (unsigned long long)f.serial,x,z,v);
@@ -6987,9 +7131,19 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(liveJobs)if(const auto it=liveJobs->find(f->serial);it!=liveJobs->end()&&it->second.keep==f)--n;
         return n;
     }
+    // A member of g stood off its touched corridor or chain in the last tick, waiting for the refresh (move).
+    bool awaitedNow(const Group& g) const {return w.tickCounter_-g.awaited<=1;}
+    // A group's refresh class: Waiting while a member stands for it (awaitedNow) -- served first, outside the
+    // refresh allowance, as the first field of a group whose members stand -- else its refresh class. With every
+    // small group on a chain, the members a touched chain did not reach were most of what still stood waiting
+    // (a whole game on the audited map: 957,586 of 1,007,194 waiting member-ticks by tick 102,900), behind every
+    // refresh of a route that still steered its group, in a quarter of the quota, three builds at a time.
+    NavClass refreshBase(const Group& g) const {
+        return awaitedNow(g)?NavClass::Waiting:g.awareDemand?NavClass::AwareRepair:NavClass::StaleRefresh;
+    }
     // A group's own class for a field it waits on (f: its field or its replacement).
     NavClass jobClass(const Group& g,const Field& f) const {
-        if(&f==g.next.get())return g.awareDemand?NavClass::AwareRepair:NavClass::StaleRefresh;
+        if(&f==g.next.get())return refreshBase(g);
         return w.tickCounter_-g.waited<=1?NavClass::Waiting:NavClass::FirstRoute;
     }
     static bool refreshClass(NavClass c) {return c==NavClass::AwareRepair||c==NavClass::StaleRefresh;}
@@ -7104,7 +7258,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         for(const int id:staleDoneIds) {
             Group& g=groups.find(id)->second;
-            if(g.field&&g.stale&&!g.next&&g.field->usable())ask(g,g.awareDemand?NavClass::AwareRepair:NavClass::StaleRefresh);
+            if(g.field&&g.stale&&!g.next&&g.field->usable())ask(g,refreshBase(g));
         }
         auto older=[](const Request& a,const Request& b) {return std::tie(a.since,a.id)<std::tie(b.since,b.id);};
         {
@@ -9799,6 +9953,16 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         return false;
     }
+    // A trapped member an improvement reopened (trappedReopened): does its own static component hold an entry of
+    // its group's goals now (seedReach: Joined)? Then a route can reach it where it stands.
+    bool trappedRejoined(const Unit& u,const Member& m) {
+        if(m.goal<0||!u.type)return false;
+        const Group* g=groups.get(m.group);
+        if(!g||g->plane<0)return false;
+        const Plane& p=plane(g->plane);
+        const int ox=footprintOrigin(u.x,u.type->footX),oz=footprintOrigin(u.z,u.type->footZ);
+        return legal(p,ox,oz)&&seedReach(*g,p,oz*width()+ox)==SeedReach::Joined;
+    }
     void trapped(Unit& u,Member& m) {
         m.why=LegionNavigator::WhyTrapped;
         // No legal route exists for this footprint: stop at once (zero speed,
@@ -11915,9 +12079,18 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // Stage 7: a trapped (terrain-unreachable) member re-registers only after a change that could join its
         // component to another -- an improvement touching that component's box -- not after every change anywhere
         // (under endless churn elsewhere it never reached its retirement: c2c25707's island-forever).
+        // A reopened member whose component holds its group's goals again (trappedRejoined) is not registered
+        // afresh: it goes on as the member it is, with its slot, its point and its clocks -- what a body that stood
+        // at a closed gate with its order did before a cut-off body was trapped by its component (cutOff below);
+        // registered afresh it gave its slot up and settled 6 to 8 cells off the click (cutoff-reopen). One whose
+        // component an improvement touched without joining it to the goals registers afresh, as before (it may
+        // have room to approach now).
         if(found&&found->controller==key&&!found->approach&&found->state==Trapped&&found->trappedEpoch!=epoch) {
-            if(trappedReopened(u,*found))++acct.trappedReopened;
-            else {found->trappedEpoch=epoch;++acct.trappedKept;}
+            if(!trappedReopened(u,*found)) {found->trappedEpoch=epoch;++acct.trappedKept;}
+            else {
+                ++acct.trappedReopened;
+                if(trappedRejoined(u,*found)) {found->state=Waiting;found->trappedEpoch=epoch;++acct.trappedResumed;}
+            }
         }
         if(!found||found->controller!=key||found->kind!=kind||
            (found->state==Trapped&&found->trappedEpoch!=epoch)||
@@ -12036,23 +12209,44 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // refresh does finish under constant static churn, about every 85
         // ticks since the quarter-quota allowance, kRefreshQuota.)
         // Stage 6: a corridor rebuilds round the body first (its plan takes every member's region again), at most
-        // kMaxWiden times; then the whole component's window takes over, as for any bounded window.
-        if(const RouteView r=view(g.field.get());r&&r.bounded()&&!g.full&&(!r.inside(ox,oz)||(r.complete()&&r.estimate(size_t(here))==kUnreached))) {
-            // A chain's halo region: attach its tile (a repair, next tick) instead of rebuilding.
-            if(g.field->kind==KindChain&&r.complete()&&requestRepair(g,*g.field,here)) {m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;}
-            // A corridor or chain a static change touched (its group is stale): the body is unknown to it, not cut
-            // off; it waits for the refresh (demanded at once) instead of widening.
-            if(g.field->kind!=KindWindow&&g.field->touched&&(g.stale||g.improveTick!=kNoTick)) {
-                // Stage 7: a deferred improvement refresh is wanted now (this body may be reachable only by it).
-                if(g.improveTick!=kNoTick) {++acct.improveDemands;promoteImprovement(g);}
-                if(!g.demand) {g.demand=true;listGroup(g);}
+        // kMaxWiden times; then the whole component's window takes over, as for any bounded window. A full group
+        // that still plans (planRoute: a large component) holds a corridor or chain, which is widened the same way.
+        if(const RouteView r=view(g.field.get());r&&r.bounded()&&!(g.full&&g.field->kind==KindWindow)&&(!r.inside(ox,oz)||(r.complete()&&r.estimate(size_t(here))==kUnreached))) {
+            // A body cut off from every goal of its group (cutOff: a building closed the way after it registered):
+            // no route on this plane reaches it, so nothing is repaired, awaited or widened for it -- the whole
+            // component, built to find that out, is touched by the next change anywhere, proves nothing and was
+            // built again for as long as the unit kept its order. A body that is trapped already, or stands in a
+            // sealed pocket (registration's own rule, kApproachRegion), is trapped here; any other walks on toward
+            // its goal for as long as it can (the no-route branch below).
+            const bool cut=cutOff(g,p,here);
+            if(cut&&(m.state==Trapped||p.compSize[size_t(compAt(p,here))]<kApproachRegion)) {acct.cutTraps+=m.state!=Trapped;trapped(u,m);return;}
+            if(!cut) {
+                // A chain's halo region: attach its tile (a repair, next tick) instead of rebuilding.
+                if(g.field->kind==KindChain&&r.complete()&&requestRepair(g,*g.field,here)) {m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;}
+                // A corridor or chain a static change touched (its group is stale): the body is unknown to it, not cut
+                // off; it waits for the refresh (demanded at once) instead of widening. The body cannot move until
+                // that refresh is built, exactly as a member of a group with no field: it is served as one
+                // (Group::awaited, jobClass), not in the refresh classes behind every route that still steers.
+                if(g.field->kind!=KindWindow&&g.field->touched&&(g.stale||g.improveTick!=kNoTick)) {
+                    // Stage 7: a deferred improvement refresh is wanted now (this body may be reachable only by it).
+                    if(g.improveTick!=kNoTick) {++acct.improveDemands;promoteImprovement(g);}
+                    if(!g.demand) {g.demand=true;listGroup(g);}
+                    g.awaited=w.tickCounter_;++acct.awaitedTicks;
+                    m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
+                }
+                if(g.next&&!g.next->done)++stats.refreshDiscards;
+                // (A window over the seeds' own cells -- planRoute's plan while every member was cut off -- was
+                // never meant to reach a body: a member that is joined again takes the group's first plan, not
+                // the whole component.)
+                const auto sb=seedBox(g);
+                const bool seedsOnly=g.field->kind==KindWindow&&g.field->x0==sb[0]&&g.field->z0==sb[1]&&
+                                     g.field->fw==sb[2]-sb[0]+1&&g.field->fh==sb[3]-sb[1]+1;
+                if(seedsOnly) {}
+                else if(g.field->kind!=KindWindow&&g.widens<kMaxWiden) {++g.widens;++acct.corridorWidens;}
+                else g.full=true;
+                g.field.reset();g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);listGroup(g);
                 m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
             }
-            if(g.next&&!g.next->done)++stats.refreshDiscards;
-            if(g.field->kind!=KindWindow&&g.widens<kMaxWiden) {++g.widens;++acct.corridorWidens;}
-            else g.full=true;
-            g.field.reset();g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);listGroup(g);
-            m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
         }
         // The holder rule (approachSettled): checked before routes and
         // side-steps, which a body held behind its own army otherwise walks
@@ -12401,18 +12595,31 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             // that does not touch the route -- another island or plane --
             // leaves it proven: nothing would refresh it.)
             if(!f||(f.estimate(size_t(here))==kUnreached&&f.reach(size_t(here))!=Reach::Unreachable)) {
-                setWaited(g);
+                // No field will: the body is cut off from every goal of its group (cutOff, see the widening above).
+                // It asks for nothing (no setWaited: a field for it would be built in vain). While its region
+                // leaves room to move it keeps heading for the goal along the proven straight segment, as a body
+                // with no route does -- a way that reopens finds it nearer -- and is trapped where the segment is
+                // blocked or it has gained nothing for kBlockedRetry ticks; in a sealed pocket at once. Trapped is
+                // the existing end of an unreachable goal (trapped: the order kept for kTrappedRetire; after an
+                // improvement that touches its component's box it goes on in place if that joined it to the
+                // goals, and registers afresh if not).
+                const bool cut=cutOff(g,p,here);
+                if(!cut)setWaited(g);
                 // No field reaches this body yet: head toward the goal along
                 // a short proven straight segment (kHeadingCells) instead of
                 // standing still; the field takes over as soon as its
                 // frontier passes here. Blocked: wait.
                 const int dx=goalX-ox,dz=goalZ-oz,span=std::max(std::abs(dx),std::abs(dz));
-                const int hx=ox+dx*kHeadingCells/span,hz=oz+dz*kHeadingCells/span;
-                if(span>kHeadingCells&&sweep(p,u,u.x,u.z,centre(hx,fx),centre(hz,fz))) {
-                    m.site=LegionNavigator::SiteDirect;m.why=LegionNavigator::WhyDirect;
-                    drive(u,m,p,nullptr,maximum,centre(hx,fx),centre(hz,fz),false,false);
-                    return;
+                const bool walk=!cut||(m.state!=Trapped&&p.compSize[size_t(compAt(p,here))]>=kApproachRegion&&stalledFor(m)<kBlockedRetry);
+                if(walk&&span>kHeadingCells) {
+                    const int hx=ox+dx*kHeadingCells/span,hz=oz+dz*kHeadingCells/span;
+                    if(sweep(p,u,u.x,u.z,centre(hx,fx),centre(hz,fz))) {
+                        m.site=LegionNavigator::SiteDirect;m.why=LegionNavigator::WhyDirect;
+                        drive(u,m,p,nullptr,maximum,centre(hx,fx),centre(hz,fz),false,false);
+                        return;
+                    }
                 }
+                if(cut) {acct.cutTraps+=m.state!=Trapped;trapped(u,m);return;}
                 m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
             }
             const uint32_t potential=f.estimate(size_t(here));
@@ -15469,7 +15676,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     for(const auto& c:f->charges)h=mix(h,uint64_t(c.label)<<32|c.cost);
                 }
             // Stage 6: a plan held for the next build, and corridor widenings.
-            if(g.plan&&g.planTick!=kNoTick) {h=mix(h,0x706c616eull);h=mix(h,uint64_t(g.planTick)<<8|g.plan->kind);h=mix(h,g.plan->sig);}
+            if(g.plan&&g.planTick!=kNoTick) {h=mix(h,0x706c616eull);h=mix(h,uint64_t(g.planTick)<<8|g.plan->kind);h=mix(h,g.plan->sig);
+                                             if(g.plan->fixedBox)h=mix(h,0x6669786564ull);}
             if(g.widens)h=mix(h,0x7769646e73ull^uint64_t(g.widens)<<48);
             if(g.routeMode)h=mix(h,0x6d6f6465ull^uint64_t(g.routeMode)<<48);
             // Start requests (stage 4): their age and a refusal stamp, while set.
@@ -15478,6 +15686,9 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(g.reroute)h=mix(h,0x7265726f757465ull);
             for(const auto& [label,a]:g.openArea)if(a) {h=mix(h,0x6f61726561ull^uint64_t(label)<<40);h=mix(h,a);}
             if(g.blockedSince!=NavAdmit::kNever) {h=mix(h,0x626c6f636bull);h=mix(h,g.blockedSince);}
+            // A member-awaited refresh (its class) and an unfinished seed-bound window (its charge), tagged only when set.
+            if(g.awaited!=Group::kNeverAwaited) {h=mix(h,0x61776169746564ull);h=mix(h,g.awaited);}
+            for(const Field* f:{g.field.get(),g.next.get()})if(f&&f->seedBound&&!f->done)h=mix(h,0x7365656462ull^uint64_t(f==g.next.get())<<40);
             // A paused first build (C1), tagged only when set.
             if(g.field&&g.field->runOn)h=mix(h,0x72756e6f6eull);
             if(g.field&&(g.field->covered||!g.field->demand.empty())) {

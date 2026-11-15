@@ -470,6 +470,19 @@ foreach(legion_case improvedefer chainresolve trafficlane)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
   set_tests_properties(legion_${legion_case} PROPERTIES LABELS "legion" ENVIRONMENT TAK_LEGION_VERIFY=1)
 endforeach()
+# Route requests on large maps (2026-11-15; docs/legion-pathfinding.md sections 2 and 9): the situations that asked
+# for a route over the whole component where a small one does, each on a small map with the field allowance shrunk
+# so that the component is large. fullplan: a group whose bounded window failed plans a chain. demandown: a second
+# command to a point another still walks to takes a chain. seedcover: a covered goal is searched through its legal
+# neighbours, and a buried one's window is charged for its seed (seedrestore: and for its window once a step opens).
+# cutoff: a body cut off from its goal after its order is trapped by its component, walks on first, retires after
+# the grace period, and goes on in place when the way reopens. splitseeds: a body beside one of its group's goals is
+# not cut off. routeclone: the new route state is copied and hashed (clones run on hash for hash). All under
+# TAK_LEGION_VERIFY; all but splitseeds and routeclone fail on the commit before.
+foreach(legion_case fullplan demandown seedcover seedrestore cutoff splitseeds routeclone)
+  add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
+  set_tests_properties(legion_${legion_case} PROPERTIES LABELS "legion" ENVIRONMENT TAK_LEGION_VERIFY=1)
+endforeach()
 # Perf follow-up I: the route invalidation index (staticChanged through sim/legion_routebins.h) against the walk of every
 # group, under churn, structures, re-orders and deaths, on two planes; index on == off == workers, under TAK_LEGION_VERIFY.
 add_test(NAME legion_routeindex COMMAND legion_world_test routeindex)
@@ -1132,6 +1145,59 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(legion_sched_inflight PROPERTIES TIMEOUT 1800)
   endif()
   set_tests_properties(legion_sched_load_div PROPERTIES ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
+  # Route requests on large maps (2026-11-15; docs/legion-pathfinding.md sections 2 and 9; the audited 2048 x 2048
+  # game, where a route over the whole map is an eighth of the field allowance and units stood waiting for one).
+  # legion_starve (starve-1024: an allowance of eight whole-map fields, lone groups behind a wall, later commands to
+  # a point another still walks to, a covered and a buried goal): nobody waits long, no reservation, and the fields
+  # stay within 20 MB (the commit before: 414,687 waiting member-ticks, a longest wait of 2,101 ticks, 40 of 260
+  # orders finished, 162 stuck, 4,348 reservation ticks, 33.5 MB).
+  # legion_cutoff_closed / _reopen / _toggle (six bodies cut off from their goal after the order by a closed gap):
+  # no field is built over and over for them (52 / 45 / 41 before; closed: one waited 3,392 ticks), they are
+  # trapped where the gap stays closed, and where it opens again all six still arrive inside the authored radius
+  # no later than they did before (the bounds are the commit before's arrival ticks plus 5%).
+  # legion_refreshfirst (sched-load with the game's routes, offsets 0 and +-1): a body standing off a touched chain
+  # is served as a waiting one (at most 5,000 waiting member-ticks an offset; 23,407 or more before).
+  # legion_armies (armies14-2048: fourteen 60-body commands at the game's allowance, more whole-map windows than
+  # it holds): a ratchet on a known weakness, not a pass -- the 60 one-body groups ordered meanwhile all arrive
+  # (10 before) and the waiting more than halves (105,579 member-ticks and a longest wait of 2,829 ticks before).
+  # legion_seedarmy (seedcorpse-army: a covered goal under a 60-body command): a ratchet on a known weakness -- its
+  # window is the whole map from then on, 21 fields built where the same walk without the feature builds one.
+  add_test(NAME legion_starve
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale starve-1024
+                   --max scale.wait.member_ticks=5000 --max scale.wait.max=150 --min scale.complete.n=240
+                   --min scale.arrive.n=215 --max scale.stuck_end=0 --max scale.sched.reservations=0
+                   --max scale.navbytes.fields_at_peak=20000000)
+  add_test(NAME legion_cutoff_closed
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale cutoff-1024
+                   --max work.fields_built.total=12 --max scale.wait.max=60 --max scale.wait.member_ticks=300
+                   --min scale.static.cut_traps=6 --max scale.static.cut_traps=6
+                   --max scale.navbytes.fields_at_peak=1000000 --min scale.arrive.n=40 --min scale.complete.n=40)
+  add_test(NAME legion_cutoff_reopen
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale cutoff-reopen
+                   --min click.C0.arrived=6 --max click.C0.done=3660 --max work.fields_built.total=20
+                   --min scale.static.trapped_resumed=6 --min scale.complete.n=46)
+  add_test(NAME legion_cutoff_toggle
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale cutoff-toggle
+                   --min click.C0.arrived=6 --max click.C0.done=3285 --max work.fields_built.total=30
+                   --min scale.complete.n=46)
+  add_test(NAME legion_refreshfirst
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale sched-load --offsets 0,1,-1
+                   --max scale.wait.member_ticks=5000 --min scale.sched.awaited_ticks=1 --min scale.arrive.n=36)
+  add_test(NAME legion_armies
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale armies14-2048
+                   --max scale.wait.member_ticks=60000 --max scale.wait.max=1000 --min scale.arrive.n=60)
+  add_test(NAME legion_seedarmy
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale seedcorpse-army
+                   --max work.fields_built.total=22 --max scale.route.fallbacks=0 --min scale.arrive.n=60)
+  set_tests_properties(legion_starve legion_cutoff_closed legion_cutoff_reopen legion_cutoff_toggle legion_refreshfirst
+                       legion_armies legion_seedarmy PROPERTIES LABELS legion TIMEOUT 900)
   # Legion 10,000 stage 5: the route consumers that state their region (lanes, slots, rings, the formation
   # entrance, awareness) on paused routes, every first build pausable (--pause-all), under TAK_LEGION_VERIFY,
   # serial == workers; each consumer asked a paused build for its region and no read was uncertain

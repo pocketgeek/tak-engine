@@ -324,7 +324,12 @@ lattice it pulls every body to the lattice's near edge (a 64-goal cap gave a row
 * **Windows.** A field covers only the bounding box of its seeds' static region grown round the group, the only area
   it can ever reach; cells outside read as unreachable (Unknown to the route queries). A body the window does not
   reach widens it: the widening restarts as a first field, not as a refresh, so the body never steers by a field
-  that cannot reach it.
+  that cannot reach it. The widened window is the whole component's (`Group::full`). Where that window is **large**
+  -- more than 1/32 of the field allowance (`kLargeWindowDiv`): over 1,048,576 cells at 128 MiB, so a 2048 x 2048
+  map but not a 1024 x 1024 one -- the full group plans its next route instead (a chain or a corridor, "Hierarchical
+  routes and tiles") and takes the whole component only after three plans failed it. On the largest maps one
+  whole-component window is an eighth of the allowance and 87 ticks of the whole field quota (section 9), and a lone
+  builder whose 250 KB window did not see round a wall asked for one.
 * **Sparse storage** (`RouteGrid`). A route's potentials live in K x K tiles aligned to the hierarchy's sectors,
   allocated when the builder first writes one; an unwritten tile reads none.
 * **Soft costs.** A field charges soft obstacles of other commands (still bodies, standing jams, mover corridors,
@@ -379,8 +384,9 @@ more is **planned** (`planRoute`, `routePlan`): the hierarchy's region search (D
 as entries, at most 65,536 regions) links every member's region to the goals' regions. The route is then
 
 * a **window** (one exact field over the bounding box): every high-demand route (one exact field the whole crowd
-  shares), an approach group (its goals unreachable), small windows, a search that does not reach every member
-  (`route.fallbacks`), or a corridor that would hold more than half the window;
+  shares), an approach group (its goals unreachable), small windows, a full group whose component is not large or
+  whose three plans failed ("Fields"), a search that does not reach every member (`route.fallbacks`), or a corridor
+  that would hold more than half the window;
 * a **corridor** (a low-demand group planning round movers while memory has room, a reach ring, a short trip): the
   same field restricted to the sectors round the region tree (a 32-cell halo, more for a pinwheel formation) and round
   the destination (the crowd's packed disc plus the halo); exact within the corridor, bounded (an origin outside it is
@@ -400,9 +406,27 @@ as entries, at most 65,536 regions) links every member's region to the goals' re
   field quota), so a body pushed off its way is back on the route without a rebuild. `RouteGrid::fin`: an attached
   tile is final everywhere it reaches.
 
+**The search's goals and targets.** The goals are the group's seeds. A seed that is not legal any more (a corpse or a
+building on the goal: `regoal` moves the member's goal, never the group's seeds) is entered through the origins its
+steps open, as the field's first relaxation enters it (`seedEntries`); the search used to skip an illegal goal, find
+nothing and fall back to the window, which for a seed without a component is the whole map (`legion_seedcover`; in
+the audited 2048 x 2048 game 22,463 fallbacks, 27% of all field cells charged). Only where no seed has a step at all
+(a goal buried under a building) does the plan still fall back; that window holds its seeds' cells and is charged for
+them (section 9). The targets are the live members' origins, without a member that is cut off from every goal
+("Static changes and routes"): the search would run out of regions looking for it. While every live member is cut
+off the plan is a window over the seeds' own cells (`route.seed_plans`), a field nobody can read, instead of the
+whole component.
+
 **Search or field by demand** (`routeDemand`, `Group::routeMode`). The bodies that would read the route -- the
-group's members and those of every other group with the same goals -- at most 48 take a chain (or a corridor); a
-group that took the field keeps it until that falls to 24 (hysteresis); a high-demand route needs no search. Chains
+group's members and those of every other group **of its command** with the same goals (the parts of one order: a
+subgroup split off for another passage reads its parent's crowd) -- at most 48 take a chain (or a corridor); a
+group that took the field keeps it until that falls to 24 (hysteresis); a high-demand route needs no search. Another
+command's group with the same goals is not counted: a start tries that group's field for a share before it plans
+(`sharedField`, within 30 ticks of the field's start), so when the plan is made none of its bodies will read this
+route. Counted, every later batch of units sent to a point another batch still walked to was a high-demand route with
+a window of its own over its whole way (the computer players send such batches 20 ticks apart; the audited game:
+11,763 such plans, 12.5 members each, 92.6 counted; `legion_demandown`). Without the own command's groups
+`bridges-1000` gridlocks (964 -> 672 arrivals): the 32-48-body parts of one order would take chains. Chains
 have a count cap of their own (16,384; the byte allowance bounds their storage), so one-body routes cannot hold every
 field slot. A group planning round movers takes a corridor while memory has room, and a chain with local corrections
 once more than half the field allowance is in use. Big orders keep one exact field; many small ones take chains over
@@ -427,12 +451,16 @@ holds all of its plan's sectors, or a finished chain that already gives every on
 allocates nothing). A body a corridor or chain does not reach first gets its halo repair (a chain), waits for the
 refresh its group is due if a static change touched the route (Unknown is not cut off), else the route is rebuilt
 round it (`Group::widens`, at most three); then the whole component's window takes over, as for any bounded window.
+A full group that plans (a large component, "Fields") is widened the same way: three plans in its life, then the
+whole component. A window over the seeds' own cells was never meant to reach a body: a member that is joined to the
+goals again takes the group's first plan, not the whole component.
 
 Tests: `legion_hier_test`, `legion_route_test` (sparse reads), `legion_chains` (eight squads cross a wall to eight
 destinations: chains built, transit tiles shared between squads with different destinations, every body arrives, the
 descent check and the class check on), `legion_chainschurn` (the same with a wall dropped across the routes while the
 chains build and lifted later), `legion_chainplane` (25 mobility classes take turns, the 25th reuses plane slot 0: no
-chain reads a tile of the previous class).
+chain reads a tile of the previous class), `legion_fullplan` (a full group on a large component plans a chain; on a
+component that is not large it keeps the window), `legion_demandown`, `legion_seedcover`.
 
 ### Static changes and routes
 
@@ -465,10 +493,31 @@ without boxes (legacy worlds, the first epoch) walk every group. `legion_routebi
   a member stands in a region the plan does not hold). A repaired or re-resolved chain is versioned, not exact: its
   tiles come from more than one geometry epoch, each descent-valid on its own build; it is touched and never proves
   Unreachable (`legion_chainresolve`).
-* **Trapped orders** re-register only after an improvement whose box touches their component's box grown by the
-  footprint (`trappedReopened`, over a per-plane log of recent improvements; a stale plane's rebuild counts as a
+* **Cut-off members.** A closure can leave a member in another static component than every goal of its group (a
+  building closes the one gap after the order). No route on its plane reaches it. The component labels say so exactly
+  and at once (`cutOff`: the member's component holds no entry of the group's seeds, an entry being a legal seed or an
+  origin an illegal seed's steps open; every seed is asked, so a group whose seeds a closure split keeps the members
+  beside either part, `legion_splitseeds`). A field can only prove it complete, unbounded and untouched, and on a map
+  that keeps changing the whole component built for that proof was touched before it was read, the member stood
+  Waiting and the component was built again for as long as the unit kept its order (`cutoff-1024` before the rule: 52
+  whole-map fields for six bodies, one of them Waiting 3,392 ticks and five held behind it; 7 fields with it). A
+  cut-off member is no target of the region search, asks for no field and is not widened for. It keeps heading for its
+  goal along the proven straight segment while that gains (`kBlockedRetry`), so a way that reopens finds it at the
+  closure; then -- or at once in a pocket under 256 origins, registration's own rule -- it is **trapped**: it stands,
+  and its order is kept for the 5-minute grace (`kTrappedRetire`) and then retires, as Retail retires an unreachable
+  goal. Until this rule a unit cut off on a busy map stood with its order for as long as the map kept changing.
+  `legion_cutoff`, `legion_cutoff_closed`.
+* **Trapped orders** are looked at again only after an improvement whose box touches their component's box grown by
+  the footprint (`trappedReopened`, over a per-plane log of recent improvements; a stale plane's rebuild counts as a
   whole-map improvement): a closure cannot open their way, so under churn elsewhere the 5-minute grace still runs out
-  (`legion_trapped`).
+  (`legion_trapped`). A member whose component holds an entry of its group's goals again (`trappedRejoined`) goes on
+  as the member it is, with its slot, point and clocks (`static.trapped_resumed`): registered afresh it gave its slot
+  up and settled 6 to 8 cells off the click, outside the authored radius (`cutoff-reopen`, `cutoff-toggle`: all six
+  bodies arrive inside it, the last within 2% of the tick it arrived at without the rule; `legion_cutoff_reopen`,
+  `legion_cutoff_toggle`). One the improvement did not join to its goals registers afresh, as before: if its component
+  has room now it becomes an approach member, walks to the nearest reachable point and its order drops there (section
+  2); with changes inside its own component that is what happens to a cut-off unit (`cutoff-1024` with the churn
+  inside the enclosure: the six orders end at the enclosure wall).
 * Under a change every tick a refresh keeps building, is installed still stale, and another follows: one finishes
   about every 85 ticks (`refreshchurn:work.refresh_completed.total`; `refreshchurn-control` completes none).
 
@@ -1776,6 +1825,14 @@ first start of a tick always fits) and reach-ring cells.
 
 * **Jobs and classes** (`serveFields`). Work is served by JOB -- a field being built, however many groups share it --
   in four classes, most urgent first: Waiting (a member stands for want of it), FirstRoute, AwareRepair, StaleRefresh.
+  A refresh is a Waiting job, and its request a Waiting request, while a member stands off its touched corridor or
+  chain waiting for it (`Group::awaited`, stamped by the member each tick it stands, hashed; `sched.awaited_ticks`):
+  that body cannot move until the refresh is built, exactly as a member of a group with no field. With every small
+  group on a chain these members were most of what still stood waiting, behind every refresh of a route that still
+  steered its group (a game on the audited map with the route rules of section 2 and without this one: 957,586 of
+  1,007,194 waiting member-ticks by tick 102,900). A window never sets the stamp, so the refresh of a
+  whole-component window keeps its class (promoting every stale group's refresh was measured and is worse).
+  `legion_refreshfirst`.
   The last two run inside the refresh allowance, `kRefreshQuota = kFieldQuota / 4`: a refresh of a group that already
   steers by a finished field takes at most a quarter of the quota per tick, while first fields, which steer nobody
   yet, keep the whole quota; a refresh's initialisation is charged to that allowance too, and a refresh that a sharing
@@ -1807,7 +1864,32 @@ first start of a tick always fits) and reach-ring cells.
 * **Memory** (`NavBytes`, `fieldAllowance`). Deterministic bytes (element counts times fixed sizes) for every
   container, by category; the field cap is a fixed byte allowance (`kFieldBytes`, 128 MiB, never below two whole-map
   fields) over the potentials and the unfinished builds' frontiers. The process heap is measured beside it by the
-  tools, never read by the sim.
+  tools, never read by the sim. A window is charged for its box when it starts (storage is sparse, the charge is
+  not), with one exception: a window none of whose seeds has a legal step (a goal buried under a building) cannot
+  leave its seeds and is charged for their tiles (`Field::seedBound`, `route.seed_bound`; the window is charged
+  after all if a step has opened by its first slice, `legion_seedrestore`).
+* **Large requests.** The allowance is fixed and the rules above assume requests much smaller than it. On a
+  2048 x 2048 map a window over the whole component is 16.7 MB, an eighth of it: eight unfinished ones (a build is
+  no eviction victim and runs its 33 million relaxations to the end) hold all of it, the ninth reserves after 150
+  ticks, and every other start, a 250 KB one too, waits behind that reservation. In the audited eight-player game
+  3,320 such windows were 78% of all field cells charged by tick 302,400, from 1.1% of the builds, and 55% of the
+  waiting member-ticks were spent behind a reservation; at tick 63,000 one such request held up 399 of 400 groups
+  without a field. The lever is the requests, not the allowance (1 GiB removes 86% of the waiting and holds
+  543-725 MB, which also goes into every replay keyframe): a full group plans ("Fields"), the demand rule counts
+  the own command, a covered goal is searched through its neighbours, a buried one is charged for its seeds, a
+  cut-off member asks for nothing (section 2), and a refresh a member stands waiting for is served first (above).
+  Measured on forks of that game with the computer players thinking live (the recorded commands name other units
+  once the game changes, so a replay of them overstates any gain), two replicates each, stock against the rules:
+  waiting member-ticks 867,183 -> 24,098 / 23,026 over ticks 302,400-308,400 and 1,468,405 -> 34,372 / 32,301
+  over 323,900-330,000 (-97%), Legion arrivals 749 -> 1,082 / 1,173 and 444 -> 699 / 702, the time from a movement
+  command to the unit's first step at the 90th percentile 727 -> 64 / 67 and 969 -> 97 / 84 ticks; over
+  63,000-72,000 331,037 -> 16,653 / 16,594 with arrivals 3,297 -> 3,414 / 3,627. The fields charged against the
+  allowance average 119-121, 89-91 and 49-50 MB in those stretches (stock 128-130 MB in all three; the forks start
+  from the recorded game's full memory). The same match played from tick 0 with the rules is a different game from
+  the first changed decision (it was decided near tick 210,000; the recorded one was still fought at 324,000). By
+  tick 180,000 it has 84,818 waiting member-ticks against 1,685,685 (-95%) with 40,551 arrivals against 41,069, no
+  eviction, no request refused for room and no reservation (recorded: 56,856, 614,921 and 21,779 ticks), and the
+  fields charged average 27 MB against 92 MB. What remains is under "Known weaknesses".
 * **Ordering.** Groups with no field start before stale refreshes of older groups (served the other way round,
   constant churn restarts the refreshes every tick and starves new groups). A refresh keeps building across static
   changes, as a first field does, and is installed still stale so another follows.
@@ -1982,9 +2064,10 @@ Retail hashes and goldens are unchanged by Legion: Legion state enters `World::s
   unreachable, quota, pens, determinism, formation, slotblock, deaths, deathsshared, splitgoal, farclick, churn,
   approachhold, approachopen, churnfield, approachchurn, legacyyield, planeincremental, planeprebuild, penstale,
   lattice, wallend, staticblock, squadformation, pinwheel, landedflyers, mixedformation, flyerfront, liftflyers, aware,
-  lonetrees, slideback, stillturn, forestedge, pausedemand, b3events, mixedrandom, formationreform; boats and
-  hovercraft: navalclearance, navalisland, hovershore, navalmissions (see "Scope"). Their metrics come from the shared
-  observer (see "Instruments"). `legion_still_test` tests the headway window alone (section 3), and
+  lonetrees, slideback, stillturn, forestedge, pausedemand, b3events, mixedrandom, formationreform, fullplan,
+  demandown, seedcover, seedrestore, cutoff, splitseeds, routeclone (the route requests of sections 2 and 9);
+  boats and hovercraft: navalclearance, navalisland, hovershore, navalmissions (see "Scope"). Their metrics come
+  from the shared observer (see "Instruments"). `legion_still_test` tests the headway window alone (section 3), and
   `legion_flyers_test` the flight stations and the rejoin (section 8).
 * `legion_acceptance_test`, five checks run in Legion and Retail; Legion asserts, Retail reports. singleunit, jagged,
   trapped and group pass for Legion; crowdheld is a ratchet (Known weaknesses).
@@ -2001,6 +2084,12 @@ Retail hashes and goldens are unchanged by Legion: Legion state enters `World::s
   serial == workers) and `clear_build` (Legion mode: reclaim then build) assert that Legion served the leg.
 * `navbudget_test`, `legion_route_test`, `legion_hier_test`, `legion_routebins_test`, `simpool_test`: the scheduler,
   route, hierarchy, route-index and worker pieces alone.
+* `legion_starve`, `legion_cutoff_closed`, `legion_cutoff_reopen`, `legion_cutoff_toggle`, `legion_refreshfirst`,
+  `legion_armies` and `legion_seedarmy` (`tools/legion_scale_check.py` over `tools/scenarios/scale/`): route requests
+  on big maps. `starve-1024` rebuilds the audited game's starvation at an allowance of eight whole-map fields and
+  bounds the waiting, the reservations and the field bytes; the cutoff files bound the fields built for bodies no
+  route can reach and hold their arrivals to what they were before the rule; the last two are ratchets on known
+  weaknesses.
 * The scenario ctests (`legion_scenario` over `tools/scenarios/`, gated by `tools/scenarios/baseline.json`), each
   named in the section of its mechanism, and `ctest -L legion` for all of them. `legion_cost` gates the growth of
   Legion work from N to 4N bodies (`tools/legion_cost_baseline.json`). `legion_doc_links` and
@@ -2190,6 +2279,48 @@ Rules that come out of using them:
   on (see [retail-engine.md](retail-engine.md)). Moving enemy bodies would be a gameplay change with no Retail
   behaviour to port. Watched by `ctest:legion_staticidle` (its part 3: another player's idle body plugging the one gap
   in a wall stays put, and the group holds until a second gap opens).
+* **Route requests on the largest maps: crowds over the chain demand still take the whole way.** A command of more
+  than 48 bodies keeps one exact window ("Search or field by demand"); on a 2048 x 2048 map that window covers most
+  of the map, any static change touches it, and with its refresh it holds 33 MB for as long as the crowd walks.
+  Four such armies fill the 128 MiB allowance; the next waits behind a reservation with every small request behind
+  it, and a whole-component refresh cannot even start inside the refresh classes there (its initialisation,
+  260,609 units, is over `kRefreshQuota`; it waits 300 ticks for promotion). `armies14-2048` (fourteen 60-body
+  commands, sixty one-body groups ordered meanwhile): 44,561 waiting member-ticks and a longest wait of 708 ticks,
+  against 105,579 and 2,829 before the route rules of 2026-11-15, and all sixty one-body groups arrive (10
+  before); with eight armies the rules are enough (130,481 -> 2,116). The computer players' waves stay under the
+  demand (the audited game's largest was 44); a player's massed army does not. A covered goal (a corpse on the
+  click cell) under such a crowd makes its window the whole map, refreshed at every change anywhere
+  (`seedcorpse-army`: 21 fields and 160 M relaxations where the same walk without the feature builds 1 and 2.6 M;
+  bounding that window to the components its entries lie in was measured apart and is not a clean gain). While more
+  than half the allowance is in use at most six refreshes are in flight (`kRefreshInflight`), and large windows'
+  refreshes, hundreds of ticks each inside the refresh allowance, then hold the six places: every other refresh
+  waits, a chain's that a member stands for too. In a whole game on the audited map played with the rules from tick
+  0 that was every start request over 300 ticks old (memory over half and six refreshes in flight at each refusal),
+  in three episodes, the worst its final battle: refresh requests up to 2,138 ticks old and 58,405 waiting
+  member-ticks in its worst 9,000 ticks (the recorded game's worst 9,000 ticks hold 2,065,528). Letting a
+  request of at most 1/64 of the allowance start behind a reservation takes `armies14-2048` to 11,806 member-ticks;
+  it changes the reservation rule (section 9) and is the first thing to take if this case matters. Measured by
+  `ctest:legion_armies` and `ctest:legion_seedarmy`.
+* **Route requests on the largest maps: the whole component is still the last resort.** A full group plans three
+  times, then takes the whole component (16.7 MB and 87 ticks of the quota on a 2048 x 2048 map). A chain follows
+  the region tree, the exact window does not: a member a chain does not reach waits a tick or more for its halo
+  repair or the next plan, up to three times, and a body standing in one of its own goal's sectors across a wall
+  from the goal is never reached by a chain (those sectors belong to the destination's own field, which does not
+  leave them), so its group spends all three plans. The line for "large" is 1/32 of the allowance: at 1/64
+  `many-10000` (832 x 832, nothing starving) lost 4% of its arrivals, and with no line `sched-load` lost 16%.
+  Measured by `ctest:legion_fullplan` and `ctest:legion_starve`.
+* **A refresh served first moves bodies that used to stand.** Under a saturated quota (`sched-load` with the game's
+  routes, seven start offsets) the members standing off a touched chain wait 97% less (24,756 -> 684 member-ticks,
+  median) and walk into the same crossing traffic sooner: arrivals 50 -> 46 at the median (47.9 -> 45.4 on
+  average, in a file whose offsets spread from 39 to 61), completions 42 -> 39, statue ticks +2%, bodies stuck at
+  the end 33 -> 25. Stamping the halo-repair wait as well was measured and costs more (arrivals 44, statue ticks
+  +7%) for the same waiting. Measured by `ctest:legion_refreshfirst`.
+* **A goal buried under a building traps its bodies.** A group whose every seed lost all its steps (a structure
+  placed over the whole goal footprint) has no route to plan: its window holds the seeds' cells, proves the goal
+  unreachable and the members are trapped until an improvement touching their component looks at them again
+  (`regoal` moves a member's own goal beside the building, but the group's seeds stay where they were). The window
+  is no longer charged the whole map; the bodies still stand. In a game played on the audited map with the rules
+  on, about 745 of 766 fallback windows were of this kind. Measured by `ctest:legion_seedcover` (its buried half).
 * **Fog**: Legion plans on the static plane as Retail's mover sees it. It does not model unexplored terrain
   separately. The one place fog shows is group awareness, which sees an enemy mover only within sight
   (`aware-unseen:pair.contacts.permille_x100` against `aware-seen:pair.contacts.permille_x100`).
