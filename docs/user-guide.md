@@ -3023,7 +3023,12 @@ replay folder cannot be written for a while, the game keeps the recording in
 memory and writes it as soon as it can.
 
 To watch one, open **Settings → Load Replay** on the main menu and choose a
-recording. The replay bar sits at the top of the map view:
+recording. The list shows the replays this version can play, newest first, each
+with the length of its game. A replay only plays on a version with the same network
+protocol as the one that recorded it, so recordings from other versions are left
+out, and a line under the list says how many there are.
+
+The replay bar sits at the top of the map view:
 
 - **The timeline** shows how far you are. Click anywhere on it, or drag its marker
   and let go, to jump there, forwards or backwards. Hovering shows the time under

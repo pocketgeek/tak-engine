@@ -101,6 +101,39 @@ void run(){
   check(a.first!=idle.first,"posDigest blind to orders and movement");
   check(a.first!=later.first,"posDigest blind to a tick of movement");
   check(a.first!=a.second,"posDigest equals the state hash");}
+ // The picker's look at a file: its first bytes tell whether this build can play it and how long the game is.
+ {auto put=[&](const Writer& value){std::ofstream out(path,std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<const char*>(value.b.data()),std::streamsize(value.b.size()));out.close();};
+  ReplayPeek peek;
+  put(recording());
+  check(peekReplayFile(name,peek)&&peek.playable&&peek.ticks==1&&peek.mapId=="Synthetic map"&&
+        peek.formatVersion==kReplayFormat&&peek.protocolVersion==kNetVersion,"a current recording is not listed as playable");
+  put(recording(kNetVersion-1));
+  check(peekReplayFile(name,peek)&&!peek.playable&&peek.protocolVersion==kNetVersion-1,"another protocol's recording listed as playable");
+  put(recording(kNetVersion,Command{},0,false,tak::sim::PathfindingMode::Retail,"",kReplayFormat-1));
+  check(peekReplayFile(name,peek)&&!peek.playable&&peek.formatVersion==kReplayFormat-1,"another format's recording listed as playable");
+  // A long game's file is not read through: what follows the start of the file is never looked at.
+  auto countAt=[](const Writer& file){   // where the tick count stands: right behind the header
+   Reader r(file.b.data()+4,file.b.size()-4);ReplayHeader h;uint32_t format=0,protocol=0;
+   check(readReplayHeader(r,h,format,protocol),"fixture: the header does not read back");
+   return size_t(r.p-file.b.data());};
+  {auto longGame=recording();
+   const size_t header=countAt(longGame);
+   for(int i=0;i<4;++i)longGame.b[header+i]=uint8_t(1945042u>>(8*i));
+   longGame.b.resize(header+4);longGame.b.resize(header+4+(1u<<20),0xEE);
+   put(longGame);
+   check(peekReplayFile(name,peek)&&peek.playable&&peek.ticks==1945042,"the game's length does not come from the header");
+   ReplayFile whole;check(!loadReplayFile(name,whole),"fixture: this file's body is rubbish, only its start is a replay");}
+  // An unfinished recording has an open count: playable as far as the header says, its length unknown.
+  {auto open=recording();
+   const size_t header=countAt(open);
+   for(int i=0;i<4;++i)open.b[header+i]=0xFF;
+   put(open);
+   check(peekReplayFile(name,peek)&&peek.playable&&peek.ticks==0,"an open tick count read as a length");}
+  {Writer junk;for(int i=0;i<64;++i)junk.u8(uint8_t(i));put(junk);
+   check(!peekReplayFile(name,peek),"a file that is no replay was listed");}
+  {Writer tiny;for(char ch:{'T','A','K','R'})tiny.u8(uint8_t(ch));put(tiny);
+   check(!peekReplayFile(name,peek),"a four-byte file was listed");}
+  check(!peekReplayFile(name+".missing",peek),"a missing file was listed");}
 }
 }
 int main(){try{run();std::cout<<"PASS: "<<checks<<" replay file checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

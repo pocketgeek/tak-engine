@@ -80,6 +80,18 @@ private:
 // Load a .takrep (header + tick bundles). Returns false on a malformed file.
 bool loadReplayFile(const std::string& path, ReplayFile& out);
 
+// What the picker says about a .takrep without loading it: the start of the file only,
+// however long the game. `playable`: recorded under this build's format and protocol and
+// within the loader's size, so picking it can work; loadReplayFile still has the last word.
+struct ReplayPeek {
+    bool playable = false;
+    uint32_t formatVersion = 0, protocolVersion = 0;
+    uint32_t ticks = 0;           // the game's length; 0 when the header does not say
+    std::string mapId;
+};
+// False: not a replay at all (unreadable, or no .takrep header).
+bool peekReplayFile(const std::string& path, ReplayPeek& out);
+
 // ---- writing ---------------------------------------------------------------
 //
 // The header of the replay the CLIENT records (MpClient::replayLog), filled exactly

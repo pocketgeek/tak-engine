@@ -3,6 +3,7 @@
 #include "net/matchconfig.h"   // matchConfigFor / replayHeaderFor
 #include "net/protocol.h"      // tak::net::Reader / getBundle
 #include "net/replayhdr.h"     // kMaxReplayBytes
+#include "net/replaywriter.h"  // kReplayOpenCount
 
 #include <cstdio>
 #include <filesystem>
@@ -90,6 +91,35 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
         out.checks.push_back(c);
     }
     return r.ok && r.p == r.end;
+}
+
+bool peekReplayFile(const std::string& path, ReplayPeek& out) {
+    out = {};
+#ifdef _WIN32
+    FILE* f = _wfopen(tak::u8path(path).c_str(), L"rb");
+#else
+    FILE* f = std::fopen(path.c_str(), "rb");
+#endif
+    if (!f) return false;
+    // The header is a few hundred bytes (five short strings and the slot table); the
+    // tick count follows it.
+    uint8_t head[4096];
+    const size_t got = std::fread(head, 1, sizeof head, f);
+    std::fclose(f);
+    if (got < 12 || head[0] != 'T' || head[1] != 'A' || head[2] != 'K' || head[3] != 'R') return false;
+    tak::net::Reader r(head + 4, got - 4);
+    tak::net::ReplayHeader h;
+    const bool headerOk = tak::net::readReplayHeader(r, h, out.formatVersion, out.protocolVersion);
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(tak::u8path(path), ec);
+    out.playable = tak::net::supportedReplayProtocol(out.formatVersion, out.protocolVersion) &&
+                   !ec && uint64_t(size) <= tak::net::kMaxReplayBytes;
+    if (!out.playable || !headerOk) return true;
+    out.mapId = h.mapId;
+    const uint32_t ticks = r.u32();
+    // An open count marks a recording that was never finished: its length is not known here.
+    if (r.ok && ticks != tak::net::kReplayOpenCount) out.ticks = ticks;
+    return true;
 }
 
 tak::net::ReplayHeader clientReplayHeader(const tak::net::MpClient& mp, uint64_t gameplayHash) {

@@ -30,6 +30,8 @@
 #include "client/ccdpin.h"
 #include "client/settings.h"
 #include "client/benchmarkpath.h"
+#include "client/replaybar.h"    // timeText: a listed replay's length
+#include "client/replayfile.h"   // peekReplayFile
 #include "client/voice.h"
 #include "client/dev.h"
 #include "client/appquit.h"
@@ -181,7 +183,9 @@ struct MainMenu::Impl {
         const float t = room > 0 ? std::clamp((thumbTop - replayTrack_.y) / room, 0.0f, 1.0f) : 0.0f;
         replayScroll_ = int(std::lround(t * float(replayMaxTop())));
     }
-    std::vector<std::string> replayFiles_;   // full paths, newest first
+    std::vector<std::string> replayFiles_;   // full paths, newest first: the ones this build can play
+    std::vector<std::string> replayLength_;  // each one's game length ("" when its header does not say)
+    size_t replayOthers_ = 0;                // .takrep files of other versions, not listed
     std::string chosenReplay_;
     std::string replayError_;         // shown on the picker
     SDL_FRect replayBtnRect_[kReplayRows]{};   // one per listed row (set each render)
@@ -1450,8 +1454,14 @@ struct MainMenu::Impl {
     // exactly what this machine has recorded. A recording another client on this
     // profile left unfinished (it crashed or was killed) is finished first, so it is
     // listed too; one still being recorded is locked and left alone.
+    //
+    // Only what this build can play is listed: a replay plays on the version that recorded
+    // it, and a folder a few releases old holds far more of the others (the file's first
+    // bytes say which, so no file is read through). The picker says how many it left out.
     void scanReplays() {
         replayFiles_.clear();
+        replayLength_.clear();
+        replayOthers_ = 0;
         replayScroll_ = 0;
         replayDrag_ = false;
         const std::string dir = tak::replayDir();
@@ -1471,7 +1481,13 @@ struct MainMenu::Impl {
         // Newest first: the replay you just played is the one you want to watch.
         std::sort(found.begin(), found.end(),
                   [](const auto& a, const auto& b) { return a.first > b.first; });
-        for (auto& f : found) replayFiles_.push_back(std::move(f.second));
+        for (auto& f : found) {
+            ReplayPeek peek;
+            if (!peekReplayFile(f.second, peek)) continue;   // not a replay at all
+            if (!peek.playable) { ++replayOthers_; continue; }
+            replayLength_.push_back(peek.ticks ? tak::replaybar::timeText(peek.ticks) : std::string());
+            replayFiles_.push_back(std::move(f.second));
+        }
     }
 
     // The replay picker. Same shape as the benchmark submenu, but its rows come from
@@ -1518,7 +1534,7 @@ struct MainMenu::Impl {
         }
         if (replayFiles_.empty()) {
             // Say WHERE they would be, so an empty list is an answer rather than a dead end.
-            const std::string m1 = "NO REPLAYS SAVED YET";
+            const std::string m1 = replayOthers_ ? "NO REPLAYS THIS VERSION CAN PLAY" : "NO REPLAYS SAVED YET";
             const std::string m2 = "EVERY GAME YOU PLAY OR WATCH IS SAVED AUTOMATICALLY";
             blockText(m1, px0 + (pw - tw(m1, 2.2f * u)) / 2, by + 6 * u, 2.2f * u, {225, 215, 175, 255});
             blockText(m2, px0 + (pw - tw(m2, 1.5f * u)) / 2, by + 34 * u, 1.5f * u, {150, 155, 175, 255});
@@ -1533,10 +1549,15 @@ struct MainMenu::Impl {
             SDL_RenderFillRectF(ren, &r);
             SDL_SetRenderDrawColor(ren, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255);
             SDL_RenderDrawRectF(ren, &r);
-            // The file's own name (its own capitals under MODERN), cut to the button.
+            // The file's own name (its own capitals under MODERN), cut to the button, and the
+            // game's length at the right: what tells an evening's game from a minute's test.
             const float lpx = 1.9f * u;
-            const std::string name = uiTextFit(std::filesystem::path(full).stem().string(), lpx, bw - 24 * u);
+            const std::string& length = replayLength_[size_t(replayScroll_ + i)];
+            const float lengthW = length.empty() ? 0 : tw(length, lpx) + 16 * u;
+            const std::string name = uiTextFit(std::filesystem::path(full).stem().string(), lpx, bw - 24 * u - lengthW);
             blockText(name, r.x + 12 * u, r.y + (bh - 7 * lpx) / 2, lpx, {228, 232, 242, 255});
+            if (!length.empty())
+                blockText(length, r.x + bw - 12 * u - tw(length, lpx), r.y + (bh - 7 * lpx) / 2, lpx, {190, 196, 214, 255});
             by += bh + gap;
         }
         if (!replayError_.empty()) {
@@ -1549,6 +1570,14 @@ struct MainMenu::Impl {
             shadowText(std::to_string(replayScroll_ + 1) + "-" + std::to_string(replayScroll_ + shown) + " OF " +
                        std::to_string(replayFiles_.size()),
                        px0 + pad, by + 8 * u, 1.8f * u, {150, 155, 175, 255});
+        if (replayOthers_) {
+            // Under the count, left of BACK: the replays of other versions, which cannot play here.
+            const std::string others = std::to_string(replayOthers_) + (replayOthers_ == 1 ? " FROM ANOTHER VERSION NOT SHOWN"
+                                                                                       : " FROM OTHER VERSIONS NOT SHOWN");
+            const float opx = 1.5f * u;
+            const std::string fit = uiTextFit(others, opx, bw - 160 * u);
+            blockText(fit, px0 + pad, by + (int(replayFiles_.size()) > kRows ? 31 : 10) * u, opx, {150, 155, 175, 255});
+        }
         menuBackButton(px0, pw, pad, by + 8 * u, u);
     }
 
