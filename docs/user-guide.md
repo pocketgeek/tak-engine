@@ -1762,8 +1762,10 @@ measurements](legion-pathfinding.md)):
   little over two minutes on plain move orders, where two crossing armies
   usually sort themselves out first. A unit that waits on units that are still
   getting somewhere keeps its order; one that is truly stuck among units that
-  hold orders too gives up after a little under three minutes. Units of other
-  players in the way never make a unit give up.
+  hold orders too gives up after a little under three minutes. Units waiting
+  behind their own firing line keep their orders for as long as the fight
+  lasts, and go on when the target is destroyed. Enemy units in the way never
+  make a unit give up; an ally's idle units do, like your own.
 - **Wheeling round walls.** When a large group (16 or more) goes round the end of
   a wall, it swings round in several ranks instead of narrowing to single file.
   It drops to single file only when the gap really is too narrow. A single tree

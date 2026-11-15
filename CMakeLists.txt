@@ -613,9 +613,9 @@ foreach(legion_scn aware-cross aware-headon aware-seen aware-unseen aware-attack
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
 endforeach()
 # Bodies that stand for good (2026-11-14; the bounds are legion_settledcrowd, legion_passage_starve, legion_lateswap,
-# legion_escapestep, legion_siegegap, legion_siegegap_move and legion_filetrade below): the same run as part A, so
-# serial == workers and both modes on the rules' fixtures.
-foreach(legion_scn settled-crowd passage-starve headon-fight escape-step siege-gap siege-gap-move file-trade)
+# legion_escapestep, legion_idleplug, legion_siegegap, legion_siegegap_move and legion_filetrade below): the same run
+# as part A, so serial == workers and both modes on the rules' fixtures.
+foreach(legion_scn settled-crowd passage-starve headon-fight escape-step idle-plug siege-gap siege-gap-move file-trade)
   add_test(NAME legion_scenario_${legion_scn}
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
@@ -1234,9 +1234,17 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios settled-crowd
                    --min g.A.arrived=24 --min g.B.complete_n=6 --max open_still900=0 --min work.stand_downs.total=1)
+  # idle-plug: four corridors, each plugged wall to wall by idle bodies; six bodies sent through each stood before
+  # the plug for good. Behind the player's own idle bodies (A on a move order, D on attack-move) and an ally's (B)
+  # the orders now end; behind an enemy's (C) they are kept, as before: an enemy's body never ends an order.
+  # Asset-free.
+  add_test(NAME legion_idleplug
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios idle-plug --offsets 0,1,-1
+                   --min g.A.complete_n=6 --min g.B.complete_n=6 --min g.D.complete_n=6 --max g.C.complete_n=0)
   # escape-step: a body on an origin illegal for its size whose straight step at its target the mover refuses stood
   # for good; it walks to the legal origin beside it (A arrives). The same body with every such origin covered by
-  # another player's idle bodies keeps its order past the long stand-down (P: another side's bodies never end one).
+  # an enemy's idle bodies keeps its order past the long stand-down (P: an enemy's bodies never end one).
   # Asset-free.
   add_test(NAME legion_escapestep
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
@@ -1272,7 +1280,7 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios file-trade
                    --min work.arrivals.total=28 --min scale.complete.n=28)
   set_tests_properties(legion_doorwaypair legion_doorwaypair_move legion_lateswap legion_settledcrowd legion_escapestep
-                       legion_siegegap legion_siegegap_hold legion_siegegap_move legion_filetrade
+                       legion_idleplug legion_siegegap legion_siegegap_hold legion_siegegap_move legion_filetrade
                        PROPERTIES LABELS legion TIMEOUT 300)
   # crowdlock: the audited game's standing crowd rebuilt on its real ground (246 bodies among the wrecks of a base,
   # 147 attack-move orders). Stock Legion ended 53 of the orders in 9,000 ticks and left 85 bodies standing with

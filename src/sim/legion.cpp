@@ -9839,8 +9839,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         const uint32_t now=w.tickCounter_;
         const Unit* b=w.unit(id);
         if(!b||!b->alive())return {};
-        // Another side's body is never a reason to end an order (Legion moves no enemy body, and neither does
-        // Retail); a body waiting to register is live now.
+        // An enemy's body is never a reason to end an order (Legion moves no enemy body, and neither does
+        // Retail; an ally's counts as the player's own); a body waiting to register is live now.
         if(!w.allied(b->player,u.player)||queued(id))return {now,now};
         // A member, also one that steps aside holding its order (a give-way is no progress).
         if(const Member* peer=member(id))return liveOfMember(*peer);
@@ -12480,7 +12480,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             }
             if(best>=0) {m.escapeTo=best;m.escapeTicks=0;return;}
             if(standKind(m)) {
-                // As live as the bodies covering the legal origins beside it (another side's body there keeps the
+                // As live as the bodies covering the legal origins beside it (an enemy's body there keeps the
                 // order: it is not ours to end); with none legal, or all of them dead, the long threshold ends it.
                 for(const auto& d:kDirections)if(legal(p,ox+d[0],oz+d[1]))liveStep(u,m,ox,oz,(oz+d[1])*W+ox+d[0]);
                 m.why=LegionNavigator::WhyHoldRefused;

@@ -221,7 +221,7 @@ a rule firing in it, so its Legion hash differs from a head without the rules.
 
 | Key | Definition |
 |---|---|
-| `work.stand_downs` | orders ended where the body stood because nothing it waited on made progress (`standDown`): after 600 dead ticks against bodies that will never move, after 4,800 otherwise. Such an order counts in `g.G.complete_n` and, off the arrival disc, in `complete_outside_radius`; it is not an arrival (`work.arrivals`) |
+| `work.stand_downs` | orders ended where the body stood because nothing it waited on made progress (`standDown`): after 600 dead ticks against bodies that will never move (and 90 ticks without progress on its own route), after 4,800 otherwise. Such an order counts in `g.G.complete_n` and, off the arrival disc, in `complete_outside_radius`; it is not an arrival (`work.arrivals`) |
 | `work.give_ways` | bodies that stepped clear in a knot (`knotGiveWay`): one per body per give-way; also counted in the parting counter (`aware.parts`) |
 | `work.late_swaps` | swaps on a fight or patrol leg, after 600 dead ticks; counted in `work.swaps` too |
 | `work.escape_steps` | mover steps of a walk off an illegal origin to the legal origin beside it |
@@ -235,8 +235,11 @@ for the gate's start offsets):
 | `doorway-pair`, `doorway-pair-move` | `legion_doorwaypair`, `legion_doorwaypair_move` | a 4x4 and a 3x3 body at the mouth of a channel one large body wide: `g.S.arrived` and `g.K.arrived` 1, a give-way |
 | `headon-fight` | `legion_lateswap` | two bodies head on in a one-body lane on attack-move orders: both arrive, a late swap |
 | `settled-crowd` | `legion_settledcrowd` | six bodies before a corridor a settled crowd of another order fills: `g.B.complete_n` 6, `open_still900` 0 |
-| `escape-step` | `legion_escapestep` | a body on an illegal origin walks off it (`g.A.arrived` 1); one whose every way off another player's idle bodies cover keeps its order (`g.P.complete_n` 0) |
+| `idle-plug` | `legion_idleplug` | four corridors plugged by idle bodies: behind the player's own (`g.A`, `g.D` on attack-move) and an ally's (`g.B`) the orders end, `complete_n` 6 each; behind an enemy's (`g.C`) they are kept, `complete_n` 0 |
+| `escape-step` | `legion_escapestep` | a body on an illegal origin walks off it (`g.A.arrived` 1); one whose every way off an enemy's idle bodies cover keeps its order (`g.P.complete_n` 0) |
 | `passage-starve` | `legion_passage_starve` | a lone waiter at a narrow passage takes its turn: `g.B.arrived` 1 |
 | `crowdlock` | `legion_crowdlock` | the audited game's standing crowd on its real ground, the install's unit types: `scale.complete.n` 147, `scale.stuck_end` and `open_still900` 0 |
 | `scale/bridges-1000`, `scale/bridges-1000-fight` | `legion_swap_wide`, `legion_fightmeet` | the bistable meets the rules must not tip: offsets -5, -4, -3, 3, 4, 5 on move orders and -2, -1, 2, 5 on attack-move orders, at most 10 stuck and at least 700 arrived |
+| `siege-gap`, `siege-gap-move` | `legion_siegegap`, `legion_siegegap_hold`, `legion_siegegap_move` | an army waiting behind its own firing line (an enemy body of 9,000 hp in a gap), weapons on, 14,000 ticks. Offsets 0, 1, -1, -2, where the target dies after some 6,000 ticks: nobody stands down, `g.A.arrived` 60 (36 and `g.M.arrived` 24 with a move order queued behind), `scale.complete_outside_n` 0. Offsets 2..5, where it outlives the run: `g.A.complete_n` 0. Guards: they pass without the rules |
+| `file-trade` | `legion_filetrade` | two files of 14 trading through each other in a one-body lane: the settle rule settles all 28 (`work.arrivals.total` 28), no stand-down ahead of it. A guard: it passes without the rules |
 
