@@ -129,9 +129,16 @@
         }
         if (result) {
             // What is on disk now is the game up to its result. Recording goes on:
-            // whatever is played or watched after it belongs to the replay too.
-            std::fprintf(stderr, "replay: result at tick %u, %u ticks recorded; recording continues\n",
-                         netTick_, replayRec_->bundles());
+            // whatever is played or watched after it belongs to the replay too. A
+            // watcher's goes on only while the game does: with no human seated the
+            // server ends it on the result's own tick (Msg::GameOver), and the recording
+            // ends there. The line says so when the server already has.
+            if (mp_->gameOver())
+                std::fprintf(stderr, "replay: result at tick %u, %u ticks recorded; the server ended the game after %u ticks, "
+                             "and the recording ends there\n", netTick_, replayRec_->bundles(), mp_->gameOverTicks());
+            else
+                std::fprintf(stderr, "replay: result at tick %u, %u ticks recorded; recording continues%s\n",
+                             netTick_, replayRec_->bundles(), spectating_ ? " while the game does" : "");
             if (!replayRec_->failing()) postNotice("REPLAY SAVED", 5);
         }
     }

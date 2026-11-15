@@ -23,6 +23,7 @@ In both:
     named and its row the highlighted one, the match length the result's tick;
   - its recording and the server's own replay both end on the game's last tick, and
     both play back (TAK_REPLAY_VERIFY) to that tick and to the hash the watcher ended on;
+    its log does not say the recording continues past the result, as a player's does;
   - played back, each ends under the banner naming the winner (the verify run's
     "replay result" line), as the game did for its watcher.
 
@@ -133,6 +134,12 @@ def watched(session, watcher, seconds):
     assert out['victory'] == 1 and not out['band'], ('the watcher\'s plate is not a victory plate', out)
     assert out['gold'] and ',' not in out['gold'] and out['line'] == out['gold'] + ' wins', ('the plate does not name the winner', out)
     assert out['seconds'] == out['result'] // 30, ('the match length is not the result\'s tick', out)
+    # A watcher's recording goes on only while the game does: its log says where the server
+    # ended it, or (the result seen before the server's word) that it continues that long.
+    said = re.search(r'replay: result at tick \d+, \d+ ticks recorded; (.*)', log)
+    ends = 'the server ended the game after %d ticks, and the recording ends there' % out['ticks']
+    assert said and said.group(1) in (ends, 'recording continues while the game does'), \
+        ('the watcher\'s log says its recording goes on past the game', said and said.group(1))
     return out
 
 
