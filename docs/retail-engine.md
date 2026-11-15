@@ -2548,7 +2548,9 @@ patrols, Shift-queued like any mission list.
 
 Ours, not retail: `World::setRally` also takes
 **Attack** (a target id; an output that cannot attack, or a dead target,
-drops the step) and **fight-move**, from the HUD's ATTACK button, the attack
+drops the step, and so does a target that has changed owner since the step
+was given: `World::retireReferences`, "A change of owner is a new object")
+and **fight-move**, from the HUD's ATTACK button, the attack
 hotkey or a right-click on an enemy. A **Shift-queued patrol** rally step is
 stored open (`Order::patrolOpen`) and copied that way, so an output closes
 the loop from where it starts that leg, as a unit's own queued patrol does
@@ -3032,6 +3034,31 @@ at all (E). Otherwise, in order (E):
    (`+0xfc`) when that is another one. (S for the retirement path; E that
    `51a140` is called with these arguments after the new object stands.)
 
+The old object's death also lets go of everything that named it (S).
+`512610` hands its death packet to `512860` whatever the kind (`5127fb`), and
+`512860` releases the object's listeners before it looks at the severity
+(`519a60` at `5129f3`, walking the list at unit `+0xc4`): each listener's
+owner hears event 8 (`519a30` calls its first virtual; a mission's is
+`4d4d00`, which ORs it into `+0x6a`) and the listener's target pointer is
+zeroed and unlinked (`519950`). A mission keeps such a listener on its target
+from construction (`4d6c40` -> `519990`, the listener at mission `+0x12`, so
+its target `+0x16`), one still waiting its turn in the queue too, and so do
+the controllers that follow a unit (`519990`'s other callers are a second
+mission constructor, `4d6f90`, and the controller constructors
+`4e3bc0`..`4e4140`, `4e3f70` among them). A
+weapon record keeps its target's slot number instead (`+0x10`), and the
+lookup `51a9a0` retires it (`51a7f0`) once that slot holds no live object. So
+at a change of owner every other unit's attack, guard, repair, boarding or
+WaitForAttack on the old object loses its target as it does when the target
+dies, whoever owns that unit: the running mission at its next dispatch (a
+flyer's attack by `41c8f6` / `41d654` / `41e28f`, so VTOL_SeekAttack when it
+was the last mission; a flyer's guard by `4191d7`), a queued one when its
+turn comes. Nothing carries over to the new object: a unit still hostile to
+the new owner takes it as it takes any enemy, by its missions' scans and the
+fire-at-will sweep. No emulation runs another unit's mission across `514da0`;
+that each mission then ends is what its handler does with a target that is
+gone (the sections on each mission).
+
 What the new object starts fresh (`511990`, E): the trigger latch `+0xd4`
 (0, so the next `4d33a0` sweep fires `UnitCreated` for the new owner's byte
 and `TriggerHit` for every armed region it stands in again), the mana pool
@@ -3055,7 +3082,53 @@ them; `MissionScript::objectReplaced` resets the latch at once, and the old
 object's death reaches the mission (`replacedObjectDied`: the condition
 deaths under the old owner, `UnitDestroyed`) and the scenario (`objectDied`)
 with the tick's other deaths (`World::replacedObjects_`, hashed while
-pending); `totalallowed` refuses a transfer. Deviations kept: the id (I: a new slot would give the new object a
+pending); `totalallowed` refuses a transfer.
+
+Other units' references to the unit (`World::retireReferences`): World
+keeps the id for the new object, so at the change every other unit's
+reference to it is pointed at no unit (`kGoneUnit`), for holders of every
+player: order legs anywhere in the queue with their route corners (an
+attack, explicit or automatic; a guard; a boarding and its carrier's pickup;
+a repair), a producer's rally steps (the Attack rally is ours), the weapon
+slots' targets and a WaitForAttack's watched unit. Each holder then loses it
+on its own next update by the path a target that died takes (`tickCombat`
+with `seekLostTarget` and `seekLostWard`, `tickSlotWeapons`, `tickRepair`,
+`tickTransport`, `scriptedWaitDone`, the rally hand-over) and goes on with
+the rest of its queue. The same rule holds for the charm, a gift
+(ShareUnits), the CRT transfer and the mission Capture, as they are one
+routine in retail: a guard, a queued repair or a boarding order on a unit
+given to an ally ends too, and so does an enemy's attack order on it. A unit
+still hostile to the new owner takes the unit again by automatic targeting
+when its player sees it (the standby scans, the fire-at-will sweep): an
+order needs no sight, an automatic target does. Before this was ported only
+automatic and mind-control attacks ended (`tickCombat`'s hostile-target
+test) and the change retired only builders at work on the unit: an explicit
+Attack stayed
+on a unit the attacker's own side or an ally had just charmed (melee units
+killed it, Gryphons made runs over it for as long as it lived), a
+producer's Attack rally went on sending new units at it, a queued Attack leg
+came up later, and a guard escorted a ward an enemy had charmed. Ours, not
+retail, and kept: an Attack given on a friendly unit AFTER the change is
+carried out (`World::attack` accepts one; no retail click gives it, see
+"Right-click on a friendly unit"), and the blocked-shot count a holder kept
+on the old object (ours) starts again. Deviations kept: a shot already in
+the air keeps the unit as its target, so a guided one goes on steering at it
+where retail's stops steering at the dead old object (`52e030` steers only
+at a live target), and it can still hit the unit; a builder at work on the
+unit (building, helping or repairing it) drops its other queued jobs with
+that one (`cancelBuilds`, as `scenarioDestroy` does for a scripted death),
+where retail's would lose only that mission (I); a HelpBuild leg is not
+pointed away, since it helps only its own player's site (`canHelpBuild`) and
+ends by that test when its turn comes.
+Test: `tools/owner_orders_test.cpp` (ctest `owner_orders` on synthetic
+types: a real charm, a gift, a scenario transfer, a queued repair and a
+WaitForAttack; `owner_orders_roster` on the shipped units, in both
+pathfinding modes: a Harpy's and a Mind Mage's charm against melee, ranged
+and Gryphon holders, an ally's charm, one Attack click on a selection with a
+Harpy in it, a queued leg, a Keep's rally, a walking and a flying guard, a
+third player's attacker).
+
+Deviations kept: the id (I: a new slot would give the new object a
 new id, which every client-side reference and replay would see); the body's
 registrations (ground stamp, sight, air occupancy, mover state) carry over
 in place where retail's old body stays stamped until it retires and the new

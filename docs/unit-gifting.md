@@ -29,9 +29,19 @@ transports. Empty, landed transports and completed buildings are eligible.
 A mixed selection transfers only eligible units, in selection order; it never
 exceeds the recipient's limits.
 
-Transfers preserve health, experience, personal mana and location. They clear
+Transfers preserve health and location. As in the original game the recipient
+gets a new unit of the type (retail's change of owner, `0x514da0`, makes a new
+object: [retail-engine.md](retail-engine.md), "A change of owner is a new
+object"), so it arrives without experience, with an empty personal mana pool
+and with its type's usual stance. They clear
 orders, construction queues, repeat production, rally orders, self-destruct and
-control-group/formation membership. They move live population counts without
+control-group/formation membership. Orders that OTHER units held on the unit end
+too, by the same rule as for a charmed unit, whoever holds them: a guard, a
+queued repair or a boarding order of the giver's units (and an ally's) on it,
+an enemy's attack order on it, a production building's attack rally step on
+it. Each of those units goes on with the rest of its orders; friendly orders
+are not carried over to the new owner's unit, and enemies shoot at it on their
+own as at any unit they see (ctest `owner_orders`). They move live population counts without
 awarding production, loss or kill score. Submitted units leave the current selection immediately; the referee still
 rechecks ownership and recipient limits when the command executes. Render geometry keys include owner and color slot, so both
 normal and cached distant models refresh to the recipient's colors.

@@ -8895,8 +8895,11 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
 
     Unit* target = unit(u.orders.front().targetId);
     // Auto-acquisition and conversion attacks require a hostile target throughout
-    // the order, not just when it starts. Another caster may have turned it since
-    // then. Ordinary explicit attacks retain their intentional friendly-fire use.
+    // the order, not just when it starts. A target that changed owner is gone
+    // for every order made on it before the change, an explicit attack's too
+    // (retireReferences), so no caster's charm leaves this unit attacking its
+    // own side; this guards the orders that remain. An explicit attack given
+    // on a friendly unit is still carried out: intentional friendly fire.
     const bool requiresEnemy=u.orders.front().autoTarget ||
         std::any_of(u.type->weapons.begin(),u.type->weapons.end(),
                     [](const Weapon& w){return w.mindControl;});
@@ -9994,6 +9997,7 @@ bool World::changeOwner(Unit& u, int newPlayer, MissionScript* notify) {
     }
     if (u.retailSite) u.retailSite->builder=0;
     killProductionOutput(u,true);
+    retireReferences(unitId);
     // The old object dies (51a140 kind 6, then its 512610): its death packet
     // takes its passengers with it (512860, killPassengers), with its hitter
     // while that lives. World runs that at the change, retail at the old
@@ -10074,6 +10078,56 @@ bool World::changeOwner(Unit& u, int newPlayer, MissionScript* notify) {
     if (notify) notify->objectReplaced(unitId);
     if (mission_ && mission_.get() != notify) mission_->objectReplaced(unitId);
     return true;
+}
+
+// The old object's death lets go of everything that named it. 512610 hands
+// its death packet to 512860 whatever the kind (6 here), and 512860 lets the
+// object's listeners go before it looks at the severity (519a60 at 5129f3):
+// each one's owner hears event 8 (519a30) and its target pointer is zeroed
+// (519950). A mission keeps such a listener on its target from construction
+// (4d6c40 -> 519990, mission +0x12), so one still waiting its turn in the
+// queue loses the unit too, and so do the controllers that follow a unit; a
+// weapon record keeps its target's slot number instead (+0x10), which the
+// lookup retires once no live object is in that slot (51a9a0 -> 51a7f0).
+// Static analysis; that the missions then end is what each one's own handler
+// does with a target that is gone.
+//
+// World keeps the id for the new object, so every other unit's reference to
+// it is pointed at no unit here (kGoneUnit), for holders of every player:
+// order legs anywhere in the queue with their route corners (an attack, a
+// guard, a boarding and its carrier's pickup, a repair), a producer's rally
+// steps, the weapon slots' targets and a WaitForAttack's watched unit. Each
+// holder then loses it on its own next update by the path a target that died
+// takes: tickCombat (a flyer's seekLostTarget and seekLostWard included, and
+// with the order its script aim), tickSlotWeapons, tickRepair, tickTransport,
+// scriptedWaitDone, the rally hand-over; and it goes on with the rest of its
+// queue. A unit still hostile to the new owner takes the new object as it
+// takes any enemy, by its missions' scans and the fire-at-will sweep. The
+// blocked-shot count (ours) was the old object's and starts again. A HelpBuild
+// needs no pointing away: it helps only its own player's site (canHelpBuild).
+// A shot already in the air keeps its target (deviation: retail's guided shot
+// stops steering at the dead old object, 52e030).
+void World::retireReferences(int unitId) {
+    for (Unit& holder:units_) {
+        if (holder.id==unitId) continue;
+        const auto retire=[&](std::vector<Order>& legs) {
+            bool any=false;
+            for (Order& o:legs) {
+                if (o.targetId==unitId) { o.targetId=kGoneUnit;any=true; }
+                if (o.repairTarget==unitId) { o.repairTarget=kGoneUnit;any=true; }
+                if (o.scripted && o.scripted<=scriptedOrders_.size())
+                    if (ScriptedOrder& s=scriptedOrders_[o.scripted-1u];s.watched==unitId) s.watched=kGoneUnit;
+            }
+            return any;
+        };
+        const bool changed=retire(holder.orders);
+        retire(holder.rally);
+        for (int32_t& target:holder.slotTarget) if (target==unitId) target=kGoneUnit;
+        if (holder.blockedTarget==unitId) {
+            holder.blockedTarget=0;holder.blockedShots=0;holder.repositions=0;holder.searchFailed=0;
+        }
+        if (changed) noteOrders(holder.id);
+    }
 }
 
 void World::startObjectOrders(Unit& u) {

@@ -906,7 +906,8 @@ Shift adds more rally steps, exactly as Shift queues a unit's own orders.
 Every new unit carries out the whole plan in order: "move to A, Shift
 fight-move to B, Shift patrol to C" sends each one to A, then fights its way
 to B, then patrols between B and C. An **attack** rally sends new units at
-that enemy; once the enemy is dead, later units skip that step. A plain
+that enemy; once the enemy is dead, or has been charmed by anyone, later units
+skip that step. A plain
 (un-Shifted) order replaces the plan, and **Stop** clears it along with the
 production queue. With the building selected, hold Shift to see the plan as
 waypoint markers. The original game kept only move and patrol rallies; attack
@@ -1126,6 +1127,17 @@ off, or **charm** it (mind control), which makes it yours. Stone, freeze and
 charm spells fly to their target as a ball of energy and work when it strikes,
 on the first unit it strikes; as in the original game they can fail, never take
 a Monarch, a building or a unit still being built, and do no damage.
+
+A charmed unit is a new unit for everyone, as in the original game. Every order
+other units held on it ends, as if it had been destroyed: units ordered to
+attack it stop (your own, your allies' and other players' alike, flyers
+included), an attack on it still waiting in a unit's queue is dropped when its
+turn comes, a production building's attack rally on it is dropped, and the
+guards and builders of its old side let go of it. Each of those units then goes
+on with the rest of its orders. So when your Harpy or Mind Mage charms the unit
+your army was told to attack, the army stops attacking it. A player still at
+war with the unit's new owner has to order the attack again, but that player's
+units shoot at it on their own, like at any other enemy they can see.
 
 **Cloaking.** Units that can cloak turn invisible with **K**. Cloaking spends
 the unit's own mana (the blue bar when it is selected), not your mana pool;
@@ -2608,8 +2620,11 @@ allies, and chat and voice start on for your allies only (tick the others to
 reach them too). A gift button is greyed while none of
 your selected units can be given. Giving units keeps the screen open: units that
 cannot be given stay yours, the recipient's unit cap is respected, and the given
-units leave your groups and take the recipient's colour. Campaigns have no
-gifting. See [unit gifting](unit-gifting.md) for which units can be given.
+units leave your groups and take the recipient's colour. Orders that other
+units held on a given unit end, as they do when a unit is charmed: a guard, a
+repair or a boarding order of yours on it, and an enemy's attack order on it.
+Campaigns have no gifting. See [unit gifting](unit-gifting.md) for which units
+can be given.
 
 ### Spectating
 

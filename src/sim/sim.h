@@ -724,6 +724,15 @@ inline constexpr uint32_t kVtolPatrolFlags = 0x1000412u;
 // 0x2000000 navigator formation bit). tools/re/check_air_point_mission.py.
 inline constexpr uint32_t kVtolMoveFlags = 0x1000402u;
 
+// What another unit's reference to a unit becomes when that unit changes
+// owner (World::retireReferences): the id of no unit. Retail's change of
+// owner kills the old object, whose death lets go of every mission and
+// controller that named it (519a60), and makes the new owner a new one; World
+// keeps the id for the new object, so the references to the old one are
+// pointed here instead. World::unit answers nothing for it, so each holder
+// loses its target as it loses one that has died and gone.
+inline constexpr int kGoneUnit = -1;
+
 struct ScriptedOrder {
     enum class Kind : uint8_t { AttackType, Train, WaitAttack, WaitNear, SelfDestruct, MakeSelectable };
     Kind kind = Kind::AttackType;
@@ -3560,6 +3569,10 @@ private:
     // and a new one is made for the new owner (World keeps the id). `notify`
     // hears the capture first (523570). False when nothing changed.
     bool changeOwner(Unit& u, int newPlayer, MissionScript* notify);
+    // The old object of a change of owner is gone for every other unit that
+    // named it (512860 -> 519a60): their order legs, rally steps and weapon
+    // slots on it are pointed at kGoneUnit, whoever owns them.
+    void retireReferences(int unitId);
     // A new object's standing orders: its type's (511990 +0x130 bits 30-31,
     // +0x134 cleared), or Defensive under a defensive AI.
     void startObjectOrders(Unit& u);
