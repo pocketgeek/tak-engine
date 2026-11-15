@@ -612,9 +612,10 @@ foreach(legion_scn aware-cross aware-headon aware-seen aware-unseen aware-attack
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
 endforeach()
-# Bodies that stand for good (2026-11-14; the bounds are legion_settledcrowd, legion_passage_starve, legion_lateswap
-# and legion_escapestep below): the same run as part A, so serial == workers and both modes on the rules' fixtures.
-foreach(legion_scn settled-crowd passage-starve headon-fight escape-step)
+# Bodies that stand for good (2026-11-14; the bounds are legion_settledcrowd, legion_passage_starve, legion_lateswap,
+# legion_escapestep, legion_siegegap and legion_siegegap_move below): the same run as part A, so serial == workers
+# and both modes on the rules' fixtures.
+foreach(legion_scn settled-crowd passage-starve headon-fight escape-step siege-gap siege-gap-move)
   add_test(NAME legion_scenario_${legion_scn}
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
@@ -1241,7 +1242,29 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios escape-step
                    --min g.A.arrived=1 --max g.P.complete_n=0 --min work.escape_steps.total=1)
+  # siege-gap: an army on one attack-move order behind an enemy body in a gap two cells wide: the bodies in reach
+  # stand firing (an attack ahead of their leg, no Legion member: combat holds them in reach from its first tick)
+  # and the rest wait behind them for some 6,000 ticks. The stand-down read the firing line as dead and ended the
+  # waiting bodies' orders after 4,800 ticks (43, 23, 49 and 56 of 60 arrived at these offsets); a body on an attack
+  # or guard leg is its owner's to end, so all 60 go on through when the target dies. At offsets 2..5 fewer bodies
+  # reach the target and it outlives the run: the army keeps its orders to tick 14,000 (legion_siegegap_hold; 51 to
+  # 58 of the 60 orders were ended). siege-gap-move: the same with 24 bodies on a move order queued behind the
+  # firing army (55, 25, 58 and 33 of 60 arrived). All three pass on the parent of the stand-down as well: they
+  # guard the rule, with weapons on and past its long threshold. Asset-free.
+  add_test(NAME legion_siegegap
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios siege-gap
+                   --offsets 0,1,-1,-2 --min g.A.arrived=60 --max scale.complete_outside_n=0)
+  add_test(NAME legion_siegegap_hold
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios siege-gap
+                   --offsets 2,3,4,5 --max g.A.complete_n=0 --max scale.complete_outside_n=0)
+  add_test(NAME legion_siegegap_move
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios siege-gap-move
+                   --offsets 0,1,-1,-2 --min g.A.arrived=36 --min g.M.arrived=24 --max scale.complete_outside_n=0)
   set_tests_properties(legion_doorwaypair legion_doorwaypair_move legion_lateswap legion_settledcrowd legion_escapestep
+                       legion_siegegap legion_siegegap_hold legion_siegegap_move
                        PROPERTIES LABELS legion TIMEOUT 300)
   # crowdlock: the audited game's standing crowd rebuilt on its real ground (246 bodies among the wrecks of a base,
   # 147 attack-move orders). Stock Legion ended 53 of the orders in 9,000 ticks and left 85 bodies standing with

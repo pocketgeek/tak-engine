@@ -9844,6 +9844,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(const Member* peer=member(id))return liveOfMember(*peer);
         // Idle, or standing on the leg it completed: live only while it steps aside (a yield, a part).
         if(settledBody(b))return yielding.count(id)?Live{now,now}:Live{};
+        // On an attack or guard leg without a member: combat has held it in reach since the leg began, so it
+        // never asked for a route (the firing line of an attack-move order: each body that finds a target in
+        // reach gets an attack ahead of its leg and stands firing). Its owner ends that leg, as a member's
+        // (liveOfMember): the bodies waiting behind a firing line keep their orders until the target is dead.
+        if(const Kind kind=kindOf(*b);kind!=Kind::None&&!policy(kind).completes)return {now,now};
         // An order no Legion member serves (building, loading, the native mover): as live as its last ground step.
         const uint32_t tick=std::max<uint32_t>(1,std::min(now,b->groundMoveTick));
         return {tick,std::min(now,tick+1)};
