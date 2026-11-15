@@ -1453,6 +1453,7 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
     ++placementEpoch_;
     paths_.clear();legion_.reset();
     searchGrades_.clear(); activeSearchGrade_=-1;
+    compCache_.clear();
     seaLevel_ = seaLevel;
     noSeaLevelTrigger_ = false;
     heights_ = heights;
@@ -5098,6 +5099,11 @@ const World::CompGrid* World::components(const NavGrid& g, int foot) const {
     labelComponents(g, foot, cg);
     cg.checkedVer = cg.ver;   // built from scratch: nothing to check
     return &cg;
+}
+
+void World::prebuildComponents(const std::vector<const UnitType*>& types) const {
+    for (const UnitType* t : types)
+        if (t && !t->canFly && !t->isStructure()) components(navFor(t), footCells(t));
 }
 
 void World::verifyComponents(const NavGrid& g, int foot, const CompGrid& cg) const {
@@ -10274,6 +10280,8 @@ void World::blockFoot(const UnitType& t, float x, float z, bool blocked) {
 void World::buildNavClasses(const TypeRegistry& reg) {
     paths_.clear();legion_.reset();
     searchGrades_.clear(); activeSearchGrade_=-1;
+    // Labellings are keyed by grid address: a new table could reuse an old one's.
+    compCache_.clear();
     navClasses_.clear();
     navIdx_.clear();
     if (heights_.empty() || terW_ <= 0) return;

@@ -217,6 +217,15 @@ contract is stated, enforced, and narrow:
   built — because the server's AI queries build cache entries clients never
   build. Query-only helpers (`pathExists`) stay query-only. Breaking this
   desyncs only server-vs-client configurations, the nastiest kind of bug.
+  Because the labelling behind `pathExists` is such a memo, `setupMatch` builds
+  it before tick 0 for every movement grid and footprint the seated sides can
+  field (`World::prebuildComponents`, following the build menus from the units
+  on the map): built on first use, a factory's first unit of each class
+  flood-filled the whole map inside a tick (82-110 ms on a 2048-cell map). The
+  retail search planes (`buildSearchPlane`) and Legion's routing sectors are
+  also built on first use but are NOT memos in this sense -- the planes are
+  hashed and their order matters, and the sectors' work is charged to Legion's
+  per-tick budget -- so they stay where they are.
 - The fog the player sees is display, built locally from the per-player sight
   plane every sim keeps and hashes (`height-and-fog.md`), so per-client team
   fog cannot desync. The referee draws nothing.

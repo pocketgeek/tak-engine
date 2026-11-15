@@ -3257,6 +3257,13 @@ public:
         uint64_t unblockCarried = 0;
     };
     const CompStats& compStats() const { return compStats_; }
+    // Build the labelling behind pathExists() now for every movement grid and
+    // footprint these types walk with (flyers and structures have none). The first
+    // query of each used to flood-fill the whole map inside a tick -- a factory's
+    // first output of a class (parkProductionOutput), 82-110 ms on a 2048-cell map --
+    // so setupMatch builds them before tick 0. A cache: no answer changes, and
+    // nothing here is hashed.
+    void prebuildComponents(const std::vector<const UnitType*>& types) const;
     void patrol(int unitId, float x, float z);
     // Queue a patrol waypoint (SetMission "p X Y"): like a move but the completed
     // order re-queues at the back, so a chain of these loops the unit through them.

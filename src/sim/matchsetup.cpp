@@ -720,6 +720,28 @@ void registerMapFeatures(World& world, const tak::tnt::Map& map, const hpi::Vfs&
     world.setFeatureTypes(std::move(types.table));
 }
 
+// Every type the units on the map can bring into play (themselves, what they
+// build, what that builds, ...), by name so the walk is the same on every peer,
+// and the reachability labelling (World::prebuildComponents) for each of their
+// movement grids and footprints. Built lazily, the first factory output of each
+// movement class flood-filled the whole map inside the tick it left the
+// factory: 82-110 ms on a 2048-cell map, four times in the first three minutes,
+// on every peer. A cache: the simulation is unchanged.
+static void prebuildReachability(World& world, const TypeRegistry& reg) {
+    std::set<std::string> seen;
+    std::vector<const UnitType*> open, types;
+    auto add = [&](const UnitType* t) {
+        if (t && seen.insert(t->id).second) { open.push_back(t); types.push_back(t); }
+    };
+    for (const auto& u : world.units())
+        if (u.alive()) add(u.type);
+    while (!open.empty()) {
+        const UnitType* t = open.back(); open.pop_back();
+        for (const auto& name : reg.buildable(t->id)) add(reg.find(name));
+    }
+    world.prebuildComponents(types);
+}
+
 std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry& reg,
                                                 const MatchConfig& cfg,
                                                 std::vector<std::pair<float, float>>* startTable) {
@@ -984,6 +1006,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
             // keep its authored start positions and default monarchs.
             if (!scenario.units.empty()) {
                 world.setScenario(std::move(pendingScenario));
+                prebuildReachability(world, reg);
                 return assigned;
             }
         }
@@ -1439,6 +1462,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     }
     // Initialization rules must see the default units too.
     if (pendingScenario) world.setScenario(std::move(pendingScenario));
+    prebuildReachability(world, reg);
     return assigned;
 }
 
@@ -1644,6 +1668,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     ms->setInitialOrders(std::move(initialOrders));
     ms->setPlacements(std::move(placements));
     world.setMission(std::move(ms));
+    prebuildReachability(world, reg);   // the placed units' classes (setupMatch saw none of them)
     humanOut = human;
     std::fprintf(stderr, "setupMission: %s -- %d placed units, human=player%d\n",
                  stem.c_str(), spawned, human);
