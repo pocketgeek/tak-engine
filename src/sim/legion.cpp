@@ -12452,6 +12452,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     m.pivotCell=here;m.pivotAim=pivotAim(u,m,p,f,ox,oz,laneComp);
                     if(unsure) {m.pivotCell=-1;m.pivotAim=-1;}   // not taken: evaluated again on the finished route
                 }
+                // An arc point on the body's own origin is no aim: the step to it has no length, the body read
+                // as refused and stood on that origin for as long as the memo held (pivotAim compares the body's
+                // centre cell with arc origins, which for a 2x2 differ by a cell). The field's descent leads on.
+                if(m.pivotAim==here)m.pivotAim=-1;
                 if(m.pivotAim>=0) {cell=m.pivotAim;pivoting=&m;pivotTarget=cell;m.site=LegionNavigator::SitePivot;}
             }
             if(unsure)runOnRoute(g,RouteNeed::Lanes);

@@ -1113,7 +1113,10 @@ the wall, offset outward by that radius, its own concentric arc round the end. I
 cells ahead that is in a straight legal line, and when blocked flows round toward it rather than down the field. The
 arc shrinks to the free width beside the wall; the look-ahead stops at passages (the passage lanes keep their own
 lanes) and within 32 cells (`kLaneNear`) of the destination (the area logic places the slots). The group's field
-window gets the arc margin. Ranks and the aim memo are hashed; the work is bounded. A member ranks within its part
+window gets the arc margin. An arc point on the body's own origin is no aim (the step to it has no length, and the
+memo held the body on that origin: two units of the audited game stood so for 9,900 and 15,600 ticks); the field's
+descent leads on. Ranks and the aim memo are hashed; the work is bounded. A member ranks within its part
+
 (`Member::part`, the tick its leg's command was applied). A lone tree or rock is no wall end (section 1). Seen in
 `corner-1x48:gate.top.files_x100` (files abreast at the corner), `uturn:gate.top.files_x100` and the `pinwheel` world
 test.
