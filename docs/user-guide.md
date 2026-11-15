@@ -3138,11 +3138,16 @@ near where you are:
   copies kept. With nine copies, a jump back to any moment plays at most a quarter
   of the game played so far, and usually much less. It never has to start from the
   beginning unless the moment lies before the first copy after the start.
+- That holds at all times. When later copies come out smaller and more of them would
+  fit, their number goes up only as fast as it can without breaking it, because the
+  wide gaps left from when fewer fitted cannot be filled in afterwards.
 - Near where you are the copies are closer together, so short rewinds stay quick.
 - Copies keep being taken however long the replay is. With room for only one
   besides the start of the game, it is always the newest. With room for none, the
   copies already there are kept, none is taken just to see whether it would fit,
   and copying starts again after a jump back to a part of the game where one does.
+- If the computer runs out of memory while taking a copy, the share for copies is
+  halved and the copies thin out to fit it, still spread over everything played.
 
 Your selection and groups survive a jump; units not yet alive at that moment drop
 out of them.

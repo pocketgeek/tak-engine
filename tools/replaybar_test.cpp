@@ -261,8 +261,8 @@ static void room() {
     for (const size_t i : plan.drop) check(i >= 1 && i <= 4, "tick 0 stays through a larger thinning");
 }
 
-// The viewer's keyframe bookkeeping (GameView::replayCaptureKeyframe, replayThinKeys and a
-// jump's restore), over sizes and budgets the test picks.
+// The viewer's keyframe bookkeeping (GameView::replayCaptureKeyframe, replayThinKeys, its
+// out-of-memory path and a jump's restore), over sizes and budgets the test picks.
 struct Viewer {
     std::vector<uint32_t> ticks;
     std::vector<uint64_t> bytes;
@@ -302,8 +302,80 @@ struct Viewer {
             broke = "at tick " + std::to_string(tick) + ", " + std::to_string(ticks.size()) + " keyframes with a gap of " +
                     std::to_string(widest);
     }
+    void outOfMemory(uint32_t tick) {
+        budget /= 2;
+        if (!thin(0, tick)) while (ticks.size() > 1) erase(ticks.size() - 1);
+    }
     void restore(size_t i) { last = bytes[i]; }
 };
+
+// The spread holds however the room for keyframes moves. A gap opened while few fitted stays as
+// it is, so their number may only rise again as the bound allows (thinPlan): it used to rise with
+// the room, and the gap bound for that number was passed.
+static void roomMoves() {
+    const uint64_t mb = uint64_t(1) << 20;
+    const uint32_t eighteenHours = 1945042 / rb::kKeyframeTicks;
+    // Keyframes come out smaller later in the game (armies die), so more of them fit.
+    {
+        Viewer v;
+        v.budget = 4096 * mb;
+        size_t large = 0;
+        for (uint32_t s = 0; s <= eighteenHours; ++s) {
+            v.capture(s * rb::kKeyframeTicks, (s == 0 ? 16 : s <= 600 ? 400 : 150) * mb);
+            if (s == 600) large = v.ticks.size();
+        }
+        check(v.broke.empty(), "keyframes that come out smaller: " + v.broke);
+        check(large == 11 && v.ticks.size() >= 20, "and the room they leave is used: " + std::to_string(v.ticks.size()));
+        check(v.over == 0 && v.held <= v.budget, "keyframes that do not grow never pass the budget");
+    }
+    // Out of memory: the budget halves and the keyframes thin to it, still spread over what was played.
+    // And a budget that grows again (only a test's does, today) fills as the spread allows.
+    {
+        Viewer v;
+        v.budget = 4096 * mb;
+        for (uint32_t s = 0; s <= eighteenHours; ++s) {
+            if (s == 800) {
+                v.outOfMemory(s * rb::kKeyframeTicks);
+                check(v.ticks.size() == 6 && v.held <= v.budget, "out of memory keeps what half the budget holds: " + std::to_string(v.ticks.size()));
+            }
+            if (s == 1200) v.budget *= 2;
+            v.capture(s * rb::kKeyframeTicks, (s == 0 ? 16 : 400) * mb);
+        }
+        check(v.broke.empty(), "a budget that halves and recovers: " + v.broke);
+        check(v.ticks.size() == 11 && v.over == 0, "and the room that comes back is used: " + std::to_string(v.ticks.size()));
+    }
+    // Whatever sizes, budgets, out-of-memory errors and jumps back do.
+    uint64_t seed = 20261114;
+    const auto random = [&](uint64_t n) {
+        seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+        return (seed >> 33) % n;
+    };
+    for (int run = 0; run < 300; ++run) {
+        Viewer v;
+        v.budget = (200 + random(4000)) * mb;
+        uint64_t size = (5 + random(60)) * mb;
+        uint32_t playhead = 0;
+        v.capture(0, size);
+        for (int step = 0, steps = 100 + int(random(500)); step < steps; ++step) {
+            const uint64_t event = random(1000), drift = random(100);
+            if (event < 6) v.budget = std::max(v.budget / 2, mb);
+            else if (event < 12) v.budget = std::min(v.budget * 2, 8192 * mb);
+            else if (event < 15) v.outOfMemory(playhead);
+            else if (event < 30) {
+                const size_t to = size_t(random(v.ticks.size()));
+                playhead = v.ticks[to];
+                v.restore(to);
+            }
+            if (drift < 45) size += size / 50;
+            else if (drift < 85) size -= size / 60;
+            else if (drift < 88) size *= 2;
+            else if (drift < 91) size /= 2;
+            size = std::clamp(size, 4 * mb, 900 * mb);
+            v.capture(playhead += rb::kKeyframeTicks, size);
+        }
+        check(v.broke.empty() && v.over == 0, "run " + std::to_string(run) + " of random sizes and budgets: " + v.broke);
+    }
+}
 
 // A keyframe is copied only into room made for one like the last: the budget is not passed to
 // find out whether one fits. (After twenty captures with no room one was copied anyway, on top
@@ -394,7 +466,7 @@ static void allocations() {
 }
 
 int main() {
-    geometry(); mapping(); speeds(); keyframes(); spread(); room(); withinBudget(); checks(); rules(); allocations();
+    geometry(); mapping(); speeds(); keyframes(); spread(); room(); roomMoves(); withinBudget(); checks(); rules(); allocations();
     if (failures) { std::fprintf(stderr, "replaybar: %d failures\n", failures); return 1; }
     std::puts("replaybar passed");
     return 0;

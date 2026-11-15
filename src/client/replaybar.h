@@ -193,6 +193,17 @@ inline uint64_t thinGapBound(uint64_t span, size_t kept) {
     return std::max<uint64_t>(kKeyframeTicks, 2 * span / std::max<size_t>(kept - std::min<size_t>(kept, 1), 1));
 }
 
+// Whether a gap between neighbours is wider than thinGapBound allows their number. A gap
+// opened while fewer were kept can be: it was within twice the even spread of those, and
+// it stays as wide when more fit again, since keyframes are only laid at the playhead.
+inline bool thinTooWide(const std::vector<uint32_t>& ticks) {
+    if (ticks.size() < 3) return false;
+    const uint64_t bound = thinGapBound(uint64_t(ticks.back()) - ticks.front(), ticks.size());
+    for (size_t i = 1; i < ticks.size(); ++i)
+        if (uint64_t(ticks[i]) - ticks[i - 1] > bound) return true;
+    return false;
+}
+
 // Room for a keyframe of `incoming` bytes at `tick` within `budget`: which of the held
 // keyframes (`ticks` ascending from 0, their `bytes`) to give up, as indices into the
 // lists as they stand, in the order thinChoice gives them up. `fits` false: there is no
@@ -201,6 +212,13 @@ inline uint64_t thinGapBound(uint64_t span, size_t kept) {
 // The caller lays no keyframe this time and asks again at the next; capture never stops
 // for good. `incoming` 0 with `tick` held already: the pass after a keyframe that came
 // out larger than the last.
+//
+// Keyframes go while they are over the budget, and while one of their gaps is too wide
+// for their number (thinTooWide). So what a plan leaves, the one being laid among them,
+// has no gap past thinGapBound, whatever the sizes and the budget did before. When more
+// fit again (keyframes come out smaller, a budget grows), room alone does not raise
+// their number: it rises as the replay's length brings the widest gap within the bound
+// for one more.
 struct ThinPlan {
     bool fits = true;
     std::vector<size_t> drop;
@@ -218,7 +236,7 @@ inline ThinPlan thinPlan(std::vector<uint32_t> ticks, const std::vector<uint64_t
         index.insert(index.begin() + (at - ticks.begin()), kLaid);
         ticks.insert(at, tick);
     }
-    while (held > budget) {
+    while (held > budget || thinTooWide(ticks)) {
         const size_t drop = thinChoice(ticks, playhead);
         if (drop >= ticks.size() || index[drop] == kLaid) return {false, {}};
         plan.drop.push_back(index[drop]);

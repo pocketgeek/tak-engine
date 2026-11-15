@@ -682,18 +682,24 @@
                 }
             }
         } catch (const std::bad_alloc&) {
-            // The machine has less to give than the budget took for granted: back to tick 0
-            // and on with half the budget, which the next captures fill again.
+            // The machine has less to give than the budget took for granted: on with half the
+            // budget, thinned to it as at any other time, so what is kept stays spread over
+            // what was played. Back to tick 0 alone when even that cannot be done.
             std::fprintf(stderr, "replay: out of memory at tick %u: keyframe budget halved\n", tick);
-            if (replayKeys_.size() > 1) replayKeys_.erase(replayKeys_.begin() + 1, replayKeys_.end());
-            replayKeyBytes_ = replayKeys_.empty() ? 0 : replayKeys_.front().bytes;
             replayKeyBudget_ /= 2;
+            replayKeyBytes_ = 0;   // of those held: the one that failed may be counted and not laid
+            for (const auto& key : replayKeys_) replayKeyBytes_ += key.bytes;
+            bool thinned = false;
+            try { thinned = replayThinKeys(0); } catch (const std::bad_alloc&) {}
+            if (!thinned) {
+                if (replayKeys_.size() > 1) replayKeys_.erase(replayKeys_.begin() + 1, replayKeys_.end());
+                replayKeyBytes_ = replayKeys_.empty() ? 0 : replayKeys_.front().bytes;
+            }
         }
     }
 
     bool GameView::replayThinKeys(uint64_t incoming) {
         namespace rb = tak::replaybar;
-        if (replayKeyBytes_ + incoming <= replayKeyBudget_) return true;
         std::vector<uint64_t> bytes;
         bytes.reserve(replayKeys_.size());
         for (const auto& key : replayKeys_) bytes.push_back(key.bytes);
