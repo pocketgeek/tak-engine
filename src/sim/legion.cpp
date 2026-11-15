@@ -14979,8 +14979,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(!other||!other->type||other->type->isStructure())continue;
             // Another player's body is no part of this crowd (an ally's settled body may yield, see requestYield).
             if(other->player!=u.player) {stranger=true;continue;}
-            // Nor does anything move the player's own body at work (a conjurer on its site, a repair, a reclaim)
-            // or one not finished yet: its job keeps it where it stands, and it is no arrival to ask for a yield.
+            // The player's own body at work (a conjurer on its site, a repair, a reclaim) or not finished yet
+            // stays part of this crowd and is read below like any other of the player's bodies. It is only
+            // noted as one that nothing here moves (its job keeps it where it stands, and it is no arrival to
+            // ask for a yield), for the exact goal's failed approach after the loop.
             if(other->underConstruction||other->buildSiteId||other->productionSiteId||other->repairId||other->reclaimId)stranger=true;
             if(!nearer(*other)&&!(isAnchor(o)&&(onSlot(*other)||beforeSlot(o,*other))))continue;
             if(isAnchor(o)) {

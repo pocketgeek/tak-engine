@@ -1212,10 +1212,13 @@ bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
         // The site each ring point snaps to, under the test the conjurer will
         // place it by (World::canPlaceSite): a point's own position passed a
         // test its site then failed, with the conjurer itself in the way.
+        const auto snap = [](float v, int foot) {
+            return tak::sim::footprintSnap(tak::sim::Fixed::fromFloat(v), foot).toFloat();
+        };
         for (float r = 40; r < 170; r += 20)
             for (float a = 0; a < 6.28f; a += 0.6f) {
-                const float x = tak::sim::footprintSnap(tak::sim::Fixed::fromFloat(p.x.toFloat() + detmath::cos(a) * r),pick->footX).toFloat();
-                const float z = tak::sim::footprintSnap(tak::sim::Fixed::fromFloat(p.z.toFloat() + detmath::sin(a) * r),pick->footZ).toFloat();
+                const float x = snap(p.x.toFloat() + detmath::cos(a) * r, pick->footX);
+                const float z = snap(p.z.toFloat() + detmath::sin(a) * r, pick->footZ);
                 if (world.canPlaceSite(pick, x, z) && (pick->canFly || !layout.blocks(footprintRect(pick, x, z)))) {
                     emit(sink, tak::net::Cmd::Build, p.id, pick->id, x, z);
                     return true;
