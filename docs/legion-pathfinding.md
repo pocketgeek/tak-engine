@@ -65,7 +65,7 @@ The mission goals (`LegionMission`):
 | Patrol | patrol legs, single or group | the waypoint, shared area per command | as Fight; the body passes through (no anchor, cells released) |
 | Attack | explicit and auto-acquired attacks, chases | the target unit, re-seeded | combat: `tickCombat` stops the body in range; Legion never completes it |
 | Guard | guard/follow | the guard ring's point on the guard's bearing (`World::guardRing`), re-seeded | guard: stops in Follow_Ground's ring; Legion never completes it |
-| Build | MobileBuild approaches (`buildRectangle`): single, queued, mana build area; a ground builder's HelpBuild leg (`helpSite`) | the rectangle's `navigationCell`, else its nearest legal reachable perimeter origin | the rectangle itself (`accepts`): `0x500`; anywhere else `0x200` |
+| Build | MobileBuild approaches (`buildRectangle`): single, queued, mana build area; a ground builder's HelpBuild leg (`helpSite`) | the rectangle's `navigationCell`, else its nearest legal reachable perimeter origin; with a body on that cell, the nearest such origin to the builder that no body stands on | the rectangle itself (`accepts`): `0x500`; anywhere else `0x200` |
 | Repair | ground repair legs on RepairUnit's rectangle round the target (`installRepairApproach`), and a patrolling builder's automatic repair detour | as Build | as Build; `tickGroundRepair` re-installs the rectangle (a new controller, so a new member) when the target moves or changes cell |
 | Reclaim | feature and corpse reclaims (also those an area reclaim queues) | the feature's point | work: `tickReclaim` starts at reach; Legion never completes it |
 | Load | passenger to its carrier, ground carrier to its passenger | the transport circle's centre | the native circle: `0x500` on `transportMission`; elsewhere `0x200` |
@@ -97,7 +97,14 @@ native navigator.
 * **Work and logistics.** Build, Load, Unload and Park are *exact*: the only arrival is the mission's own geometry
   (build rectangle, transport circle, park ring). Reaching Legion's seed or settling against a crowd outside it
   raises the native failed-approach event `0x200` instead, and the handler decides exactly as after a failed native
-  search (build if within reach, re-roll the park ring, retry the pickup). Load/Unload events go to the leg's
+  search (build if within reach, re-roll the park ring, retry the pickup). A build, help, repair or reclaim approach
+  is seeded at the rectangle's `navigationCell`, one cell; when a body stands on that cell at registration, at the
+  perimeter origin nearest the builder that no body stands on (the native search takes any cell of the rectangle).
+  A body held for a crowd window with no free step nearer an exact goal, against a body nothing here moves, gets the
+  failed-approach event too: another player's body, or the player's own at work (a conjurer on its site, a repair, a
+  reclaim) or unfinished. Before, a builder sent to a cell a second conjurer worked on stood there with its order
+  neither placed nor given up, and a conjurer ordered to conjure where it stood was held on its own site by an idle
+  unit on the one cell it was sent to (`ctest:legion_conjure_site`, `ctest:pathblock`). Load/Unload events go to the leg's
   `transportMission`, as in the native mover. Help, repair and reclaim legs approach on the same rectangle controller
   as a build. These kinds are *solo*: each body gets its own group and field (a teammate's seed is not on this body's
   rectangle or within its reach). Embarked units are never members. A work/logistics body that cannot accelerate

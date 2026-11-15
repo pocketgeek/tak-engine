@@ -3802,11 +3802,23 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             const auto& rect=*leg.buildRectangle;
             const auto [cx,cz]=rect.navigationCell(sx,sz);
             gx=cx;gz=cz;
-            if(!legal(p,cx,cz)) {
+            // A body standing on that one cell held the builder in front of it until the approach failed
+            // where it stood: out of reach the order was given up, and a conjurer standing on its own site
+            // (navigationCell breaks an inside origin's ties to the left) then refused that site with its own
+            // body for all 31 tries. It takes the perimeter origin nearest itself that no body stands on
+            // instead, as the native search takes any cell of the rectangle.
+            auto bodyOn=[&](int x,int z) {
+                const auto bodies=w.searchBodyRect(x,z,u.type->footX,u.type->footZ,u.id);
+                return std::any_of(bodies.cells.begin(),bodies.cells.end(),[](const Unit* b) {return b!=nullptr;});
+            };
+            const bool taken=legal(p,cx,cz)&&bodyOn(cx,cz);
+            if(!legal(p,cx,cz)||taken) {
+                const int fromX=taken?sx:cx,fromZ=taken?sz:cz;
                 int best=-1;int64_t bestD=0;
                 rect.enumerate([&](int16_t x,int16_t z) {
                     if(!legal(p,x,z)||(reach>=0&&compAt(p,z*width()+x)!=reach))return;
-                    const int64_t d=int64_t(x-cx)*(x-cx)+int64_t(z-cz)*(z-cz);
+                    if(taken&&bodyOn(x,z))return;
+                    const int64_t d=int64_t(x-fromX)*(x-fromX)+int64_t(z-fromZ)*(z-fromZ);
                     const int index=z*width()+x;
                     if(best<0||d<bestD||(d==bestD&&index<best)) {best=index;bestD=d;}
                 });
@@ -14936,6 +14948,9 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(!other||!other->type||other->type->isStructure())continue;
             // Another player's body is no part of this crowd (an ally's settled body may yield, see requestYield).
             if(other->player!=u.player) {stranger=true;continue;}
+            // Nor does anything move the player's own body at work (a conjurer on its site, a repair, a reclaim)
+            // or one not finished yet: its job keeps it where it stands, and it is no arrival to ask for a yield.
+            if(other->underConstruction||other->buildSiteId||other->productionSiteId||other->repairId||other->reclaimId)stranger=true;
             if(!nearer(*other)&&!(isAnchor(o)&&(onSlot(*other)||beforeSlot(o,*other))))continue;
             if(isAnchor(o)) {
                 const auto a=anchors.find(o);
@@ -14966,7 +14981,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         stats.crowdWindowRingCells+=ring;
         // An exact goal (a build rectangle, a transport circle, a park ring)
-        // held for a window against another player's body, with no free step
+        // held for a window against another player's body, or the player's
+        // own at work or unfinished, with no free step
         // nearer its point: no yield or part can move that body, so nothing
         // here would ever end the approach. Retail's mover bumps it, the
         // refused step re-asks the navigator and the search from the closest

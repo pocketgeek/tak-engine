@@ -17,7 +17,9 @@
 //    cell with the conjurer or anyone else;
 //  - a second conjurer at work beside the spot: the order is refused when it
 //    is given exactly when the site would lie on the worker or its site, and
-//    every order that is taken is placed;
+//    every order that is taken is placed, also when the worker only comes to
+//    stand in the first conjurer's way after the order (under Legion both
+//    used to hold the conjurer there for good);
 //  - a standing unit beside the spot, the player's own (it steps aside) or
 //    another player's (it does not): the finished unit shares no cell with it;
 //  - the conjurer among its player's idle units, ordered to conjure where it

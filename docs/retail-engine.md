@@ -4689,8 +4689,11 @@ Ours, not retail:
   (`ai::Controller::produce`) tests `canPlaceSite` at the site each ring point
   snaps to, counting the conjurer; its site search (`placeSite`) and the
   Classic AI's `siteOpen` test `canPlaceSite` too.
+- Under Legion pathfinding a builder is sent to a cell of the rectangle that
+  no body stands on, and one held against a body that nothing moves ends its
+  approach as a failed one (docs/legion-pathfinding.md, "Work and logistics").
 
-`conjure_site_test` covers every site round an idle
+`conjure_site_test` (both pathfinding modes) covers every site round an idle
 Beast Lord, Beast Handler, Beast Tamer and flying monarch, a second conjurer
 at work or arriving, standing units of the player and of another, a conjurer
 among idle units, and the computer player's picks.
