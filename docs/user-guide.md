@@ -1753,6 +1753,17 @@ measurements](legion-pathfinding.md)):
   further in, stop where they stand and are free for their next order, instead
   of edging round the crowd for minutes. At a wall or in a dead end the
   destination area follows the wall or the corridor.
+- **Units do not stand forever with an order they cannot carry out.** When a
+  unit can get no further because units of its own side that will not move
+  again fill the way (a crowd that has already arrived somewhere else, idle
+  units in a narrow gap), it gives the order up after about 20 seconds and is
+  free for the next one. Two units stuck in each other's way step aside for one
+  another: after about 40 seconds on attack-move and patrol orders, after a
+  little over two minutes on plain move orders, where two crossing armies
+  usually sort themselves out first. A unit that waits on units that are still
+  getting somewhere keeps its order; one that is truly stuck among units that
+  hold orders too gives up after a little under three minutes. Units of other
+  players in the way never make a unit give up.
 - **Wheeling round walls.** When a large group (16 or more) goes round the end of
   a wall, it swings round in several ranks instead of narrowing to single file.
   It drops to single file only when the gap really is too narrow. A single tree

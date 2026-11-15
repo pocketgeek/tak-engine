@@ -211,3 +211,32 @@ The ctests `legion_nocap` (`why.flow_cap.statue`, `why.route_cap.statue` at most
 (`why.hold_movers.stopped` at most 5,200 on corner-1x100) bound the cap and queue keys; `legion_flowahead` bounds the
 fixture-wide `backward`. Nudges count as statue, sideways and backward steps (`why.nudge.*`), so a fixture's nudge-free
 creep is `statue_ticks` minus `why.nudge.statue`.
+
+## Bodies that stand for good (`work.stand_downs` ...; src/sim/legion.h, tools/scenarios/)
+
+The rules of docs/legion-pathfinding.md section 4, "Bodies that stand for good". Their counters are
+`LegionNavigator::Stats` fields, exported like every counter as `work.<name>.total` (and `.max`, `.p99`) when they
+are not zero, and as `legion_<name>` by crowdbench. They are never hashed. A fixture in which one of them moves has
+a rule firing in it, so its Legion hash differs from a head without the rules.
+
+| Key | Definition |
+|---|---|
+| `work.stand_downs` | orders ended where the body stood because nothing it waited on made progress (`standDown`): after 600 dead ticks against bodies that will never move, after 4,800 otherwise. Such an order counts in `g.G.complete_n` and, off the arrival disc, in `complete_outside_radius`; it is not an arrival (`work.arrivals`) |
+| `work.give_ways` | bodies that stepped clear in a knot (`knotGiveWay`): one per body per give-way; also counted in the parting counter (`aware.parts`) |
+| `work.late_swaps` | swaps on a fight or patrol leg, after 600 dead ticks; counted in `work.swaps` too |
+| `work.escape_steps` | mover steps of a walk off an illegal origin to the legal origin beside it |
+| `census.l1_dead_ended`, `.l1_dead_ended_half`, `.l1_dead_max` | debug builds, `--w9`: dead spells of 600 ticks or more that ended by themselves (with a rise of liveness), those of 2,400 or more, and the longest. The long stand-down (4,800) must stay above the longest: `bridges-1000` reads up to 3,826 over offsets -5..5 |
+
+The fixtures, each run by a ctest with bounds (none is in `baseline.json`; the doorway pair's spawns leave no room
+for the gate's start offsets):
+
+| Fixture | ctest | What must hold |
+|---|---|---|
+| `doorway-pair`, `doorway-pair-move` | `legion_doorwaypair`, `legion_doorwaypair_move` | a 4x4 and a 3x3 body at the mouth of a channel one large body wide: `g.S.arrived` and `g.K.arrived` 1, a give-way |
+| `headon-fight` | `legion_lateswap` | two bodies head on in a one-body lane on attack-move orders: both arrive, a late swap |
+| `settled-crowd` | `legion_settledcrowd` | six bodies before a corridor a settled crowd of another order fills: `g.B.complete_n` 6, `open_still900` 0 |
+| `escape-step` | `legion_escapestep` | a body on an illegal origin walks off it (`g.A.arrived` 1); one whose every way off another player's idle bodies cover keeps its order (`g.P.complete_n` 0) |
+| `passage-starve` | `legion_passage_starve` | a lone waiter at a narrow passage takes its turn: `g.B.arrived` 1 |
+| `crowdlock` | `legion_crowdlock` | the audited game's standing crowd on its real ground, the install's unit types: `scale.complete.n` 147, `scale.stuck_end` and `open_still900` 0 |
+| `scale/bridges-1000`, `scale/bridges-1000-fight` | `legion_swap_wide`, `legion_fightmeet` | the bistable meets the rules must not tip: offsets -5, -4, -3, 3, 4, 5 on move orders and -2, -1, 2, 5 on attack-move orders, at most 10 stuck and at least 700 arrived |
+

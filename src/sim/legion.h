@@ -185,6 +185,11 @@ public:
         // kept a body from stepping back across the lane it left and nothing else moved it.
         uint64_t passFilterHolds=0;
         uint64_t swaps=0;   // round 2 item 3: allies that traded places (swapBodies)
+        // Bodies that stand for good (2026-11-14, see liveOf in legion.cpp): orders ended where the body stood
+        // because nothing it waited on made progress (standDown), bodies that stepped clear in a knot
+        // (knotGiveWay), swaps on fight or patrol legs (counted in swaps too), and mover steps of a walk off
+        // an illegal origin.
+        uint64_t standDowns=0,giveWays=0,lateSwaps=0,escapeSteps=0;
         // ---- W9 step 0 instruments (observation only, never hashed) ----------
         // One counter per W9 mechanism, declared here and 0 until the step that builds it:
         // sealSettles (A2, a pressed lattice member settled by two yield refusals), creepPresses (A3, a
@@ -248,6 +253,7 @@ public:
         f("vertex_near",s.vertexNear);f("vertex_blocked",s.vertexBlocked);f("vertex_work",s.vertexWork);
         f("gate_commits",s.gateCommits);f("gate_releases",s.gateReleases);
         f("pass_filter_holds",s.passFilterHolds);f("swaps",s.swaps);
+        f("stand_downs",s.standDowns);f("give_ways",s.giveWays);f("late_swaps",s.lateSwaps);f("escape_steps",s.escapeSteps);
         f("seal_settles",s.sealSettles);f("creep_presses",s.creepPresses);f("deep_rechoices",s.deepRechoices);
         f("anchor_advances",s.anchorAdvances);f("gate_lane_moves",s.gateLaneMoves);f("gate_holds",s.gateHolds);
         f("fold_binds",s.foldBinds);f("turn_guard_rejects",s.turnGuardRejects);f("clear_aims",s.clearAims);
