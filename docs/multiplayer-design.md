@@ -528,9 +528,9 @@ answer to the next request.
 
 A watched game's stream is taken before its `GameStarting` is: that message waits in
 `MpClient` until the packages it names have arrived and verified
-(`MpClient::watchLoading`), while the bundle log, a `Pause`, a `Waiting` and chat
-lines behind it are stored. `leaveGame` therefore also clears what a game's stream
-left (the buffered bundles and their tick counter, the pause, the wait, chat, voice),
+(`MpClient::watchLoading`), while the bundle log, a `Pause`, a `Waiting`, a
+`GameOver` and chat lines behind it are stored. `leaveGame` therefore also clears what a game's stream
+left (the buffered bundles and their tick counter, the pause, the wait, the game's end, chat, voice),
 so a watch taken back during that wait leaves nothing under the tick numbers of the
 next game on the connection. The server takes a `LeaveGame` whatever the request
 budgets say (it is exempt from the shared ones, as `Ping` is): it has no answer, so
