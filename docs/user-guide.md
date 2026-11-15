@@ -474,8 +474,10 @@ deposit within reach of an armed enemy they know of (in sight now, or
 remembered), a deposit inside the base of an enemy who may still be there
 (within 1,000 pixels of that enemy's start and nearer it than their own home),
 and, for five minutes, a deposit where their lodestone was destroyed before it
-was finished or the builder on its way there was killed. A Hard or Absurd Zhon
-keeps its producers, which are its builders too, on its own side of the map
+was finished, or whose builder was killed beside it (within 400 pixels) or on
+its way there within 1,000 pixels of it. A builder killed before it set out, or
+farther from the deposit, does not count against the deposit. A Hard or Absurd
+Zhon keeps its producers, which are its builders too, on its own side of the map
 (deposits nearer its home than any enemy's start) and sends at most a quarter
 of them (two at least) to build lodestones at a time.
 

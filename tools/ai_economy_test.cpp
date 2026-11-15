@@ -225,7 +225,7 @@ static void unitCap(const Roster& r) {
 
 // Hard and Absurd reach the whole map for deposits, but not one beside armed
 // enemies they know of, nor inside the base of an enemy still there, nor where
-// they just lost a site or the builder walking to it.
+// they just lost a site, or its builder beside it or on its way there.
 static void safeDeposits(const Roster& r) {
     // The miner at (2000,1000): deposit A 200 px east of it, B 600 px west.
     const float ax=2208,az=1008,bx=1408,bz=1008;
@@ -291,6 +291,35 @@ static void safeDeposits(const Roster& r) {
             order=build(think(controller,w,80),"aralode");
             check(sent && order && order->unitId==second && order->x==bx,
                   "a deposit whose builder was killed on the way is left alone for a while");
+        }
+        // A killed builder makes its deposit unsafe only beside it (within 400 px)
+        // or on its way there: it had set out (64 px nearer) and was within 1,000
+        // px. The deposit is `trip` px west of the miners, the other one 1,600 px
+        // east; the first miner is killed `shortOf` px from the deposit.
+        struct Killed { float trip,shortOf;bool unsafe;const char* label; };
+        for (const auto& k : {Killed{1200,1200,false,"a builder killed at home leaves the far deposit it was sent to free"},
+                              Killed{1200,100,true,"a deposit whose builder was killed beside it is left alone for a while"},
+                              Killed{1200,600,true,"... and one whose builder was killed on its way, 600 px short of it"},
+                              Killed{1200,1100,false,"a builder killed more than 1,000 px short of its deposit leaves it free"},
+                              Killed{600,600,false,"a builder killed where it stood when it was sent leaves the deposit free"}}) {
+            const float westX=2000-k.trip,eastX=3600;
+            sim::World w;int miner=0;world(w,miner);
+            w.setManaSpots({{westX,az},{eastX,az}});
+            const int second=w.spawn(r("araminer"),2000,1100,0,0);
+            busy(w,second,r("arasword"));
+            sight(w);
+            ai::Controller controller(0,r.reg,r.profile,1,level);
+            auto cs=think(controller,w,40);
+            auto order=build(cs,"aralode");
+            const bool sent=order && order->unitId==miner && order->x==westX;
+            for (const auto& c:cs) sim::applyCommand(w,r.reg,c);
+            think(controller,w,60);   // the order is in the world: the trip is noted, from here
+            w.unit(miner)->x=sim::Fixed::fromInt(int(westX+k.shortOf));
+            think(controller,w,80);   // ... and where the builder has come to
+            auto& dead=*w.unit(miner);dead.hp={};dead.deadFor=1;
+            w.unit(second)->orders.clear();
+            order=build(think(controller,w,100),"aralode");
+            check(sent && order && order->unitId==second && order->x==(k.unsafe ? eastX : westX),k.label);
         }
     }
     {

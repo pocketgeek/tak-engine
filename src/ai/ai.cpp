@@ -2218,20 +2218,28 @@ bool Controller::stalledBuilder(int unitId) const {
 // sent the next builder to the same deposit, still the nearest free one: 526
 // orders within five seconds of the last at one spot in one game, and a flying
 // builder re-placed one site 49 times under an enemy that killed each.
+// A killed builder counts only where its death says something about the deposit,
+// as the last think saw it: beside the deposit (within kThreatRadius, the danger
+// test's own least reach), or on its way there -- the lodestone was the leg it
+// was on, it had come kTripGain nearer the deposit than where it was first seen
+// with the order, and it was within kTripReach of it. One killed at home before
+// it set out, on another leg of its route, or farther off bans nothing: of 54
+// builders that died with a lodestone order in five 20-minute rooms, 4 died
+// where they stood when ordered and 9 more than 1,000 px from the deposit.
 void Controller::updateLostSites(const tak::sim::World& world) {
     std::erase_if(lostSites_,[&](const LostSite& l){return l.until<=now_;});
-    auto lost=[&](const std::pair<float,float>& site) {
+    auto lost=[&](float x,float z) {
         for (auto& l:lostSites_)
-            if (l.x==site.first && l.z==site.second) { l.until=now_+kLostSiteTicks; return; }
-        lostSites_.push_back({site.first,site.second,now_+kLostSiteTicks});
+            if (l.x==x && l.z==z) { l.until=now_+kLostSiteTicks; return; }
+        lostSites_.push_back({x,z,now_+kLostSiteTicks});
     };
-    for (const auto* watched:{&lodestoneSites_,&lodestoneTrips_})
-        for (const auto& [id,site]:*watched) {
-            const auto* u=world.unit(id);
-            if (!u || !u->alive()) lost(site);
-        }
+    auto gone=[&](int id) { const auto* u=world.unit(id);return !u || !u->alive(); };
+    for (const auto& [id,site]:lodestoneSites_)
+        if (gone(id)) lost(site.first,site.second);
+    for (const auto& [id,trip]:lodestoneTrips_)
+        if (trip.unsafe && gone(id)) lost(trip.x,trip.z);
     lodestoneSites_.clear();
-    lodestoneTrips_.clear();
+    std::map<int,LodestoneTrip> trips;
     for (const auto& u:world.units()) {
         if (!u.alive() || u.player!=player_ || !u.type) continue;
         if (u.type->isStructure()) {
@@ -2239,13 +2247,20 @@ void Controller::updateLostSites(const tak::sim::World& world) {
             continue;
         }
         if (!u.type->isBuilder) continue;
-        for (const auto& order:u.orders)
-            if (order.buildType && order.buildType->onMana && order.buildType->isStructure() &&
-                (order.buildX.v || order.buildZ.v)) {
-                lodestoneTrips_[u.id]={order.buildX.toFloat(),order.buildZ.toFloat()};
-                break;
-            }
+        for (size_t i=0;i<u.orders.size();++i) {
+            const auto& order=u.orders[i];
+            if (!order.buildType || !order.buildType->onMana || !order.buildType->isStructure() ||
+                !(order.buildX.v || order.buildZ.v)) continue;
+            const float x=order.buildX.toFloat(),z=order.buildZ.toFloat();
+            const float dx=x-u.x.toFloat(),dz=z-u.z.toFloat(),d=std::sqrt(dx*dx+dz*dz);
+            const auto seen=lodestoneTrips_.find(u.id);
+            const float from=seen!=lodestoneTrips_.end() && seen->second.x==x && seen->second.z==z ? seen->second.from : d;
+            const bool onItsWay=i==tak::sim::World::currentLeg(u.orders) && d<=from-kTripGain && d<kTripReach;
+            trips[u.id]={x,z,from,d<kThreatRadius || onItsWay};
+            break;
+        }
     }
+    lodestoneTrips_.swap(trips);
 }
 
 void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& sink) {

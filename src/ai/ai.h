@@ -703,10 +703,11 @@ private:
     //  - within reach of an armed enemy this side knows of (knowledge_: in sight
     //    now, or remembered): its weapon range and 64 px, kThreatRadius at least;
     //  - for kLostSiteTicks after a lodestone site of ours on it was destroyed
-    //    unfinished, or the builder bound for it was killed (lostSites_).
+    //    unfinished, or the builder bound for it was killed beside it or on its
+    //    way there, within kTripReach of it (lostSites_, updateLostSites).
     // unsafeDeposit answers the last two; the known armed enemies are bucketed
     // once per think, on first use.
-    static constexpr float kEnemyBase = 1000, kThreatRadius = 400;
+    static constexpr float kEnemyBase = 1000, kThreatRadius = 400, kTripReach = 1000, kTripGain = 64;
     static constexpr uint32_t kLostSiteTicks = 5 * 60 * 30;
     static constexpr int kThreatCell = 512;
     struct Threat { float x, z, r; };
@@ -715,9 +716,13 @@ private:
     bool unsafeDeposit(float x, float z) const;
     struct LostSite { float x, z; uint32_t until; };
     std::vector<LostSite> lostSites_;
-    // Own unfinished lodestone sites, and own builders with a lodestone order,
-    // as of the last think: unit id -> the deposit.
-    std::map<int, std::pair<float, float>> lodestoneSites_, lodestoneTrips_;
+    // Own unfinished lodestone sites as of the last think: unit id -> the deposit.
+    std::map<int, std::pair<float, float>> lodestoneSites_;
+    // Own builders with a lodestone order as of the last think, by unit id: the
+    // deposit, how far from it the builder was when first seen with that order,
+    // and whether its death now would make the deposit unsafe (updateLostSites).
+    struct LodestoneTrip { float x, z, from; bool unsafe; };
+    std::map<int, LodestoneTrip> lodestoneTrips_;
     void updateLostSites(const tak::sim::World&);
     bool buildsLodestone(const tak::sim::UnitType*) const;
     mutable std::unordered_map<const tak::sim::UnitType*,bool> lodestoneBuilders_;
