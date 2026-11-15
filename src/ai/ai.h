@@ -642,6 +642,14 @@ private:
             return o.targetId != 0 || o.attackMove || o.buildType || o.load || o.unload || o.guard;
         });
     }
+    // Each fighter of ours, by unit id: where it stood when it last made headway
+    // (came kHeadway from there), the think tick it last did, fought, or was not
+    // on a march (it holds no attack-move), and the stops this AI has given it
+    // since for making none (updateStrikeProgress).
+    struct StrikeProgress { float x, z; uint32_t since; uint8_t stops; };
+    std::unordered_map<int, StrikeProgress> strikeProgress_;
+    uint32_t strikeProgressAt_ = 0;   // the think strikeProgress_ was last brought up to
+    void updateStrikeProgress(const tak::sim::World&, uint32_t simTick, const CommandSink&);
     void emit(const CommandSink& sink, tak::net::Cmd kind, int unitId,
               const std::string& type, float x, float z) const;
 

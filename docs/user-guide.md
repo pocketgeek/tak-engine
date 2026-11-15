@@ -405,7 +405,15 @@ lodestone rather than walking into towers. Units that finish one target go on to
 the next attack. Easy simply goes for the nearest; Hard and Absurd split a large
 army over several targets.
 
-At every difficulty except Retail, a unit that steps back from a target inside
+At every difficulty except Retail, a fighter the AI has sent out keeps its
+order until it gets there, as long as it is getting somewhere. One that has
+stood for a minute without moving 64 pixels is stopped and sent out again a
+moment later, the way you would click again on units that have got stuck; if
+that does not free it, the AI waits two, then four, then eight minutes before
+it tries again. Units that are fighting are left alone. Units that may be
+waiting their turn behind them (standing near a fight of their own side, or
+sent to a place where one is going on) are given four minutes instead of
+one. A unit that steps back from a target inside
 its weapon's minimum range, or walks to a spot with a clear shot, is left to
 carry out the attack it was given. A Harpy, Mind Mage or Basilisk is ordered
 onto a unit only when its charm or stone gaze can take it: never a building or

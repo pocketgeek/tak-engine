@@ -3260,6 +3260,101 @@ void Controller::sendScouts(const tak::sim::World& world, uint32_t simTick, cons
     std::erase_if(pool, [&](const Fighter& f) { return std::find(sent.begin(), sent.end(), f.id) != sent.end(); });
 }
 
+// A fighter sent out with an attack-move -- a wave, a raid, an exploring group --
+// is not commanded again while it holds it (waveFree), and nothing promises the
+// march ends: two bodies holding orders lock each other at a channel mouth, one
+// stands in front of a settled crowd, a route is never answered. Such a unit
+// stood where it was for the rest of the game: 55 of one side's fighters before
+// it won a long game, 148 by its end. A player clicks again, and so does this:
+// it notes where each fighter last made headway -- came kHeadway from that spot
+// -- and stops one that has held its march for kStrikeStallTicks without any.
+// Idle again, it is a striker free for its next site, or back in the pool, from
+// the next think (sendWaves), and bodies waiting on its order are let through.
+// A column on the march passes kHeadway every few seconds, slow as it is.
+// Never a unit that fights: one with a target, or a weapon of its with one.
+// A unit standing at a fight -- one of ours fights, or was hit since the last
+// think, in the site cells around it or around the point it marches on -- may
+// be waiting its turn behind a siege line, so it is given four times as long;
+// not for ever, for the bodies locked beside a fight that goes on all game
+// stand as the others do (the 55 stood in a base still being fought over).
+// Each stop without headway since doubles the wait before the next, up to eight
+// minutes: a unit a fresh order does not free is not ordered about every minute.
+// Defenders and scouts keep their own rules (sendDefenders; sendScouts'
+// kTripTicks). Ours, not retail, which watches no unit's headway: a strike
+// squad's think sends a marching member its MOVE again one time in ten or in
+// fifty, whatever it is doing (0x40e180, classicwaves.h).
+void Controller::updateStrikeProgress(const tak::sim::World& world, uint32_t simTick, const CommandSink& sink) {
+    constexpr float kHeadway = 64;
+    constexpr uint32_t kStrikeStallTicks = 60 * 30;   // a minute of game time, as a builder's (updateBuilderProgress)
+    constexpr int kFightDoublings = 2, kMaxDoublings = 3;   // four minutes at a fight; eight at most
+    constexpr int kMaxStops = 64;                           // stops in one think, for the wire frame
+    auto cellAt = [](float x, float z) {
+        return std::pair{int(std::floor(x / kSiteCell)), int(std::floor(z / kSiteCell))};
+    };
+    auto cellOf = [&](const tak::sim::Unit& u) { return cellAt(u.x.toFloat(), u.z.toFloat()); };
+    auto fighting = [](const tak::sim::Unit& u) {
+        return std::any_of(u.slotTarget.begin(), u.slotTarget.end(), [](int32_t target) { return target != 0; }) ||
+            std::any_of(u.orders.begin(), u.orders.end(), [](const tak::sim::Order& o) { return o.targetId && !o.guard; });
+    };
+    std::vector<std::pair<int, int>> fights;
+    for (const auto& u : world.units())
+        if (u.alive() && u.player == player_ && u.type && !u.underConstruction && !u.embarked() &&
+            (fighting(u) || u.attackedTick > strikeProgressAt_))
+            fights.push_back(cellOf(u));
+    std::sort(fights.begin(), fights.end());
+    fights.erase(std::unique(fights.begin(), fights.end()), fights.end());
+    auto fightNear = [&](std::pair<int, int> cell) {
+        for (int i = -1; i <= 1; ++i)
+            for (int j = -1; j <= 1; ++j)
+                if (std::binary_search(fights.begin(), fights.end(), std::pair{cell.first + i, cell.second + j})) return true;
+        return false;
+    };
+    // Around the unit, or around the point it marches on.
+    auto atFight = [&](const tak::sim::Unit& u) {
+        if (fightNear(cellOf(u))) return true;
+        for (auto o = u.orders.rbegin(); o != u.orders.rend(); ++o)
+            if (o->attackMove) {
+                const auto goal = o->missionTarget.value_or(std::pair{o->x, o->z});
+                return fightNear(cellAt(goal.first.toFloat(), goal.second.toFloat()));
+            }
+        return false;
+    };
+    // World order, and lookups only in the map: the stops come out the same way every run.
+    std::unordered_map<int, StrikeProgress> next;
+    next.reserve(strikeProgress_.size());
+    int stops = 0;
+    for (const auto& u : world.units()) {
+        if (!u.alive() || u.player != player_ || !u.type || u.underConstruction || u.embarked() ||
+            u.type->isStructure() || u.type->isBuilder || u.type->weapon.damage <= 0) continue;
+        const float x = u.x.toFloat(), z = u.z.toFloat();
+        StrikeProgress progress{x, z, simTick, 0};
+        if (const auto last = strikeProgress_.find(u.id); last != strikeProgress_.end()) {
+            progress = last->second;
+            const float dx = x - progress.x, dz = z - progress.z;
+            if (dx * dx + dz * dz >= kHeadway * kHeadway) progress = {x, z, simTick, 0};
+        }
+        const bool marching = !defenders_.count(u.id) && !scouts_.count(u.id) &&
+            std::any_of(u.orders.begin(), u.orders.end(), [](const tak::sim::Order& o) { return o.attackMove; });
+        if (!marching || u.incapacitated() || fighting(u)) progress.since = simTick;
+        else {
+            // The wait away from a fight first: only a unit that has stood that
+            // long is looked up among the fights.
+            const uint32_t stood = simTick - progress.since;
+            const auto wait = [&](int more) { return kStrikeStallTicks << std::min(progress.stops + more, kMaxDoublings); };
+            if (stops < kMaxStops && stood >= wait(0) && stood >= wait(atFight(u) ? kFightDoublings : 0)) {
+                tak::net::Command stop; stop.kind = tak::net::Cmd::Stop; stop.player = uint8_t(player_); stop.unitId = u.id;
+                sink(stop);
+                ++stops;
+                progress.since = simTick;
+                if (progress.stops < UINT8_MAX) ++progress.stops;
+            }
+        }
+        next.emplace(u.id, progress);
+    }
+    strikeProgress_.swap(next);
+    strikeProgressAt_ = simTick;
+}
+
 // Pool idle (non-builder) fighters; once a strike force has gathered (waveSize, per
 // difficulty), send the whole group at the best site on the board (scanTargets,
 // pickSite) so the wave arrives together rather than trickling in; with nothing
@@ -3987,6 +4082,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
         }
         sendDefenders(world,sink);
     }
+    updateStrikeProgress(world, simTick, sink);
     sendWaves(world, simTick, sink, assigned);
 }
 

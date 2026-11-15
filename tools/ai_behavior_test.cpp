@@ -2294,6 +2294,12 @@ int main(int argc,char** argv) {
             auto cs=think(controller,w,uint32_t(wave*750));int n=attacks(cs);
             largest=std::max(largest,n);if (n>0 && n<30) {probes+=n-n%3;scouts+=n%3;}
             for (const auto& c:cs) sim::applyCommand(w,empty,c);
+            // This world is never ticked: the fighters sent out are carried along
+            // by hand, or they would stand with their attack-moves and be stopped
+            // and sent again as units that make no headway are.
+            for (int id=1;const auto* u=w.unit(id);++id)
+                if (std::any_of(u->orders.begin(),u->orders.end(),[](const auto& o){return o.attackMove;}))
+                    w.unit(id)->x=u->x+sim::Fixed::fromInt(100);
             w.spawn(&soldier,400,800+float(wave)*32,0,0);
         }
         check(probes>0 && probes<=10 && scouts>0,"probing raids preserve the accumulating home force");

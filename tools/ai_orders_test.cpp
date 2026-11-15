@@ -1,7 +1,8 @@
 // Our levels' army orders, as a real ai::Controller's commands on constructed
-// worlds: a unit whose queue still holds the attack it was given is left alone;
-// an attack the sim would refuse is not ordered; and the side stays the seat's
-// when its Monarch is gone.
+// worlds: a fighter that makes no headway on its attack-move is stopped and sent
+// again, one on the march or standing at a fight is not; a unit whose queue still
+// holds the attack it was given is left alone; an attack the sim would refuse is
+// not ordered; and the side stays the seat's when its Monarch is gone.
 #include "ai/ai.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
@@ -36,9 +37,186 @@ static void pastStart(sim::World& w) {w.resumeClocks(1,w.gameRngState());}
 static std::vector<net::Command> think(ai::Controller& ai,sim::World& w,uint32_t tick) {
     std::vector<net::Command> out;ai.tick(w,tick,[&](const auto& c){out.push_back(c);});return out;
 }
+static int count(const std::vector<net::Command>& cs,net::Cmd kind) {
+    return int(std::count_if(cs.begin(),cs.end(),[&](const auto& c){return c.kind==kind;}));
+}
 static void apply(sim::World& w,const sim::TypeRegistry& registry,const std::vector<net::Command>& cs) {
     for (const auto& c:cs) sim::applyCommand(w,registry,c);
 }
+static std::vector<int> army(sim::World& w,const sim::UnitType& soldier,int n,float x=400,float z=800) {
+    std::vector<int> ids;
+    for (int i=0;i<n;++i) ids.push_back(w.spawn(&soldier,x+float(i%7)*40,z+float(i/7)*40,0,0));
+    return ids;
+}
+
+// A wave's fighters hold their attack-move until it ends, and nothing promises
+// it does. One that has made no headway for a minute is stopped, and goes out
+// again from the next think; each stop that does not free it doubles the wait.
+static void stalledMarch(const sim::TypeRegistry& registry,const ai::Profile& profile) {
+    const auto soldier=fighter(),lode=lodestone();
+    for (auto level:{ai::Difficulty::Normal,ai::Difficulty::Absurd}) {
+        const uint32_t period=level==ai::Difficulty::Normal ? 30 : 20;
+        const char* name=level==ai::Difficulty::Normal ? "Normal" : "Absurd";
+        char label[160];
+        auto say=[&](const char* what) {std::snprintf(label,sizeof label,"%s: %s",name,what);return label;};
+        sim::World w;terrain(w);w.player(0).income=100;
+        const auto ids=army(w,soldier,35);
+        w.spawn(&lode,3400,3400,0,1);
+        pastStart(w);
+        ai::Controller controller(0,registry,profile,1,level,{{3400,800}});
+        auto cs=think(controller,w,0);
+        check(count(cs,net::Cmd::AttackMove)==35,say("the push marches on the enemy's lodestone"));
+        apply(w,registry,cs);
+        // The world is not ticked: every fighter stands where it was with its
+        // attack-move, as bodies that lock each other on the way do.
+        size_t early=0;
+        uint32_t tick=period;
+        for (;tick<60*30;tick+=period) early+=think(controller,w,tick).size();
+        check(early==0,say("a march that has stood for less than a minute is left alone"));
+        cs=think(controller,w,tick);
+        check(count(cs,net::Cmd::Stop)==35 && cs.size()==35,
+              say("a fighter that has made no headway for a minute on its attack-move is stopped"));
+        apply(w,registry,cs);
+        const uint32_t stopped=tick;
+        cs=think(controller,w,tick+=period);
+        check(count(cs,net::Cmd::AttackMove)==35 && count(cs,net::Cmd::Stop)==0,
+              say("... and is sent out again at the next think"));
+        apply(w,registry,cs);
+        const uint32_t resent=tick;
+        uint32_t second=0;
+        for (tick+=period;tick<stopped+10*60*30 && !second;tick+=period) {
+            cs=think(controller,w,tick);
+            if (count(cs,net::Cmd::Stop)) second=tick;
+            apply(w,registry,cs);
+        }
+        check(second>=resent+2*60*30-period && second<=resent+2*60*30,
+              say("a unit the fresh order did not free waits two minutes for the next stop"));
+        // Headway ends the back-off: once it has come 64 px, the wait is a minute again.
+        for (int id:ids) w.unit(id)->x=w.unit(id)->x+sim::Fixed::fromInt(80);
+        cs=think(controller,w,tick);
+        apply(w,registry,cs);
+        const uint32_t moved=tick;
+        uint32_t third=0;
+        for (tick+=period;tick<moved+10*60*30 && !third;tick+=period)
+            if (count(think(controller,w,tick),net::Cmd::Stop)) third=tick;
+        check(third>=moved+60*30-period && third<=moved+60*30+2*period,
+              say("after headway the wait is a minute again"));
+    }
+}
+
+// A column that queues through a gap in a wall, marches on and lays siege, under
+// the real sim in both pathfinding modes: every unit of it makes headway or
+// stands at the fight, and none is stopped while the target stands.
+static void marchAndSiege(const sim::TypeRegistry& registry,const ai::Profile& profile) {
+    auto soldier=fighter();soldier.maxVel=sim::Fixed::fromInt(1);
+    const auto lode=lodestone();
+    for (auto mode:{sim::PathfindingMode::Retail,sim::PathfindingMode::Legion}) {
+        const char* name=mode==sim::PathfindingMode::Retail ? "Retail pathfinding" : "Legion pathfinding";
+        char label[160];
+        auto say=[&](const char* what) {std::snprintf(label,sizeof label,"%s: %s",name,what);return label;};
+        sim::World w;
+        // A wall of water across the map at x 1984-2048 with a ford 64 px wide.
+        std::vector<uint8_t> h(256*256,100);
+        for (int z=0;z<256;++z) for (int x=124;x<128;++x) if (z<52 || z>=56) h[size_t(z)*256+size_t(x)]=0;
+        w.setTerrain(std::move(h),256,256,20);w.setRoomVision(true,true);
+        w.setPathService(true);w.setPathfindingMode(mode);
+        w.player(0).income=100;
+        const auto ids=army(w,soldier,35);
+        const int target=w.spawn(&lode,3400,900,0,1);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,900}});
+        int stops=0,sent=0,queued=0,sieging=0;
+        uint32_t tick=0;
+        for (;tick<8000 && w.unit(target) && w.unit(target)->alive();++tick) {
+            const auto cs=think(controller,w,tick);
+            stops+=count(cs,net::Cmd::Stop);
+            sent+=count(cs,net::Cmd::AttackMove);
+            apply(w,registry,cs);
+            w.tick(1.f/30.f);
+            if (tick%300) continue;
+            // Marchers held up before the ford, and standing behind the siege line.
+            int before=0,behind=0;
+            for (int id:ids) {
+                const auto* u=w.unit(id);
+                const bool marching=std::any_of(u->orders.begin(),u->orders.end(),[](const auto& o){return o.attackMove;}) &&
+                    std::none_of(u->orders.begin(),u->orders.end(),[](const auto& o){return o.targetId!=0;});
+                if (marching && u->x.toFloat()<1984 && tick>=1500) ++before;
+                if (marching && u->x.toFloat()>3000) ++behind;
+            }
+            queued=std::max(queued,before);sieging=std::max(sieging,behind);
+        }
+        const bool through=std::all_of(ids.begin(),ids.end(),[&](int id){return w.unit(id)->x.toFloat()>2048;});
+        const auto* t=w.unit(target);
+        std::printf("  %s: %d still short of the ford after 50 s, %d at most standing behind the siege line, %u ticks\n",
+                    name,queued,sieging,tick);
+        check(sent>=35 && through,say("the whole column gets through the ford"));
+        check(queued>=1,say("... queuing for it"));
+        check(!t || !t->alive() || t->hp.toFloat()<25000,say("... and lays siege to the lodestone beyond"));
+        check(sieging>=1,say("... some of it waiting behind the siege line"));
+        check(stops==0,say("no fighter of a column on the march or at its siege is stopped"));
+    }
+}
+
+// Fighters waiting behind a siege line stand with their attack-move: a fight
+// around them, or around the point they march on, gives them four minutes
+// where another standing march gets one. Not for ever: the bodies that lock
+// each other beside a long fight are stopped and sent again too.
+static void siegeQueue(const sim::TypeRegistry& registry,const ai::Profile& profile) {
+    const auto soldier=fighter(),lode=lodestone();
+    {
+        sim::World w;terrain(w);w.player(0).income=100;
+        army(w,soldier,35);
+        const auto front=army(w,soldier,3,3300,3300);   // within reach of the lodestone
+        const int target=w.spawn(&lode,3400,3400,0,1);
+        pastStart(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        auto cs=think(controller,w,0);
+        check(count(cs,net::Cmd::AttackMove)==35 && count(cs,net::Cmd::Attack)==3,
+              "the push marches on the lodestone and the three beside it attack it");
+        apply(w,registry,cs);
+        int stops=0;
+        uint32_t tick=30;
+        for (;tick<4*60*30;tick+=30) stops+=count(think(controller,w,tick),net::Cmd::Stop);
+        check(stops==0,"fighters standing behind a siege line are left with their orders for four minutes");
+        cs=think(controller,w,tick);
+        check(count(cs,net::Cmd::Stop)==35 && cs.size()==35,"... then stopped");
+        apply(w,registry,cs);
+        cs=think(controller,w,tick+=30);
+        check(count(cs,net::Cmd::AttackMove)==35,"... and sent again at the next think");
+        apply(w,registry,cs);
+        // Two minutes on the siege ends: the lodestone falls and its attackers
+        // have no order. Away from a fight the second wait is two minutes, not
+        // eight, and the march has stood that long.
+        const uint32_t over=tick+2*60*30;
+        for (tick+=30;tick<over;tick+=30) stops+=count(think(controller,w,tick),net::Cmd::Stop);
+        check(stops==0,"while the siege lasts they are not stopped again");
+        w.unit(target)->deadFor=0;
+        for (int id:front) w.stop(id);
+        check(count(think(controller,w,over),net::Cmd::Stop)==35,
+              "once the fight is over, a march that has stood its time is stopped at once");
+    }
+    {
+        // A fight near home excuses the fighters standing around it, not one
+        // standing far from it whose march goes elsewhere.
+        sim::World w;terrain(w);w.player(0).income=100;
+        const auto ids=army(w,soldier,35);
+        const int far=w.spawn(&soldier,400,3000,0,0);
+        w.spawn(&lode,3400,3400,0,1);
+        pastStart(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        auto cs=think(controller,w,0);
+        check(count(cs,net::Cmd::AttackMove)==36,"the push marches, the fighter standing apart with it");
+        apply(w,registry,cs);
+        auto post=lodestone();post.id="post";post.onMana=false;
+        const int enemy=w.spawn(&post,800,700,0,1);
+        for (int i=0;i<3;++i) w.attack(ids[size_t(i)],enemy,false);
+        std::vector<net::Command> stops;
+        for (uint32_t tick=30;tick<=60*30+30;tick+=30)
+            for (const auto& c:think(controller,w,tick)) if (c.kind==net::Cmd::Stop) stops.push_back(c);
+        check(stops.size()==1 && stops.front().unitId==far,
+              "a fight elsewhere does not excuse a fighter standing far from it");
+    }
+}
+
 // The sim puts legs of its own in front of an attack: the walk out of a weapon's
 // minimum range, or to a clear shot (World::repositionForShot inserts a plain
 // move at the head of the queue). The attack behind it is still the unit's
@@ -292,6 +470,9 @@ int main(int argc,char** argv) {
         return fails ? 1 : 0;
     }
     sim::TypeRegistry empty;ai::Profile profile;
+    stalledMarch(empty,profile);
+    marchAndSiege(empty,profile);
+    siegeQueue(empty,profile);
     heldAttack(empty,profile);
     refusedAttacks(empty,profile);
     seatSide();

@@ -537,7 +537,7 @@ centre, radius, counts, firepower, shot cost, draw, busy-deposit test and placer
 | 23 | Wave size from the biggest enemy population, x multipliers, cap 50, sign = keep reserve | bigPush = waveSize + income/4, raids, cooldown 750 | **different** |
 | 24 | Strike: cohesion recruit, dissolve at a random 1/3..all loss, re-pick target on kill | AttackMove pool committed to the objective; a fighter is left alone while its queue holds the order it was given (an attack behind the sim's own walk to a firing spot too) | **different** |
 | 25 | Target = scored over all enemy units, mana-site/visible/armed/big-player bias, new-best reachability | nearest visible enemy to home, else enemy start; flow-reachable | **different** |
-| 26 | Strike issues MOVE (fight by standing orders) | AttackMove, and up close an Attack on the site's anchor where the sim would take it (`canTake`: a charm, a stone or a freeze only on a unit it can take) | different (approximation needed) |
+| 26 | Strike issues MOVE (fight by standing orders), sent again to a marching member one think in 10 or in 50 whatever it is doing | AttackMove, and up close an Attack on the site's anchor where the sim would take it (`canTake`: a charm, a stone or a freeze only on a unit it can take); a fighter that makes no headway for a minute on its attack-move (four minutes where its side is fighting around it or around the point it marches on) is stopped and sent again, with the wait doubled up to 8 minutes (`updateStrikeProgress`) | different (approximation needed) |
 | 27 | Withdraw wounded (HP < 1/(rand(3)+3)) and unreachable members | none | **missing** |
 | 28 | VTOL squads patrol random map/edge points | flyers join waves | **missing** |
 | 29 | Naval strikes 51..79 like ground waves; naval x3 priority | naval planner, fleets of 3 (Easy 2), cooldown 750 | different |
@@ -560,7 +560,8 @@ ring-search `placeSite` with 48 px lanes, approach clearance and enemy-proximity
 reservations / `plannedManaSites_`; the nearest-ally home rule; the stalled-builder timeout and bans;
 refused-site memory and `unqueueStalled`; the category retry; the naval planner with private preview
 Worlds; Monarch "fights back" via `lastHitBy` (omniscient about unseen attackers); the Monarch 520 px
-leash; door clearing; `sendWaves` (objective, raids, lone scout, cooldowns, bigPush); `sendDefenders`;
+leash; door clearing; `sendWaves` (objective, raids, lone scout, cooldowns, bigPush); the stalled-march
+stop (`updateStrikeProgress`); `sendDefenders`;
 `stationArmy`; the defensive Stance; the fixed thinkPeriod and producer round-robin; manaMult != 1;
 defensiveAi; and the Controller LCG.
 
