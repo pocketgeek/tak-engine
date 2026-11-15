@@ -535,10 +535,14 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
     if (aggressive) {
         n.desiredFactories = std::clamp(1 + int(n.income / kIncomePerFactory), 1, 32);
         // A store filling up: production is not spending what comes in. One more
-        // factory than it has (of Zhon's producers, those not away at lodestones:
-        // four in five of them, see below).
+        // factory than it has. Of Zhon's producers that is one more than those
+        // its income feeds: its allowance (below) is those and a quarter of them
+        // more for the ones away at lodestones (producersOut), so of the producers
+        // it has four in five count here, and a quarter of those as away. Taking a
+        // quarter of all it has as away would add none: of 12 producers 9 would
+        // count, and one more with its 2 away are the 12 it has.
         if (me.storage > 0 && me.mana > me.storage * 0.6f) {
-            const int have = mobileProduction(side) ? n.factories - std::max(2, n.factories / 5) : n.factories;
+            const int have = mobileProduction(side) ? n.factories - producersOut(n.factories * 4 / 5) : n.factories;
             n.desiredFactories = std::min(std::max(n.desiredFactories, have) + 1, 32);
         }
     }

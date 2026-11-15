@@ -308,9 +308,9 @@ static void safeDeposits(const Roster& r) {
 // and a quarter more for the ones away, not another side's whole builder
 // allowance on top.
 static void zhonAllowance(const Roster& r) {
-    auto conjuresHandler=[&](ai::Difficulty difficulty,float income,int handlers) {
+    auto conjuresHandler=[&](ai::Difficulty difficulty,float income,int handlers,float mana=6000) {
         sim::World w;terrain(w);w.buildNavClasses(r.reg);
-        w.player(0).storage=20000;w.player(0).mana=6000;w.player(0).income=income;
+        w.player(0).storage=20000;w.player(0).mana=mana;w.player(0).income=income;
         w.spawn(r("zonking"),800,800,0,0);
         for (int i=0;i<handlers;++i) busy(w,w.spawn(r("zonhand"),1400+float(i%6)*60,1400+float(i/6)*60,0,0),r("zongob"));
         for (int i=0;i<handlers*4;++i) w.spawn(r("zongob"),2000+float(i%16)*40,400+float(i/16)*40,0,0);
@@ -321,6 +321,11 @@ static void zhonAllowance(const Roster& r) {
         // Income 300: six factories' worth, and two away at lodestones.
         check(conjuresHandler(level,300,7),"Hard/Absurd Zhon adds producers up to one per 60 income and a quarter more");
         check(!conjuresHandler(level,300,8),"Hard/Absurd Zhon keeps no more producers than its income feeds");
+        // Twelve producers: ten that its income is taken to feed and two away.
+        // One more and its share away make thirteen (a quarter of all twelve
+        // counted as away would make the twelve it has, and add none).
+        check(!conjuresHandler(level,300,12) && conjuresHandler(level,300,12,15000),
+              "with the store over 60% full a Hard/Absurd Zhon conjures one more producer than it has");
     }
 }
 
