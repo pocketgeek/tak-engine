@@ -19416,6 +19416,22 @@ void World::deliverSearchRoute(int unitId,const std::vector<PathCell>& route,Fix
 }
 
 void World::tickNavigationMovement(Unit& u,Fixed maximum) {
+    // An attack leg holds no point of its own: World::attack and the attack
+    // missions store x = z = 0, and tickCombat writes the target's position
+    // into it each tick it chases. The tick the leg ahead ends (its target
+    // died, turned, boarded, the leash ran out; a guard's ward died),
+    // tickCombat drops that leg and returns before the next one's first
+    // chase, so the mover would take it with the placeholder and route to
+    // the map's corner -- and the next tick's chase keeps the route's
+    // waypoints. Retail's dispatcher runs the new head's first wake at once
+    // (4d8450), and that wake reads the target's position, so the leg starts
+    // from there.
+    if (!u.type->canFly && !u.orders.empty()) {
+        Order& leg=u.orders[currentLeg(u.orders)];
+        if (leg.targetId>0 && !leg.guard && !leg.load && !leg.unload && !leg.transportPickup &&
+            leg.x==Fixed() && leg.z==Fixed())
+            if (const Unit* t=unit(leg.targetId); t && t->alive()) { leg.x=t->x; leg.z=t->z; }
+    }
     // The rectangle is work metadata, never a movement destination. A rejected
     // site leaves it at the head until the next deposit is tried next tick.
     if (!u.orders.empty() && u.orders.front().manaBuildArea) {

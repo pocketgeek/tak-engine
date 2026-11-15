@@ -5826,6 +5826,29 @@ when the fire-at-will sweep switches her weapon on its first tick, and she
 would stall in 26 attack-sweep cases (14 against the castle or the
 lodestone); retail's automatic slot would aim during that walk.
 
+**A queued attack starts from its target.** Retail's chase steers by a circle
+controller on the target itself (stage 2 above), so its mover never holds a
+point for an attack, and the dispatcher goes straight on to the new head when a
+mission ends (`4d8450`, as it does for the default mission and a step-out), so
+the next attack's first stages run in the same dispatch. World's attack leg
+holds no point until `tickCombat` writes the target's position into it on each
+chase tick (`World::attack` and the attack missions store x = z = 0). When the
+leg ahead ended (target dead, turned, carried off, leash run out, a guard's
+ward dead), `tickCombat` dropped it and returned, and the mover took the queued
+attack with that placeholder: under Retail pathfinding it routed to the map's
+top-left corner and kept those waypoints after the next tick's chase fixed the
+point (Attack, then a Shift- or box-queued Attack: 5,700-6,500 px walked
+against 450-860 px for the direct order). `tickNavigationMovement` now gives a
+ground attack leg still at the placeholder its target's position before the
+mover runs, as retail's first wake would. The other kinds that follow a unit or
+a wreck (Guard, Repair, Assist, Reclaim, Resurrect) store a real point when
+issued and were not affected; flyers fly their own goals and were not either.
+Load also stores no point, but its mission installs its own approach; a Load
+queued behind another order does not start at all (the carrier drops its
+pickup while the passenger's Load is still queued), which is a separate gap. `queued_target_test` (Retail and `--legion`) queues a melee, ranged and
+flyer Attack, Guard, Repair and Assist behind an Attack, and an Attack behind a
+Guard whose ward dies, a finished Repair and a Move.
+
 ## Kirenna on an attack-move (icd static + emulation)
 
 A fight-move leg is retail's MoveFight order (`World::markFightLeg`:

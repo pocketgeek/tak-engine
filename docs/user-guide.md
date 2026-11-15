@@ -1670,7 +1670,9 @@ repair, reclaim, area reclaim, load, unload and building.
   and so on, then Shift-click as many points as you like. Releasing Shift
   disarms the order.
 - Units carry out their list in order. A finished order hands over to the next
-  one straight away.
+  one straight away. A queued attack (Shift-right-click an enemy, or a
+  right-drag attack box) heads straight for its target from wherever the unit
+  stands when the order before it ends, the target dying included.
 - **Hold Shift to see the plan.** The selected units show a dotted line through
   their queued orders, including building sites and area jobs.
 - **Queued buildings show as see-through outlines** on their sites until a
