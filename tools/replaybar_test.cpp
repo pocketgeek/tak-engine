@@ -41,6 +41,8 @@ static void geometry() {
             }
             // Room left for "123:45 / 123:45", a block-font cell being 6 px wide.
             check(l.timeRight - right >= 15 * 6 * l.textPx * 0.9f, at + ": no room for the time");
+            // What the label may fill stops short of the last control (a longer one is drawn smaller).
+            check(rb::timeRoom(l) > 0 && rb::timeRoom(l) < l.timeRight - right, at + ": the time's room runs into the controls");
         }
 }
 
@@ -81,6 +83,13 @@ static void speeds() {
         for (const float real : {0.01f, 0.25f, 0.76f, 0.96f, 1.4f, 27.4f, 240.0f})
             check(rb::speedText(speed, real).size() <= 12, "a speed label stays short");
     check(rb::timeText(30 * 210) == "3:30" && rb::timeText(30 * 1382) == "23:02", "time text");
+    // From an hour on the label has hours (an 18 hour replay read "1080:34").
+    check(rb::timeText(30 * 3599) == "59:59" && rb::timeText(30 * 3600) == "1:00:00", "hours start at 60 minutes");
+    check(rb::timeText(1945042) == "18:00:34", "18 hours read as hours: " + rb::timeText(1945042));
+    check(rb::timeText(30 * 210, 1945042) == "0:03:30" && rb::timeText(0, 30 * 3600) == "0:00:00",
+          "every time of a replay that passes an hour reads the same way");
+    check(rb::timeText(30 * 210, 30 * 3599) == "3:30", "a replay under an hour keeps m:ss");
+    check(rb::timeText(30 * 360000 + 29) == "100:00:00", "past 99 hours");
 }
 
 static void keyframes() {

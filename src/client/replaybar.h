@@ -49,10 +49,15 @@ inline std::string speedText(float speed, float real) {
     return out;
 }
 
-inline std::string timeText(size_t tick) {
+// "3:30"; "1:03:30" from an hour on. `length`: the replay's, so that every time of a
+// replay that passes an hour reads the same way ("0:03:30 / 18:00:34").
+inline std::string timeText(size_t tick, size_t length = 0) {
     const size_t seconds = tick / kTicksPerSecond;
-    char text[32];
-    std::snprintf(text, sizeof text, "%zu:%02zu", seconds / 60, seconds % 60);
+    char text[48];
+    if (std::max(tick, length) / kTicksPerSecond >= 3600)
+        std::snprintf(text, sizeof text, "%zu:%02zu:%02zu", seconds / 3600, seconds / 60 % 60, seconds % 60);
+    else
+        std::snprintf(text, sizeof text, "%zu:%02zu", seconds / 60, seconds % 60);
     return text;
 }
 
@@ -97,6 +102,12 @@ inline Layout layout(float mapViewW, float uiScale, float top) {
     l.textPx = 1.5f * r;
     l.timeRight = l.box.x + w - pad;
     return l;
+}
+
+// The width row 2 leaves the time, right of the speed controls. A label wider than this
+// (hours on a narrow bar) is drawn smaller, as a long speed label is.
+inline float timeRoom(const Layout& l) {
+    return std::max(0.0f, l.timeRight - (l.faster.x + l.faster.w) - 4 * l.textPx);
 }
 
 inline float tickToX(const Layout& l, size_t tick, size_t length) {

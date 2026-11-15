@@ -3032,6 +3032,9 @@ recording. The replay bar sits at the top of the map view:
   jumping while held.
 - **Play/pause** sits between them.
 - **−** and **+** set the speed, from 0.25× to 256×.
+- **The time** at the right reads where you are and how long the game is, in
+  minutes and seconds, with hours once the game is an hour long
+  (**0:03:30 / 18:00:34**).
 
 | Key | Action |
 | --- | --- |

@@ -3221,12 +3221,14 @@
         const float speedPx = px * std::min(1.0f, l.speed.w / blockWidth(speed, px));   // the long ones shrink to fit
         blockText(speed, l.speed.x + (l.speed.w - blockWidth(speed, speedPx)) / 2,
                   l.speed.y + (l.speed.h - 7 * speedPx) / 2, speedPx, {235, 225, 180, 255});
-        const std::string time = rb::timeText(replayTick_) + " / " + rb::timeText(length);
-        blockText(time, l.timeRight - blockWidth(time, px), l.speed.y + (l.speed.h - textH) / 2, px, kText);
+        // Hours make the label longer than a narrow bar leaves room for: it shrinks to fit.
+        const std::string time = rb::timeText(replayTick_, length) + " / " + rb::timeText(length, length);
+        const float timePx = px * std::min(1.0f, rb::timeRoom(l) / std::max(1.0f, blockWidth(time, px)));
+        blockText(time, l.timeRight - blockWidth(time, timePx), l.speed.y + (l.speed.h - 7 * timePx) / 2, timePx, kText);
 
         if (const bool hover = !exitMenu_ && l.timeline.hit(mouseX_, mouseY_); hover || replayDragging_) {
             const size_t tick = replayDragging_ ? replayDragTick_ : rb::xToTick(l, mouseX_, length);
-            const std::string at = rb::timeText(tick);
+            const std::string at = rb::timeText(tick, length);
             const float w = blockWidth(at, px) + 12 * pixel, h = textH + 8 * pixel;
             const float x = std::clamp(rb::tickToX(l, tick, length) - w / 2, l.box.x, l.box.x + l.box.w - w);
             const SDL_FRect tip{x, l.box.y + l.box.h + 2 * pixel, w, h};
