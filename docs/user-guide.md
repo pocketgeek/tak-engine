@@ -407,7 +407,11 @@ army over several targets.
 
 At every difficulty except Retail, a unit that steps back from a target inside
 its weapon's minimum range, or walks to a spot with a clear shot, is left to
-carry out the attack it was given.
+carry out the attack it was given. A Harpy, Mind Mage or Basilisk is ordered
+onto a unit only when its charm or stone gaze can take it: never a building or
+an immune unit, and for a charm nothing at all while its own side is at the
+unit cap. Otherwise it fights its way to the place and takes what it can
+there.
 
 It knows the start positions the way you do from the room: with **Fixed** or **By Slot** start
 locations whose start each is, with **Random** only the map's start spots, any of

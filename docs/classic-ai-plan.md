@@ -537,7 +537,7 @@ centre, radius, counts, firepower, shot cost, draw, busy-deposit test and placer
 | 23 | Wave size from the biggest enemy population, x multipliers, cap 50, sign = keep reserve | bigPush = waveSize + income/4, raids, cooldown 750 | **different** |
 | 24 | Strike: cohesion recruit, dissolve at a random 1/3..all loss, re-pick target on kill | AttackMove pool committed to the objective; a fighter is left alone while its queue holds the order it was given (an attack behind the sim's own walk to a firing spot too) | **different** |
 | 25 | Target = scored over all enemy units, mana-site/visible/armed/big-player bias, new-best reachability | nearest visible enemy to home, else enemy start; flow-reachable | **different** |
-| 26 | Strike issues MOVE (fight by standing orders) | AttackMove | different (approximation needed) |
+| 26 | Strike issues MOVE (fight by standing orders) | AttackMove, and up close an Attack on the site's anchor where the sim would take it (`canTake`: a charm, a stone or a freeze only on a unit it can take) | different (approximation needed) |
 | 27 | Withdraw wounded (HP < 1/(rand(3)+3)) and unreachable members | none | **missing** |
 | 28 | VTOL squads patrol random map/edge points | flyers join waves | **missing** |
 | 29 | Naval strikes 51..79 like ground waves; naval x3 priority | naval planner, fleets of 3 (Easy 2), cooldown 750 | different |

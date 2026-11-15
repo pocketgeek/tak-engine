@@ -1,6 +1,7 @@
 // Our levels' army orders, as a real ai::Controller's commands on constructed
 // worlds: a unit whose queue still holds the attack it was given is left alone;
-// and the side stays the seat's when its Monarch is gone.
+// an attack the sim would refuse is not ordered; and the side stays the seat's
+// when its Monarch is gone.
 #include "ai/ai.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
@@ -70,6 +71,42 @@ static void heldAttack(const sim::TypeRegistry& registry,const ai::Profile& prof
     cs=think(controller,w,360);
     check(cs.size()==1 && cs.front().kind==net::Cmd::Attack && cs.front().unitId==id,
           "a striker on a plain move with no attack behind it is free for its next order");
+}
+
+// An Attack is ordered only where the sim would take it (World::canAttackTarget):
+// a charm takes a finished mobile unit that is not immune, with its side below
+// the unit cap; a stone weapon one that can be stoned. Otherwise the unit
+// fight-moves to the site and takes what it can there.
+static void refusedAttacks(const sim::TypeRegistry& registry,const ai::Profile& profile) {
+    auto harpy=fighter();harpy.id="harpy";harpy.buildCost=1000;
+    harpy.weapon.damage=1;harpy.weapon.mindControl=true;harpy.weapons={harpy.weapon};
+    auto basilisk=fighter();basilisk.id="basilisk";basilisk.buildCost=1000;
+    basilisk.weapon.status=sim::Weapon::Status::Stoned;basilisk.weapons={basilisk.weapon};
+    auto troll=fighter();troll.id="troll";troll.weapon.damage=0;troll.weapons.clear();troll.buildCost=100;
+    auto immune=troll;immune.id="immune";immune.cantBeCaptured=true;immune.cantBeStoned=true;
+    const auto lode=lodestone();
+    // The one order `caster` gets with `victim` 100 px from it.
+    auto order=[&](const sim::UnitType& caster,const sim::UnitType& victim,int unitCap) {
+        sim::World w;terrain(w);w.player(0).income=100;
+        if (unitCap) w.setUnitCap(unitCap);
+        const int id=w.spawn(&caster,1000,1000,0,0);
+        const int target=w.spawn(&victim,1100,1000,0,1);
+        pastStart(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        const auto cs=think(controller,w,0);
+        if (cs.size()!=1 || cs.front().unitId!=id) return 0;
+        return cs.front().kind==net::Cmd::Attack && cs.front().targetId==target ? 1 :
+               cs.front().kind==net::Cmd::AttackMove ? 2 : 0;
+    };
+    check(order(harpy,troll,0)==1,"a Harpy is ordered to charm a mobile unit beside it");
+    check(order(harpy,lode,0)==2,"a Harpy beside a lodestone fight-moves there: a charm takes no building");
+    check(order(harpy,immune,0)==2,"... nor a unit that cannot be captured");
+    check(order(harpy,troll,1)==2,"... nor anything while its side is at the unit cap");
+    check(order(basilisk,troll,0)==1,"a Basilisk is ordered to stone a mobile unit beside it");
+    check(order(basilisk,lode,0)==2,"a Basilisk beside a lodestone fight-moves there: nothing stones a building");
+    check(order(basilisk,immune,0)==2,"... nor a unit that cannot be stoned");
+    check(order(fighter(),lode,0)==1 && order(fighter(),immune,1)==1,
+          "a unit whose weapon does damage attacks either, at the unit cap too");
 }
 
 // The seat's faction is its Monarch's, for the whole game. With the Monarch dead
@@ -222,6 +259,7 @@ int main(int argc,char** argv) {
     }
     sim::TypeRegistry empty;ai::Profile profile;
     heldAttack(empty,profile);
+    refusedAttacks(empty,profile);
     seatSide();
     std::printf("%d failed\n",fails);
     return fails ? 1 : 0;

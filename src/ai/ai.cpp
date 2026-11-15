@@ -1752,6 +1752,30 @@ bool Controller::reachesNow(const tak::sim::Unit& u, const tak::sim::Unit& t) {
     return !(weapon.melee && t.flightGroundMode == 2);
 }
 
+// World::weaponServes for each weapon, as far as a unit's public state tells
+// (its aim point under water is the sim's alone to know). The sim refuses an
+// Attack no weapon can carry out, or drops it on the next tick: 660 of one long
+// game's 2,996 Attack orders went that way -- Harpies sent to charm lodestones
+// and factories, or anything at all with their side at the unit cap, Basilisks
+// to stone buildings and the immune -- and the unit stood idle under fire until
+// the next think sent it the same order.
+bool Controller::canTake(const tak::sim::World& world, const tak::sim::Unit& u, const tak::sim::Unit& t) const {
+    using Status = tak::sim::Weapon::Status;
+    // What a charm, a stone and a freeze each need: a mobile unit (bmcode 1), finished, no Monarch.
+    const bool body = t.type->buildMovementCode == 1 && !t.type->commander && !t.underConstruction;
+    const auto serves = [&](const tak::sim::Weapon& w) {
+        if ((w.noAir && t.flightGroundMode == 2) || (w.toAir && t.flightGroundMode != 2) || w.damageVs(t.type) <= 0)
+            return false;
+        if (w.mindControl && !(body && !t.type->cantBeCaptured && !t.embarked() && t.stonedFor <= 0 &&
+                               !world.atUnitCap(player_))) return false;
+        if (w.status == Status::Stoned && !(body && !t.type->cantBeStoned)) return false;
+        if (w.status == Status::Frozen && !(body && !t.type->cantBeFrozen)) return false;
+        return true;
+    };
+    const auto& weapons = u.type->weapons;
+    return weapons.empty() ? serves(u.type->weapon) : std::any_of(weapons.begin(), weapons.end(), serves);
+}
+
 // Every enemy unit this AI knows of (knowledge_), scored where it was last seen.
 // A unit's value is its cost, tripled for a lodestone or mana building and
 // doubled for production and builders (retail's picker divides everything that
@@ -1960,7 +1984,9 @@ bool Controller::strikeOrder(const tak::sim::World& world, const tak::sim::Unit&
         // targets (as retail's picker, x10), and up close an order on the anchor
         // itself makes sure of it.
         // A charm cannot take a unit still being built (the sim refuses the
-        // order), so a caster attack-moves there instead of standing idle.
+        // order), so a caster attack-moves there instead of standing idle; so
+        // does any unit none of whose weapons can take the anchor as it stands
+        // (canTake): on the fight-move it takes what it can around the site.
         const bool charmRefused = e->underConstruction &&
             std::any_of(u.type->weapons.begin(), u.type->weapons.end(),
                         [](const auto& w) { return w.mindControl; });
@@ -1969,7 +1995,7 @@ bool Controller::strikeOrder(const tak::sim::World& world, const tak::sim::Unit&
         // force walked past everything on the way without fighting (an Absurd
         // Creon army sent 3000 px at an Aramon Stronghold going up died walking
         // through the defenders); a fight-move gets it there fighting.
-        if (close && !charmRefused && reachesNow(u, *e)) {
+        if (close && !charmRefused && canTake(world, u, *e) && reachesNow(u, *e)) {
             tak::net::Command c; c.kind = tak::net::Cmd::Attack; c.player = uint8_t(player_);
             c.unitId = u.id; c.targetId = e->id;
             sink(c);

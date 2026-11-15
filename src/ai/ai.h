@@ -413,6 +413,13 @@ private:
     // reach `t` where it is now: a melee one never reaches a unit in the air,
     // and the sim drops such an attack order at once (Attack_Melee's head).
     static bool reachesNow(const tak::sim::Unit& u, const tak::sim::Unit& t);
+    // Some weapon of `u` can do something to `t` as it stands, by the sim's own
+    // test of an attack order (World::canAttackTarget for a computer's unit):
+    // the damage table, the layer it is on, and what a charm, a stone or a
+    // freeze can take -- a mobile unit that is finished, no Monarch and not
+    // immune, and for a charm an owner below the unit cap. canHurt asks only
+    // the damage table, by type.
+    bool canTake(const tak::sim::World&, const tak::sim::Unit& u, const tak::sim::Unit& t) const;
     // The best site for a force of `force` strength at (x,z) whose units move as
     // `type`, by value (economy, production, the Monarch, finishing a player off),
     // threat (armed units, nearer our base) and practicality (distance, whether the
