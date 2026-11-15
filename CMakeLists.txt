@@ -1256,9 +1256,11 @@ if(Python3_Interpreter_FOUND)
   # waiting bodies' orders after 4,800 ticks (43, 23, 49 and 56 of 60 arrived at these offsets); a body on an attack
   # or guard leg is its owner's to end, so all 60 go on through when the target dies. At offsets 2..5 fewer bodies
   # reach the target and it outlives the run: the army keeps its orders to tick 14,000 (legion_siegegap_hold; 51 to
-  # 58 of the 60 orders were ended). siege-gap-move: the same with 24 bodies on a move order queued behind the
-  # firing army (55, 25, 58 and 33 of 60 arrived). All three pass on the parent of the stand-down as well: they
-  # guard the rule, with weapons on and past its long threshold. Asset-free.
+  # 58 of the 60 orders were ended). That test bounds only the orders ended off the arrival disc, which is what a
+  # stand-down here is, so it holds as well if a change to combat lets the target die at those offsets.
+  # siege-gap-move: the same with 24 bodies on a move order queued behind the firing army (55, 25, 58 and 33 of 60
+  # arrived). All three pass on the parent of the stand-down as well: they guard the rule, with weapons on and past
+  # its long threshold. Asset-free.
   add_test(NAME legion_siegegap
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios siege-gap
@@ -1266,7 +1268,7 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME legion_siegegap_hold
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios siege-gap
-                   --offsets 2,3,4,5 --max g.A.complete_n=0 --max scale.complete_outside_n=0)
+                   --offsets 2,3,4,5 --max scale.complete_outside_n=0)
   add_test(NAME legion_siegegap_move
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios siege-gap-move
