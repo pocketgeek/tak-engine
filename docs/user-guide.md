@@ -504,7 +504,9 @@ grows, up to the Monarch and four; Easy and Passive keep two. Defensive and Absu
 Defensive add one per 50 income with no ceiling. No other AI builds more of one
 builder type than its build profile allows. Zhon has no factory
 buildings, so its AI counts its Beast Handlers, Tamers, Lords and Shamans as
-both producers and builders. A Normal, Defensive or Absurdly Defensive AI whose
+both producers and builders. An AI plays the faction its seat was given for
+the whole game: builders it captures from another side do not change that,
+after its Monarch is dead either. A Normal, Defensive or Absurdly Defensive AI whose
 mana store is nearly full keeps its builders building income rather than
 leaving them idle; Hard and Absurd add a factory instead.
 

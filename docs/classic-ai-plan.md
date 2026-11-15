@@ -554,7 +554,8 @@ centre, radius, counts, firepower, shot cost, draw, busy-deposit test and placer
 Category planner and desire ladder; `assessNeeds`; affordability/"economy-first" gate; the income < 20
 economy rule; the over-commit throttle (mana < 50); the full-store rule (90%); the priority-96 lodestone
 trigger and its home-radius gate; `terrainWeight`; limitScale and limit lifting; "missing weight = never
-build"; builderCap/desiredFactories/army targets per income; the Zhon allowance (`mobileProduction`);
+build"; builderCap/desiredFactories/army targets per income; the Zhon allowance (`mobileProduction`, by the
+seat's faction: its Monarch's side, fixed at the first think);
 ring-search `placeSite` with 48 px lanes, approach clearance and enemy-proximity avoidance; deposit
 reservations / `plannedManaSites_`; the nearest-ally home rule; the stalled-builder timeout and bans;
 refused-site memory and `unqueueStalled`; the category retry; the naval planner with private preview

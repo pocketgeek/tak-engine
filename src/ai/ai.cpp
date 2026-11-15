@@ -441,10 +441,10 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
     Needs n;
     const auto& me = world.player(player_);
     n.income = me.income;   // spend the income actually available
-    std::string side;       // the Monarch's, else a mobile builder's
+    std::string side = side_;   // the seat's faction; not known: the Monarch's, else a mobile builder's
     for (const auto& u : world.units()) {
         if (!u.alive() || u.player != player_ || !u.type) continue;
-        if (!u.type->isStructure() && u.type->isBuilder && (side.empty() || u.type->commander))
+        if (side_.empty() && !u.type->isStructure() && u.type->isBuilder && (side.empty() || u.type->commander))
             side = u.type->side;
         if (u.type->isBuilder) {
             const auto* site = u.buildSiteId ? world.unit(u.buildSiteId) : nullptr;
@@ -3685,7 +3685,15 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     // Door clearance reads the live obstacle overlay, which new buildings change:
     // keep it for one think only.
     navalDoorSteps_.clear();
-    if (!home_) home_=homeOf(world);
+    if (!home_) {
+        home_=homeOf(world);
+        // The seat's faction, once: the Monarch it has (a commander is never
+        // captured or given away), else the god the match setup gave the seat
+        // for its Monarch's side.
+        for (const auto& u : world.units())
+            if (u.alive() && u.player == player_ && u.type && u.type->commander) { side_ = u.type->side; break; }
+        if (const auto* god = world.player(player_).godType; side_.empty() && god) side_ = god->side;
+    }
     if (!allyHomesKnown_) {
         allyHomesKnown_=true;
         for (int p=0;p<world.numPlayers();++p)

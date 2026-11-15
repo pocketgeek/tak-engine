@@ -647,6 +647,14 @@ private:
     DiffParams dp_;
     std::vector<std::pair<float, float>> enemyStarts_;   // starts_ not gone, refreshed each think
     std::optional<std::pair<float,float>> home_;
+    // The seat's faction (a UnitType::side), fixed at the first think like home_:
+    // its Monarch's side, else -- the Monarch already dead when this AI took the
+    // seat -- the side of the god the match setup resolved from that Monarch
+    // (Player::godType). Empty when neither tells (a constructed world): then
+    // assessNeeds reads the side off the seat's mobile builders, as it once
+    // always did after the Monarch died -- and a captured builder with a lower
+    // unit id than every own one turned a Zhon seat into "Creon" for good.
+    std::string side_;
     // Allied players' home anchors, fixed at the first think like home_ (homeOf's
     // rule applied to each ally). Expansion leaves a living ally's home deposits
     // to that ally while it can still claim them, then to the nearest other ally

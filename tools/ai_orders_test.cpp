@@ -1,5 +1,6 @@
 // Our levels' army orders, as a real ai::Controller's commands on constructed
-// worlds: a unit whose queue still holds the attack it was given is left alone.
+// worlds: a unit whose queue still holds the attack it was given is left alone;
+// and the side stays the seat's when its Monarch is gone.
 #include "ai/ai.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
@@ -71,6 +72,100 @@ static void heldAttack(const sim::TypeRegistry& registry,const ai::Profile& prof
           "a striker on a plain move with no attack behind it is free for its next order");
 }
 
+// The seat's faction is its Monarch's, for the whole game. With the Monarch dead
+// it used to be read off the lowest-numbered mobile builder -- which a captured
+// one can be: a Zhon seat then counted as a side with factory buildings, and
+// stopped replacing the producers that are its factories.
+struct Roster {
+    std::shared_ptr<hpi::Vfs::Files> files=std::make_shared<hpi::Vfs::Files>();
+    hpi::Vfs vfs;
+    sim::TypeRegistry reg;
+    ai::Profile profile;
+    void file(const std::string& path,const std::string& text) {
+        std::string lines;
+        for (char ch : text) { lines += ch; if (ch == ';' || ch == '{' || ch == '}') lines += '\n'; }
+        (*files)[path]={lines.begin(),lines.end()};
+    }
+    void type(const std::string& id,const std::string& fields) {
+        file("units/"+id+".fbi","[UNITINFO]{unitname="+id+";objectname="+id+
+            ";maxdamage=100;footprintx=2;footprintz=2;buildtime=30;buildcost=10;sightdistance=600;"+fields+"}");
+    }
+    const sim::UnitType* operator()(const char* id) const {return reg.find(id);}
+    Roster() {
+        const std::string mobile="canmove=1;maxvelocity=1;";
+        // ARA has a factory building; ZON has none: its handlers and tamers are its factories.
+        type("arakeep","side=ARA;builder=1;workertime=30;");
+        type("aramason","side=ARA;builder=1;workertime=30;"+mobile);
+        type("arasword","side=ARA;"+mobile);
+        file("canbuild/arakeep/arasword.tdf","[CANBUILD]{sortbias=0;}");
+        file("canbuild/aramason/arakeep.tdf","[CANBUILD]{sortbias=0;}");
+        type("zonking","side=ZON;builder=1;commander=1;workertime=30;"+mobile);
+        type("zongod","side=ZON;"+mobile);
+        type("zonhand","side=ZON;builder=1;workertime=30;"+mobile);
+        type("zontame","side=ZON;builder=1;workertime=30;"+mobile);
+        type("zongob","side=ZON;"+mobile);
+        file("canbuild/zonking/zonhand.tdf","[CANBUILD]{sortbias=0;}");
+        file("canbuild/zonhand/zontame.tdf","[CANBUILD]{sortbias=0;}");
+        file("canbuild/zonhand/zongob.tdf","[CANBUILD]{sortbias=1;}");
+        file("canbuild/zontame/zongob.tdf","[CANBUILD]{sortbias=0;}");
+        vfs.setMapFiles(files);
+        reg.loadDir(vfs,"units");reg.loadBuildTree(vfs,"canbuild");
+        for (const char* id : {"arasword","zongob"}) {
+            auto* t=const_cast<sim::UnitType*>(reg.find(id));
+            t->weapon.damage=10;t->weapon.range=120;t->weapons={t->weapon};
+        }
+        for (const char* id : {"arakeep","aramason","arasword","zonhand","zontame","zongob"}) profile.weight[id]=10;
+    }
+};
+static void seatSide() {
+    Roster r;
+    // Orders to conjure a producer: the Monarch's Beast Handler, a handler's Tamer.
+    auto producers=[](const std::vector<net::Command>& cs) {
+        return int(std::count_if(cs.begin(),cs.end(),[](const auto& c) {
+            return c.kind==net::Cmd::Build && (std::string(c.type)=="zonhand" || std::string(c.type)=="zontame");
+        }));
+    };
+    // A Zhon seat on 100 income wants six producers and has four. `captured`: an
+    // Aramon constructor with a lower unit id than any of them is the seat's too.
+    struct Seat { sim::World w; int monarch=0; };
+    auto seat=[&](Seat& s,bool captured,bool monarch) {
+        terrain(s.w);s.w.player(0).income=100;s.w.player(0).mana=5000;
+        if (captured) s.w.spawn(r("aramason"),700,1000,0,0);
+        if (monarch) s.monarch=s.w.spawn(r("zonking"),1000,1000,0,0);
+        for (int i=0;i<4;++i) s.w.spawn(r("zonhand"),1000+float(i)*200,1400,0,0);
+        for (int i=0;i<14;++i) s.w.spawn(r("zongob"),1000+float(i)*40,1800,0,0);
+        pastStart(s.w);
+    };
+    {
+        Seat s;seat(s,true,true);
+        ai::Controller controller(0,r.reg,r.profile,1,ai::Difficulty::Normal);
+        check(producers(think(controller,s.w,0))>0,"a Zhon seat short of producers conjures more");
+        s.w.unit(s.monarch)->deadFor=0;
+        check(producers(think(controller,s.w,30))>0,
+              "with its Monarch dead and a captured constructor its lowest-numbered builder, it still does: the side is the seat's");
+    }
+    {
+        // The Monarch was dead before this AI took the seat: the god the match
+        // setup resolved from it tells the faction.
+        Seat s;seat(s,true,false);
+        s.w.player(0).godType=r("zongod");
+        ai::Controller controller(0,r.reg,r.profile,1,ai::Difficulty::Normal);
+        check(producers(think(controller,s.w,0))>0,"an AI taking a Zhon seat whose Monarch is dead knows the side by the seat's god");
+    }
+    {
+        // Controls: no captured builder; and nothing to tell the seat by (no
+        // Monarch seen, no god), where the builders' side is read as before.
+        Seat s;seat(s,false,true);
+        ai::Controller controller(0,r.reg,r.profile,1,ai::Difficulty::Normal);
+        think(controller,s.w,0);
+        s.w.unit(s.monarch)->deadFor=0;
+        check(producers(think(controller,s.w,30))>0,"a Zhon seat with no captured builder conjures producers after its Monarch as before");
+        Seat t;seat(t,true,false);
+        ai::Controller unknown(0,r.reg,r.profile,1,ai::Difficulty::Normal);
+        check(producers(think(unknown,t.w,0))==0,"with neither Monarch nor god to tell the seat by, the lowest-numbered builder's side is read");
+    }
+}
+
 // The audited defect itself, on the shipped data (Crusades balance): a Veruna
 // Catapult ordered onto a unit inside its minimum range walks out to fire. The
 // AI used to send the Attack again on every think of the walk, the sim's three
@@ -127,6 +222,7 @@ int main(int argc,char** argv) {
     }
     sim::TypeRegistry empty;ai::Profile profile;
     heldAttack(empty,profile);
+    seatSide();
     std::printf("%d failed\n",fails);
     return fails ? 1 : 0;
 }
