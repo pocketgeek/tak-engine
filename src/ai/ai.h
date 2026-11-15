@@ -180,7 +180,9 @@ struct Needs {
     std::unordered_map<const tak::sim::UnitType*, int> unfinished; // of counts, still under construction
     int   economyProjects = 0; // producers committed to income/storage construction
     int   lodestoneProjects = 0; // builders whose job is a lodestone (onMana), placed or queued
-    int   population = 0;      // includes construction and this think's planned units
+    int   population = 0;      // includes construction, and every unit ordered but not yet
+                               // begun (a factory's queue, a builder's build order)
+    int   lodestones = 0;      // income buildings (lodestones, Divine ones too), standing or ordered
     int   economy = 0;         // count: income/storage structures
     int   factories = 0;       // count: static or mobile production units
     int   navalFactories = 0;  // dedicated shipyards, including construction

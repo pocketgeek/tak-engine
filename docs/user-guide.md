@@ -445,6 +445,14 @@ buildings: its Beast Handlers, Tamers, Lords and Shamans conjure its army, so a
 Hard or Absurd Zhon keeps one of them for every 60 income in the same way, and a
 quarter more (two at least) for the ones away building lodestones.
 
+Hard and Absurd keep adding lodestones while their mana store has room. With
+the store 90% full they build none: more income would buy nothing. In a room
+with a **Unit cap** their lodestones take at most a quarter of it, and in the
+last twentieth of the cap they start no lodestone except the one they build
+when short of mana, so that a place freed at the cap goes to a fighter. Every
+level except Retail counts the units it has ordered but not yet started against
+the unit cap, so it does not send a builder to a site the cap will refuse.
+
 Every level except Easy and Retail upgrades its lodestones to divine lodestones
 once its base is full: when no free deposit within reach of home is left for a
 basic lodestone (a basic lodestone pays for itself in seconds, so it always
@@ -482,8 +490,9 @@ grows, up to the Monarch and four; Easy and Passive keep two. Defensive and Absu
 Defensive add one per 50 income with no ceiling. No other AI builds more of one
 builder type than its build profile allows. Zhon has no factory
 buildings, so its AI counts its Beast Handlers, Tamers, Lords and Shamans as
-both producers and builders. An AI whose mana store is nearly full keeps its
-builders building income rather than leaving them idle.
+both producers and builders. A Normal, Defensive or Absurdly Defensive AI whose
+mana store is nearly full keeps its builders building income rather than
+leaving them idle; Hard and Absurd add a factory instead.
 
 Every level except Retail keeps the ground in front of its factory doors clear:
 it does not build in front of a door, does not put a new factory where its door

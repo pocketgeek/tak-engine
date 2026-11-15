@@ -182,6 +182,11 @@ static bool mobileBuilder(const tak::sim::UnitType* t) {
     return t && !t->isStructure() && t->isBuilder;
 }
 
+// A building that pays mana: a lodestone, a Divine one, a sacred-site building.
+static bool incomeBuilding(const tak::sim::UnitType* t) {
+    return t && t->isStructure() && t->income > 0;
+}
+
 bool Controller::mobileProduction(const std::string& side) const {
     if (side.empty()) return false;
     auto [it,inserted]=mobileProduction_.try_emplace(side,true);
@@ -458,6 +463,7 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
         }
         ++n.population;
         ++n.counts[u.type];
+        if (incomeBuilding(u.type)) ++n.lodestones;
         if (u.underConstruction) ++n.unfinished[u.type];
         if (u.type->isStructure() && !tak::sim::World::lodestoneUpgradeBase(*u.type).empty()) {
             ++n.upgrades;
@@ -476,16 +482,22 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
             case BuildCat::Defense:  ++n.defenses; break;
         }
         if (mobileBuilder(u.type)) ++n.mobileBuilders;
-        // A builder trained or conjured but not yet begun is no unit yet: a
-        // factory's queue, or a producer walking to its conjuring spot. Count
-        // it, or every think hands the next idle producer one more builder.
+        // A unit ordered but not yet begun is no unit yet: a factory's queue, a
+        // builder walking to its site or conjuring spot. It will take a slot
+        // under the unit cap all the same, so it counts as population -- the
+        // sim refuses a site at the cap only when the builder gets there, and
+        // 873 such orders were walked to and dropped in one long game. Ours,
+        // not retail, whose planners order freely at the cap. A builder is
+        // counted by type as well, or every think hands the next idle producer
+        // one more builder.
         auto planned = [&](const tak::sim::UnitType* t) {
+            ++n.population;
             if (t->isStructure() && !tak::sim::World::lodestoneUpgradeBase(*t).empty()) {
                 ++n.upgrades;++n.upgradeProjects;
-            }
+            } else if (incomeBuilding(t)) ++n.lodestones;
             if (upgrader(t)) ++n.priests;
             if (!mobileBuilder(t)) return;
-            ++n.population;++n.counts[t];++n.mobileBuilders;
+            ++n.counts[t];++n.mobileBuilders;
             if (categoryOf(t) == BuildCat::Factory) ++n.factories; else ++n.builders;
         };
         for (size_t i = 0; i < u.buildQueue.size(); ++i)
@@ -587,8 +599,15 @@ int Controller::desire(BuildCat c, const Needs& n) const {
             // Bootstrap income BEFORE the pricey first factory -- building a 1700-mana
             // keep out of the opening treasury with no income starves everything after.
             if (n.income < 20.0f) return 95;
-            if (diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd)
+            if (diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd) {
+                // Their ladder never met an income target, so they bought
+                // lodestones beside a full store until those filled the unit
+                // cap (1,676 of one side's 2,000 units, its army 914 -> 186).
+                // A full store: income already goes unspent, and what holds
+                // production back is not mana.
+                if (n.storeFull) return 0;
                 return n.income < 25.0f + 20.0f * n.factories ? 80 : 60;
+            }
             if (n.income < 25.0f + 20.0f * n.factories) return 60;
             // A full store means the income target is not what holds production
             // back. Retail's builders draw from their whole menu, the lodestone
@@ -983,6 +1002,16 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
         // them while the navy and the rest of the army receive nothing.
         if (ut->onMana && ut->sacredIncome && !world.hasManaSpots()) return 0;
         if (categoryOf(ut)==BuildCat::Economy && ut->income<=0 && needs.income<20) return 0;
+        // A lodestone takes a unit-cap slot like any unit, and Hard and Absurd
+        // lift its profile limit (below). With a cap set they hold at most a
+        // quarter of it in income buildings, and start none in the last
+        // twentieth of it but the short-of-mana one, so that a slot freed at the
+        // cap goes to a fighter. Ours, not retail (a limit of 7 per type there).
+        if (aggressive && world.unitCap() > 0 && incomeBuilding(ut) && !divine(ut)) {
+            const int cap = world.unitCap();
+            if (needs.lodestones >= std::max(1, cap / 4) ||
+                (needs.population >= cap - cap / 20 && !triggered(ut))) return 0;
+        }
         auto li = profile_.limit.find(ut->id);
         int lim = li == profile_.limit.end() ? -1 : li->second;
         if (lim == 0) return 0;
@@ -3720,6 +3749,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                     if (navalFactory(pick)) ++needs.navalFactories;
                     if (navalProducer(pick)) ++needs.navalProducers;
                     if (pick->onMana && pick->isStructure()) ++needs.lodestoneProjects;
+                    if (incomeBuilding(pick) && tak::sim::World::lodestoneUpgradeBase(*pick).empty()) ++needs.lodestones;
                     if (mobileBuilder(pick)) ++needs.mobileBuilders;
                     if (!pick->isStructure() && !pick->canFly && !pick->isBuilder &&
                         pick->domain==tak::sim::UnitType::Domain::Water) ++needs.navalArmy;

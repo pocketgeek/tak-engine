@@ -154,6 +154,67 @@ static void shortOfManaLodestone(const Roster& r) {
     check(lodes(ai::Difficulty::Normal,10,false)==1,"Normal's short-of-mana lodestone is unchanged");
 }
 
+// A full store: more income buys nothing. Hard and Absurd then build no
+// lodestone; the builder is free for the next think.
+static void fullStore(const Roster& r) {
+    auto buildsLode=[&](ai::Difficulty difficulty,float mana) {
+        sim::World w;terrain(w);w.buildNavClasses(r.reg);
+        w.setManaSpots({{1216,816}});
+        w.player(0).storage=10000;w.player(0).mana=mana;w.player(0).income=300;
+        for (int i=0;i<6;++i) busy(w,w.spawn(r("arakeep"),400+float(i)*200,400,0,0),r("arasword"));
+        w.spawn(r("araminer"),1000,1000,0,0);
+        ai::Controller controller(0,r.reg,r.profile,1,difficulty);
+        return orders(think(controller,w),net::Cmd::Build,"aralode")==1;
+    };
+    for (auto level : {ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
+        check(buildsLode(level,5000),"Hard/Absurd keep adding lodestones while the store has room");
+        check(!buildsLode(level,9500),"Hard/Absurd build no lodestone beside a full store");
+    }
+}
+
+// With a unit cap set, lodestones take a quarter of it at most, none is started
+// in the last twentieth of it, and an order given but not yet a unit counts.
+static void unitCap(const Roster& r) {
+    // `lodes` lodestones standing, `army` swordsmen, then an idle miner beside a
+    // free deposit and an idle keep.
+    struct Result { int lodes,swords; };
+    auto room=[&](ai::Difficulty difficulty,int cap,int lodes,int army,bool queued) {
+        sim::World w;terrain(w);w.buildNavClasses(r.reg);
+        std::vector<std::pair<float,float>> spots{{1216,1408}};
+        for (int i=0;i<lodes;++i) spots.emplace_back(400+float(i%10)*128,3008+float(i/10)*128);
+        w.setManaSpots(spots);
+        w.setUnitCap(cap);
+        w.player(0).storage=40000;w.player(0).mana=8000;w.player(0).income=300;
+        w.spawn(r("araminer"),1000,1400,0,0);
+        w.spawn(r("arakeep"),800,800,0,0);
+        if (queued) {
+            // A second keep whose queued swordsman has not begun: no unit yet.
+            const int keep=w.spawn(r("arakeep"),1400,800,0,0);
+            w.unit(keep)->buildQueue.push_back(r("arasword"));
+        }
+        for (int i=0;i<lodes;++i) w.spawn(r("aralode"),spots[size_t(i)+1].first,spots[size_t(i)+1].second,0,0);
+        for (int i=0;i<army;++i) w.spawn(r("arasword"),2000+float(i%20)*40,2000+float(i/20)*40,0,0);
+        ai::Controller controller(0,r.reg,r.profile,1,difficulty);
+        const auto cs=think(controller,w);
+        return Result{orders(cs,net::Cmd::Build,"aralode"),orders(cs,net::Cmd::Train,"arasword")};
+    };
+    for (auto level : {ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
+        check(room(level,40,9,5,false).lodes==1,"below a quarter of the cap a lodestone is still built");
+        check(room(level,40,10,5,false).lodes==0,"lodestones stop at a quarter of the unit cap");
+        check(room(level,0,10,5,false).lodes==1,"with no unit cap the lodestones have no share to keep to");
+        // 38 of 40: two slots left. The miner comes first in unit order.
+        const auto last=room(level,40,2,34,false);
+        check(last.lodes==0 && last.swords==1,"the last slots under the cap go to fighters, not lodestones");
+        check(room(level,40,2,33,false).lodes==1,"before the last twentieth of the cap a lodestone is still built");
+    }
+    // 39 of 40, and one more swordsman queued: the cap is spoken for.
+    for (auto level : {ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd,ai::Difficulty::Defensive}) {
+        const auto full=room(level,40,0,36,true);
+        check(full.swords==0 && full.lodes==0,"an order not yet begun counts against the unit cap");
+        check(room(level,40,0,35,true).swords==1,"... and one slot below it a fighter is still trained");
+    }
+}
+
 // Zhon's handlers are its factories, and conjure all the time they are not away
 // at a lodestone: Hard and Absurd keep as many as their income feeds (one per 60)
 // and a quarter more for the ones away, not another side's whole builder
@@ -179,6 +240,8 @@ int main() {
     const Roster roster;
     factoryTarget(roster);
     shortOfManaLodestone(roster);
+    fullStore(roster);
+    unitCap(roster);
     zhonAllowance(roster);
     std::printf("%s (%d failed)\n",fails ? "FAILED" : "OK",fails);
     return fails ? 1 : 0;
