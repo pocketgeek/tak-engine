@@ -3914,6 +3914,20 @@ and a shot off the map is retired on the spot as past any other edge. The
 weapons' aim arithmetic (the lead, the aim angles) is retail's too: it only
 leaves the range for a target 32,768 px or more away.
 
+Not bounded: the room past the west and north edges. On their attack missions
+the shipped flyers get about 1,400 px past an edge at most before they are
+turned back (1,014 px past the west edge in the first 72,000 ticks of the
+recorded game). A Move or a patrol point is kept as given, though, and World's
+VTOL_Move has not the off-map return retail's begins with (`417c38`, read in
+the icd, not ported): a flyer ordered to a point far past those edges flies
+there and stays, and the spatial hash, which is sized by the units, grows with
+it (over 1,000 cells a side for a flyer 30,000 px past both edges of a
+256-cell map, whose own side is 131). No click gives such a point: the camera
+stops at the map's edges, and a flyer group's spread adds at most
+sqrt(3000 n) px, 548 px for a hundred flyers. The computer players gave none
+in the recorded game (212,049 point orders, all on the map). Only a hand-made
+command can, as the wire accepts any finite point.
+
 `map_edge_test` covers it on constructed 2048-cell worlds: the arithmetic; the
 ports' points and the navigator's steering; the reach test and the level aim
 at 42,000 px; guards, patrols and a move at the east and south edges and the
