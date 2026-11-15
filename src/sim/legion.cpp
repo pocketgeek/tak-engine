@@ -3584,8 +3584,12 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // Cells the goal searches below visited (scratch for registerMove's accounting; never hashed).
     // nearestLegal charges a ring its whole perimeter (8r), as the unclipped walk
     // did, from the first ring that touches the map to the one the search ends
-    // on: for a goal on the map exactly the old charge (registerCharged spends
-    // it from the registration budget, so it must not move).
+    // on. For a goal on the map that is the old charge (registerCharged spends
+    // it from the registration budget, so it must not move): `reach` is always
+    // the component of the unit's own legal origin, which lies in the box, so
+    // the search ends on a ring that holds an answer, as the unclipped walk
+    // did. (A component with no origin would stop at the box and be charged
+    // less than that walk's every ring.)
     mutable uint64_t searchCells=0;
     int nearestLegal(const Plane& p,int x,int z,int reach=-1) const {
         if(legal(p,x,z))return z*width()+x;

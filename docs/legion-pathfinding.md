@@ -215,9 +215,13 @@ start component's bounding box (as `nearestReachable` does). A goal off the map 
 and a ground unit may be sent after a flyer that is off the map) starts at its Chebyshev distance to the map, and
 the search stops once no ring can reach the box. The answers are the same as the full walk's. That walk tested
 every cell of every ring: for a goal 2048 cells or more off a 2048-cell map, 16.8 million cells (12 ms) to find
-nothing, each time it was asked. The registration budget is still charged a ring's whole perimeter (8r units), from
-the first ring that touches the map to the one the search ends on, which for a goal on the map is exactly what the
-full walk charged (`map_edge_test`).
+nothing, each time it was asked (`map_edge_test`). The registration budget is still charged a ring's whole perimeter
+(8r units), from the first ring that touches the map to the one the search ends on. For a goal on the map that is
+what the full walk charged, because both end on the same ring: past the 24 cells the search is only ever asked for
+the component of the unit's own legal origin, and that origin lies in the component's box, so a ring that holds an
+answer comes before the box runs out. (A component with no origin, which no caller asks for, would end at the box
+and be charged less than the full walk's every ring.) A goal off the map is charged less than it was: the rings that
+lie wholly off the map are free.
 
 **Nearest reachable approach.** If the resolved goal lies in a different static component from the unit, and the
 unit's own component has at least 256 origins (`kApproachRegion`), the unit becomes an **approach member**. Its goal
