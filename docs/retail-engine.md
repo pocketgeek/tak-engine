@@ -4707,6 +4707,15 @@ Ours, not retail:
   approach failed within reach, 0x200, hemmed in on the site) starts its
   approach again on the first failed try and every fifth after it, instead of
   waiting where nothing would ever move it. The tries still count to 31.
+- On a conjured unit's site each such new approach also clears the conjurer's
+  way off the site (`clearSiteExit`): the player's idle units on one cell of
+  the rectangle's perimeter step aside as they would from the site. They stand
+  beside the site, not on it, so `clearBuildSite` never asks them, and a
+  conjurer ordered to conjure a unit of its own size where it stood, with its
+  player's idle units all round it, lost the order after the 31 tries. The
+  cell is the nearest the conjurer can stand on with no body on it that would
+  not step aside, the controller's own (`navigationCell`) first. Bodies that
+  do not step aside all round it still end the order.
 - The computer player's ring search round a conjurer
   (`ai::Controller::produce`) tests `canPlaceSite` at the site each ring point
   snaps to, counting the conjurer; its site search (`placeSite`) and the
@@ -4718,7 +4727,8 @@ Ours, not retail:
 `conjure_site_test` (both pathfinding modes) covers every site round an idle
 Beast Lord, Beast Handler, Beast Tamer and flying monarch, a second conjurer
 at work or arriving, standing units of the player and of another, a conjurer
-among idle units, and the computer player's picks.
+among idle units, one hemmed in by its player's idle units and by another
+player's, and the computer player's picks.
 
 **Room for the next output (a deliberate deviation).** A mobile producer's exit
 step carries an output out of the 12-cell area its next output may be made in.

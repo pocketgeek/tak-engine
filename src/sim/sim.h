@@ -3540,6 +3540,10 @@ private:
     // able to move and idle or guarding (its guard resumes afterwards).
     bool yieldsToSite(const Unit& k, int player) const;
     void clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, Fixed z);
+    // A conjurer standing on its own site walks to the site's edge first:
+    // the player's idle units on the perimeter cell it can step to, beside
+    // the site and so not clearBuildSite's, make room the same way.
+    void clearSiteExit(const Unit& builder, const RetailRectGoal& rectangle);
     // A mobile producer with a rally has no room for its next output: one idle
     // unit walks out of the area the output may be made in. (x,z) is a scripted
     // producer's pad; the unscripted search has no point of its own.

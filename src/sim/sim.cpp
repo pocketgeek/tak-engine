@@ -13591,6 +13591,33 @@ void World::clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, F
     }
 }
 
+// Ours, with clearBuildSite: a conjurer standing on its own site steps to the
+// site's edge before the site can go down (World::tick's re-approach). Hemmed
+// in there by its player's idle units it never could: they stand beside the
+// site, not on it, so clearBuildSite leaves them where they are, and the
+// order was given up after the 31 tries. They leave one cell of the site's
+// perimeter (`rectangle`: the conjurer's origins round the site) the same
+// way: the nearest the conjurer can stand on with no body on it that would
+// not step aside, the controller's own cell (navigationCell) before another
+// as near.
+void World::clearSiteExit(const Unit& builder, const RetailRectGoal& rectangle) {
+    const int fx=builder.type->footX,fz=builder.type->footZ;
+    const int bx=footprintOrigin(builder.x,fx),bz=footprintOrigin(builder.z,fz);
+    int bestX=0,bestZ=0;int64_t best=-1;
+    const auto consider=[&](int x,int z) {
+        const int64_t d=int64_t(x-bx)*(x-bx)+int64_t(z-bz)*(z-bz);
+        if ((best>=0 && d>=best) || !passable(builder.type,x+fx/2,z+fz/2)) return;
+        const auto bodies=searchBodyRect(x,z,fx,fz,builder.id);
+        if (std::any_of(bodies.cells.begin(),bodies.cells.end(),
+                        [&](const Unit* k){return k && !yieldsToSite(*k,builder.player);})) return;
+        best=d;bestX=x;bestZ=z;
+    };
+    const auto [nx,nz]=rectangle.navigationCell(bx,bz);
+    consider(nx,nz);
+    rectangle.enumerate([&](int16_t x,int16_t z){consider(x,z);});
+    if (best>=0) clearBuildSite(builder,builder.type,Fixed::fromInt(bestX*16+fx*8),Fixed::fromInt(bestZ*16+fz*8));
+}
+
 // A flyer's guard: VTOL_Follow (0x418860, emulated), the guard mission of
 // every flyer (the order dispatch 0x4de530 picks it by canfly alone, armed
 // or builder). Each look:
@@ -20928,6 +20955,9 @@ void World::tick(float dt) {
                             if (bx>rectangle.minX && bx<rectangle.maxX && bz>rectangle.minZ && bz<rectangle.maxZ) {
                                 order.buildRectangle=rectangle;
                                 order.mission.stage=0;
+                                // A conjurer's way off its site: the player's
+                                // idle units beside the site make room too.
+                                if (!order.buildType->isStructure()) clearSiteExit(builder,rectangle);
                             }
                         }
                     } else popBuildOrder(builder);

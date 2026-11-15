@@ -942,10 +942,11 @@ be conjured right beside the conjurer or any other unit, and never on top of
 one. The conjurer never blocks its own spot. Order a unit on or beside the
 conjurer and it first steps to the edge of the spot, as it walks up to any
 site (the original game's cursor refuses a spot the conjurer stands on). If
-other units hem it in on the spot, it waits and tries to walk off again while
-yours make room; after about ten seconds (up to half a minute under
-[Legion](#legion) pathfinding) it gives the order up, as for any blocked
-site. A mobile
+your own idle units hem it in on the spot, one of them steps aside to let it
+out. If units that will not make way hem it in (another player's, or yours
+that are busy), it waits and tries to walk off again; after about ten seconds
+(up to half a minute under [Legion](#legion) pathfinding) it gives the order
+up, as for any blocked site. A mobile
 builder running infinite production treats **Move**, **Patrol**, **Attack**
 and **fight-move** as rally orders for its output, just like a production
 building (the builder itself stays put and keeps producing); **Shift** adds

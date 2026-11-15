@@ -24,7 +24,10 @@
 //    another player's (it does not): the finished unit shares no cell with it;
 //  - the conjurer among its player's idle units, ordered to conjure where it
 //    stands: it walks off its own site, round them or after they made room;
-//  - the conjurer hemmed in by another player's units: the order still ends;
+//  - the conjurer hemmed in on a site of its own size by its player's idle
+//    units, none of them on the site: one makes room and the unit is conjured,
+//    also with another player's unit on the side the conjurer would take; by
+//    another player's units all round: the order still ends;
 //  - the computer player's own ring pick (ai::Controller), for the conjurer
 //    standing at different places inside a cell: every order is placed.
 // Each order is also compared with the build cursor's test (canPlaceOrder).
@@ -281,22 +284,30 @@ void crowdedConjurer(const sim::TypeRegistry& registry,bool legion) {
           "zonlord among its player's idle units conjures zonorc where it stands",t.text());
 }
 
-// Another player's units stand all round the conjurer, which is ordered to
-// conjure a unit of its own size where it stands. It cannot leave the site
-// and they do not move: the order is taken (nothing but the conjurer is on
-// the site) and must still end, given up after the 31 tries, not held.
-void hemmedConjurer(const sim::TypeRegistry& registry,bool legion) {
+// Units stand all round the conjurer (`foreign`: which of kRound are another
+// player's), which is ordered to conjure a unit of its own size where it
+// stands: nothing but the conjurer is on the site, so the order is taken, and
+// the conjurer cannot leave the site. Its player's idle units are not on the
+// site, so the site never asks them to leave: one makes room on a cell the
+// conjurer can step to and the unit is conjured, also when another player's
+// unit stands on the cell it would take first (kRound[0], on its left).
+// Another player's do not move: with them all round it the order must still
+// end, given up after the 31 tries, not held.
+void hemmedConjurer(const sim::TypeRegistry& registry,bool legion,int foreign) {
     const auto* builder=registry.find("zonhand");const auto* type=registry.find("zontroll");
     if(!builder || !type) {check(false,"shipped types of the hemmed-in case");return;}
     sim::World w;setup(w,registry,legion);
     w.setTeam(1,0);
     const int id=w.spawn(builder,768,768,std::nullopt,0);
-    for(const auto& at:kRound)w.spawn(type,float(768+at[0]),float(768+at[1]),std::nullopt,1);
+    for(int k=0;k<8;++k)w.spawn(type,float(768+kRound[k][0]),float(768+kRound[k][1]),std::nullopt,foreign>>k&1);
     for(int tick=0;tick<3;++tick)w.tick(1.f/30);
     Outcome o;
     if(build(w,registry,id,*type,768,768))o=follow(w,id,*type,1500);
-    check(o.accepted && (o.placed>=0 || o.dropped>=0) && !o.shared,
-          "a conjurer hemmed in on its own site by another player's units: the order ends",
+    const bool room=foreign!=255;
+    check(o.accepted && (room ? o.placed>=0 : o.placed>=0 || o.dropped>=0) && !o.shared,
+          std::string("a conjurer hemmed in on its own site by ")+
+          (foreign==0?"its player's idle units":room?"its player's idle units and one of another player's":"another player's units")+
+          (room?": one makes room and the unit is conjured":": the order ends"),
           !o.accepted?"refused":o.placed>=0?"placed at tick "+std::to_string(o.placed):
           o.dropped>=0?"given up at tick "+std::to_string(o.dropped):"still held after 1500 ticks");
 }
@@ -359,7 +370,9 @@ int main(int argc,char** argv) {
     standingUnit(registry,legion,"zonhand","zontroll","zongiant",false);
     standingUnit(registry,legion,"zonlord","zonorc","zongiant",false);
     crowdedConjurer(registry,legion);
-    hemmedConjurer(registry,legion);
+    hemmedConjurer(registry,legion,0);
+    hemmedConjurer(registry,legion,1);
+    hemmedConjurer(registry,legion,255);
     aiRing(registry,legion,"zonorc",8);
     aiRing(registry,legion,"zonroc",8);
     check(cursorDiffers==0,"the build cursor's test and the order agree on every click",
