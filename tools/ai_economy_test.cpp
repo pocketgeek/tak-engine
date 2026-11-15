@@ -21,12 +21,20 @@ static void terrain(sim::World& w) {
     w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
     w.setRoomVision(true,false);
 }
+// The sim's per-player sight for the units as they stand, on a world past its
+// first tick (before it our levels see nothing: Controller::updateKnowledge).
+static void sight(sim::World& w) {w.updateNavigationExploration();w.resumeClocks(1,w.gameRngState());}
 static std::vector<net::Command> think(ai::Controller& ai,sim::World& w,uint32_t tick=0) {
     std::vector<net::Command> out;ai.tick(w,tick,[&](const auto& c){out.push_back(c);});
     return out;
 }
 static int orders(const std::vector<net::Command>& cs,net::Cmd kind,const char* type) {
     return int(std::count_if(cs.begin(),cs.end(),[&](const auto& c){return c.kind==kind && std::string(c.type)==type;}));
+}
+// The first Build order for `type` (a copy: the commands may be a temporary).
+static std::optional<net::Command> build(const std::vector<net::Command>& cs,const char* type) {
+    const auto it=std::find_if(cs.begin(),cs.end(),[&](const auto& c){return c.kind==net::Cmd::Build && std::string(c.type)==type;});
+    return it==cs.end() ? std::nullopt : std::optional<net::Command>(*it);
 }
 // A producer that already has work, which the AI leaves alone: a factory with
 // a unit queued, a mobile builder with a build order.
@@ -215,6 +223,86 @@ static void unitCap(const Roster& r) {
     }
 }
 
+// Hard and Absurd reach the whole map for deposits, but not one beside armed
+// enemies they know of, nor inside the base of an enemy still there, nor where
+// they just lost a site or the builder walking to it.
+static void safeDeposits(const Roster& r) {
+    // The miner at (2000,1000): deposit A 200 px east of it, B 600 px west.
+    const float ax=2208,az=1008,bx=1408,bz=1008;
+    auto world=[&](sim::World& w,int& miner,float income=300) {
+        terrain(w);w.buildNavClasses(r.reg);
+        w.setManaSpots({{ax,az},{bx,bz}});
+        w.player(0).storage=10000;w.player(0).mana=3000;w.player(0).income=income;
+        w.spawn(r("arakeep"),1800,1800,0,0);
+        miner=w.spawn(r("araminer"),2000,1000,0,0);
+    };
+    for (auto level : {ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
+        {
+            sim::World w;int miner=0;world(w,miner);sight(w);
+            ai::Controller controller(0,r.reg,r.profile,1,level);
+            auto order=build(think(controller,w,40),"aralode");
+            check(order && order->x==ax,"a builder takes the nearest free deposit");
+        }
+        {
+            // An enemy swordsman 150 px from A, in the miner's sight.
+            sim::World w;int miner=0;world(w,miner);
+            w.spawn(r("arasword"),ax+150,az,0,1);w.setTeam(1,1);sight(w);
+            ai::Controller controller(0,r.reg,r.profile,1,level);
+            auto order=build(think(controller,w,40),"aralode");
+            check(order && order->x==bx,"a deposit beside an armed enemy in sight is passed over");
+        }
+        {
+            // An enemy that may still be at its start, 600 px beyond A.
+            sim::World w;int miner=0;world(w,miner);sight(w);
+            ai::Controller controller(0,r.reg,r.profile,1,level,{{ax+600,az}});
+            auto order=build(think(controller,w,40),"aralode");
+            check(order && order->x==bx,"a deposit inside an enemy's base is passed over");
+        }
+        {
+            // A site of ours on A is destroyed before it is finished.
+            sim::World w;int miner=0;world(w,miner);
+            busy(w,miner,r("aralode"));
+            const int site=w.spawn(r("aralode"),ax,az,0,0);w.unit(site)->underConstruction=true;
+            sight(w);
+            ai::Controller controller(0,r.reg,r.profile,1,level);
+            think(controller,w,40);
+            auto& dead=*w.unit(site);dead.hp={};dead.deadFor=1;w.blockFoot(*dead.type,ax,az,false);
+            w.unit(miner)->orders.clear();
+            auto order=build(think(controller,w,80),"aralode");
+            check(order && order->x==bx,"a deposit whose site was destroyed unfinished is left alone for a while");
+            w.unit(miner)->orders.clear();
+            order=build(think(controller,w,80+6*60*30),"aralode");
+            check(order && order->x==ax,"... and tried again five minutes later");
+        }
+        {
+            // The builder walking to A is killed on the way.
+            sim::World w;int miner=0;world(w,miner);
+            const int second=w.spawn(r("araminer"),2000,1100,0,0);
+            busy(w,second,r("arasword"));
+            sight(w);
+            ai::Controller controller(0,r.reg,r.profile,1,level);
+            auto cs=think(controller,w,40);
+            auto order=build(cs,"aralode");
+            const bool sent=order && order->unitId==miner && order->x==ax;
+            for (const auto& c:cs) sim::applyCommand(w,r.reg,c);
+            think(controller,w,60);   // the order is in the world: the trip is noted
+            auto& dead=*w.unit(miner);dead.hp={};dead.deadFor=1;
+            w.unit(second)->orders.clear();
+            order=build(think(controller,w,80),"aralode");
+            check(sent && order && order->unitId==second && order->x==bx,
+                  "a deposit whose builder was killed on the way is left alone for a while");
+        }
+    }
+    {
+        // Normal's reach and rules are its own: unchanged (income 30: it wants a lodestone).
+        sim::World w;int miner=0;world(w,miner,30);
+        w.spawn(r("arasword"),ax+150,az,0,1);w.setTeam(1,1);sight(w);
+        ai::Controller controller(0,r.reg,r.profile,1,ai::Difficulty::Normal);
+        auto order=build(think(controller,w,30),"aralode");
+        check(order && order->x==ax,"Normal's deposit choice is unchanged");
+    }
+}
+
 // Zhon's handlers are its factories, and conjure all the time they are not away
 // at a lodestone: Hard and Absurd keep as many as their income feeds (one per 60)
 // and a quarter more for the ones away, not another side's whole builder
@@ -236,13 +324,41 @@ static void zhonAllowance(const Roster& r) {
     }
 }
 
+// Zhon's handlers are its factories: few leave for a lodestone at a time, and
+// none crosses to the enemy's side of the map for one.
+static void zhonProducers(const Roster& r) {
+    // `handlers` idle handlers at home with four goblins each already standing
+    // (past the opening army); deposits near home, or on the far side of the
+    // map, where the enemy starts. `builder` swaps them for another side's miners.
+    auto lodes=[&](ai::Difficulty difficulty,int handlers,bool nearHome,const char* builder="zonhand") {
+        sim::World w;terrain(w);w.buildNavClasses(r.reg);
+        std::vector<std::pair<float,float>> spots;
+        for (int i=0;i<20;++i) spots.emplace_back((nearHome ? 416.f : 2816.f)+float(i%5)*160,(nearHome ? 1616.f : 2416.f)+float(i/5)*160);
+        w.setManaSpots(spots);
+        w.player(0).storage=40000;w.player(0).mana=8000;w.player(0).income=2000;
+        for (int i=0;i<handlers;++i) w.spawn(r(builder),600+float(i%8)*60,600+float(i/8)*60,0,0);
+        if (std::string(builder)!="zonhand") busy(w,w.spawn(r("arakeep"),400,400,0,0),r("arasword"));
+        for (int i=0;i<handlers*4;++i) w.spawn(r("zongob"),1600+float(i%16)*40,400+float(i/16)*40,0,0);
+        ai::Controller controller(0,r.reg,r.profile,1,difficulty,{{3600,3600}});
+        return orders(think(controller,w),net::Cmd::Build,std::string(builder)=="zonhand" ? "zonlode" : "aralode");
+    };
+    for (auto level : {ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
+        check(lodes(level,16,true)==4,"a quarter of Zhon's producers (two at least) are out on lodestones at a time");
+        check(lodes(level,6,true)==2,"... two of six");
+        check(lodes(level,16,false)==0,"Zhon's producers take no deposit on the enemy's side of the map");
+        check(lodes(level,1,false,"araminer")==1,"a constructor of a side with factory buildings still crosses the map");
+    }
+}
+
 int main() {
     const Roster roster;
     factoryTarget(roster);
     shortOfManaLodestone(roster);
     fullStore(roster);
     unitCap(roster);
+    safeDeposits(roster);
     zhonAllowance(roster);
+    zhonProducers(roster);
     std::printf("%s (%d failed)\n",fails ? "FAILED" : "OK",fails);
     return fails ? 1 : 0;
 }

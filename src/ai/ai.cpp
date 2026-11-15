@@ -982,9 +982,13 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
         if (mobileFactory && needs.income >= 20 && value > 0) {
             // Zhon's factories can ALSO build economy. Keep them producing an
             // opening force instead of sending every handler off to a lodestone.
+            // Hard and Absurd once kept half of them out on lodestones, anywhere on
+            // the map: a side lost 1,099 producers in 165 minutes, its army pinned
+            // at three per producer beside a full store. A quarter now, on safe
+            // deposits on their own side (placeSite), none beside a full store.
             if (cat == BuildCat::Army && needs.army < std::max(4, needs.factories * 3)) return 85;
             if (cat == BuildCat::Economy && needs.economyProjects >=
-                (aggressive ? std::max(2,needs.factories/2) : std::max(1,needs.factories/3))) return 40;
+                (aggressive ? producersOut(needs.factories) : std::max(1,needs.factories/3))) return 40;
         }
         return value;
     };
@@ -1333,6 +1337,12 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
             }
     const bool factory=!registry_.buildable(t->id).empty();
     const auto* launches=naval ? &navalLaunchOffsets(t) : nullptr;
+    // Zhon's producers are its factories as well as its lodestone builders. At
+    // Hard and Absurd, whose reach is the whole map, they went from deposit to
+    // deposit until they stood in enemy bases (median 12,000 px from home, median
+    // life 5.1 minutes): they take deposits on their own side of the map only.
+    const bool producerTrip=!builder.type->commander && categoryOf(builder.type)==BuildCat::Factory &&
+        mobileProduction(builder.type->side);
     // The Defensive AI does not send a builder into a fight: a site with a spotted
     // (sees), armed enemy within kFightRadius waits until the defenders have cleared it.
     constexpr float kFightRadius=400;
@@ -1407,6 +1417,19 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
     auto usable=[&](float x,float z) {
         const float dx=x-home.first,dz=z-home.second;
         if (dx*dx+dz*dz>radius*radius || !knowsGround(world,x,z)) return false;
+        if (aggressive && t->onMana && t->isStructure()) {
+            // Hard's and Absurd's reach is the whole map: not a deposit inside the
+            // base of an enemy who may still be there (its home deposits: within
+            // kEnemyBase of its start and nearer it than our home) -- for a
+            // producer, none on that enemy's side at all (enemySide) -- nor an
+            // unsafe one. Before the placement test, which is the costly one and
+            // would learn what stands on a deposit no builder is sent to.
+            const float own=dx*dx+dz*dz;
+            if (std::any_of(enemyStarts_.begin(),enemyStarts_.end(),[&](const auto& e) {
+                    const float ex=e.first-x,ez=e.second-z,d=ex*ex+ez*ez;
+                    return d<own && (producerTrip || d<kEnemyBase*kEnemyBase); }) ||
+                unsafeDeposit(x,z)) return false;
+        }
         if (!world.canPlaceSite(t,x,z,player_)) { learnSiteBlockers(world,t,x,z); return false; }
         if (dx*dx+dz*dz>ownRadius*ownRadius && enemySide(x,z,home.first,home.second)) return false;
         if (std::any_of(refusedSites_.begin(),refusedSites_.end(),[&](const RefusedSite& r) {
@@ -2148,6 +2171,42 @@ bool Controller::stalledBuilder(int unitId) const {
     return progress!=builderProgress_.end() && progress->second.stalled;
 }
 
+// Hard and Absurd remember where a lodestone was lost before it stood: a site of
+// ours destroyed unfinished, or the builder bound for the deposit killed. That
+// deposit is unsafe for kLostSiteTicks (unsafeDeposit). Without it the next think
+// sent the next builder to the same deposit, still the nearest free one: 526
+// orders within five seconds of the last at one spot in one game, and a flying
+// builder re-placed one site 49 times under an enemy that killed each.
+void Controller::updateLostSites(const tak::sim::World& world) {
+    std::erase_if(lostSites_,[&](const LostSite& l){return l.until<=now_;});
+    auto lost=[&](const std::pair<float,float>& site) {
+        for (auto& l:lostSites_)
+            if (l.x==site.first && l.z==site.second) { l.until=now_+kLostSiteTicks; return; }
+        lostSites_.push_back({site.first,site.second,now_+kLostSiteTicks});
+    };
+    for (const auto* watched:{&lodestoneSites_,&lodestoneTrips_})
+        for (const auto& [id,site]:*watched) {
+            const auto* u=world.unit(id);
+            if (!u || !u->alive()) lost(site);
+        }
+    lodestoneSites_.clear();
+    lodestoneTrips_.clear();
+    for (const auto& u:world.units()) {
+        if (!u.alive() || u.player!=player_ || !u.type) continue;
+        if (u.type->isStructure()) {
+            if (u.underConstruction && u.type->onMana) lodestoneSites_[u.id]={u.x.toFloat(),u.z.toFloat()};
+            continue;
+        }
+        if (!u.type->isBuilder) continue;
+        for (const auto& order:u.orders)
+            if (order.buildType && order.buildType->onMana && order.buildType->isStructure() &&
+                (order.buildX.v || order.buildZ.v)) {
+                lodestoneTrips_[u.id]={order.buildX.toFloat(),order.buildZ.toFloat()};
+                break;
+            }
+    }
+}
+
 void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& sink) {
     constexpr float kHomeRadius = 900, kSiteRadius = 400;
     // An enemy shooting into the territory from outside it is answered out to this
@@ -2626,6 +2685,42 @@ void Controller::forDepositsNear(const tak::sim::World& world, float x, float z,
                 if (dx * dx + dz * dz < r * r) fn(size_t(it->second));
             }
         }
+}
+
+bool Controller::unsafeDeposit(float x, float z) const {
+    constexpr float kSameDeposit = 32;
+    if (std::any_of(lostSites_.begin(), lostSites_.end(), [&](const LostSite& l) {
+            const float dx = l.x - x, dz = l.z - z; return dx * dx + dz * dz < kSameDeposit * kSameDeposit; }))
+        return true;
+    if (threatsAt_ != now_) {
+        threatsAt_ = now_;
+        threats_.clear();
+        for (const auto& [id, k] : knowledge_) {
+            if (k.unfinished || (k.type->weapon.damage <= 0 && !k.type->weapon.mindControl &&
+                std::none_of(k.type->weapons.begin(), k.type->weapons.end(),
+                             [](const auto& w) { return w.damage > 0 || w.mindControl; }))) continue;
+            // No reach past two cells: the search below looks no farther.
+            const float reach = std::max(float(k.type->weapon.range), k.type->maxRange()) + 64;
+            threats_.emplace_back(gridKey(int(std::floor(k.x / kThreatCell)), int(std::floor(k.z / kThreatCell))),
+                                  Threat{k.x, k.z, std::clamp(reach, kThreatRadius, float(kThreatCell) * 2)});
+        }
+        // knowledge_ is in unit-id order; the stable sort keeps it within a cell.
+        std::stable_sort(threats_.begin(), threats_.end(),
+                         [](const auto& a, const auto& b) { return a.first < b.first; });
+    }
+    if (threats_.empty()) return false;
+    const int cx = int(std::floor(x / kThreatCell)), cz = int(std::floor(z / kThreatCell));
+    for (int gz = cz - 2; gz <= cz + 2; ++gz)
+        for (int gx = cx - 2; gx <= cx + 2; ++gx) {
+            const int64_t key = gridKey(gx, gz);
+            auto it = std::lower_bound(threats_.begin(), threats_.end(), key,
+                                       [](const auto& entry, int64_t k) { return entry.first < k; });
+            for (; it != threats_.end() && it->first == key; ++it) {
+                const float dx = it->second.x - x, dz = it->second.z - z;
+                if (dx * dx + dz * dz <= it->second.r * it->second.r) return true;
+            }
+        }
+    return false;
 }
 
 // A site the real placement test refused (World::canPlace: everything there, in
@@ -3596,6 +3691,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
             }
     }
     if (world.hasManaSpots()) updateBuilderProgress(world,simTick,sink);
+    if (world.hasManaSpots() && (diff_==Difficulty::Hard || diff_==Difficulty::Absurd)) updateLostSites(world);
     // A builder of ours bound for a deposit this side now holds taken -- an enemy
     // lodestone seen there on the way, or learned -- is stopped and given another
     // site from the next think, as a player who sees the spot taken would.

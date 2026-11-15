@@ -453,6 +453,16 @@ when short of mana, so that a place freed at the cap goes to a fighter. Every
 level except Retail counts the units it has ordered but not yet started against
 the unit cap, so it does not send a builder to a site the cap will refuse.
 
+Hard and Absurd take mana deposits anywhere on the map, except unsafe ones: a
+deposit within reach of an armed enemy they know of (in sight now, or
+remembered), a deposit inside the base of an enemy who may still be there
+(within 1,000 pixels of that enemy's start and nearer it than their own home),
+and, for five minutes, a deposit where their lodestone was destroyed before it
+was finished or the builder on its way there was killed. A Hard or Absurd Zhon
+keeps its producers, which are its builders too, on its own side of the map
+(deposits nearer its home than any enemy's start) and sends at most a quarter
+of them (two at least) to build lodestones at a time.
+
 Every level except Easy and Retail upgrades its lodestones to divine lodestones
 once its base is full: when no free deposit within reach of home is left for a
 basic lodestone (a basic lodestone pays for itself in seconds, so it always

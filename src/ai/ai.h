@@ -668,6 +668,30 @@ private:
     std::vector<StalledSite> stalledSites_;
     void updateBuilderProgress(const tak::sim::World&, uint32_t simTick, const CommandSink&);
     bool stalledBuilder(int unitId) const;
+    // Hard's and Absurd's builders reach the whole map for deposits (placeSite).
+    // Ours, not retail, whose AI builds only inside its bases. A deposit is not
+    // safe for them, and is passed over:
+    //  - within kEnemyBase of a start an enemy may still hold (enemyStarts_),
+    //    when nearer that start than home (placeSite tests this one);
+    //  - within reach of an armed enemy this side knows of (knowledge_: in sight
+    //    now, or remembered): its weapon range and 64 px, kThreatRadius at least;
+    //  - for kLostSiteTicks after a lodestone site of ours on it was destroyed
+    //    unfinished, or the builder bound for it was killed (lostSites_).
+    // unsafeDeposit answers the last two; the known armed enemies are bucketed
+    // once per think, on first use.
+    static constexpr float kEnemyBase = 1000, kThreatRadius = 400;
+    static constexpr uint32_t kLostSiteTicks = 5 * 60 * 30;
+    static constexpr int kThreatCell = 512;
+    struct Threat { float x, z, r; };
+    mutable std::vector<std::pair<int64_t, Threat>> threats_;
+    mutable uint32_t threatsAt_ = UINT32_MAX;   // the think threats_ was gathered for
+    bool unsafeDeposit(float x, float z) const;
+    struct LostSite { float x, z; uint32_t until; };
+    std::vector<LostSite> lostSites_;
+    // Own unfinished lodestone sites, and own builders with a lodestone order,
+    // as of the last think: unit id -> the deposit.
+    std::map<int, std::pair<float, float>> lodestoneSites_, lodestoneTrips_;
+    void updateLostSites(const tak::sim::World&);
     bool buildsLodestone(const tak::sim::UnitType*) const;
     mutable std::unordered_map<const tak::sim::UnitType*,bool> lodestoneBuilders_;
     struct DefenseResponse {

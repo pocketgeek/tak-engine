@@ -525,7 +525,7 @@ centre, radius, counts, firepower, shot cost, draw, busy-deposit test and placer
 | 11 | Event clocks: base rand(30)+15, strike rand(60)+15, backup 150, VTOL rand(30)+15 | a fixed thinkPeriod of 20/30/90 | different |
 | 12 | Base anchored at the start location; scatter around it | ring search around the builder/home | **different** |
 | 13 | Block-grid random scatter, towers ring the base, deposits never covered | deterministic ring search r = 70..340 step 30, 48 px lanes | **different** |
-| 14 | Lodestone = nearest free deposit to the base centre within R (560/800) | nearest to the builder; reservations, ally rule, stall bans | different |
+| 14 | Lodestone = nearest free deposit to the base centre within R (560/800) | nearest to the builder; reservations, ally rule, stall bans; Hard and Absurd (whole-map reach) pass over unsafe deposits: beside a known armed enemy, in an enemy's base, where a site or its builder was just lost; Zhon's producers stay on their own side | different |
 | 15 | Factory: one queued unit, deferral of expensive units | producersPerThink round-robin, Train | different |
 | 16 | Constructor: Monarch builds only while builders < p1 and past the alarm | Monarch always builds | **missing** |
 | 17 | Monarch alarm on hit (30..927 ticks build pause) | none | **missing** |

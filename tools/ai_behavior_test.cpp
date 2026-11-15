@@ -2996,7 +2996,9 @@ int main(int argc,char** argv) {
                 auto king=*reg.find("araking");king.commander=false; // expansion builder using the same menu
                 w.spawn(&king,400,800,0,0);
                 ai::Profile p;p.weight["aralode"]=100;
-                ai::Controller controller(0,reg,p,1,difficulty,{{3400,800}});
+                // The enemy starts 1,100 px beyond the deposit: clear of its base,
+                // whose deposits Hard and Absurd leave alone (tools/ai_economy_test.cpp).
+                ai::Controller controller(0,reg,p,1,difficulty,{{3900,800}});
                 auto cs=think(controller,w);
                 bool build=std::any_of(cs.begin(),cs.end(),[](const auto& c){return c.kind==net::Cmd::Build;});
                 check(build==(difficulty==ai::Difficulty::Hard || difficulty==ai::Difficulty::Absurd),"Hard and Absurd expand beyond the normal and defensive home limits");
