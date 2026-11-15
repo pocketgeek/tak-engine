@@ -725,6 +725,11 @@ the blocked re-request. A first step onto one of the route's seeds is a gain (po
 it is on the headway clock. `legion_progressclock` checks it, and the observer's `stall_stale_ticks` (a stall clock
 that ages while the headway clock advances) must read 0 on every fixture.
 
+The re-base is right for the stall clock, whose readers ask whether the body gains on the route it has now, and
+wrong for liveness ("Bodies that stand for good"), which asks whether the body has got anywhere: a body that stands
+one step back from its best place when the measure changes reads its next step forward as a gain. Liveness
+therefore keeps a route record of its own that a new measure does not wipe (`Member::liveLeft`, below).
+
 The detour rules keep the record they were tuned on (`Member::nearest`): the least distance still to go the body has
 read since its order began or it was re-seated, in whichever measure it read. A record needs a gain within the
 current metric (`nearestHere`) as well as a new low of `nearest`, so a metric transition is never a record. A new
@@ -894,7 +899,8 @@ goals"), so the rules here are its counterpart. They are ours, not Retail's, and
 *dead*: nothing it waits on has made progress for a long time. Ordinary steering is untouched.
 
 * **Liveness** (`liveOf`, `Member::liveTick`, `liveSeen`). A body is live while it, or anything it waits on, makes
-  progress. Its own progress: a gain on its route (the stall clock's test), a new least distance to its own goal by
+  progress. Its own progress: a gain on its route, against a record of its own (the route record, below), a new
+  least distance to its own goal by
   8 px (`kLiveGain`; a formation member walking to a slot beyond the click climbs the field), the settle rule still
   at work on it (a slot re-choice, or the settle bound still growing toward it: a dead-end queue settles back row
   by row over thousands of ticks), a step of the walk off an illegal origin, and any update in which it waits for a
@@ -927,6 +933,46 @@ goals"), so the rules here are its counterpart. They are ours, not Retail's, and
   other at that pace), and a gain within `kGivenCool` (300) ticks of a give-way made for the body, as well as the
   step aside itself. Otherwise every give-way put the long stand-down off by its full term: the crowd below was
   still standing at tick 12,000 where it now ends by 8,300.
+* **The route record** (`Member::liveLeft`, `liveCell`, `liveTrail`, `liveSeeded`; `liveRecord`, `liveStood`). A
+  gain on the route is progress only below the least distance still to go the body has read at a place it stood
+  on. The stall clock's record cannot say that: it is re-based to where the body stands whenever its measure
+  changes, and a measure changes with every refresh of the group's route (each static change that touches the
+  route asks for one; so does the blocked re-request), when the route reaches or leaves the body, and with a step
+  on or off a seed. Read from that record, a body that stood one step back from its best place at a refresh was
+  live on its next step forward, and every body waiting on it with it: the dead age of the whole knot restarted
+  with each change of the map. A real game changes its map all the time, and with a change on any member's route
+  more often than every 4,800 ticks the knot kept its orders for good, as before the rules: the crowd below with
+  one 1x1 feature placed and lifted every 300 ticks ended 143 of its 147 orders, the doorway pair and two bodies
+  queued on it holding theirs at tick 20,000 as at 9,000 (`ctest:legion_crowdlock_churn`); a 3x3 against a 2x2 body
+  on move orders in a lane never ended theirs with a feature toggled beside the lane's mouth every 150, 600, 1,500,
+  3,000 or 4,500 ticks (`ctest:legion_churnknot`). Values of two measures cannot be compared (a refresh with other
+  soft charges reads higher or lower everywhere, and a gap that closes adds its whole way round), but places can.
+  The body remembers the origin of its record and the last `kLiveTrail` (8) origins a full update found it on,
+  newest first; under a new measure the record is the least value that measure gives those origins and the one it
+  stands on (the route's potential where it is final, squared cells to the goal while no route reaches the body:
+  the record holds through that phase too). A body that walks on reads its next step as a gain, as before (the
+  origins behind it stand higher). One whose way was turned round gains once it has passed the best of the origins
+  it remembers, at most eight on, and a body that shuffles among them gains nothing, whatever refreshes its route.
+  A first step onto a seed counts once for a goal, not once for every route (a body twitching on and off another
+  body's goal stepped onto that seed anew after each refresh; no fixture has such a body, so this half is by
+  reading). The record restarts with the goal, as the least distance does. On a map that does not change the rules
+  behave almost as before, because a refresh or a step off a seed re-bases the measure there too: of the 179
+  fixtures of `tools/scenarios` that do not change their map, all keep their Legion state at start offset 0, the
+  crowd below among them; at offsets 1 and -1 only `doorplug-112` at -1 behaves differently (six more of the
+  bodies behind its plug end their orders there, 37 for 31, and 23 stand stuck for 29; arrivals equal), and five
+  more fixtures move their hash and nothing else (the record is folded with the clocks: a runner without that
+  fold gives the old hash). Over the gate offsets of the baselined fixtures `doorplug-112` behaves differently at
+  -1 and -4 (at -4 no key moves) and eleven Legion hashes were retaken (baseline history LLOCKS4). Among the nested fixtures the fight on the
+  bridges (`bridges-1000-fight`) gains too: 890 arrivals for 883 at offset -1, 222 stuck for 241 at 1 and 935
+  arrivals for 919 at 2 (-2 and 0 keep their hash). Under changes nobody is left standing with an order: six variants of the crowd (a feature
+  every 300, 1,500 or 4,000 ticks in its area, every 300 ticks 500 cells off on one body's route, eight features
+  every 600 or 2,400 ticks) at three start offsets, run to tick 20,000, end every order by tick 9,800 but those of
+  one to three bodies that walk on across the map to a goal 500 cells off (they arrive after tick 18,000 or are
+  still walking); the same eighteen runs left 4 to 6 bodies holding orders for good in ten before. A body that
+  makes headway after a change is
+  live by it: `ctest:legion_routeopens` closes a lane beyond a pair that has stood dead 2,500 ticks and opens a
+  door behind the big body; it turns round, walks back over ground it remembers and on through a second lane,
+  and arrives 1,700 ticks past the tick its order would have ended at.
 * **The stand-down** (`standDown`, `heldDead`; `work.stand_downs`). For a member on a leg that completes at a point,
   that is no approach to an unreachable goal (it has its own ending, "Stuck classification") and no production exit or
   PARK (the exit rules end those and keep the door lane clear). Dead `kStandDown` (600) ticks and held from a step
@@ -973,6 +1019,10 @@ goals"), so the rules here are its counterpart. They are ours, not Retail's, and
   is nearest the target, chosen once and walked to with mover steps for at most 60 updates (a single step toward it
   is undone by the next native step, which the mover accepts as far as the illegal origin's edge). With no such
   origin it holds, as live as the bodies covering the legal origins beside it, and stands down at the long threshold.
+  The walk's record (`Member::escapeTo`) ends with the walk: on the update that brings the body onto a legal origin,
+  and with any step another rule gives it (a swap, a yield step). It used to wait for the body's own next update,
+  and a swap by a body updating later in the same tick left it naming an origin two cells from the body
+  (`ctest:legion_reorder`, under `TAK_LEGION_VERIFY`: the hook aborted at tick 3,507).
 * **The thresholds are measured, and the measurements are the guard.** Two allied armies meeting in a one-body lane
   are bistable ("Known weaknesses"), and their knots undo themselves slowly: on `bridges-1000` over start offsets
   -5..5 a knot stands dead for up to 3,826 ticks and still comes apart (a group re-plan sends one side another way;
@@ -989,8 +1039,11 @@ goals"), so the rules here are its counterpart. They are ours, not Retail's, and
   ended, the last at tick 6,907 (8,267), 21 within 160 px: on this 2048 x 2048 map the route rules for large maps
   give a group whose bounded window failed a chain where it took the whole component's window, and a chain's way is
   not the window's (Known weaknesses, "the whole component is still the last resort"). Through the client's order
-  path (`ctest:legion_crowdlock`, a window of that ground too small for those rules) 147 of 147 against 53. The
-  doorway pair, a 4x4 and a 3x3 body at the mouth of a channel one large body wide: stood for good in
+  path (`ctest:legion_crowdlock`, a window of that ground too small for those rules) 147 of 147 against 53, at start
+  offset 0, where the fixture is read; with these rules alone, one cell off (offset 1) three bodies still hold orders
+  at tick 9,000 and the last order ends at tick 9,751. While the map changes nobody is left standing either (the
+  route record, above; `ctest:legion_crowdlock_churn`: 147 of 147 against 143). The doorway pair, a 4x4 and a 3x3
+  body at the mouth of a channel one large body wide: stood for good in
   8 of 28 start positions with one command and 4 of 41 with two, on either kind of order; now in none (both through
   by tick 3,100 on attack-move orders, by 6,000 on move orders; Retail by 2,300; `ctest:legion_doorwaypair`,
   `ctest:legion_doorwaypair_move`). A settled crowd of another order in a corridor: the bodies sent through it end
@@ -1025,13 +1078,24 @@ goals"), so the rules here are its counterpart. They are ours, not Retail's, and
   (`bridges-1000-fight`) arrives 751.6 on average over the eleven offsets against 747.5 and stands 1,430 stuck in all
   against 1,848, but five offsets lose 1 to 6% of their arrivals while offset 0 gains 21% (the late swap and the
   give-way move the knots). Orders that end outside the arrival disc count against `complete_outside_radius`, and
-  bodies that used to stand now walk, shuffle and reverse (`doorplug-112:reversals`). Tick time: about 3% more at
-  1,000 bodies, paid where no rule fires (the parent, the first version of the rules and this one interleaved on one
+  bodies that used to stand now walk, shuffle and reverse (`doorplug-112:reversals`). A formation member can stand
+  down before the settle rule settles it: an Alt+1 formation of 36 sent into a bay where 8 idle bodies stand (room
+  for about 28) has one member's order ended by the stand-down at tick 2,573 that the settle rule ended only after
+  tick 7,473, one arrival of the navigator's own fewer at each of three start offsets (47, 46 and 44 for 48, 47 and
+  45; bodies in the arrival disc 34, 35 and 33 for 34, 34 and 34). The route record holds a body dead that creeps on
+  by another way while it stands above the best place it remembers, where the re-based record read every such step
+  as a gain: in four of the eighteen runs of the crowd under changes one or two bodies stand down that settled as
+  arrivals before (58 for 59, 69 for 70, 54 for 56 and 52 for 54 of the navigator's own; bodies in the arrival disc
+  are the same in all eighteen). Tick time: 4 to 5% more at 1,000 bodies (3 to 4% before the route record, about 1%
+  for it; below), paid where no rule fires (the parent, the first version of the rules and this one interleaved on one
   core, in two runs whose behaviour is identical in all three: an open-field move, `one-1000`, 0.395 ms a tick to
-  0.406; the meet of two armies, `bridges-1000` at offset 3, 1.321 to 1.362). The liveness of the bodies on a blocked
-  step is read on every blocked update (1.7% of the navigator's time in the meet, by a cycle count), a body's own
-  gain test runs on every update (under 1%), and the rest is not attributed. Taking the root and the division out of
-  the gain test moved neither run by more than 0.3%, so they stay. `legion_cost` does not see any of this: it reads
+  0.406; the meet of two armies, `bridges-1000` at offset 3, 1.321 to 1.362; a second measurement of five interleaved
+  pairs on one core read +3.9% and +3.2%; the route record, five pairs interleaved on one core against the rules
+  without it, `one-1000` 0.449 to 0.452 ms and `bridges-1000` 1.520 to 1.535, +0.7% and +1.0%; against the parent,
+  three pairs on another core, 0.430 to 0.452 and 1.461 to 1.520, +5.1% and +4.1%). The liveness of the bodies on a
+  blocked step is read on every blocked update (1.7% of the navigator's time in the meet, by a cycle count), a body's
+  own gain test runs on every update (under 1%), and the rest is not attributed. Taking the root and the division out
+  of the gain test moved neither run by more than 0.3%, so they stay. `legion_cost` does not see any of this: it reads
   work counters, not time.
 * Rejected, with what each measured: a plain time-out (a held body without gain for 600 ticks ends its order: it
   cannot tell a body waiting for the other army to cross from one in a knot; `bridges-1000` 608 of 1,000 at offset
@@ -2286,6 +2350,7 @@ each tick (structure signature, plane labels, opening holders and occupant count
 and the ticks since its ways last asked, `nextOpening`'s cache), the
 goal-resolution cache, which is a pure function of the plane, and observation-only counters (`Stats`, the `why` tag).
 The liveness clocks of section 4 (`Member::liveTick`, `liveSeen`, `liveBest`, `liveGoal`, `blockCell`, `admitWait`)
+and the route record they are read from (`liveLeft`, `liveCell`, `liveSeeded`, the eight origins of `liveTrail`)
 are folded from a dead age of `kStandDown` (600) ticks on, for the members the rules end or move (`liveFolded`).
 Younger, no rule reads them: every rule reads its own member's clocks, and a peer's, only past that age
 (`TAK_LEGION_VERIFY` fails a read below it), and until then they are a function of the member updates, whose inputs
@@ -2336,15 +2401,21 @@ Retail hashes and goldens are unchanged by Legion: Legion state enters `World::s
   `legion_settledcrowd` (the stand-down), `legion_idleplug` (a plug of the player's own or an ally's idle bodies
   ends the order, an enemy's does not), `legion_escapestep` (the walk off an illegal origin, and no stand-down
   behind an enemy's bodies), `legion_passage_starve` (section 6) and `legion_crowdlock` (the audited crowd on
-  its real ground, with the install's types). Guards, which pass without the rules and fail when a rule fires where
+  its real ground, with the install's types). `legion_churnknot` and `legion_crowdlock_churn` (a pair in a lane, and
+  that crowd, while a 1x1 feature beside them is placed and lifted every 1,500 and every 300 ticks) fail without
+  the route record: the changes kept a knot's orders for good. `legion_reorder` (units that gave their order up
+  are ordered again, behind the plug and after it has left) runs under `TAK_LEGION_VERIFY`, which aborted on a
+  stale record of the walk off an illegal origin. Guards, which pass without the rules and fail when a rule fires where
   it must not: `legion_swap_wide` and `legion_fightmeet` (the bistable meets the rules must not tip),
   `legion_siegegap`, `legion_siegegap_hold` and `legion_siegegap_move` (an army waiting behind its own firing line,
   with weapons on, to tick 14,000: it goes on when the target dies, and keeps its orders where the target outlives
   the run), `legion_guardplug` (six bodies behind a firing line that plugs a corridor keep their orders past the
-  long threshold), `legion_filetrade` (no stand-down ahead of the settle rule) and `legion_plugleaves` (a plug of
-  idle bodies that is ordered away within the short stand-down's wait costs no arrival). `legion_knotthree` fails
-  before the rules and measures a limit of them: a knot with no way out ends its orders, after at most 16 give-ways
-  that open nothing. `legion_scenario_headon-attack` has no bounds: the fixture of a limit ("Known weaknesses").
+  long threshold), `legion_filetrade` (no stand-down ahead of the settle rule), `legion_plugleaves` (a plug of
+  idle bodies that is ordered away within the short stand-down's wait costs no arrival) and `legion_routeopens` (a
+  body that has stood dead 2,500 ticks walks a route that opens and arrives 1,700 ticks past the tick its order
+  would have ended at; it fails when a body's own gains are not counted). `legion_knotthree` and `legion_pocketfar`
+  fail before the rules and measure a limit of them: a knot with no way out, and a pair whose pocket lies beyond the
+  give-way's reach, end their orders after give-ways that open nothing (at most 8 a body). `legion_scenario_headon-attack` has no bounds: the fixture of a limit ("Known weaknesses").
 * The scenario ctests (`legion_scenario` over `tools/scenarios/`, gated by `tools/scenarios/baseline.json`), each
   named in the section of its mechanism, and `ctest -L legion` for all of them. `legion_cost` gates the growth of
   Legion work from N to 4N bodies (`tools/legion_cost_baseline.json`). `legion_doc_links` and
@@ -2495,6 +2566,28 @@ Rules that come out of using them:
     each other in turn, a cell back and a cell on, `kMaxGiveWays` times each, 30 ticks apart: 16 steps that open
     nothing, then they stand until the long threshold ends their orders (`ctest:legion_knotthree`; Retail squeezes
     five of the six bodies past each other).
+  * A give-way never carries a body back to a pocket more than `kGiveReach` (4) origins away, and it is not made
+    toward room the other body is going to. A 3x3 against a 2x2 body on move orders in a lane whose one pocket lies
+    7 cells behind the small body give way to each other 16 times, nobody passes, and both orders end at tick 5,374
+    (Retail walks both through by tick 2,046); four bodies meeting at a crossing of two lanes give way 64 times, 8
+    each, and all four orders end by tick 5,220 (Retail ends them at tick 491, none arriving)
+    (`ctest:legion_pocketfar`; before the rules all stood for good).
+  * The route record remembers eight origins and the origin of its record. A body that shuffles over more ground
+    than that under routes that turn round with every refresh could still gain once a turn; no world measured has
+    one. Under a new route the record reads the remembered origins only where that route's value is final; one it
+    has not settled yet would not count, and a step back onto it could read as a gain once. In the twenty-two churned
+    worlds measured (the crowd's six, the pair's ten, the lane's six, three start offsets each) no re-base found a
+    remembered origin unsettled. And two things restart a body's clocks as before, whatever it remembers. A change that cuts the body's only
+    way to its goal and gives it back re-resolves the order (the member is trapped or walks to an approach point
+    meanwhile, and registers afresh when the way reopens): a 3x3 body before its own idle unit in a lane whose far
+    end is closed wall to wall and opened again every 300 ticks keeps its order for good, as before the rules; with
+    the same every 1,500 ticks it ends (scratch worlds, not fixtures). And a goal that becomes illegal is a new
+    goal.
+  * The long stand-down takes a body that moves without gain, and a committed way round still bodies (at most 240
+    ticks) reads no gain until the body's next ordinary update. A way that opens within such a walk of the long
+    threshold comes too late: a body 4,570 ticks dead when a door opened behind it had its order ended 230 ticks
+    later on its way through the door, as it would have been with the door shut (a scratch world; with the door
+    opening at a dead age of 2,500, `ctest:legion_routeopens`, the body arrives).
   * An order the stand-down ended stays ended. Bodies whose blockers move away after that stand idle where a wait
     would have carried them (`ctest:legion_plugleaves`: 0 of 6 arrive where 6 did, when the plug leaves some 1,100
     ticks after their orders ended).
@@ -2510,8 +2603,9 @@ Rules that come out of using them:
     that reproduces it.
   * The AI sends idle fighters out again, and a formation's rejoin may order a stood-down member to its point again:
     sent into the same knot, a unit stands 600 ticks and stands down again.
-  Measured by `ctest:legion_crowdlock`, `ctest:legion_settledcrowd`, `ctest:legion_doorwaypair`,
-  `ctest:legion_knotthree`, `ctest:legion_plugleaves`, `ctest:legion_guardplug`, `doorplug-112:open_still900` and
+  Measured by `ctest:legion_crowdlock`, `ctest:legion_crowdlock_churn`, `ctest:legion_settledcrowd`,
+  `ctest:legion_doorwaypair`, `ctest:legion_knotthree`, `ctest:legion_pocketfar`, `ctest:legion_churnknot`,
+  `ctest:legion_plugleaves`, `ctest:legion_guardplug`, `doorplug-112:open_still900` and
   `doorplug-112:g.B.complete_outside_radius`.
 * **Attack rings against Retail.** Round a box walled on several sides Retail packs sub-cell points of the corners'
   origins and jostles bodies in and out, so a few more of its bodies stand in reach at the end; a ring across a river

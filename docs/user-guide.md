@@ -1851,8 +1851,10 @@ measurements](legion-pathfinding.md)):
   idle units away), order it again. Two units stuck in each other's way step
   aside for one another: after about 40 seconds on attack-move and patrol
   orders, after a little over two minutes on plain move orders, where two
-  crossing armies usually sort themselves out first. Where neither has room to
-  step aside, both give up. A unit that waits on units that are still getting
+  crossing armies usually sort themselves out first. A unit steps aside by a
+  few steps only (four of its own at most): where neither finds room that
+  near, or the only room is where the other is going, the two shuffle a few
+  times and then both give up. A unit that waits on units that are still getting
   somewhere keeps its order; one that is truly stuck among units that hold
   orders too gives up a little under three minutes after the last of them made
   any headway. Units waiting behind their own firing line keep their orders for
@@ -1861,7 +1863,10 @@ measurements](legion-pathfinding.md)):
   unit can still wait for good behind your own guards standing in a gap, or
   face to face with a unit on its way to attack in a lane too narrow to pass.
   Enemy units in the way never make a unit give up; an ally's idle units do,
-  like your own.
+  like your own. Buildings going up and coming down and wrecks appearing
+  nearby do not start the wait afresh; only a change that cuts a unit's way
+  to its goal and opens it again does, because the order is then worked out
+  anew.
 - **Wheeling round walls.** When a large group (16 or more) goes round the end of
   a wall, it swings round in several ranks instead of narrowing to single file.
   It drops to single file only when the gap really is too narrow. A single tree
