@@ -3890,6 +3890,11 @@ Where retail would wrap, the value stops at the end of the range:
   blast distance to a unit's box (`529f97`) and the weapons' range tests on a
   unit and its target saturate the same way, so a unit at the edge is aimed
   at, hit and hurt where it stands.
+- The whole-pixel distances above are taken whole (`retailBuildWithinReach`,
+  `retailAirToGroundHover`, `retailAirToAir`, `retailAirEvade`,
+  `retailDirectAim`): a builder 32,768 px or more from its site, which a map
+  from 1449 cells a side allows along its diagonal, is no longer "within
+  reach" of it after a failed approach.
 - A group move's per-unit offsets (ours, `applySelectionOrder`) stay at the
   edge.
 
@@ -3910,11 +3915,12 @@ weapons' aim arithmetic (the lead, the aim angles) is retail's too: it only
 leaves the range for a target 32,768 px or more away.
 
 `map_edge_test` covers it on constructed 2048-cell worlds: the arithmetic; the
-ports' points and the navigator's steering; guards, patrols and a move at the
-east and south edges and the corner (no step longer than the flyer's speed, no
-coordinate on the far side, still flying after 2000 ticks, the spatial hash
-within the map plus 2048 px); a group move ordered 10 px from each edge; and a
-plain shot whose last step passes the edge.
+ports' points and the navigator's steering; the reach test and the level aim
+at 42,000 px; guards, patrols and a move at the east and south edges and the
+corner (no step longer than the flyer's speed, no coordinate on the far side,
+still flying after 2000 ticks, the spatial hash within the map plus 2048 px);
+a group move ordered 10 px from each edge; and a plain shot whose last step
+passes the edge.
 With the shipped units, eight Gryphons fly attack runs at targets on the east
 and south edges for 3000 ticks, and every target is hit in both halves of the
 run; before the change the same flyers step 65,534 px in a tick. The recorded

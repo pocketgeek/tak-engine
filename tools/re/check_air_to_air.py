@@ -194,8 +194,8 @@ def main():
                                 text=True, capture_output=True, check=True)
         return [tuple(map(int, line.split())) for line in output.stdout.splitlines()]
 
-    # `beyond`, per fixture: it leaves the 16.16 range, where the port differs from retail on purpose
-    # (emurange.py). Those are counted; every other fixture must match exactly.
+    # `beyond`, per fixture: it leaves the 16.16 range or holds a distance of 32768 px or more, where the port
+    # differs from retail on purpose (emurange.py). Those are counted; every other fixture must match exactly.
     def compare(name, fixtures, expected, actual, beyond=None):
         if len(actual) != len(expected):
             raise AssertionError('%s: row count %d, expected %d' % (name, len(actual), len(expected)))
@@ -207,7 +207,8 @@ def main():
                     continue
                 raise AssertionError('%s fixture %d: %s\n  port   %s\n  native %s' % (name, i, fixtures[i], got, want))
         if past:
-            print('%s: %d fixtures past the end of the range, where the port differs (ours)' % (name, past))
+            print('%s: %d fixtures past the end of the range or 32768 px apart, where the port differs (ours)'
+                  % (name, past))
 
     # --- 41d780 ----------------------------------------------------------
     fixtures, expected = [], []
@@ -418,7 +419,9 @@ def main():
                          len(log.get('group', [])), len(log.get('leave', [])), formations))
         # The flyer, its target and the led point, and the points built from them (up to twice the reach out).
         ends = (x, z, tx, tz, whole[0], whole[2])
-        beyond.append(not emurange.fits(*ends) or (max(map(abs, ends)) >> 16) + 2 * reach + 64 >= 32768)
+        beyond.append(not emurange.fits(*ends) or
+                      (max(map(abs, ends)) >> 16) + 2 * reach + 64 >= 32768 or
+                      emurange.pixels(x, z, whole[0], whole[2]) >= 32768 or emurange.pixels(x, z, tx, tz) >= 32768)
         fixtures.append(' '.join(map(str, (stage, events, tick, deadline, pending, flags, count, s32(x), s32(y),
                                            s32(z), heading, s32(tx), s32(ty), s32(tz), target_heading, *velocity,
                                            *lead, speed, max_speed, reach, automatic, flies, int(on_map), width,
@@ -527,7 +530,7 @@ def main():
                          get(mission + 0x52, 'i'), len(points), len(moving), *goal, goal_radius, mx, my, mz, mh,
                          get(RNG), draws[0], len(log.get('group', [])), len(log.get('leave', [])), formations))
         # (The evade line itself is past the range by design and stays retail's: the port wraps it too.)
-        beyond.append(not emurange.fits(x, z, tx, tz))
+        beyond.append(not emurange.fits(x, z, tx, tz) or emurange.pixels(x, z, tx, tz) >= 32768)
         fixtures.append(' '.join(map(str, (stage, events, tick, deadline, pending, flags, maneuver, budget, s32(x),
                                            s32(y), s32(z), heading, s32(tx), 0, s32(tz), max_speed, type_speed,
                                            target_type_speed, turn_rate, target_turn_rate, reach, flies,

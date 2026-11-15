@@ -273,7 +273,9 @@ int retailAirToGroundHover(RetailMissionState& m,int32_t& count,RetailFlightVect
     auto whole=[&](RetailFlightVector p) {
         const double dx=double(satSub32(p.x,in.position.x));
         const double dz=double(satSub32(p.z,in.position.z));
-        return int(int16_t(retailFtol(std::sqrt(dx*dx+dz*dz))>>16));
+        // Retail keeps the signed low word (movsx), which turns negative at
+        // 32768 px; no retail map has such a distance. Ours: the whole word.
+        return int(retailFtol(std::sqrt(dx*dx+dz*dz))>>16);
     };
     switch (m.stage) {
     case 0:                                                              // 41dca6

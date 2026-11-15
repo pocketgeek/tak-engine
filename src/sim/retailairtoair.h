@@ -205,7 +205,9 @@ int retailAirToAir(RetailMissionState& m,int32_t& count,uint32_t tick,uint32_t e
     // 41d042..41d0f8: the whole-pixel distance to P (_ftol's low word) against R.
     const double dx=double(satSub32(me.x,lead.x));
     const double dz=double(satSub32(me.z,lead.z));
-    const int span=int16_t(retailFtol(std::sqrt(dz*dz+dx*dx))>>16);
+    // (Retail's signed word turns negative at 32768 px, farther than any retail
+    // map is wide. Ours: the whole word.)
+    const int span=int(retailFtol(std::sqrt(dz*dz+dx*dx))>>16);
     const int reach=duel.distance;
     const bool inHalf=span<reach/2, inQuarter=span<reach/4, beyond=span>3*reach/2;
     if (span>5*reach && duel.automatic && host.random(2)==0 && host.retarget()) return 5;   // 41d0fa
@@ -360,7 +362,7 @@ int retailAirEvade(RetailAirEvade& e,uint32_t tick,uint32_t events,const RetailA
     }
     const double dz=double(satSub32(in.position.z,in.target.z));
     const double dx=double(satSub32(in.position.x,in.target.x));
-    const int span=int16_t(retailFtol(std::sqrt(dx*dx+dz*dz))>>16);
+    const int span=int(retailFtol(std::sqrt(dx*dx+dz*dz))>>16);   // the whole word, as AirToAir's
     int32_t gap=int32_t(host.random(span));
     gap+=int32_t(host.random(span));
     gap+=int32_t(host.random(span));

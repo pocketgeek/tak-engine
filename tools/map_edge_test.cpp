@@ -14,6 +14,8 @@
 #include "net/lockstep.h"
 #include "sim/matchsetup.h"
 #include "sim/retailairattack.h"
+#include "sim/retailanimationqueries.h"
+#include "sim/retailconstruction.h"
 #include "sim/retailflight.h"
 #include <algorithm>
 #include <cmath>
@@ -123,6 +125,19 @@ void flightPorts() {
         [&](int n) { return uint32_t(n-1)*(++draw%2); });
     check(patrol.point.x>=edge-200*kPx,"a patrol point past the east edge stays at the edge (x "+
           std::to_string(patrol.point.x/kPx)+")");
+}
+
+// ---- Whole-pixel distances read as signed 16-bit words -----------------------------------
+void distances() {
+    // 405756: a builder 42,000 px from its site is not within its 100 px reach.
+    const Fixed bx=Fixed::fromInt(100),bz=Fixed::fromInt(100),sx=Fixed::fromInt(30000),sz=Fixed::fromInt(30000);
+    check(!retailBuildWithinReach(bx,bz,sx,sz,2,2,2,2,100),"a site 42,000 px away is out of a builder's reach");
+    check(retailBuildWithinReach(sx-Fixed::fromInt(40),sz,sx,sz,2,2,2,2,100) &&
+          !retailBuildWithinReach(sx-Fixed::fromInt(400),sz,sx,sz,2,2,2,2,100),"the reach test is unchanged up close");
+    // 52c4e0: a level aim at a point 42,000 px away has no pitch.
+    const auto aim=retailDirectAim(30000*kPx,0,30000*kPx,0);
+    const auto close=retailDirectAim(300*kPx,0,300*kPx,0);
+    check(aim[1]==close[1],"a level aim 42,000 px away is level");
 }
 
 // ---- Flyers at the east and south edges, synthetic ---------------------------------------
@@ -302,6 +317,7 @@ int main(int argc,char** argv) {
     } else {
         arithmetic();
         flightPorts();
+        distances();
         flyersAtTheEdge();
         groupMoveAtTheEdge();
         shotAtTheEdge();

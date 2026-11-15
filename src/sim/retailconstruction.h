@@ -9,11 +9,16 @@ namespace tak::sim {
 
 // 405756..405809: failed MobileBuild paths may still leave the builder close
 // enough to place the site. Each footprint diagonal is truncated separately.
+// Retail subtracts in 32 bits and reads the distance as a signed 16-bit word
+// of whole pixels (movsx at 4057ec), so 32768 px or more reads as negative and
+// "within reach". No retail map has such a distance; a map from 1449 cells a
+// side has (its diagonal). Ours: the differences and the distance are taken
+// whole, and a far site is far. Identical below 32768 px.
 inline bool retailBuildWithinReach(Fixed x,Fixed z,Fixed gx,Fixed gz,
         int16_t fx,int16_t fz,int16_t siteFx,int16_t siteFz,uint16_t reach) {
-    const int64_t dx=std::bit_cast<int32_t>(uint32_t(x.v)-uint32_t(gx.v));
-    const int64_t dz=std::bit_cast<int32_t>(uint32_t(z.v)-uint32_t(gz.v));
-    const int distance=std::bit_cast<int16_t>(uint16_t(isqrt64(uint64_t(dx*dx)+uint64_t(dz*dz))>>16));
+    const int64_t dx=int64_t(x.v)-int64_t(gx.v);
+    const int64_t dz=int64_t(z.v)-int64_t(gz.v);
+    const int distance=int(isqrt64(uint64_t(dx*dx)+uint64_t(dz*dz))>>16);
     const auto edge=[](int16_t width,int16_t height) {
         return int(isqrt64(uint64_t(int64_t(width)*width+int64_t(height)*height)*64));
     };

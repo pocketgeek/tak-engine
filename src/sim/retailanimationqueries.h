@@ -8,11 +8,13 @@
 namespace tak::sim {
 // 52c4e0: direct/guided weapon heading and pitch from a 16.16 aim vector.
 // Pitch uses signed whole-word height and horizontal length, unlike heading.
+// (The length is kept whole here: retail's signed word turns negative at
+// 32768 px, farther than any retail map is wide. Identical below that.)
 inline std::array<uint16_t,2> retailDirectAim(int32_t dx,int32_t dy,int32_t dz,
                                             uint16_t nativeHeading) {
     const uint64_t horizontal=isqrt64(uint64_t(int64_t(dx)*dx)+uint64_t(int64_t(dz)*dz));
     const int32_t height=std::bit_cast<int16_t>(uint16_t(uint32_t(dy)>>16));
-    const int32_t distance=std::bit_cast<int16_t>(uint16_t(horizontal>>16));
+    const int32_t distance=int32_t(horizontal>>16);
     return {uint16_t(retailDirection(Fixed::raw(dx),Fixed::raw(dz)).v-nativeHeading),
             uint16_t(retailDirection(Fixed::raw(-height),Fixed::raw(distance)).v)};
 }
