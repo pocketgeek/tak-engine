@@ -126,6 +126,21 @@ static void refusedAttacks(const sim::TypeRegistry& registry,const ai::Profile& 
     check(order(basilisk,immune,0)==2,"... nor a unit that cannot be stoned");
     check(order(fighter(),lode,0)==1 && order(fighter(),immune,1)==1,
           "a unit whose weapon does damage attacks either, at the unit cap too");
+    {
+        // Standing where that fight-move ends, the Harpy is left there: the
+        // same order on every think would end as it began.
+        sim::World w;terrain(w);w.player(0).income=100;
+        const int id=w.spawn(&harpy,1000,1000,0,0);
+        w.spawn(&lode,1100,1000,0,1);
+        pastStart(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        auto cs=think(controller,w,0);
+        const bool sent=cs.size()==1 && cs.front().kind==net::Cmd::AttackMove;
+        if (sent) { w.unit(id)->x=sim::Fixed::fromFloat(cs.front().x);w.unit(id)->z=sim::Fixed::fromFloat(cs.front().z); }
+        size_t again=0;
+        for (uint32_t tick=30;tick<=90;tick+=30) again+=think(controller,w,tick).size();
+        check(sent && again==0,"a Harpy standing at the lodestone it cannot take is not sent there again on every think");
+    }
 }
 
 // The seat's faction is its Monarch's, for the whole game. With the Monarch dead

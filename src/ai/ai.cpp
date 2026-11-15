@@ -2001,6 +2001,12 @@ bool Controller::strikeOrder(const tak::sim::World& world, const tak::sim::Unit&
             sink(c);
             return true;
         }
+        // With no weapon for the anchor and standing where that fight-move
+        // ends, it stays: its weapons take what comes within reach, and the
+        // order would end as it began, on every think of a siege (the anchor
+        // is not passed over while others bring it down).
+        if (constexpr float kArrived = 48; close && !canTake(world, u, *e) &&
+            (tx - ux) * (tx - ux) + (tz - uz) * (tz - uz) <= kArrived * kArrived) return true;
     }
     emit(sink, tak::net::Cmd::AttackMove, u.id, "", tx, tz);
     return true;
