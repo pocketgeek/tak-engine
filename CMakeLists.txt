@@ -614,11 +614,11 @@ foreach(legion_scn aware-cross aware-headon aware-seen aware-unseen aware-attack
 endforeach()
 # Bodies that stand for good (2026-11-14; the bounds are legion_settledcrowd, legion_passage_starve, legion_lateswap,
 # legion_escapestep, legion_idleplug, legion_siegegap, legion_siegegap_move, legion_filetrade, legion_plugleaves,
-# legion_knotthree, legion_guardplug, legion_churnknot, legion_routeopens and legion_reorder
+# legion_knotthree, legion_guardplug, legion_churnknot, legion_routeopens, legion_reorder and legion_pocketfar
 # below): the same run as part A, so serial == workers and both modes on the rules' fixtures. headon-attack has no
 # bounds: it is a known limit (its header says which), kept as a fixture so that the limit has a measure.
 foreach(legion_scn settled-crowd passage-starve headon-fight escape-step idle-plug siege-gap siege-gap-move file-trade
-                   plug-leaves knot-three guard-plug headon-attack churn-knot reorder)
+                   plug-leaves knot-three guard-plug headon-attack churn-knot reorder pocket-far)
   add_test(NAME legion_scenario_${legion_scn}
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
@@ -1347,10 +1347,21 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios reorder --offsets 0,1,-1
                    --min g.A.arrived=6 --min g.B.arrived=6)
+  # pocket-far: the give-way's reach (kGiveReach, 4 origins). A 3x3 against a 2x2 body on move orders in a lane whose
+  # one pocket lies 7 cells behind the small body, and four bodies meeting at a crossing of two lanes, twice: all
+  # ten stood for good. Nobody gets through now either (Retail walks the pair through), but every order ends and no
+  # body gives way more than kMaxGiveWays times on its leg (80 in all at offset 0). The measure of that limit
+  # (docs/legion-pathfinding.md, "Known weaknesses"). Asset-free.
+  add_test(NAME legion_pocketfar
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios pocket-far --offsets 0,1,-1
+                   --min g.LB.complete_n=1 --min g.LS.complete_n=1 --min g.FW.complete_n=1 --min g.FE.complete_n=1
+                   --min g.FN.complete_n=1 --min g.FS.complete_n=1 --min g.MW.complete_n=1 --min g.ME.complete_n=1
+                   --min g.MN.complete_n=1 --min g.MS.complete_n=1 --max scale.stuck_end=0 --max work.give_ways.total=80)
   set_tests_properties(legion_doorwaypair legion_doorwaypair_move legion_lateswap legion_settledcrowd legion_escapestep
                        legion_idleplug legion_siegegap legion_siegegap_hold legion_siegegap_move legion_filetrade
                        legion_plugleaves legion_knotthree legion_guardplug legion_churnknot legion_routeopens
-                       legion_reorder
+                       legion_reorder legion_pocketfar
                        PROPERTIES LABELS legion TIMEOUT 300)
   set_tests_properties(legion_reorder PROPERTIES ENVIRONMENT TAK_LEGION_VERIFY=1)
   # crowdlock: the audited game's standing crowd rebuilt on its real ground (246 bodies among the wrecks of a base,

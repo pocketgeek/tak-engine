@@ -5,6 +5,10 @@
 # smaller than the crowd, and the settle rule ignores a settled crowd of another destination: B stood in front of
 # A for good, orders kept. Its orders now end beside the crowd (the stand-down: the Legion counterpart of Retail's
 # growing goal circle), and the units are free for the next order.
+# Read at start offset 0 only (legion_settledcrowd). A negative start offset moves order B's spawn to within two
+# cells of the map's edge, where three of its six bodies cannot move in either mode (Retail leaves them standing
+# there as well): they never reach the crowd, hold their orders to the long stand-down, 4,808 ticks after the
+# order, and this file ends before that.
 # Keys: open_still900 (0; 6 before), g.B.complete_n (6; 0 before), work.stand_downs.total.
 scn 1
 name settled-crowd
