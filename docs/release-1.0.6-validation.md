@@ -2,8 +2,9 @@
 
 Protocol **330**, replay format **15**, random map generator version **10**.
 
-TAG: lander fills in `v1.0.6` -> the version commit, the annotated tag object, and the
-publication time.
+Tag `v1.0.6` -> `dc29fb6a` (the version commit); annotated tag object `65ad2b84`.
+Published 2026-11-15 21:39:38 UTC as the Latest release; 1.0.0 to 1.0.5 stay GitHub
+releases.
 
 ## Scope and compatibility
 
@@ -82,5 +83,21 @@ determinism workflow and builds every package.
 
 ## Tag CI and packages
 
-TAGCI: lander fills in main's CI on the version commit, tag CI on `v1.0.6`, the asset
-count and digest check, and the Windows and macOS signature checks.
+Main's CI on `dc29fb6a` (Determinism, macOS, Windows, Linux packages) was green. Tag CI
+on `v1.0.6`: Determinism (sim) 43758223419 (dispatched), Linux packages 43758215965,
+Windows build 43758215981 and macOS build 43758215979 (both Sign + notarize jobs
+included) all green at the first attempt.
+
+39 assets, the same set as 1.0.5's. All 39 were downloaded and match the release's SHA-256
+digests. `takclient` from the x86_64 AppImage and `takclient` and `takserver` from the
+Fedora 44 package report `1.0.6 (build v1.0.6)`.
+Windows: on oden-win (scratch `C:/tak/w/rel106sig`), `Get-AuthenticodeSignature` reports
+**Valid** (timestamped, "Curtis Edge") for the x64 setup program and `takclient`,
+`takserver` and `cartographer` in both zips; the x64 `takclient.exe` and `takserver.exe`
+report `1.0.6 (build v1.0.6)`.
+macOS: on the MacBook, both DMGs and the two apps in each DMG and each zip pass `stapler
+validate`, `spctl` accepts each as "Notarized Developer ID", `codesign --verify --strict
+--deep` passes for the DMGs' apps, whose version reads 1.0.6, and the arm64 `takclient`
+reports `1.0.6 (build v1.0.6)`.
+The draft was created with the notes before the tag was pushed, and tag CI uploaded into
+it. Every link in the notes answers 200.
