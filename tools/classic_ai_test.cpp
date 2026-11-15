@@ -447,6 +447,56 @@ static ai::ClassicSquadUnit squadUnit(int id,int32_t x,int32_t z) {
     return u;
 }
 
+// A strike's target (p4) is a unit id. Retail keeps a 16-bit slot there; World's
+// ids are never reused and pass 65,535 in a long game, and the port used to mask
+// them the same way, so a strike on unit 70,000 asked for unit 4,464 (none, or
+// the wrong one), dropped its target and slept. The id is kept whole now.
+static void strikeWideTargetIds() {
+    struct Host {
+        int picked=0;std::vector<ai::ClassicEnemy> enemies;int orders=0;ai::ClassicPoint goal{};
+        int random(int k) { return k>1 ? 1 : 0; }           // never rand(250)==0: keep a live target
+        int pick(const ai::ClassicPoint&,size_t) { return picked; }
+        const ai::ClassicEnemy* target(int id) {
+            for (const auto& e:enemies) if (id && e.id==id) return &e;
+            return nullptr;
+        }
+        bool threat(std::pair<int32_t,int32_t>,int32_t) { return false; }
+        bool reachable(const ai::ClassicSquadUnit&,const ai::ClassicEnemy&,int16_t,bool) { return true; }
+        uint8_t resolve(int,size_t,const ai::ClassicPoint&) { return 1; }
+        void order(uint8_t,bool,size_t,const ai::ClassicPoint& at,int32_t,int32_t) { ++orders;goal=at; }
+        void clear(size_t) {}
+        int width() const { return 256; }
+        int height() const { return 256; }
+    };
+    auto run=[](int32_t target,int32_t contact,int picked,int32_t& p4,int32_t& p5,int& orders,ai::ClassicPoint& goal) {
+        const int slot=ai::classic_slot::kFirstStrike;
+        ai::ClassicSquads s;
+        auto& strike=s.squads[size_t(slot)];
+        strike.kind=sim::RetailAiSquadKind::Strike;strike.parameters[0]=slot+1;
+        strike.parameters[4]=target;strike.parameters[5]=contact;strike.members={1};
+        s.squads[size_t(slot+1)].kind=sim::RetailAiSquadKind::Backup;s.squads[size_t(slot+1)].parameters[0]=slot;
+        std::vector<ai::ClassicSquadUnit> units{squadUnit(1,1000,1000)};
+        units[0].flags|=ai::ClassicSquadUnit::kArmed;units[0].hp=100;units[0].maxDamage=100;units[0].squad=slot;
+        Host h;h.picked=picked;
+        for (const int id:{70000,70001}) {
+            ai::ClassicEnemy e;e.id=id;e.flags=ai::ClassicEnemy::kLive;
+            e.x=(id==70000 ? 3000 : 4000)<<16;e.z=2000<<16;h.enemies.push_back(e);
+        }
+        sim::RetailAiGroupClock clock{true,0};
+        ai::classicStrikeThink(s,units,slot,clock,100,h);
+        p4=strike.parameters[4];p5=strike.parameters[5];orders=h.orders;goal=h.goal;
+    };
+    int32_t p4=0,p5=0;int orders=0;ai::ClassicPoint goal{};
+    run(70000,1,0,p4,p5,orders,goal);
+    std::printf("  strike on unit 70000: p4 %d p5 %d, %d orders to x %d\n",p4,p5,orders,goal[0]>>16);
+    check(p4==70000 && p5!=0,"a strike keeps its target unit 70000 (no 16-bit mask)");
+    check(orders==1 && goal[0]==3000<<16,"the strike marches on unit 70000");
+    run(0,0,70001,p4,p5,orders,goal);
+    std::printf("  strike picks unit 70001: p4 %d p5 %d, %d orders to x %d\n",p4,p5,orders,goal[0]>>16);
+    check(p4==70001 && p5!=0,"a strike stores a picked target unit 70001 whole");
+    check(orders==1 && goal[0]==4000<<16,"the strike marches on unit 70001");
+}
+
 static void squadAssignment() {
     uint32_t seed=7;
     ai::ClassicSquads s;
@@ -2513,6 +2563,7 @@ int main(int argc,char** argv) {
     classicLodestoneSites();
     squadConstruction();
     squadAssignment();
+    strikeWideTargetIds();
     if (argc>1) { shippedData(argv[1]);abnarSquads(argv[1]);classicFactories(argv[1]); }
     std::printf("%s\n",fails ? "FAILED" : "all passed");
     return fails ? 1 : 0;

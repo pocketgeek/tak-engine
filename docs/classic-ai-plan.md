@@ -330,7 +330,9 @@ centre, radius, counts, firepower, shot cost, draw, busy-deposit test and placer
      the units stop where they are until the base think re-plans them (0x40e24c..0x40e2bc).
   3. **Target**: keep it unless it is gone or dead, or rand(250)==0 (drawn only if still valid). Re-pick
      with 0x40a200(centroid, random member). If none is found, wake = now + rand(900)+150 (5..35 s) and the
-     squad **stays where it is**.
+     squad **stays where it is**. Retail keeps the target (p4) as a 16-bit unit slot; the port keeps the
+     whole unit id, which is never reused and passes 65,535 in a long game (ours, not retail; masked, a
+     strike on a later unit read an older id and dropped its target).
   4. **Withdraw** a member that is unarmed or has no mover, or has HP < maxHP/(rand(3)+3) (20..33%), or
      (when changed or rand(20)==0) fails 0x4e1570 reachability to the target within weapon range. It is
      sent to the retreat base with a MOVE.

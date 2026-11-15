@@ -5,13 +5,17 @@
 namespace tak::sim {
 
 struct RetailPlacementCell {
-    uint16_t entity=0, feature=0xffff;
+    // `entity` is the occupant's unit id (0: none). Retail keeps a 16-bit slot
+    // index here; World's ids are never reused and pass 65,535 in a long game,
+    // so the port carries them whole (ours, not retail).
+    uint32_t entity=0;
+    uint16_t feature=0xffff;
     uint8_t high=0,low=0,backX=0,backZ=0;
 };
 
 struct RetailPlacementEntity {
     bool valid=false,live=false,mover=false;
-    uint16_t identity=0;
+    uint32_t identity=0;
 };
 
 // 507d10, mobile placement mode with the footprint check enabled. Other
@@ -21,7 +25,7 @@ struct RetailPlacementEntity {
 template<class CellAt,class FeatureFlags,class EntityAt>
 bool retailMobilePlacement(int x,int z,int footX,int footZ,int width,int height,
         int sea,int maxDepth,int minDepth,int maxSlope,int maxWaterSlope,
-        uint16_t self,bool allowMoving,uint32_t featureCount,
+        uint32_t self,bool allowMoving,uint32_t featureCount,
         CellAt cellAt,FeatureFlags featureFlags,EntityAt entityAt) {
     if (x<0 || z<0 || x+footX>=width || z+footZ>=height) return false;
     for (int j=0;j<footZ;++j) for (int i=0;i<footX;++i) {

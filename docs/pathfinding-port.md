@@ -214,6 +214,12 @@ bodies retail keeps off the word at the map's last row and column, which World
 still counts as occupants. The search plane's full build keeps the same body
 on every cell, so placement (`mobilePlacement`, `507d10`), landing
 (`509400`), live grades (`cellScore`) and search grades read one holder.
+Retail's placement loop keeps a holder's 16-bit slot index; World passes the
+holder's unit id, which is never reused and passes 65,535 in a long game, so
+`retailMobilePlacement` carries ids in 32 bits (ours, not retail). With 16, a
+unit made after the 65,536th stopped blocking ground placement, and one 65,536
+ids after a living unit took that unit's cells for its own
+(`placement_ids_test`).
 
 Validation:
 

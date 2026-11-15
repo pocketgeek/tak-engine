@@ -2946,7 +2946,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x)
             p.cell[size_t(z)*W+x]=x+1<W&&z+1<H&&retailMobilePlacement(x,z,1,1,W,H,w.seaLevel_,p.maxDepth,p.minDepth,
                 p.maxSlope,p.maxWaterSlope,0,false,1,cellAt,[](uint16_t){return 0x20u;},
-                [](uint16_t){return RetailPlacementEntity{};});
+                [](uint32_t){return RetailPlacementEntity{};});
         uint64_t work=uint64_t(x1-x0+1)*uint64_t(z1-z0+1);
         auto stampStructure=[&](const Unit& u) {
             if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())return;

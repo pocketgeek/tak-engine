@@ -2617,11 +2617,11 @@ public:
         return cx<width && cz<height && (navigationExplored_[size_t(cz)*width+cx]>>player & 1)!=0;
     }
     bool mobilePlacement(const Unit& subject,int x,int z,bool allowMoving) const {
-        return mobilePlacement(*subject.type,uint16_t(subject.id),x,z,allowMoving);
+        return mobilePlacement(*subject.type,uint32_t(subject.id),x,z,allowMoving);
     }
     // 507d10's mobile footprint loop for a body of `type` that is not on the map
     // yet: `self` 0 excludes no occupant (BUILD stage 2's factory output query).
-    bool mobilePlacement(const UnitType& type,uint16_t self,int x,int z,bool allowMoving) const;
+    bool mobilePlacement(const UnitType& type,uint32_t self,int x,int z,bool allowMoving) const;
     Fixed surfaceHeight(const Unit& subject,uint32_t clock,uint16_t* pitch=nullptr,uint16_t* roll=nullptr) const;
     void commitGroundStep(Unit& subject,Fixed dx,Fixed dz,bool strictDiagonal=false);
     void updateGroundTerrainFlags(Unit& subject) const;

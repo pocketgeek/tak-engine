@@ -481,7 +481,10 @@ void classicStrikeThink(ClassicSquads& s, std::vector<ClassicSquadUnit>& units, 
         squad.setActive(0);
         return;
     }
-    auto targetId = [&] { return int(uint32_t(p[4]) & 0xffffu); };
+    // p4 holds the target. Retail stores a 16-bit unit slot there; World's unit ids
+    // are never reused and pass 65,535 in a long game, so the port keeps the whole
+    // id (masked, a later unit's id read as an older unit's: a dead one, or the wrong one).
+    auto targetId = [&] { return int(p[4]); };
     bool repick = true;
     if (p[5] != 0)
         if (const ClassicEnemy* t = h.target(targetId()); t && (t->flags & ClassicEnemy::kLive) && !(t->flags & ClassicEnemy::kDying))
@@ -495,7 +498,7 @@ void classicStrikeThink(ClassicSquads& s, std::vector<ClassicSquadUnit>& units, 
         const int picked = it == index.at.end() ? 0 : h.pick(ClassicPoint{centroid->first, 0, centroid->second}, it->second);
         // 0x40de20: a live pick, else none.
         const ClassicEnemy* now = picked ? h.target(picked) : nullptr;
-        p[4] = now ? int32_t(uint16_t(now->id)) : 0;
+        p[4] = now ? int32_t(now->id) : 0;
         now = h.target(targetId());
         if (now && now->id != old) changed = true;
         else if (!now) clock.deadline = tick + uint32_t(h.random(900)) + 150u;

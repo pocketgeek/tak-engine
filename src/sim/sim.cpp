@@ -1374,7 +1374,7 @@ void World::commitGroundStep(Unit& u,Fixed dx,Fixed dz,bool strictDiagonal) {
     updateBodyIndex(u);
 }
 
-bool World::mobilePlacement(const UnitType& type,uint16_t self,int x,int z,bool allowMoving) const {
+bool World::mobilePlacement(const UnitType& type,uint32_t self,int x,int z,bool allowMoving) const {
     if (mapPlacementCells_.size()!=size_t(hW_)*hH_ || mapPlacementCells_.empty())
         throw std::runtime_error("mobile placement requires loaded map feature data");
     // A placement query observes one immutable body layout. Reuse its rectangle
@@ -1398,7 +1398,7 @@ bool World::mobilePlacement(const UnitType& type,uint16_t self,int x,int z,bool 
         }
         if (bodies.cells.empty()) bodies=searchBodyRect(x,z,type.footX,type.footZ);
         const auto* body=bodies.cells[size_t(cz-z)*type.footX+cx-x];
-        if (body) result.entity=uint16_t(body->id);
+        if (body) result.entity=uint32_t(body->id);
         return result;
     };
     const int maximum=type.canFly || type.domain!=UnitType::Domain::Ground
@@ -1407,8 +1407,8 @@ bool World::mobilePlacement(const UnitType& type,uint16_t self,int x,int z,bool 
         ? (type.minWaterDepth>0?type.minWaterDepth:13) : -10000;
     return retailMobilePlacement(x,z,type.footX,type.footZ,hW_,hH_,seaLevel_,maximum,minimum,
         type.maxSlope,type.maxWaterSlope,self,allowMoving,1,cellAt,
-        [](uint16_t){return 0x20u;},[&](uint16_t id) {
-            const auto* u=unit(id);
+        [](uint16_t){return 0x20u;},[&](uint32_t id) {
+            const auto* u=unit(int(id));
             return RetailPlacementEntity{u!=nullptr,u && u->alive(),u && !u->type->isStructure(),id};
         });
 }
@@ -17619,7 +17619,7 @@ std::optional<std::pair<int,int>> World::legionParkSpot(const Unit& u,const Reta
                 continue;
             const auto bodies=searchBodyRect(around.x,around.z,around.w,around.h,u.id);
             if (std::any_of(bodies.cells.begin(),bodies.cells.end(),[](const Unit* b){return b!=nullptr;})) continue;
-            if (!mapPlacementCells_.empty() && !mobilePlacement(t,uint16_t(u.id),ox,oz,true)) continue;
+            if (!mapPlacementCells_.empty() && !mobilePlacement(t,uint32_t(u.id),ox,oz,true)) continue;
             return std::pair{ox,oz};
         }
     }
