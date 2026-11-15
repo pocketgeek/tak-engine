@@ -3187,7 +3187,13 @@ case; the owner asked for them fixed regardless (protocol 325):
   spot in its range band with a clear shot (`repositionForShot`, searching
   far enough to clear the minimum range), if it may move (an ordered
   attack, a stance other than Hold Position, or an auto target on the way);
-  otherwise, or with no spot, it gives the target up.
+  otherwise, or with no spot, it gives the target up. The walks are the
+  blocked-shot budget's, three per target between hits on it: the back-off
+  takes the target into that bookkeeping, so a new target starts with all
+  three and a hit gives them back. (In 1.0.3 to 1.0.5 it did not, so after
+  three back-offs in a unit's life every Attack on an enemy inside its
+  minimum range was dropped the tick it was given. Test:
+  `minrange_backoff_test`.)
 - **A boat's clear-shot chord** (`shotChordClear`) started from the sea bed
   under the spot plus the muzzle's lift, so every chord met the surface and
   a boat never found a spot to reposition to. It starts from the body's own

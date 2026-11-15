@@ -9223,6 +9223,13 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
             const bool onTheWay = u.orders.front().autoTarget && movementQueued(u);
             const bool ordered = !u.orders.front().autoTarget;
             const bool mayMove = u.moveState != 0 || onTheWay || ordered;
+            // The walks are this target's, as a written-off spot's are
+            // (noteShotImpact): a new target starts with all of them, and a
+            // hit on this one gives them back. Taking the target also keeps
+            // the count in the state hash.
+            if (mayMove && u.blockedTarget!=target->id) {
+                u.blockedTarget=target->id;u.blockedShots=0;u.repositions=0;u.searchFailed=0;
+            }
             if (mayMove && repositionForShot(u,*target,slot)) return;
             if (!mayMove || u.searchFailed || u.repositions >= kMaxRepositions) {
                 if(u.scriptAimTarget)clearScriptWeaponTarget(u);
