@@ -4100,6 +4100,14 @@ if(TAK_TEST_DATA)
         "${CMAKE_SOURCE_DIR}/tools/replay_always_test.py"
         --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
       set_tests_properties(replay_always PROPERTIES TIMEOUT 300)
+      # A watched game the server ends (no human seated at its result): an all-AI game
+      # ends on the tick it is decided, one whose player left moments after; the watcher
+      # plays it to its last tick, gets the winner's result plate after three seconds, and
+      # its recording and the server's replay end on that tick and play back to the same state.
+      add_test(NAME watch_end COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tools/watch_end_test.py"
+        --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
+      set_tests_properties(watch_end PROPERTIES TIMEOUT 600)
       # Replay seeking end to end: every landing and the end of the game hash as a straight
       # run does, on Retail, Legion, a campaign mission, a .crt scenario and a spectator's recording.
       add_test(NAME replay_seek COMMAND "${Python3_EXECUTABLE}"

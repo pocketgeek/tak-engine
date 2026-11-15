@@ -713,6 +713,12 @@ void MpClient::onFrame(const Frame& f) {
         }
         case Msg::SpeedUpdate: { uint8_t s = r.u8(); if (r.ok) { gameSpeed_ = s; room_.opts.speed = s; } break; }
         case Msg::MissionOutcome: { int8_t o = int8_t(r.u8()); if (r.ok) missionOutcome_ = o; break; }
+        case Msg::GameOver: {
+            const uint32_t ticks = r.u32(); const uint8_t team = r.u8();
+            if (!r.ok) break;
+            gameOver_ = true; gameOverTicks_ = ticks; gameOverTeam_ = team == 0xFF ? -1 : int(team);
+            break;
+        }
         case Msg::Chat: {
             std::string who = r.str(), text = r.str();
             if (r.ok) chat_.push_back({who, text});
@@ -872,6 +878,7 @@ void MpClient::createGame(const std::string& name, const std::string& password,
                           bool spectate, bool priv, const std::string& mission) {
     if(roomRequestPending_)return;
     joinError_.clear();createError_.clear();
+    gameOver_ = false;
     resetModTransfer();resetMapTransfer();
     mapStatus_ = "CHECKING MAP";
     if (mission.empty() && !mapgen::isGeneratedMapId(mapId)) {
@@ -904,6 +911,7 @@ void MpClient::joinGame(uint32_t id, const std::string& password) {
     if(roomRequestPending_)return;
     roomRequestPending_=true;
     joinError_.clear();
+    gameOver_ = false;
     Writer w; w.u32(id); w.str(password);
     send(Msg::JoinGame, w);
 }
@@ -921,7 +929,7 @@ void MpClient::leaveGame() {
     // watched game's stream is taken before its GameStarting is (which may wait for a
     // package, takes()), so a WATCH taken back in that wait leaves one too.
     bundles_.clear(); jitterHeld_.clear(); nextBundleTick_ = 0;
-    waiting_.clear(); paused_ = false;
+    waiting_.clear(); paused_ = false; gameOver_ = false;
     chat_.clear(); voice_.clear(); inputDropped_.clear();
     room_ = RoomView{};
     state_ = State::Lobby;
@@ -1086,6 +1094,7 @@ void MpClient::spectate(uint32_t gameId, const std::string& password) {
     if(roomRequestPending_)return;
     roomRequestPending_=true;
     joinError_.clear();
+    gameOver_ = false;
     expectingSpectate_ = true;
     Writer w; w.u32(gameId); w.str(password);
     send(Msg::Spectate, w);

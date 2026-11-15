@@ -255,6 +255,14 @@ public:
     uint8_t gameSpeed() const { return gameSpeed_; }
     // Campaign mission result the server reported: 0 = running, +1 = victory, -1 = defeat.
     int missionOutcome() const { return missionOutcome_; }
+    // The server ended the game this client is watching (Msg::GameOver): it closes no more
+    // ticks, so the game is its first gameOverTicks() bundles and is over here once those
+    // are played. gameOverTeam(): the winning team then, -1 = nobody. Cleared by the next
+    // room request and by leaveGame() -- not by GameStarting, which a watcher may still be
+    // holding back for a package when the game ends (watchLoading()).
+    bool gameOver() const { return gameOver_; }
+    uint32_t gameOverTicks() const { return gameOverTicks_; }
+    int gameOverTeam() const { return gameOverTeam_; }
 
     const std::vector<GameInfo>& games() const { return games_; }
     const RoomView& room() const { return room_; }
@@ -512,6 +520,9 @@ private:
     bool startSent_ = false;  // a StartGame went out and its answer is still to come
     uint8_t gameSpeed_ = 10;   // live game speed (from opts + in-game SpeedUpdate)
     int missionOutcome_ = 0;   // campaign mission result (0 running / +1 win / -1 loss)
+    bool gameOver_ = false;    // Msg::GameOver arrived (see gameOver())
+    uint32_t gameOverTicks_ = 0;
+    int gameOverTeam_ = -1;
     std::vector<std::pair<std::string, std::string>> chat_;
     std::vector<VoiceFrame> voice_;
     uint64_t voiceDropped_ = 0;

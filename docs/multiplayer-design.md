@@ -927,6 +927,14 @@ multiplayer game.
   ping, **behind-by indicator**, paused-by, the disconnect wait's
   `WAITING FOR <name> 27` countdowns and the own `RECONNECTING` line); chat
   overlay.
+- **Result:** a player's client latches its own result from its sim and goes
+  to the result screen three seconds later. A watcher has no result of its
+  own: it names the winner on a banner when its sim sees one, and its game
+  ends when the server says so (`GameOver`, §4) and it has played and shown
+  the last tick -- then the same three seconds and the same result screen,
+  on the winner's plate (the winning team's rows highlighted, the winner
+  named, the match length the result's tick; "Game Over" on the defeat plate
+  when nobody won).
 - `--server`, `--name` select a server from the command line (debug builds). LAN
   play = run `takserver` on any machine on the LAN, or a LOCAL SERVER from the
   menu.
@@ -1166,9 +1174,12 @@ the `gameMods` byte with the shared package's `modDigest`. The
   `tools/room_flow_test.py` (the room, scripted through `TAK_ROOM_SCRIPT`) run in
   ctest.
 - Game end (§4): `room_standing` (the standing a tick reports, on constructed
-  worlds) and `server_endgame` (a real server at protocol level: a seated human's
+  worlds), `server_endgame` (a real server at protocol level: a seated human's
   room plays on, the match-over and all-players-gone ends, `GameOver`, the
-  replay's length, a watcher still catching up).
+  replay's length, a watcher still catching up) and `watch_end` (real clients:
+  an all-AI game watched by its host ends on the tick it is decided, a game
+  whose player left moments later; the watcher's three seconds, its plate,
+  both replays).
 - `tools/desync-hunt-remote.sh`: `--minutes` limits simulated match time;
   `TAK_WALL_TIMEOUT=3600` grants each client up to one real hour for a dense
   stress run (the default is simulated seconds plus 300). The same tick,

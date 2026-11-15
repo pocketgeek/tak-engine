@@ -348,7 +348,8 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
         // Title band ("Victory"/"Defeat") in the decorative face the .gui names for it,
         // sized to fill the band. The mission name (campaign only) sits just above it.
         {
-            const char* big = victory ? "Victory" : "Defeat";
+            const char* big = stats && !stats->bandWord.empty() ? stats->bandWord.c_str()
+                              : victory ? "Victory" : "Defeat";
             // decorativesm's cell is 25x29 but its glyphs hang below the baseline, so
             // scale to a little under the band height or the word laps the help line.
             float sc = deco.ok() ? lay.scale * (g.title.h / 40.0f) : lay.scale * 1.6f;
@@ -364,10 +365,12 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
             float y = lay.py(g.title.y) + (g.title.h * lay.scale - th) / 2 - top;
             if (tf.ok()) tf.draw(ren, big, x, y, sc, gold);
             else uiText(ren, big, x, lay.py(g.title.y), sc * 2, gold);
-            if (!title.empty() && stats) {
+            // ...or, for a watcher, who won.
+            const std::string& above = stats && !stats->watchLine.empty() ? stats->watchLine : title;
+            if (!above.empty() && stats) {
                 float tsc = lay.scale;
-                float ttw = body.ok() ? float(body.width(title, tsc)) : uiTextWidth(title, tsc);
-                text(body, title, {(640 - ttw / lay.scale) / 2, g.title.y - 26, ttw / lay.scale, 20}, dim, false, true);
+                float ttw = body.ok() ? float(body.width(above, tsc)) : uiTextWidth(above, tsc);
+                text(body, above, {(640 - ttw / lay.scale) / 2, g.title.y - 26, ttw / lay.scale, 20}, dim, false, true);
             }
         }
         text(body, cancelHover ? cancelTip : okHover ? proceedTip : std::string(), g.help, dim, false, true, true);

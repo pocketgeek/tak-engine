@@ -2997,8 +2997,9 @@
         }
 
         // Victory / defeat banner. A spectator/replay viewer isn't a participant,
-        // so it names the winner instead of "VICTORY"/"DEFEAT".
-        if (outcome_ != 0 && bigFont_.ok()) {
+        // so it names the winner instead of "VICTORY"/"DEFEAT". A watched game the
+        // server ended (watchOver_) shows it whether or not anyone won.
+        if ((outcome_ != 0 || watchOver_) && bigFont_.ok()) {
             std::string msg;
             SDL_Color col{255, 220, 90, 255};
             if (spectating_ || replayMode_) {
@@ -3014,7 +3015,7 @@
             SDL_RenderFillRectF(ren_, &shade);
             float tw = float(bigFont_.width(msg, 1.5f));
             bigFont_.draw(ren_, msg, (winW - tw) / 2, float(winH) / 2 + 24, 1.5f, col);
-            const char* hint = !spectating_ && !replayMode_ && missionStem_.empty()
+            const char* hint = (!spectating_ && !replayMode_ && missionStem_.empty()) || watchOver_
                 ? "RESULTS IN 3 SECONDS" : "PRESS ESC FOR MENU";
             blockText(hint, (winW - blockWidth(hint, 2.0f)) / 2, float(winH) / 2 + 74, 2.0f,
                       {220, 220, 230, 255});

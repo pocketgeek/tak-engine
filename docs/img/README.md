@@ -74,7 +74,9 @@ has the exact environment, window and profile per job:
   Nothing connects to any server.
 - `TAK_SHOT_STREAM=1` (with `TAK_CREDSTORE=test`, so no real key can appear) the
   streaming window; `TAK_SHOT_CAMPAIGN=0` the campaign book; `TAK_SHOT_RESULT=<png>`
-  the result screen with built-in sample statistics.
+  the result screen with built-in sample statistics (`TAK_SHOT_RESULT_WATCH=1`: a
+  watcher's plate, the second sample player the winner; with `TAK_SHOT_RESULT_LOSE=1`
+  nobody, "Game Over").
 - `TAK_SHOT_OPTIONS=graphics|interface|voice` an Options page.
 
 Room pictures launch the menu with `TAK_MENU_PICK=singleplayer` and `TAK_NODOORVID=1`,

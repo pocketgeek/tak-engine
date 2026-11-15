@@ -16,6 +16,9 @@ namespace tak::hpi { class Vfs; }
 namespace tak {
 
 std::string factionLogoSequence(std::string side);
+// The same side names as a faction index, 0=ara 1=tar 2=ver 3=zon 4=cre (the result
+// screen's victory<race>.gui plates, ResultStats::faction); -1 for any other name.
+int factionIndex(const std::string& side);
 
 // Palette for `anims/<gaf>.gaf`: its sibling .pcx if present, else the shared GUI
 // palette. Returns an empty palette if neither loads (art then simply doesn't draw).

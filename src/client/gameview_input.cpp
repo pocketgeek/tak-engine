@@ -221,7 +221,7 @@
             // menu. Once the game is over it returns to the front-end menu directly.
             if (SDL_GetModState() & KMOD_CTRL) clearSquad();
             else if (unitInfoType_) unitInfoType_ = nullptr;   // close Unit Info first
-            else if (outcome_ != 0) { menuRequested_ = true; }
+            else if (outcome_ != 0 || watchOver_) { menuRequested_ = true; }
             else if (placing_ || pendingCmd_) {
                 placing_ = nullptr; pendingCmd_ = 0;buildDrag_=manaBuildDrag_=false;
                 shiftBuildPlaced_ = shiftOrderArmed_ = false;

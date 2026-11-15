@@ -582,6 +582,12 @@ public:
     // missionOutcomePublic this also covers a skirmish/MP last-team-standing result.
     int outcomePublic() const { return outcome_; }
     uint32_t outcomeTickPublic() const { return outcomeTick_; }
+    // A watched game the server has ended (Msg::GameOver), with its last tick played and
+    // on screen: the watcher's game is over, whether or not a team won (mpStep).
+    bool watchOverPublic() const { return watchOver_; }
+    // Which plate the result screen shows: a player's own win, or for a watcher (who is
+    // on nobody's side) whether any team won.
+    bool resultVictory() const { return spectating_ ? front().winningTeam >= 0 : outcome_ > 0; }
     // The hash this client REPORTS to the referee. A spectator's is never checked --
     // Server::checkHashes returns immediately when no human slot is seated -- so it
     // sends a cheap 0 instead of folding thousands of units into an FNV every period.
@@ -4978,6 +4984,7 @@ private:
     SoundClasses soundClasses_;
     uint32_t salt_ = 0;
     uint64_t resultStartedMs_ = 0;   // main-thread wall clock, independent of sim speed/pause
+    bool watchOver_ = false;         // watchOverPublic(); main thread
     std::atomic<int> outcome_{0};   // 0 = playing, 1 = victory, -1 = defeat (worker writes, main reads)
     std::atomic<uint32_t> outcomeTick_{0};   // sim ticks played when outcome_ landed (0 = none yet)
     // TAK_FAKE_DESYNC=TICK: report a wrong hash from this tick on (see reportedHash).

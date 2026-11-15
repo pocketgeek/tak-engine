@@ -403,6 +403,11 @@ it does, so a slow stress game on a loaded machine keeps its seat
 (`TAK_SIM_SLOW_US=<us>` plays such a client; `harness_seat_load` tests both).
 `TAK_DEFEAT_TEST=1` destroys the player's Monarch and plays on through the results
 transition; any other value only destroys it, and the run ends at its result.
+A watching run (`--mpspectate`, or `--mphost` with `TAK_MP_WATCH`) also ends when the
+server ends the watched game (`Msg::GameOver`): `end=gameover` when its own sim saw no
+result. `TAK_WATCH_END_TEST=1` is the watch probe: the run plays on past the result
+until the server ends the game, then through the same three-second results transition,
+and prints the result plate a watcher gets (`watch_end` tests it).
 
 ## Server authentication
 

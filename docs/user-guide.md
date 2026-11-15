@@ -354,7 +354,7 @@ before. Everyone else sees them as plain text. A button that another option deci
 | **Allow speed change** | Lets the host change game speed during the match, from −9 (0.1×) to +10 (2×). |
 | **Pathfinding** | **Retail** (the default) or **Legion**. Campaigns always use Retail. See [Pathfinding](#pathfinding-retail-and-legion). |
 | **Allow spectators** | Multiplayer only. **On** (the default): anyone in the browser can **Watch** the game once it starts. **Off**: the server turns every watcher away. Players, AIs and reconnecting players are not affected. It is fixed once the game starts. See [Spectating](#spectating). |
-| **Watch** | Single-player only: the **Watch** button on your own slot. You leave your slot and watch the AIs play; if fewer than two AIs are seated, every open slot gets one, of a random side. While you watch, **Fog of war** shows **Full Vision** and **Power codes** shows **Off** (neither can be changed), and the room says *WATCHING THE AIS*. Every open or AI slot shows **Sit here**: click it to play again in that slot (an AI there leaves), with your own choices for both back. |
+| **Watch** | Single-player only: the **Watch** button on your own slot. You leave your slot and watch the AIs play; if fewer than two AIs are seated, every open slot gets one, of a random side. While you watch, **Fog of war** shows **Full Vision** and **Power codes** shows **Off** (neither can be changed), and the room says *WATCHING THE AIS*. Every open or AI slot shows **Sit here**: click it to play again in that slot (an AI there leaves), with your own choices for both back. The game ends by itself when one team of AIs is left, on the winner's result screen (see [Spectating](#spectating)). |
 | **Power codes** | **Off** (the default) or **On**. On lets every player in the game type the original game's cheat codes in the chat box, such as **+ATM** and **+NowISee**. See [Power codes](#power-codes). Always off in campaigns. |
 | **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. It is among the room's rules, and under the preview in **Change map...**; maps marked with a gold **S** in the list have a scenario. In the panel it is greyed, with the reason, for maps without a playable one, including maps whose scenario gives you, player 1, nothing to command (*PLAYER 1 GETS NO ARMY*: many downloaded maps place only scenery or wildlife). A map that needs a unit type your install lacks is offered if your install has a game mod pack (one you could tick in the room, or an always-enabled one), in single player and multiplayer alike, with the warning *PACK NEEDED:* and the unit, in case a pack supplies it. It starts **Off** for each map you select, and the lines under it say what turning it on changes. In the room it can be clicked once the map has been checked; when turning it on or off would remove AIs or move a player, the first click only says what the second will do (*CLICK AGAIN: ...*). While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
 
@@ -2678,6 +2678,25 @@ numbers and the **F4** board.
 Only the host can pause a game or change its speed, so a spectator's **Pause** key
 does nothing. When you **Watch** the AIs in single player you are the host, and both work.
 
+**When a watched game ends.** As soon as one team is left, a banner names it:
+**TEAM 2 WINS**. What happens next depends on who is still playing:
+
+- **No human player is in the game** (you are watching the AIs, or the last
+  human has left or been replaced by an AI): the game ends right there. The server stops
+  running it, and three seconds later you get the same result screen the players
+  get. It shows the winner's victory plate with the winner named above
+  **Victory** (the player, or **Team 2 wins** for a team of several) and the
+  winning players' rows highlighted, and the game's length is the moment it was
+  decided. If nobody is left at all, or every player left a game that was not
+  decided, the screen reads **Game Over**.
+- **A human player is still in the game**: it goes on until the players leave
+  (their own games show the result and leave three seconds after it), and then
+  ends for you as above. **Esc** takes you to the result screen sooner.
+
+A game that cannot be decided, for example when the last armies cannot reach
+each other, runs until you leave: there is no stalemate rule and no time limit.
+A game nobody is connected to never keeps running on the server.
+
 The host decides whether a game can be watched with **Allow spectators** (on by
 default). When it is off, the browser shows a red **No watch** button instead of
 **Watch**, and the server refuses any request to watch the game, including from a
@@ -2994,7 +3013,9 @@ watched carry no checkpoint hashes, since a spectator does not report them.
 The replay is written to disk while you play, so it is kept however the game
 ends: a win or a loss, quitting, returning to the menu, a lost connection, the
 computer shutting down, or the game being killed or crashing. It runs to the
-moment you left, including anything played or watched after the result. If the
+moment you left, including anything played or watched after the result. A game
+you watched with no human player left in it ends when it is decided (see
+[Spectating](#spectating)), so its replay ends there too. If the
 game was killed or crashed, the recording is finished the next time TAK Engine
 starts and loses at most about the last second (after a power cut, up to about
 the last ten seconds). If the disk fills up or the

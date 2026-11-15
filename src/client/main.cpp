@@ -1187,7 +1187,8 @@ int main(int argc, char** argv) {
     // TAK_SHOT_RESULT=<png> [TAK_SHOT_RESULT_SIDE=0..4] [TAK_SHOT_RESULT_LOSE=1]:
     // render the end-of-game plate with a sample table and exit. Playing a whole match
     // out just to look at the screen isn't practical, so this is how its layout gets
-    // verified against the retail art.
+    // verified against the retail art. TAK_SHOT_RESULT_WATCH=1 renders a watcher's plate
+    // (GameView::resultStats): the second player the winner, or with ..._LOSE nobody.
     if (const char* rs = tak::devEnv("TAK_SHOT_RESULT"); rs && *rs) {
         tak::ResultStats st;
         st.matchSec = 17 * 60 + 42;
@@ -1207,7 +1208,17 @@ int main(int argc, char** argv) {
             st.rows.push_back(std::move(r));
         }
         bool victory = tak::devEnv("TAK_SHOT_RESULT_LOSE") == nullptr;
-        tak::ResultScreen::run(ren, vfs, victory, "MISSION 7", false, &settings, nullptr, &st);
+        const bool watch = tak::devFlag("TAK_SHOT_RESULT_WATCH");
+        if (watch) {
+            st.rows[0].isLocal = false;
+            if (!victory) st.bandWord = "Game Over";
+            else {
+                st.rows[1].isLocal = true;
+                st.watchLine = st.rows[1].name + " wins";
+                if (!tak::devEnv("TAK_SHOT_RESULT_SIDE")) st.faction = 1;
+            }
+        }
+        tak::ResultScreen::run(ren, vfs, victory, watch ? "" : "MISSION 7", false, &settings, nullptr, &st);
         tak::releaseUiTextGlyphs(); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
         return 0;
     }
@@ -1922,7 +1933,11 @@ int main(int argc, char** argv) {
         // result like an ordinary one -- at exactly the result's tick (setNetStopAtOutcome).
         const char* defeatEnv = tak::devEnv("TAK_DEFEAT_TEST");
         const bool defeatProbe = defeatEnv && std::string(defeatEnv) == "1";
-        gameView->setNetStopAtOutcome(!defeatProbe);
+        // TAK_WATCH_END_TEST=1 is the watch probe, for a spectating run: play on past the
+        // result until the server ends the game (Msg::GameOver), then through the same
+        // three-second results transition, and report the result plate a watcher gets.
+        const bool watchProbe = tak::devFlag("TAK_WATCH_END_TEST");
+        gameView->setNetStopAtOutcome(!defeatProbe && !watchProbe);
         // Jitter benchmark: run the client loop at a FIXED 60 fps (so the stall
         // metric is frame-rate-consistent) and enable the RTT probe. Otherwise the
         // usual tight poll loop.
@@ -1960,7 +1975,25 @@ int main(int argc, char** argv) {
                              (unsigned long long)delay, gameView->netTick());
                 break;
             }
-            if (!cont || (!defeatProbe && gameView->outcomePublic() != 0)) break;
+            static uint64_t watchOverAt = 0;
+            if (watchProbe && gameView->watchOverPublic() && !watchOverAt) watchOverAt = SDL_GetTicks64();
+            if (watchProbe && gameView->menuRequested()) {
+                const uint64_t delay = SDL_GetTicks64() - watchOverAt;
+                if (!watchOverAt || delay < 2950 || delay > 4000)
+                    throw std::runtime_error("watched game's results transition did not take three seconds");
+                const tak::ResultStats st = gameView->resultStats();
+                std::string gold;   // the highlighted rows: the winners'
+                for (const auto& row : st.rows) if (row.isLocal) gold += (gold.empty() ? "" : ",") + row.name;
+                std::fprintf(stderr, "PASS: watched game over: results after %llu ms at tick %u, result tick %u; "
+                             "plate victory=%d faction=%d line='%s' band='%s' matchSec=%d gold=%s\n",
+                             (unsigned long long)delay, gameView->netTick(), gameView->outcomeTickPublic(),
+                             int(gameView->resultVictory()), st.faction, st.watchLine.c_str(), st.bandWord.c_str(),
+                             st.matchSec, gold.c_str());
+                break;
+            }
+            if (!cont || (!defeatProbe && !watchProbe && gameView->outcomePublic() != 0)) break;
+            // A watched game the server ended (Msg::GameOver) is over, result or none.
+            if (!watchProbe && gameView->watchOverPublic()) break;
             if (int(gameView->netTick()) >= limitTicks) break;
             if (tak::termRequested()) break;   // SIGTERM/SIGINT/SIGHUP: tear down (and finish the replay)
             // TAK_KILL_AT_TICK=N: die like a crash at tick N -- SIGKILL (TerminateProcess on
@@ -1993,7 +2026,8 @@ int main(int argc, char** argv) {
                      gameView->netTick(), (unsigned long long)gameView->worldHashPublic(),
                      gameView->aliveUnits(),
                      gameView->netError().empty() ? "none" : gameView->netError().c_str(),
-                     endOutcome != 0 ? "concluded" : "timelimit", gameView->outcomeTickPublic());
+                     endOutcome != 0 ? "concluded" : gameView->watchOverPublic() ? "gameover" : "timelimit",
+                     gameView->outcomeTickPublic());
         if (const auto* legion = gameView->legionPublic()) {
             // Which mission goals Legion routed in this game (legs taken on,
             // arrivals raised, failed approaches handed back), by kind.
@@ -3219,11 +3253,13 @@ int main(int argc, char** argv) {
         else if (rc == tak::ResultChoice::Retry) { pendingCampaign = campaignStem; pendingCampaignId = campaignId; }
         // Menu -> pendingCampaign stays empty -> the outer loop re-shows the front-end.
     } else if (campaignStem.empty() && gameView && !quitApp && fromMenu &&
-               gameView->outcomePublic() != 0) {
+               (gameView->outcomePublic() != 0 || gameView->watchOverPublic())) {
         // Skirmish / multiplayer: retail shows the same victory/defeat plate here,
         // with the match's statistics table. No next mission and nothing to retry,
-        // so both buttons come back to the front end.
-        int oc = gameView->outcomePublic();
+        // so both buttons come back to the front end. A watcher gets the plate too,
+        // the winner's (GameView::resultStats), also when the server ended a watched
+        // game that nobody won.
+        const bool victory = gameView->resultVictory();
         tak::ResultStats st = gameView->resultStats();
         localServer.stop(); gameView.reset(); mp.reset();   // view first: it saves the replay
         const auto next = origin == tak::LaunchOrigin::SinglePlayer ? tak::ResultChoice::NewGame
@@ -3244,7 +3280,7 @@ int main(int argc, char** argv) {
             proceedTip = address && sessionToken.heldFor(address->host, address->port) ? "Game List"
                                                                                        : "Connect to Server";
         }
-        const auto rc = tak::ResultScreen::run(ren, vfs, oc > 0, "", false, &settings, &menuMusic, &st, next,
+        const auto rc = tak::ResultScreen::run(ren, vfs, victory, "", false, &settings, &menuMusic, &st, next,
                                                menuTip, proceedTip);
         if (rc == next) afterResult = rc;
         else resultToTitle = true;

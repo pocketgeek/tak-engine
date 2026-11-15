@@ -17,6 +17,13 @@ std::string factionLogoSequence(std::string side) {
     return {};
 }
 
+int factionIndex(const std::string& side) {
+    static const char* const kSequences[5] = {"AraTeam", "TarTeam", "VerTeam", "ZonTeam", "CreTeam"};
+    const std::string sequence = factionLogoSequence(side);
+    for (int i = 0; i < 5; ++i) if (sequence == kSequences[i]) return i;
+    return -1;
+}
+
 
 gaf::Palette guiPalette(const hpi::Vfs& vfs, const std::string& gafName) {
     std::string pp = "anims/" + gafName + ".pcx";

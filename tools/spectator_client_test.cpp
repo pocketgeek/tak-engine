@@ -8,6 +8,10 @@
 //  - The refusal also drops the pending spectate. Before 258 it stayed set, so the next
 //    ordinary JoinGame's GameStarting came up as a SPECTATOR start: the player got no
 //    control of the slot the server had just seated them in.
+//  - GameOver (the server ended the watched game) is taken in a room and by a watcher
+//    whose GameStarting is still to come, names the game's length and winner, and is
+//    forgotten when the client leaves or asks for another room; outside a room it is
+//    not this client's.
 #include "net/client.h"
 #include "net/netcompat.h"
 
@@ -62,6 +66,19 @@ struct Server {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         throw std::runtime_error("timed out waiting for a client request");
+    }
+    // Answer the client's next Ping (the one it sends behind a LeaveGame: until that Pong
+    // it drops everything of a room, MpClient::takes).
+    void answerPing(net::MpClient& client) {
+        for (int i = 0; i < 2000; ++i) {
+            client.poll();
+            if (!conn.recv()) throw std::runtime_error("server receive");
+            net::Frame f;
+            while (conn.poll(f))
+                if (f.kind == net::Msg::Ping) { conn.send(net::Msg::Pong); conn.flushWrite(); return; }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        throw std::runtime_error("timed out waiting for the client's ping");
     }
     // Send, then a Ping: the client's Pong proves it processed the message first.
     void send(net::Msg kind, const net::Writer& w, net::MpClient& client) {
@@ -134,6 +151,28 @@ int main() {
         check(!client.isSpectator(), "a refused watch turned the next seated start into a spectator start");
         check(!client.isCatchUp(), "a seated fresh start reads as a spectate catch-up");
         check(client.room().mySlot == 1 && client.room().opts.allowSpectators == 1, "start keeps the slot and the rule");
+
+        // The end of a watched game. Leave the seat (the Pong behind the LeaveGame ends
+        // what the old room may still send), then watch.
+        const auto gameOver = [](uint32_t ticks, uint8_t team) { net::Writer w; w.u32(ticks); w.u8(team); return w; };
+        check(!client.gameOver(), "no game is over before the server says so");
+        client.leaveGame();
+        check(server.receive(client).kind == net::Msg::LeaveGame, "leave request");
+        server.answerPing(client);
+        server.send(net::Msg::GameOver, gameOver(9, 0), client);
+        check(!client.gameOver(), "a GameOver outside any room is not this client's");
+        client.spectate(12, "");
+        check(server.receive(client).kind == net::Msg::Spectate, "watch request");
+        server.send(net::Msg::GameOver, gameOver(900, 1), client);   // before its GameStarting: a watcher still loading
+        check(client.gameOver() && client.gameOverTicks() == 900 && client.gameOverTeam() == 1,
+              "GameOver names the game's length and the winning team");
+        server.send(net::Msg::GameStarting, gameStarting(12, 0xFF, 1), client);
+        check(client.isSpectator() && client.gameOver() && client.gameOverTicks() == 900,
+              "a GameOver that came before the watcher's GameStarting is kept");
+        server.send(net::Msg::GameOver, gameOver(901, 0xFF), client);
+        check(client.gameOverTeam() == -1 && client.gameOverTicks() == 901, "0xFF is nobody");
+        client.leaveGame();
+        check(!client.gameOver(), "leaving forgets the game that was over");
     } catch (const std::exception& e) {
         std::printf("  FAIL %s\n", e.what()); ++failures;
     }

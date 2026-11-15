@@ -455,7 +455,17 @@
     }
 
     bool GameView::mpStep() {
-        if (outcome_ != 0 && !spectating_ && !replayMode_ && missionStem_.empty()) {
+        // A watcher has no result of its own to leave on: its game ends when the server
+        // says so (Msg::GameOver -- the match is decided with no human seated, or every
+        // player has gone) and the last tick it names has been played and shown.
+        if (spectating_ && !watchOver_ && mp_->gameOver() && netTick_ >= mp_->gameOverTicks() &&
+            front().gameTick >= mp_->gameOverTicks()) {
+            watchOver_ = true;
+            std::fprintf(stderr, "watch: the server ended the game after %u ticks (%s)\n", mp_->gameOverTicks(),
+                         mp_->gameOverTeam() >= 0 ? ("team " + std::to_string(mp_->gameOverTeam() + 1) + " wins").c_str()
+                                                  : "no winner");
+        }
+        if ((outcome_ != 0 && !spectating_ && !replayMode_ && missionStem_.empty()) || watchOver_) {
             const uint64_t now = SDL_GetTicks64();
             if (!resultStartedMs_) resultStartedMs_ = now;
             if (now - resultStartedMs_ >= 3000) menuRequested_ = true;
@@ -1688,7 +1698,7 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
             // so render caches never take a new unit for the old one with its id.
             worldEpoch_.fetch_add(1, std::memory_order_release);
             writableWorld().resetForReplay();
-            netTick_ = 0; outcome_ = 0; outcomeTick_ = 0; resultStartedMs_ = 0; netError_.clear();
+            netTick_ = 0; outcome_ = 0; outcomeTick_ = 0; resultStartedMs_ = 0; watchOver_ = false; netError_.clear();
             // Replaying history from tick 0: hold our own orders and stop counting
             // acknowledgements until the log is spent (see cmdCatchUp_).
             // The SERVER says where history ends; we do not guess (see
@@ -1715,7 +1725,9 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
                 mp_->reportLoaded(gameDataHash_);
             }
             mpSetupDone_ = true;
-        } else if (st == S::InGame) {
+        } else if (st == S::InGame || (st == S::Starting && mpSetupDone_ && mp_->gameOver())) {
+            // (Starting: a watched game the server ended before its first tick sends no
+            // bundle to start on; mpStep still ends the watch.)
 #ifndef NDEBUG
             autoplayStep();   // TAK_AUTOPLAY: headless humans that actually give orders
             buildlineNetProbe();

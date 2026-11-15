@@ -5,6 +5,7 @@
 #include "client/buildline.h"
 #include "client/reclaimpick.h"
 #include "client/gamespeed.h"
+#include "client/guiart.h"
 #include "client/shadowmask.h"
 #include "client/retailfeatureclock.h"
 #include "client/retailbuilderanimation.h"
@@ -790,12 +791,23 @@
     // Build the end-of-game statistics table from the last render frame. Rows follow
     // slot order so the table reads the same for everyone in a multiplayer game; a
     // player still standing when the game ended is timed at the full match length.
+    //
+    // A watcher is on nobody's side, so its plate is the winner's: the winning team's
+    // rows are the highlighted ones, the plate is the side of its first player still
+    // standing, a line names the winner, and the match length is the tick the result
+    // landed (a game its players played on past the result is not timed at the moment
+    // the watcher left). With no winner the band reads "Game Over".
     tak::ResultStats GameView::resultStats() const {
         tak::ResultStats st;
         const Frame& f = front();
         st.matchSec = int(f.gameTick / 30);
+        if (spectating_ && outcomeTick_ != 0) st.matchSec = std::min(st.matchSec, int(outcomeTick_ / 30));
         static const char* kSides[5] = {"ara", "tar", "ver", "zon", "cre"};
         for (int i = 0; i < 5; ++i) if (side_ == kSides[i]) st.faction = i;
+        const int winner = spectating_ ? f.winningTeam : -1;
+        int winners = 0;
+        bool plate = false, plateFell = false;
+        std::string winnerName;
         for (int p = 0; p < f.numPlayers && p < int(f.players.size()); ++p) {
             if (resultParticipants_ && !(*resultParticipants_ & (1u<<p))) continue;
             const PlayerR& pr = f.players[size_t(p)];
@@ -811,7 +823,21 @@
             row.defeated = pr.defeated;
             row.isLocal = (p == localPlayer_) && !spectating_;
             row.timeSec = pr.defeatedAt >= 0 ? int(pr.defeatedAt) : st.matchSec;
+            if (winner >= 0 && pr.team == winner) {
+                row.isLocal = true;
+                if (!winners++) winnerName = row.name;
+                // The plate: the first winner still standing, else the first winner.
+                if (const int side = tak::factionIndex(pr.side); side >= 0 && (!plate || (plateFell && !pr.defeated))) {
+                    st.faction = side;
+                    plate = true;
+                    plateFell = pr.defeated;
+                }
+            }
             st.rows.push_back(std::move(row));
+        }
+        if (spectating_) {
+            if (winner < 0) st.bandWord = "Game Over";
+            else st.watchLine = (winners == 1 ? winnerName : "Team " + std::to_string(winner + 1)) + " wins";
         }
         return st;
     }

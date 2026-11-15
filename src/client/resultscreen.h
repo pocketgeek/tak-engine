@@ -40,6 +40,10 @@ struct ResultStats {
     int faction = 0;      // local player's faction (0=ara 1=tar 2=ver 3=zon 4=cre)
                           // -- picks which victory<race>.gui plate is shown
     int matchSec = 0;
+    // A watcher's plate (GameView::resultStats): the line naming the winner, drawn above
+    // the title band where a campaign shows the mission name, and the band's word when
+    // nobody won ("Game Over"; empty keeps Victory / Defeat).
+    std::string watchLine, bandWord;
 };
 
 class ResultScreen {
