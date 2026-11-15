@@ -4079,6 +4079,9 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         int stripLo=0,stripHi=-1,stripPlane=-1;uint64_t stripEpoch=~0ull;
         int8_t tokenDir=-1;int tokenPlayer=-1;bool closing=false;uint32_t granted=0,lastEntry=0;
         uint32_t waitSince[2]={kNoTick,kNoTick};bool waited[2]={false,false},waiting[2]={false,false};
+        // Ticks since a body of each way last asked and was refused (0: in the last tick; saturating). Derived
+        // from the asks like waited, never hashed.
+        uint8_t sinceAsk[2]={255,255};
         uint32_t occ[2]={0,0};
         uint32_t com[2]={0,0};    // admitted bodies still before the strip, by direction (counted with occ)
         uint32_t cross=0;         // the longest crossing among the open way's admitted bodies, ticks (see crossTicks)
@@ -4520,17 +4523,31 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         const uint32_t now=w.tickCounter_;
         for(auto& o:openings) {
-            if(o.tokenDir<0&&!o.waiting[0]&&!o.waiting[1])continue;
-            for(int d=0;d<2;++d) {o.waited[d]=o.waiting[d];o.waiting[d]=false;if(!o.waited[d])o.waitSince[d]=kNoTick;}
+            if(o.tokenDir<0&&!o.waiting[0]&&!o.waiting[1]) {o.sinceAsk[0]=o.sinceAsk[1]=255;continue;}
+            for(int d=0;d<2;++d) {
+                o.sinceAsk[d]=o.waiting[d]?uint8_t(0):uint8_t(std::min(255,o.sinceAsk[d]+1));
+                o.waited[d]=o.waiting[d];o.waiting[d]=false;if(!o.waited[d])o.waitSince[d]=kNoTick;
+            }
             if(o.tokenDir<0)continue;
             const int cur=o.tokenDir,other=1-cur;
+            // A body held kRestAfter ticks asks only on every kRestStride-th tick (heldRest). Where the passage
+            // turns, a waiter's ask therefore stands for the stride, and a passage that just turned keeps its way
+            // for the stride. Without the two a lone waiter never took its turn while bodies of the other way stood
+            // admitted before the passage and never used it: asked two ticks before, the passage was freed and
+            // the other way's bodies, updated first (lower unit numbers on the same ticks), took it again; asked
+            // the tick before, the passage turned to it and straight back on the next tick (it had not asked again
+            // yet, the other way's lapsed bodies had) -- every kAdmitCommit ticks, for good (the 18-hour audit:
+            // three units for 14 hours; passage-starve.scn). The run of waiting (waitSince) and the closing rule
+            // read single ticks as before: counted over the stride, a way closes where it stays open today, and
+            // bridges-100 loses a turn pattern its arrivals depend on (first army's t90 +16%).
+            const bool asked=o.sinceAsk[other]<gRestStride,fresh=now-o.granted<gRestStride;
             // An admitted body still on its way to the strip keeps the passage its way, for kAdmitCommit ticks
             // after the last admission: turned under it, the admission lapsed where it stood -- on the apron of the
             // mouth, in the exit of the stream let in next (bridges-100 at offset 0: 15 bodies admitted east of
             // the bridge lapsed when the token turned 60 ticks after the last admission, and the west army came
             // through into them and stood on the bridge for the rest of the run).
-            if(!o.occ[cur]&&now-o.lastEntry>=kAdmitClear&&(!o.com[cur]||now-o.lastEntry>=kAdmitCommit)) {
-                if(o.waited[other]) {o.tokenDir=int8_t(other);o.granted=now;o.closing=false;o.waitSince[other]=kNoTick;++acct.admitTurns;}
+            if(!fresh&&!o.occ[cur]&&now-o.lastEntry>=kAdmitClear&&(!o.com[cur]||now-o.lastEntry>=kAdmitCommit)) {
+                if(asked) {o.tokenDir=int8_t(other);o.granted=now;o.closing=false;o.waitSince[other]=kNoTick;++acct.admitTurns;}
                 else if(!o.waited[cur]) {o.tokenDir=-1;o.closing=false;}
             }
             if(o.tokenDir!=cur) {

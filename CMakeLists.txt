@@ -1252,6 +1252,15 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios taperbridge-small --data "${TAK_TEST_DATA}"
                    --offsets 0,-8 --min scale.arrive.n=95 --max scale.stuck_end=2)
   set_tests_properties(legion_passage_small PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # ... and a lone waiter takes its turn although a body of the other way stands admitted before the passage and never
+  # uses it (passage-starve: on the parent the passage was freed every 120 ticks and retaken by that body, which has
+  # the lower unit number and updates first, for good -- three units of the audited 18-hour game stood so for 14
+  # hours). The waiter must arrive. Asset-free.
+  add_test(NAME legion_passage_starve
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios passage-starve
+                   --min g.B.arrived=1 --max g.A.complete_n=0)
+  set_tests_properties(legion_passage_starve PROPERTIES LABELS legion TIMEOUT 300)
   # Head-on meets near both goals (many-100: two pairs of 25-body orders sent to each other's positions meet
   # within kPivotNear of both goals; the meet band now holds up to the destination area plus one lead): at least
   # 98 of 100 arrive, the 90th percentile within 1,000 ticks (the previous commit 96 / 1,616; Retail 92 / 1,144).

@@ -1236,6 +1236,16 @@ copy here.
   body's top speed (`crossTicks`, derived every tick from the passers; the token fields it decides are hashed). A door
   or a short gap keeps the 300 ticks; a long bridge with slow bodies turns about once (the first army crosses whole,
   then the other), because every turn puts the next way's crowd onto the apron the last way is coming out onto.
+* **A lone waiter.** A body held 60 ticks asks only on every second tick (the rest stride, section 9), so where the
+  passage turns a waiter's ask stands for the stride (`Opening::sinceAsk`), and a passage that just turned keeps its
+  way for the stride. Without the two, a lone waiter never took its turn while bodies of the other way stood admitted
+  before the passage and never used it: asked two ticks before, the passage was freed and the other way's bodies,
+  which have the lower unit numbers and update first on the same ticks, took it again; asked the tick before, the
+  passage turned to it and straight back on the next tick. Every 120 ticks, for good: three units of the audited
+  18-hour game stood so for 14 hours. The run of waiting and the closing rule still read single ticks.
+  `ctest:legion_passage_starve` (the waiter crosses; before, never). `taperbridge-100` and `taperbridge-small` keep
+  their hashes at every gate offset and `bridges-100` at ten of eleven (offset -3 turns once more: its first army's
+  t90 8,512 for 10,087).
 * Tests: `ctest:legion_passage_admission` (bridges-100 at offsets 0 and -5: at least 95 arrive, at most 2 stuck),
   `ctest:legion_passage_records` (crowdbench opposingbridges 100x1: at least 90 in goal), `ctest:legion_passage_taper`
   (taperbridge-100 at 0 and -4: at most 2 stuck), `ctest:legion_passage_green` (taperbridge-100 at +1, -5 and +8: at
@@ -1244,8 +1254,10 @@ copy here.
 * Rejected: turning only once the far apron is clear too (the other way's waiting crowd stands there), no lapse at all,
   a commit window scaled to the zone walk (neutral), holding the token while an admitted body stands in the mouth
   (slower), waiting bodies parting for the stream coming out or stepping out of the passage's lane (the knot moves),
-  and short reservations at chokepoints (admission already serialises the passage; bookings that bind allies across
-  groups make two armies refuse each other's cells).
+  short reservations at chokepoints (admission already serialises the passage; bookings that bind allies across
+  groups make two armies refuse each other's cells), and, for the lone waiter, counting an ask over the stride for the
+  run of waiting too, or asking again on a rested body's skipped update (either way a way closes after two crossings
+  where it stays open today: `bridges-100` moved at 8 of 11 offsets, its first army's t90 from 8,287 to 9,592).
 
 ### The passage gate
 
