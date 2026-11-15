@@ -1203,8 +1203,9 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
     }
 }
 // Zhon has no factory buildings: its mobile builders train the army and build
-// the lodestones. Their allowance is another side's factories plus its builders
-// past the Monarch, not the factories alone.
+// the lodestones. Their allowance is another side's factories plus those away
+// at lodestones (Normal, Hard, Absurd) or its builders past the Monarch (Easy),
+// not the factories alone.
 static void mobileProducers() {
     auto files=std::make_shared<hpi::Vfs::Files>();
     auto file=[&](const std::string& path,const std::string& text) {
@@ -1251,13 +1252,12 @@ static void mobileProducers() {
             return c.kind==net::Cmd::Build && std::string(c.type)==side+"hand";
         });
     };
-    // Income 100: three factories (100/40 + 1) and four builders, the Monarch included.
+    // Income 100: two factories (100/60 + 1) and two producers away at lodestones
+    // (tools/ai_economy_test.cpp), the Monarch on top.
     check(conjuresHandler("zon",ai::Difficulty::Normal,100,3),
-          "Zhon's mobile producers count as builders as well as factories");
-    check(conjuresHandler("zon",ai::Difficulty::Normal,100,5),
-          "Zhon's producers grow to its factories plus its builders past the Monarch");
-    check(!conjuresHandler("zon",ai::Difficulty::Normal,100,6),
-          "Zhon's producers stop at its factories plus its builders past the Monarch");
+          "Zhon's producers grow to its factories plus those away at lodestones");
+    check(!conjuresHandler("zon",ai::Difficulty::Normal,100,4),
+          "Zhon's producers stop at its factories plus those away at lodestones");
     check(!conjuresHandler("tar",ai::Difficulty::Normal,100,3),
           "a side with factory buildings keeps its mobile producers to the factory count");
     check(conjuresHandler("zon",ai::Difficulty::Easy,100,2),
@@ -1355,9 +1355,9 @@ static void builderTotals() {
         ai::Controller controller(0,reg,p,1,difficulty);
         return builders(think(controller,w,difficulty==ai::Difficulty::Easy ? 90 : 0),{"zonhand"});
     };
-    // Income 100: three factories and four builders, so the Monarch and six handlers.
-    check(zhon(ai::Difficulty::Normal,100,5,0)==1,"Zhon's producers grow to its own allowance");
-    check(zhon(ai::Difficulty::Normal,100,5,1)==0,
+    // Income 100: two factories and two away at lodestones, so the Monarch and four handlers.
+    check(zhon(ai::Difficulty::Normal,100,3,0)==1,"Zhon's producers grow to its own allowance");
+    check(zhon(ai::Difficulty::Normal,100,3,1)==0,
           "a handler ordered but not yet conjured counts against Zhon's allowance");
     // Hard at income 100000: 32 factories and a quarter more for the producers away
     // at lodestones, so 40, and 41 with the Monarch (tools/ai_economy_test.cpp).

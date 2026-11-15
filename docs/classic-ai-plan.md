@@ -531,7 +531,7 @@ centre, radius, counts, firepower, shot cost, draw, busy-deposit test and placer
 | 17 | Monarch alarm on hit (30..927 ticks build pause) | none | **missing** |
 | 18 | Monarch retreat by HP/mana/castable thresholds, to the safest of 20 points | Monarch "fights back" (Attack lastHitBy) + 520 px home leash | **different** |
 | 19 | Desired builders p1 = rand(2)+1, growing with population/20 | builderCap tables per level | different |
-| 20 | Duplicate-factory rule; Monarch 4-tower cap | desiredFactories per income (Normal one per 40; Hard and Absurd one per 60, what a working factory spends, and one more while the store is over 60% full) | different |
+| 20 | Duplicate-factory rule; Monarch 4-tower cap | desiredFactories per income (Easy one per 40; Normal, Hard and Absurd one per 60, what a working factory spends, and one more while the store is over 60% full; Normal at most 8) | different |
 | 21 | Idle units: MOVE centre -> p1 -> PATROL p2 inside the base ring; re-plan 1/50 | door clearing; stationArmy (defensive only) | **missing** |
 | 22 | Base threat = visible enemy in the ring-0 radius; defenders patrol through intruders | sendDefenders (defensive levels only), radius 900/400/1500 | **missing** for attack levels |
 | 23 | Wave size from the biggest enemy population, x multipliers, cap 50, sign = keep reserve | bigPush = waveSize + income/4, raids, cooldown 750 | **different** |

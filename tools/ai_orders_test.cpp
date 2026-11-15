@@ -374,11 +374,11 @@ static void seatSide() {
             return c.kind==net::Cmd::Build && (std::string(c.type)=="zonhand" || std::string(c.type)=="zontame");
         }));
     };
-    // A Zhon seat on 100 income wants six producers and has four. `captured`: an
+    // A Zhon seat on 200 income wants six producers and has four. `captured`: an
     // Aramon constructor with a lower unit id than any of them is the seat's too.
     struct Seat { sim::World w; int monarch=0; };
     auto seat=[&](Seat& s,bool captured,bool monarch) {
-        terrain(s.w);s.w.player(0).income=100;s.w.player(0).mana=5000;
+        terrain(s.w);s.w.player(0).income=200;s.w.player(0).mana=5000;
         if (captured) s.w.spawn(r("aramason"),700,1000,0,0);
         if (monarch) s.monarch=s.w.spawn(r("zonking"),1000,1000,0,0);
         for (int i=0;i<4;++i) s.w.spawn(r("zonhand"),1000+float(i)*200,1400,0,0);

@@ -454,12 +454,15 @@ still being built, a level starts nothing new except that lodestone. Every level
 picks only deposits on ground it knows, and a deposit counts as free unless it
 sees or remembers a lodestone on it, or a build there is refused.
 
-Hard and Absurd size their production to their income: one factory for every
-60 mana of income a second (a working factory spends 30 to 120), one more
-whenever their mana store is over 60% full, and 32 at most. Zhon has no factory
-buildings: its Beast Handlers, Tamers, Lords and Shamans conjure its army, so a
-Hard or Absurd Zhon keeps one of them for every 60 income in the same way, and a
-quarter more (two at least) for the ones away building lodestones.
+Normal, Hard and Absurd size their production to their income: one factory for
+every 60 mana of income a second (a working factory spends 30 to 120), one more
+whenever their mana store is over 60% full, and 8 at most for Normal, 32 for
+Hard and Absurd. Normal still builds no more of one factory type than its build
+profile allows. Zhon has no factory buildings: its Beast Handlers, Tamers, Lords
+and Shamans conjure its army, so a Normal, Hard or Absurd Zhon keeps one of them
+for every 60 income in the same way, and a quarter more (two at least) for the
+ones away building lodestones. Normal keeps building lodestones until it earns
+the 60 a factory that its next factory needs.
 
 Hard and Absurd keep adding lodestones while their mana store has room. With
 the store 90% full they build none: more income would buy nothing. In a room
@@ -514,7 +517,8 @@ for it, its own or an ally's, has got no nearer for a minute, and sends its own
 stuck builders to other work.
 
 Normal starts with its Monarch and one builder and adds builders as its income
-grows, up to the Monarch and four; Easy and Passive keep two. Defensive and Absurdly
+grows, up to the Monarch and four (a Zhon Normal's producers follow its
+production instead, above); Easy and Passive keep two. Defensive and Absurdly
 Defensive add one per 50 income with no ceiling. No other AI builds more of one
 builder type than its build profile allows. Zhon has no factory
 buildings, so its AI counts its Beast Handlers, Tamers, Lords and Shamans as

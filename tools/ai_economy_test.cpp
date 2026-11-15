@@ -1,4 +1,5 @@
-// Hard's and Absurd's economy and army make-up, as decisions of a real
+// Our levels' economy and army make-up (Hard's and Absurd's most of all, and
+// the factory rule Normal shares with them), as decisions of a real
 // ai::Controller on constructed bases: what its producers are ordered to build,
 // and where, in one think.
 #include "ai/ai.h"
@@ -127,10 +128,15 @@ static void factoryTarget(const Roster& r) {
         check(!buildsKeep(level,300,8) && buildsKeep(level,300,8,15000),
               "with the store over 60% full Hard/Absurd build one more factory than they have");
     }
-    // The other levels keep their own targets: Normal one per 40 (eight at most),
-    // the defensive levels one per 25 without a ceiling.
-    check(buildsKeep(ai::Difficulty::Normal,300,7) && !buildsKeep(ai::Difficulty::Normal,300,8),
-          "Normal keeps one factory per 40 income, eight at most");
+    // Normal follows the same rule, eight at most: at one per 40 its factories
+    // kept the store empty and the over-commit throttle on as Hard's did.
+    check(buildsKeep(ai::Difficulty::Normal,300,5),"Normal adds a factory below one per 60 income");
+    check(!buildsKeep(ai::Difficulty::Normal,300,6),"Normal stops at one factory per 60 income (and one)");
+    check(!buildsKeep(ai::Difficulty::Normal,300,6) && buildsKeep(ai::Difficulty::Normal,300,6,15000),
+          "with the store over 60% full Normal builds one more factory than it has");
+    check(buildsKeep(ai::Difficulty::Normal,600,7) && !buildsKeep(ai::Difficulty::Normal,600,8) &&
+          !buildsKeep(ai::Difficulty::Normal,600,8,15000),"Normal stops at eight factories, a filling store or not");
+    // The defensive levels keep one per 25 without a ceiling.
     check(buildsKeep(ai::Difficulty::Defensive,300,12) && !buildsKeep(ai::Difficulty::Defensive,300,13),
           "Defensive keeps one factory per 25 income");
 }
@@ -178,6 +184,23 @@ static void fullStore(const Roster& r) {
         check(buildsLode(level,5000),"Hard/Absurd keep adding lodestones while the store has room");
         check(!buildsLode(level,9500),"Hard/Absurd build no lodestone beside a full store");
     }
+}
+
+// Normal's lodestones grow to the income its next factory needs (one per 60):
+// between its old income target (25 + 20 a factory) and that, a side wanted
+// neither a lodestone nor a factory, and stood still.
+static void normalIncomeTarget(const Roster& r) {
+    auto buildsLode=[&](float income,int keeps) {
+        sim::World w;terrain(w);w.buildNavClasses(r.reg);
+        w.setManaSpots({{1216,816}});
+        w.player(0).storage=10000;w.player(0).mana=4000;w.player(0).income=income;
+        for (int i=0;i<keeps;++i) busy(w,w.spawn(r("arakeep"),400+float(i)*200,400,0,0),r("arasword"));
+        w.spawn(r("araminer"),1000,1000,0,0);
+        ai::Controller controller(0,r.reg,r.profile,1,ai::Difficulty::Normal);
+        return orders(think(controller,w),net::Cmd::Build,"aralode")==1;
+    };
+    check(buildsLode(58,1) && buildsLode(100,2),"Normal adds lodestones below 60 income a factory");
+    check(!buildsLode(130,2),"... and none past it while the store has room and no factory is short of mana");
 }
 
 // With a unit cap set, lodestones take a quarter of it at most, none is started
@@ -333,8 +356,8 @@ static void safeDeposits(const Roster& r) {
 }
 
 // Zhon's handlers are its factories, and conjure all the time they are not away
-// at a lodestone: Hard and Absurd keep as many as their income feeds (one per 60)
-// and a quarter more for the ones away, not another side's whole builder
+// at a lodestone: Normal, Hard and Absurd keep as many as their income feeds (one
+// per 60) and a quarter more for the ones away, not another side's whole builder
 // allowance on top.
 static void zhonAllowance(const Roster& r) {
     auto conjuresHandler=[&](ai::Difficulty difficulty,float income,int handlers,float mana=6000) {
@@ -356,6 +379,14 @@ static void zhonAllowance(const Roster& r) {
         check(!conjuresHandler(level,300,12) && conjuresHandler(level,300,12,15000),
               "with the store over 60% full a Hard/Absurd Zhon conjures one more producer than it has");
     }
+    // Normal: the same six and two away on 300 income (its builder allowance of
+    // four on top made twelve), and with a filling store one more than the six
+    // its eight are taken to feed; ten at most (eight factories and two away).
+    check(conjuresHandler(ai::Difficulty::Normal,300,7) && !conjuresHandler(ai::Difficulty::Normal,300,8),
+          "Normal Zhon keeps no more producers than its income feeds and a quarter more");
+    check(conjuresHandler(ai::Difficulty::Normal,300,8,15000),
+          "with the store over 60% full a Normal Zhon conjures one more producer than it has");
+    check(!conjuresHandler(ai::Difficulty::Normal,300,10,15000),"a Normal Zhon keeps ten producers at most");
 }
 
 // Zhon's handlers are its factories: few leave for a lodestone at a time, and
@@ -410,6 +441,7 @@ int main() {
     factoryTarget(roster);
     shortOfManaLodestone(roster);
     fullStore(roster);
+    normalIncomeTarget(roster);
     unitCap(roster);
     safeDeposits(roster);
     zhonAllowance(roster);

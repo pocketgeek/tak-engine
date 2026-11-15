@@ -429,10 +429,17 @@ Controller::BaseLayout Controller::baseLayout(const tak::sim::World& world) cons
     return layout;
 }
 
-// Hard's and Absurd's income per factory (assessNeeds).
+// Normal's, Hard's and Absurd's income per factory (assessNeeds).
 static constexpr float kIncomePerFactory = 60;
 
-// How many of a Hard or Absurd Zhon's `producers` may be away building
+// The levels whose production is sized to what it spends (assessNeeds): one
+// factory per kIncomePerFactory, one more while the store fills, and Zhon's
+// producers counted the same way.
+static bool spendSizedProduction(Difficulty d) {
+    return d == Difficulty::Normal || d == Difficulty::Hard || d == Difficulty::Absurd;
+}
+
+// How many of a Normal, Hard or Absurd Zhon's `producers` may be away building
 // lodestones at a time: a quarter, two at least.
 static int producersOut(int producers) { return std::max(2, producers / 4); }
 
@@ -507,14 +514,20 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
             if (u.orders[i].buildType && (i > 0 || !bound || bound->type != u.orders[i].buildType))
                 planned(u.orders[i].buildType);
     }
-    // One factory per ~40 income so production can actually spend what we earn.
-    // Hard and Absurd: one per kIncomePerFactory, and one more than they have
-    // while the store is over 60% full (below). A working factory spends 30 to
-    // 120 mana a second (build cost x worker time / build time: 30-45 for a
-    // keep's troops, 60-80 for a castle's); at their old one per 25 income the
-    // factories asked for half as much again as came in, the store sat empty,
-    // and the over-commit throttle (tick) stopped every new order -- the next
-    // lodestone too -- in 61-95% of thinks from minute 3 of a game on.
+    // One factory per ~40 income so production can actually spend what we earn
+    // (Easy; the defensive levels have their own rule below).
+    // Normal, Hard and Absurd: one per kIncomePerFactory, and one more than they
+    // have while the store is over 60% full (below); Normal at most 8, Hard and
+    // Absurd 32. A working factory spends 30 to 120 mana a second (build cost x
+    // worker time / build time: 30-45 for a keep's troops, 60-80 for a
+    // castle's); at Hard's old one per 25 income the factories asked for half as
+    // much again as came in, the store sat empty, and the over-commit throttle
+    // (tick) stopped every new order -- the next lodestone too -- in 61-95% of
+    // thinks from minute 3 of a game on. Normal's one per 40 did the same more
+    // slowly: four of the eight Normal sides of the audited room sat under the
+    // throttle in 71-97% of thinks from minute 5 to 20. Normal keeps its own
+    // builder cap, army size, pace and profile limits; only the factory rule is
+    // Hard's.
     // Builders count the Monarch. Normal grows to the Monarch plus four as income
     // allows: retail's ai/default.txt limits each builder type, not the total --
     // arabuild, arafly and arapries 4 each, cremech and crechie 4, tarpries,
@@ -532,8 +545,9 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
         // Income limits production speed, not the eventual size of the force.
         n.desiredArmy = world.unitCap() > 0 ? world.unitCap() : INT_MAX;
     }
-    if (aggressive) {
-        n.desiredFactories = std::clamp(1 + int(n.income / kIncomePerFactory), 1, 32);
+    if (spendSizedProduction(diff_)) {
+        const int most = aggressive ? 32 : 8;
+        n.desiredFactories = std::clamp(1 + int(n.income / kIncomePerFactory), 1, most);
         // A store filling up: production is not spending what comes in. One more
         // factory than it has. Of Zhon's producers that is one more than those
         // its income feeds: its allowance (below) is those and a quarter of them
@@ -543,7 +557,7 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
         // count, and one more with its 2 away are the 12 it has.
         if (me.storage > 0 && me.mana > me.storage * 0.6f) {
             const int have = mobileProduction(side) ? n.factories - producersOut(n.factories * 4 / 5) : n.factories;
-            n.desiredFactories = std::min(std::max(n.desiredFactories, have) + 1, 32);
+            n.desiredFactories = std::min(std::max(n.desiredFactories, have) + 1, most);
         }
     }
     if (dp_.unbounded) {
@@ -572,18 +586,18 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
     // lodestones, and they count as factories here. Their allowance is the
     // factories another side would have plus that side's builders past the
     // Monarch, so Zhon is not held to the producers of a side that has both.
-    // Normal's most is 8 + 4 = 12, the four types' retail limits together.
     // Every builder=1 mobile unit counts against the cap: Aramon's and Taros's
     // priests are factories by their menus, but builders all the same. Zhon's
     // cap is its producers' allowance plus the Monarch.
-    // At Hard and Absurd a producer conjures troops all the time it is not away
-    // at a lodestone, and spends as a factory does. With another side's whole
-    // builder allowance (up to 11) on top of its factories, Zhon had twice the
-    // producers its income could keep conjuring, and sat under the over-commit
-    // throttle like the factory sides (85-88% of thinks in minutes 5-10). Its
-    // producers are the factories its income feeds plus those it may send to
-    // lodestones at a time (producersOut).
-    const int builders = aggressive ? producersOut(n.desiredFactories) : n.builderCap - 1;
+    // At Normal, Hard and Absurd a producer conjures troops all the time it is
+    // not away at a lodestone, and spends as a factory does. With another side's
+    // whole builder allowance (up to 11) on top of its factories, Zhon had twice
+    // the producers its income could keep conjuring, and sat under the
+    // over-commit throttle like the factory sides (85-88% of thinks in minutes
+    // 5-10 at Hard). Its producers are the factories its income feeds plus those
+    // it may send to lodestones at a time (producersOut): Normal's most is
+    // 8 + 2 = 10, under the four types' retail limits together (12).
+    const int builders = spendSizedProduction(diff_) ? producersOut(n.desiredFactories) : n.builderCap - 1;
     n.mobileBuilderCap = n.builderCap;
     if (mobileProduction(side)) {
         n.mobileBuilderCap = 1 + n.desiredFactories + builders;
@@ -612,7 +626,13 @@ int Controller::desire(BuildCat c, const Needs& n) const {
                 if (n.storeFull) return 0;
                 return n.income < 25.0f + 20.0f * n.factories ? 80 : 60;
             }
-            if (n.income < 25.0f + 20.0f * n.factories) return 60;
+            // Normal's next factory needs kIncomePerFactory more income (assessNeeds):
+            // its lodestones grow to that, or a side whose income stood between the
+            // two targets wanted neither -- a Taros side sat on one factory and 58
+            // income from minute 6 to 20 with three builders idle.
+            if (n.income < (spendSizedProduction(diff_) ?
+                    std::max(25.0f + 20.0f * n.factories, kIncomePerFactory * n.factories) :
+                    25.0f + 20.0f * n.factories)) return 60;
             // A full store means the income target is not what holds production
             // back. Retail's builders draw from their whole menu, the lodestone
             // among it (weight 10, limit 7 in ai/default.txt); ours stood idle
