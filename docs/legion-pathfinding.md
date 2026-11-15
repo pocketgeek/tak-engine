@@ -961,9 +961,13 @@ goals"), so the rules here are its counterpart. They are ours, not Retail's, and
   `ctest:legion_swap_wide` and `ctest:legion_fightmeet` read the offsets the older tests do not.
 * **What it does.** The audited crowd rebuilt on its real ground (246 bodies among the wrecks of a base, 147
   attack-move orders, 9,000 ticks): stock Legion ended 61 orders and left 84 bodies standing with theirs, 13 within
-  160 px of their goal; Retail ends 141 and 17; Legion now ends all 147, the last at tick 6,907 (8,267 with the
-  game's own unit numbering), 21 within 160 px. Through the client's order path (`ctest:legion_crowdlock`) 147 of 147
-  against 53. The doorway pair, a 4x4 and a 3x3 body at the mouth of a channel one large body wide: stood for good in
+  160 px of their goal; Retail ends 141 and 17; Legion now ends 146 of the 147 (145 with the game's own unit
+  numbering), 19 within 160 px (20), and the last one or two by tick 9,900 (17,100). With these rules alone all 147
+  ended, the last at tick 6,907 (8,267), 21 within 160 px: on this 2048 x 2048 map the route rules for large maps
+  give a group whose bounded window failed a chain where it took the whole component's window, and a chain's way is
+  not the window's (Known weaknesses, "the whole component is still the last resort"). Through the client's order
+  path (`ctest:legion_crowdlock`, a window of that ground too small for those rules) 147 of 147 against 53. The
+  doorway pair, a 4x4 and a 3x3 body at the mouth of a channel one large body wide: stood for good in
   8 of 28 start positions with one command and 4 of 41 with two, on either kind of order; now in none (both through
   by tick 3,100 on attack-move orders, by 6,000 on move orders; Retail by 2,300; `ctest:legion_doorwaypair`,
   `ctest:legion_doorwaypair_move`). A settled crowd of another order in a corridor: the bodies sent through it end
@@ -2076,11 +2080,15 @@ first start of a tick always fits) and reach-ring cells.
   command to the unit's first step at the 90th percentile 727 -> 64 / 67 and 969 -> 97 / 84 ticks; over
   63,000-72,000 331,037 -> 16,653 / 16,594 with arrivals 3,297 -> 3,414 / 3,627. The fields charged against the
   allowance average 119-121, 89-91 and 49-50 MB in those stretches (stock 128-130 MB in all three; the forks start
-  from the recorded game's full memory). The same match played from tick 0 with the rules is a different game from
-  the first changed decision (it was decided near tick 210,000; the recorded one was still fought at 324,000). By
-  tick 180,000 it has 84,818 waiting member-ticks against 1,685,685 (-95%) with 40,551 arrivals against 41,069, no
-  eviction, no request refused for room and no reservation (recorded: 56,856, 614,921 and 21,779 ticks), and the
-  fields charged average 27 MB against 92 MB. What remains is under "Known weaknesses".
+  from the recorded game's full memory). With the rules for bodies that stand for good in as well (section 4), the same
+  forks measured the same way: 867,183 -> 18,169 / 25,882 and 1,468,405 -> 29,491 / 29,058 waiting member-ticks (-97%
+  and -98%), arrivals 1,046 / 1,089 and 646 / 668 (3 to 8% under the route rules alone, 40 to 50% over stock), the
+  90th-percentile delay 64 / 67 and 84 / 89 ticks, 114-119 and 93-95 MB charged; over 63,000-72,000 16,563 with 3,449
+  arrivals. The same match played from tick 0 with the rules is a different game from the first changed decision (it was
+  decided near tick 210,000; the recorded one was still fought at 324,000). By tick 180,000 it has 84,818 waiting
+  member-ticks against 1,685,685 (-95%) with 40,551 arrivals against 41,069, no eviction, no request refused for room
+  and no reservation (recorded: 56,856, 614,921 and 21,779 ticks), and the fields charged average 27 MB against 92 MB.
+  What remains is under "Known weaknesses".
 * **Ordering.** Groups with no field start before stale refreshes of older groups (served the other way round,
   constant churn restarts the refreshes every tick and starves new groups). A refresh keeps building across static
   changes, as a first field does, and is installed still stale so another follows.
@@ -2427,8 +2435,8 @@ Rules that come out of using them:
   end orders more often than they open ways:
   * A pair wedged at a mouth by the crowd behind it has no cell to step to, so its orders end at the long threshold
     and the two stand idle there (stuck bodies: they part for the next mover by their full width). In the audited
-    crowd 21 of 147 bodies end within 160 px of their goal (Retail 17, stock Legion 13); the rest end where they
-    stood or part of the way.
+    crowd 19 or 20 of 147 bodies end within 160 px of their goal (Retail 17, stock Legion 13); the rest end where
+    they stood or part of the way.
   * The long threshold counts from the last progress of anything the body waits on, not from when the body stopped:
     a body behind a queue that still moves now and then keeps its order, however long it stands.
   * Only bodies of the body's own side (its player's and its allies') that will never move end an order early. A body
@@ -2577,6 +2585,15 @@ Rules that come out of using them:
   from the goal is never reached by a chain (those sectors belong to the destination's own field, which does not
   leave them), so its group spends all three plans. The line for "large" is 1/32 of the allowance: at 1/64
   `many-10000` (832 x 832, nothing starving) lost 4% of its arrivals, and with no line `sched-load` lost 16%.
+  A chain's way is also not the window's way, and in a crowd that costs: in the audited crowd rebuilt on its real
+  ground (section 4, "What it does"; the audit's world tool on the whole map, not a fixture) a catapult whose group
+  takes a chain is led the long way round and its order ends some 2,100 px short of a goal it reached, to within
+  33 px, over the whole component's window; and one or two siege units walk a closed loop with their orders, about
+  3,000 ticks a lap (a detour round the settled crowd ends where the chain's descent leads round and back to the
+  same blocked step), until they stand down before that crowd, the first at tick 9,270 and the last between ticks
+  16,200 and 17,100. The settle rule's growing bound makes such a body live each time it comes round, so its
+  stand-down waits for the lap after that bound has stopped growing. Over the whole component's window the same
+  units came to a stand in the jam and their orders ended there, with all the others by tick 8,267.
   Measured by `ctest:legion_fullplan` and `ctest:legion_starve`.
 * **A refresh served first moves bodies that used to stand.** Under a saturated quota (`sched-load` with the game's
   routes, seven start offsets) the members standing off a touched chain wait 97% less (24,756 -> 684 member-ticks,
