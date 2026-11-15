@@ -125,6 +125,8 @@ def main():
     for address, name in [(0x51a770, 'ground aim'), (0x4d77b0, 'insert')]:
         p.hooks[address] = unexpected(name)
     p.freeze_hooks()
+    # Sees retail leave the 16.16 range in a call (emurange.py): the run's point is the last thing it builds.
+    watch = emurange.Watch(p, ((0x41bf80, 0x41ca4f),) + emurange.HELPERS)
     draws = [0]
     p.uc.hook_add(UC_HOOK_CODE, lambda uc, a, s, d: draws.__setitem__(0, draws[0] + 1),
                   begin=0x535cc0, end=0x535cc0)
@@ -149,7 +151,7 @@ def main():
 
     rng = random.Random(0x41bf80)
     following = HEAP + 0x32000     # the next mission, when +0x66 has one
-    fixtures, expected = [], []
+    fixtures, expected, left = [], [], []
     outcomes = {}
     s32 = lambda v: (v + 2**31) % 2**32 - 2**31
     for i in range(6000):
@@ -215,6 +217,7 @@ def main():
         result, error = p.call(0x41bf80, (unit, mission, events))
         if error:
             raise AssertionError((i, error))
+        left.append(watch.left())
         installs = len(log.get('install', []))
         if installs and log['install'][-1] != controller:
             raise AssertionError((i, 'installed a controller it did not build'))
@@ -256,11 +259,12 @@ def main():
     actual = [tuple(map(int, line.split())) for line in output.stdout.splitlines()]
     if len(actual) != len(expected):
         raise AssertionError('row count %d, expected %d' % (len(actual), len(expected)))
-    # A run point past the end of the 16.16 range (the longest run lengths): the port stops there, retail wraps.
+    # A run point past the end of the 16.16 range (the longest run lengths): retail's sum wraps in that call, the
+    # port stops there. Such a row may differ in the point's x and z alone; every other row must match exactly.
     past = 0
     for i, (got, want) in enumerate(zip(actual, expected)):
         if got != want:
-            if emurange.saturated(got, want):
+            if left[i] and emurange.stopped(got, want, (8, 10)):
                 past += 1
                 continue
             raise AssertionError('fixture %d: %s\n  port   %s\n  native %s' % (i, fixtures[i], got, want))
@@ -269,9 +273,11 @@ def main():
         stages[int(fixture.split()[0])] = stages.get(int(fixture.split()[0]), 0) + 1
     installed = sum(1 for row in expected if row[7])
     print('PASS: %d AirToGround calls (stages %s), %d controllers, %d step-outs, group check %s, every state, '
-          'point, radius and draw; %d points past the end of the range, where the port stops (ours)'
+          'point, radius and draw; retail leaves the range in %d fixtures and the port differs in %d of them, in '
+          'the run point alone (ours)'
           % (len(expected), ' '.join('%d:%d' % kv for kv in sorted(stages.items())), installed,
-             sum(1 for row in expected if row[18]), ', '.join('%s %d' % kv for kv in sorted(outcomes.items())), past))
+             sum(1 for row in expected if row[18]), ', '.join('%s %d' % kv for kv in sorted(outcomes.items())),
+             sum(map(bool, left)), past))
 
 
 if __name__ == '__main__':

@@ -64,20 +64,22 @@ def run(binary, mode, lines):
     return [tuple(map(int, line.split())) for line in output.stdout.splitlines()]
 
 
-def compare(name, fixtures, expected, actual):
+def compare(name, fixtures, expected, actual, left=None, point=()):
+    """Every row equal. `left`, per fixture: where retail left the 16.16 range in that call (emurange.Watch); the
+    port stops there instead (ours), so such a row may differ in the x and z of the point it builds (`point`,
+    the last thing these missions build), and in nothing else."""
     if len(actual) != len(expected):
         raise AssertionError('%s: row count %d, expected %d' % (name, len(actual), len(expected)))
-    # A point past the end of the 16.16 range (the missions' points here are any 32-bit value): the port stops
-    # there, retail wraps (emurange.py).
     past = 0
     for i, (got, want) in enumerate(zip(actual, expected)):
         if got != want:
-            if emurange.saturated(got, want):
+            if left and left[i] and emurange.stopped(got, want, point):
                 past += 1
                 continue
             raise AssertionError('%s fixture %d: %s\n  port   %s\n  native %s' % (name, i, fixtures[i], got, want))
-    if past:
-        print('%s: %d points past the end of the range, where the port stops (ours)' % (name, past))
+    if left:
+        print('%s: retail leaves the range in %d fixtures; the port differs in %d of them, in the built point '
+              'alone (ours)' % (name, sum(map(bool, left)), past))
 
 
 def check_counter(binary):
@@ -371,6 +373,9 @@ def check_hover(binary):
     for address, name in [(0x51a770, 'ground aim'), (0x4e4520, 'controller heading')]:
         p.hooks[address] = (lambda n: lambda uc, a: (_ for _ in ()).throw(AssertionError('unexpected ' + n)))(name)
     p.freeze_hooks()
+    # Sees retail leave the 16.16 range in a call (emurange.py): a sum of positions wraps, or the distance to the
+    # point (41dd5f) is 32768 px or more and reads negative.
+    watch = emurange.Watch(p, ((0x41d820, 0x41e3cf),) + emurange.HELPERS, words=(0x41dd5f,))
     draws = [0]
     p.uc.hook_add(UC_HOOK_CODE, lambda uc, a, s, d: draws.__setitem__(0, draws[0] + 1), begin=0x535cc0, end=0x535cc0)
     lost = [0]
@@ -389,7 +394,7 @@ def check_hover(binary):
     put(target + 0x114, 'B', 0)
 
     rng = random.Random(0x41d820)
-    fixtures, expected = [], []
+    fixtures, expected, left = [], [], []
     stages = {}
     for i in range(8000):
         stage = rng.choice((0, 1, 1, 2, 3, 3, 4, 4, 4, 4, 5, 5, 6))
@@ -465,6 +470,7 @@ def check_hover(binary):
         result, error = p.call(0x41d820, (unit, mission, events))
         if error:
             raise AssertionError((i, error))
+        left.append(watch.left())
         if log.get('auto') and any(a != 3 for a in log['auto']):
             raise AssertionError((i, 'auto slots', log['auto']))
         if log.get('manual') and any(a != 0 for a in log['manual']):
@@ -511,7 +517,7 @@ def check_hover(binary):
         actual.append((result, stage, wait, deadline, pending, flags, count, px, py, pz, approaches, rings, gx, gy, gz,
                        radius, lostc, outc, leaves, formations, begin, autos, aims, leads, retargets, steps, stepd,
                        seed, calls))
-    compare('hover', fixtures, expected, actual)
+    compare('hover', fixtures, expected, actual, left, (12, 14))
     def tally(column):
         return sum(1 for row in expected if row[column])
     print('PASS: AirToGroundHover, %d calls (%s), every state, point, controller, slot call, push and draw '
@@ -794,6 +800,7 @@ def check_seek_guard(binary):
     p.hooks[0x4d6a50] = cancel
     p.hooks[0x51e4d0] = lambda uc, a: (_ for _ in ()).throw(AssertionError('unexpected 51e4d0'))
     p.freeze_hooks()
+    watch = emurange.Watch(p, ((0x4197d0, 0x419daf),) + emurange.HELPERS)
     draws = [0]
     p.uc.hook_add(UC_HOOK_CODE, lambda uc, a, s, d: draws.__setitem__(0, draws[0] + 1), begin=0x535cc0, end=0x535cc0)
 
@@ -801,7 +808,7 @@ def check_seek_guard(binary):
     put(unit + 0xc, 'I', weapon)
     rng = random.Random(0x4197d0)
     outcomes = {}
-    fixtures, expected = [], []
+    fixtures, expected, left = [], [], []
     stages = {}
     for i in range(8000):
         stage = rng.choice((0, 0, 1, 1, 1, 1, 2))
@@ -858,6 +865,7 @@ def check_seek_guard(binary):
         result, error = p.call(0x4197d0, (unit, mission, events))
         if error:
             raise AssertionError((i, error))
+        left.append(watch.left())
         missions = log.get('mission', [])
         names = log.get('lookup', [])
         # A step-out's D (+0x4e) is (rand(15) + footX) x 16, never 0; the
@@ -901,7 +909,7 @@ def check_seek_guard(binary):
     rows = run(binary, '--air-seek-guard', fixtures)
     # The port counts a guard() call per offer; native offers one (resolve)
     # and builds it only for a row: the port's guardCalls equals resolves.
-    compare('seek guard', fixtures, expected, rows)
+    compare('seek guard', fixtures, expected, rows, left, (11, 13))
 
     def tally(column, value=None):
         return sum(1 for row in expected if (row[column] == value if value is not None else row[column]))
@@ -1031,6 +1039,7 @@ def check_air_strike(binary):
     p.hooks[0x51d1e0] = group
     p.hooks[0x50c480] = lambda uc, a: (record('leave', get(a)), (1, 0))[1]
     p.freeze_hooks()
+    watch = emurange.Watch(p, ((0x41b5e0, 0x41bf7f),) + emurange.HELPERS)
     draws = [0]
     p.uc.hook_add(UC_HOOK_CODE, lambda uc, a, s, d: draws.__setitem__(0, draws[0] + 1), begin=0x535cc0, end=0x535cc0)
 
@@ -1040,7 +1049,7 @@ def check_air_strike(binary):
     put(unit + 8, 'I', mover)
     put(kind + 0x1aa, 'I', weapon)
     rng = random.Random(0x41b5e0)
-    fixtures, expected, beyond = [], [], []
+    fixtures, expected, left = [], [], []
     stages = {}
     for i in range(12000):
         stage = rng.choice((0, 1, 1, 2, 2, 3, 4, 4, 4, 4, 5, 5, 6, 6, 7))
@@ -1123,6 +1132,7 @@ def check_air_strike(binary):
         result, error = p.call(0x41b5e0, (unit, mission, events))
         if error:
             raise AssertionError((i, error))
+        left.append(watch.left())
         missions = log.get('mission', [])
         steps = [m for m in missions if m[0] == 'VTOL_StepOut']
         seeks = [m for m in missions if m[0] == 'VTOL_SEEKATTACK']
@@ -1152,9 +1162,6 @@ def check_air_strike(binary):
         # The port's retarget() is the scan, the not-the-target test and the
         # attack together: it answers yes only when all three do.
         retargets = int(answer['found'] == 1 and answer['attack'])
-        # The mission's point is any 32-bit value: 32768 px or more from the flyer on an axis, their difference
-        # does not fit 32 bits. Retail's wraps; the port's keeps its sign (emurange.py).
-        beyond.append(not emurange.fits(x - point[0], z - point[2]))
         fixtures.append(' '.join(map(str, (stage, events, tick, deadline, pending, flags, *point, s32(x), s32(y),
                                            s32(z), s32(tx), s32(ty), s32(tz), heading, int(armed), int(dropped),
                                            int(flies), int(unit_live and not dying), int(fire == 0),
@@ -1171,16 +1178,19 @@ def check_air_strike(binary):
     for r in rows:
         r = list(r)
         actual.append(tuple(r))
+    # The mission's point is any 32-bit value. 32768 px or more from the flyer on an axis, their difference does
+    # not fit 32 bits: retail's wraps (the watch sees it, in that call), the port's keeps its sign (emurange.py),
+    # and the distance, the heading and the point built from them differ. Every other row must match exactly.
     past = 0
     for i, (got, want) in enumerate(zip(actual, expected)):
         # retargetCalls (port) against scans (native): the same offers.
         if got != want:
-            if beyond[i] or emurange.saturated(got, want):
+            if left[i]:
                 past += 1
                 continue
             raise AssertionError('air strike fixture %d: %s\n  port   %s\n  native %s' % (i, fixtures[i], got, want))
-    if past:
-        print('air strike: %d fixtures past the end of the range, where the port differs (ours)' % past)
+    print('air strike: retail leaves the range in %d fixtures (a difference wraps); the port differs in %d of '
+          'them (ours)' % (sum(map(bool, left)), past))
     if len(actual) != len(expected):
         raise AssertionError('air strike: row count %d, expected %d' % (len(actual), len(expected)))
 

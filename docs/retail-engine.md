@@ -3931,8 +3931,16 @@ far end lies past the east edge.
 
 The emulation checks that feed these ports any 32-bit value
 (`check_air_attack_run.py`, `check_air_to_air.py`, `check_air_traffic.py`)
-count the fixtures where the port differs on purpose (`tools/re/emurange.py`)
-and compare every other fixture exactly as before.
+let a fixture differ only where retail itself leaves the range in that very
+call. `tools/re/emurange.py` follows the native handler as it builds the
+mission's points and notes each sum of positions that wraps and each distance
+word that reads negative: 4 of 6,000 attack runs, 67 of 12,000 AirToAir and 60
+of 12,000 VTOL_Evade calls, one hover, one guard search and 18 of 12,000 air
+strikes. The port differs in 4, 55, 54, 1, 1 and 18 of them. Where the sum
+that wrapped is the built point's own, the row may differ in that point's x
+and z alone, by a coordinate held at the end of the range; a wrapped
+difference or distance also changes the headings, tests and draws taken from
+it. Every other fixture is compared exactly as before.
 
 ## Self-destruct: the unit quits, it does not explode
 
