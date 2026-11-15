@@ -2162,6 +2162,14 @@ endif()
 add_executable(ai_economy_test tools/ai_economy_test.cpp ${TAK_AI_SOURCES})
 target_link_libraries(ai_economy_test PRIVATE tak-formats)
 add_test(NAME ai_economy COMMAND ai_economy_test)
+# Our levels' army orders, as a real Controller's commands on constructed worlds;
+# with the game data, a Catapult's back-off from its minimum range under the real sim.
+add_executable(ai_orders_test tools/ai_orders_test.cpp ${TAK_AI_SOURCES})
+target_link_libraries(ai_orders_test PRIVATE tak-formats)
+add_test(NAME ai_orders COMMAND ai_orders_test)
+if(TAK_TEST_DATA)
+    add_test(NAME ai_orders_data COMMAND ai_orders_test "${TAK_TEST_DATA}")
+endif()
 
 # The Classic level's pieces (profile baker, type info, priority clock); with
 # --profile it is the native side of tools/re/check_ai_profile.py, with

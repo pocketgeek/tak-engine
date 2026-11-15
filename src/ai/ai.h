@@ -593,8 +593,8 @@ private:
     // Idle, or only holding a factory's PARK release: retail parks every factory
     // output with no rally (GetBuilt 0x402220) and that PARK lasts until the next
     // order, so a parked newborn is as free to command as one with no orders.
-    // A flyer's step-out (retail's air traffic) leading the queue is read past,
-    // as waveFree does: an idle flyer stepping out of a stack is still idle. So is a
+    // A flyer's step-out (retail's air traffic) leading the queue is read past:
+    // an idle flyer stepping out of a stack is still idle. So is a
     // flyer only LANDING (VTOL_LandIfCan, which every flyer runs when its job ends --
     // a flying builder after each building): it is on its standby, and a new order
     // replaces the landing. Waiting for the touchdown cost a flying builder (the Zhon
@@ -623,13 +623,17 @@ private:
     // A fighter is free to be committed to a wave when it's idle or only doing a plain
     // move -- NOT while it's already fight-moving or attacking (so re-commanding it each
     // think doesn't reset its march and thrash it in place).
-    // A flyer's step-out (retail's air traffic) leads its queue for a moment; the
-    // order behind it is what the unit is doing.
+    // The whole queue is read, not its head: the sim puts legs of its own in front
+    // of the order a unit was given -- a flyer's step-out (retail's air traffic),
+    // the walk out of a weapon's minimum range or to a clear shot
+    // (World::repositionForShot) -- and the order behind them is still what the
+    // unit is doing. Read by its head alone, a Catapult backing off was free on
+    // every think: the Attack was sent again, its queue replaced, the walk begun
+    // again until the sim's three were spent, and it never fired.
     static bool waveFree(const tak::sim::Unit& u) {
-        const size_t k = !u.orders.empty() && u.orders.front().stepOut ? 1 : 0;
-        if (u.orders.size() <= k) return true;
-        const auto& o = u.orders[k];
-        return o.targetId == 0 && !o.attackMove && !o.buildType && !o.load && !o.unload && !o.guard;
+        return std::none_of(u.orders.begin(), u.orders.end(), [](const tak::sim::Order& o) {
+            return o.targetId != 0 || o.attackMove || o.buildType || o.load || o.unload || o.guard;
+        });
     }
     void emit(const CommandSink& sink, tak::net::Cmd kind, int unitId,
               const std::string& type, float x, float z) const;

@@ -405,6 +405,10 @@ lodestone rather than walking into towers. Units that finish one target go on to
 the next attack. Easy simply goes for the nearest; Hard and Absurd split a large
 army over several targets.
 
+At every difficulty except Retail, a unit that steps back from a target inside
+its weapon's minimum range, or walks to a spot with a clear shot, is left to
+carry out the attack it was given.
+
 It knows the start positions the way you do from the room: with **Fixed** or **By Slot** start
 locations whose start each is, with **Random** only the map's start spots, any of
 which may hold an enemy or nobody until it has looked. It does not know how many

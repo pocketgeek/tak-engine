@@ -535,7 +535,7 @@ centre, radius, counts, firepower, shot cost, draw, busy-deposit test and placer
 | 21 | Idle units: MOVE centre -> p1 -> PATROL p2 inside the base ring; re-plan 1/50 | door clearing; stationArmy (defensive only) | **missing** |
 | 22 | Base threat = visible enemy in the ring-0 radius; defenders patrol through intruders | sendDefenders (defensive levels only), radius 900/400/1500 | **missing** for attack levels |
 | 23 | Wave size from the biggest enemy population, x multipliers, cap 50, sign = keep reserve | bigPush = waveSize + income/4, raids, cooldown 750 | **different** |
-| 24 | Strike: cohesion recruit, dissolve at a random 1/3..all loss, re-pick target on kill | AttackMove pool committed to the objective | **different** |
+| 24 | Strike: cohesion recruit, dissolve at a random 1/3..all loss, re-pick target on kill | AttackMove pool committed to the objective; a fighter is left alone while its queue holds the order it was given (an attack behind the sim's own walk to a firing spot too) | **different** |
 | 25 | Target = scored over all enemy units, mana-site/visible/armed/big-player bias, new-best reachability | nearest visible enemy to home, else enemy start; flow-reachable | **different** |
 | 26 | Strike issues MOVE (fight by standing orders) | AttackMove | different (approximation needed) |
 | 27 | Withdraw wounded (HP < 1/(rand(3)+3)) and unreachable members | none | **missing** |
