@@ -24,13 +24,16 @@
 //    another player's (it does not): the finished unit shares no cell with it;
 //  - the conjurer among its player's idle units, ordered to conjure where it
 //    stands: it walks off its own site, round them or after they made room;
+//  - a conjurer that is not idle (walking past, or at work with the order
+//    queued behind its job), ordered to conjure where it stands: the same;
 //  - the conjurer hemmed in on a site of its own size by its player's idle
 //    units, none of them on the site: one makes room and the unit is conjured,
 //    also with another player's unit on the side the conjurer would take; by
 //    another player's units all round: the order still ends;
 //  - the computer player's own ring pick (ai::Controller), for the conjurer
 //    standing at different places inside a cell: every order is placed.
-// Each order is also compared with the build cursor's test (canPlaceOrder).
+// Each order is also compared with the build cursor's test, called as the
+// client calls it (canPlaceOrder with the builder the order is for).
 //
 //   conjure_site_test <retail-install-dir> [--legion]
 #include "ai/ai.h"
@@ -88,15 +91,21 @@ void setup(sim::World& w,const sim::TypeRegistry& registry,bool legion) {
 }
 
 int cursorDiffers=0;   // orders the build cursor's test answered differently
-bool build(sim::World& w,const sim::TypeRegistry& registry,int builder,const sim::UnitType& type,float x,float z) {
-    const bool cursor=w.canPlaceOrder(&type,x,z,0);
+std::string cursorFirst;   // the first of them
+bool build(sim::World& w,const sim::TypeRegistry& registry,int builder,const sim::UnitType& type,float x,float z,
+           bool queue=false) {
+    // The client's call (GameView::canPlaceLocked and canPlacePreview): the
+    // builder the order is for goes in, as World::queueBuild passes its own.
+    const bool cursor=w.canPlaceOrder(&type,x,z,0,builder);
     net::Command c{};
-    c.kind=net::Cmd::Build;c.player=0;c.unitId=builder;c.x=x;c.z=z;c.queue=0;
+    c.kind=net::Cmd::Build;c.player=0;c.unitId=builder;c.x=x;c.z=z;c.queue=queue;
     std::snprintf(c.type,sizeof c.type,"%s",type.id.c_str());
     sim::applyCommand(w,registry,c);
     const auto* b=w.unit(builder);
     const bool taken=std::any_of(b->orders.begin(),b->orders.end(),[&](const sim::Order& o){return o.buildType==&type;});
-    if(taken!=cursor)++cursorDiffers;
+    if(taken!=cursor && !cursorDiffers++)
+        cursorFirst=type.id+" by "+b->type->id+" at ("+std::to_string(int(x))+","+std::to_string(int(z))+"): the cursor "+
+            (cursor?"takes":"refuses")+" it, the order is "+(taken?"taken":"refused");
     return taken;
 }
 
@@ -284,6 +293,54 @@ void crowdedConjurer(const sim::TypeRegistry& registry,bool legion) {
           "zonlord among its player's idle units conjures zonorc where it stands",t.text());
 }
 
+// A conjurer that is not idle, so that no test would have it step aside:
+// walking past, or at work on a unit beside it with the new order queued
+// behind that job. It is ordered to conjure on each of the nine sites centred
+// on or beside itself, all of which hold its own body. The cursor's test and
+// the order's both leave the order's own conjurer out: the order is taken
+// (but for a site on the unit it is still making), it steps off the site and
+// the unit is conjured.
+void busyConjurer(const sim::TypeRegistry& registry,bool legion,bool atWork) {
+    const auto* builder=registry.find("zonhand");const auto* type=registry.find("zontroll");
+    const auto* made=registry.find("zontrain");
+    if(!builder || !type || !made) {check(false,"shipped types of the busy-conjurer case");return;}
+    Tally t;
+    for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx) {
+        sim::World w;setup(w,registry,legion);
+        const int id=w.spawn(builder,768,768,std::nullopt,0);
+        for(int tick=0;tick<3;++tick)w.tick(1.f/30);
+        int first=0;
+        if(atWork) {
+            if(!build(w,registry,id,*made,848,768)) {check(false,"the conjurer takes its first order");return;}
+            for(int tick=0;tick<200 && !w.unit(id)->buildSiteId;++tick)w.tick(1.f/30);
+            first=w.unit(id)->buildSiteId;
+            if(!first) {check(false,"the conjurer starts its first site");return;}
+        } else {
+            net::Command walk{};
+            walk.kind=net::Cmd::Move;walk.player=0;walk.unitId=id;walk.x=1100;walk.z=900;
+            sim::applyCommand(w,registry,walk);
+            for(int tick=0;tick<30;++tick)w.tick(1.f/30);
+        }
+        const auto* b=w.unit(id);
+        const Rect body=footprint(*b);   // wherever its walk has taken it
+        const float x=float((body.x+dx)*16+body.w*8)+3,z=float((body.z+dz)*16+body.h*8)-5;
+        const Rect site=siteRect(*type,x,z);
+        if((atWork ? b->buildSiteId!=first : b->orders.empty()) || !intersects(site,body)) {
+            check(false,"the busy conjurer stands on the site it is given");return;
+        }
+        const bool blocked=first && intersects(site,footprint(*w.unit(first)));
+        Outcome o;
+        if(build(w,registry,id,*type,x,z,atWork))o=follow(w,id,*type,atWork?3000:400);
+        if(blocked && o.accepted) {++t.wrongAccept;t.note("taken on the unit it is making",x,z);}
+        if(!blocked && !o.accepted) {++t.wrongRefusal;t.note("refused on clear ground",x,z);}
+        t.add(o,x,z);
+    }
+    check(t.placed>0 && t.placed+t.refused==t.clicks && t.shared==0 && !t.wrongAccept && !t.wrongRefusal,
+          std::string("zonhand ")+(atWork?"at work, the order queued":"walking past")+", conjures zontroll where it stands",
+          t.text()+", "+std::to_string(t.wrongAccept)+" taken on the unit it is making, "+
+          std::to_string(t.wrongRefusal)+" refused on clear ground");
+}
+
 // Units stand all round the conjurer (`foreign`: which of kRound are another
 // player's), which is ordered to conjure a unit of its own size where it
 // stands: nothing but the conjurer is on the site, so the order is taken, and
@@ -370,13 +427,15 @@ int main(int argc,char** argv) {
     standingUnit(registry,legion,"zonhand","zontroll","zongiant",false);
     standingUnit(registry,legion,"zonlord","zonorc","zongiant",false);
     crowdedConjurer(registry,legion);
+    busyConjurer(registry,legion,false);
+    busyConjurer(registry,legion,true);
     hemmedConjurer(registry,legion,0);
     hemmedConjurer(registry,legion,1);
     hemmedConjurer(registry,legion,255);
     aiRing(registry,legion,"zonorc",8);
     aiRing(registry,legion,"zonroc",8);
     check(cursorDiffers==0,"the build cursor's test and the order agree on every click",
-          std::to_string(cursorDiffers)+" differ");
+          std::to_string(cursorDiffers)+" differ"+(cursorFirst.empty()?"":"; first: "+cursorFirst));
 
     std::printf("conjure_site_test%s: %d checks, %d failed\n",legion?" --legion":"",cases,failures);
     return failures?1:0;

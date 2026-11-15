@@ -4727,8 +4727,10 @@ Ours, not retail:
 `conjure_site_test` (both pathfinding modes) covers every site round an idle
 Beast Lord, Beast Handler, Beast Tamer and flying monarch, a second conjurer
 at work or arriving, standing units of the player and of another, a conjurer
-among idle units, one hemmed in by its player's idle units and by another
-player's, and the computer player's picks.
+among idle units, one that is walking or at work, one hemmed in by its
+player's idle units and by another player's, and the computer player's picks.
+Every order is compared with the build cursor's call (`canPlaceOrder` with the
+builder).
 
 **Room for the next output (a deliberate deviation).** A mobile producer's exit
 step carries an output out of the 12-cell area its next output may be made in.
