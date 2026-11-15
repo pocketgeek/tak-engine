@@ -8322,7 +8322,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             w.commitGroundStep(*u,sx,sz,true);
             u->speed=Fixed();u->turnReqBam=0;
             if(u->x==bx&&u->z==bz) {it=yielding.erase(it);continue;}
-            if(Member* ym=member(it->first))ym->why=LegionNavigator::WhyYield;
+            if(Member* ym=member(it->first)) {ym->why=LegionNavigator::WhyYield;ym->escapeTo=-1;}   // (as a swap: see swapBodies)
             ++stats.slides;++it;
         }
     }
@@ -12525,7 +12525,13 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 const int64_t travel=std::min<int64_t>(std::max<int64_t>(1,retailGroundSpeedCap(maximum*w.groundTerrainMultiplier(u),u.groundPitch,0).v),length);
                 if(length>0&&++m.escapeTicks<=kEscapeUpdates&&bodiesFree(u,m.escapeTo%W,m.escapeTo/W))
                     w.commitGroundStep(u,Fixed::raw(int32_t(sdx*travel/length)),Fixed::raw(int32_t(sdz*travel/length)),false);
-                if(u.x!=x||u.z!=z) {++stats.escapeSteps;liveNow(m);u.speed=Fixed::raw(int32_t(travel));return;}
+                if(u.x!=x||u.z!=z) {
+                    ++stats.escapeSteps;liveNow(m);u.speed=Fixed::raw(int32_t(travel));
+                    // On a legal origin the walk is over, at once: the record names a walk from the origin the
+                    // body stands on, and a swap by a body that updates later this tick moves it off that one.
+                    if(legal(p,footprintOrigin(u.x,fx),footprintOrigin(u.z,fz)))m.escapeTo=-1;
+                    return;
+                }
                 m.escapeTo=-1;
             }
             const Fixed x=u.x,z=u.z;
@@ -14643,6 +14649,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(am.detour==bz*W+bx)am.detour=-1;
         Member& bm=*member(b.id);
         if(bm.detour==az*W+ax)bm.detour=-1;
+        bm.escapeTo=-1;   // a walk off an illegal origin was chosen from the origin it has just left
         bm.why=LegionNavigator::WhyPass;
         if(bm.state==Holding)unstamp(b.id);
         bm.state=Moving;bm.heldSince=kNoTick;bm.holdUpdates=0;

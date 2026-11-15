@@ -614,11 +614,11 @@ foreach(legion_scn aware-cross aware-headon aware-seen aware-unseen aware-attack
 endforeach()
 # Bodies that stand for good (2026-11-14; the bounds are legion_settledcrowd, legion_passage_starve, legion_lateswap,
 # legion_escapestep, legion_idleplug, legion_siegegap, legion_siegegap_move, legion_filetrade, legion_plugleaves,
-# legion_knotthree, legion_guardplug, legion_churnknot and legion_routeopens
+# legion_knotthree, legion_guardplug, legion_churnknot, legion_routeopens and legion_reorder
 # below): the same run as part A, so serial == workers and both modes on the rules' fixtures. headon-attack has no
 # bounds: it is a known limit (its header says which), kept as a fixture so that the limit has a measure.
 foreach(legion_scn settled-crowd passage-starve headon-fight escape-step idle-plug siege-gap siege-gap-move file-trade
-                   plug-leaves knot-three guard-plug headon-attack churn-knot)
+                   plug-leaves knot-three guard-plug headon-attack churn-knot reorder)
   add_test(NAME legion_scenario_${legion_scn}
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
@@ -1338,10 +1338,21 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios churn-knot
                    --min g.OB.arrived=1 --min g.OS.arrived=1)
+  # reorder: units that gave their order up behind a plug of their own idle units are ordered again, with the plug
+  # still there (they give up again) and after it has left (all arrive). Run under TAK_LEGION_VERIFY: at offset 1 a
+  # body walking off an illegal origin reached its legal origin and was moved on by another body's swap in the same
+  # tick, and the walk's stale record aborted the hook at tick 3,507 (a debug build; Release compiles the hook out).
+  # Asset-free.
+  add_test(NAME legion_reorder
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios reorder --offsets 0,1,-1
+                   --min g.A.arrived=6 --min g.B.arrived=6)
   set_tests_properties(legion_doorwaypair legion_doorwaypair_move legion_lateswap legion_settledcrowd legion_escapestep
                        legion_idleplug legion_siegegap legion_siegegap_hold legion_siegegap_move legion_filetrade
                        legion_plugleaves legion_knotthree legion_guardplug legion_churnknot legion_routeopens
+                       legion_reorder
                        PROPERTIES LABELS legion TIMEOUT 300)
+  set_tests_properties(legion_reorder PROPERTIES ENVIRONMENT TAK_LEGION_VERIFY=1)
   # crowdlock: the audited game's standing crowd rebuilt on its real ground (246 bodies among the wrecks of a base,
   # 147 attack-move orders). Stock Legion ended 53 of the orders in 9,000 ticks and left 85 bodies standing with
   # theirs; every order now ends and nobody stands (Retail ends 143).
