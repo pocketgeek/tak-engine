@@ -613,9 +613,9 @@ foreach(legion_scn aware-cross aware-headon aware-seen aware-unseen aware-attack
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
 endforeach()
 # Bodies that stand for good (2026-11-14; the bounds are legion_settledcrowd, legion_passage_starve, legion_lateswap,
-# legion_escapestep, legion_siegegap and legion_siegegap_move below): the same run as part A, so serial == workers
-# and both modes on the rules' fixtures.
-foreach(legion_scn settled-crowd passage-starve headon-fight escape-step siege-gap siege-gap-move)
+# legion_escapestep, legion_siegegap, legion_siegegap_move and legion_filetrade below): the same run as part A, so
+# serial == workers and both modes on the rules' fixtures.
+foreach(legion_scn settled-crowd passage-starve headon-fight escape-step siege-gap siege-gap-move file-trade)
   add_test(NAME legion_scenario_${legion_scn}
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
@@ -1263,8 +1263,16 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios siege-gap-move
                    --offsets 0,1,-1,-2 --min g.A.arrived=36 --min g.M.arrived=24 --max scale.complete_outside_n=0)
+  # file-trade: two files of 14 on move orders trade through each other in a lane one body wide and come to their
+  # own settled arrivals with a dead age as long as the trade (a swap's gain is no progress). The short stand-down
+  # took 11 of the 28 on their first held update; it now waits until the body's route has stood kStandMeet ticks
+  # too, and the settle rule settles all 28, as on the parent of the stand-down. Asset-free.
+  add_test(NAME legion_filetrade
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios file-trade
+                   --min work.arrivals.total=28 --min scale.complete.n=28)
   set_tests_properties(legion_doorwaypair legion_doorwaypair_move legion_lateswap legion_settledcrowd legion_escapestep
-                       legion_siegegap legion_siegegap_hold legion_siegegap_move
+                       legion_siegegap legion_siegegap_hold legion_siegegap_move legion_filetrade
                        PROPERTIES LABELS legion TIMEOUT 300)
   # crowdlock: the audited game's standing crowd rebuilt on its real ground (246 bodies among the wrecks of a base,
   # 147 attack-move orders). Stock Legion ended 53 of the orders in 9,000 ticks and left 85 bodies standing with

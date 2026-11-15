@@ -64,7 +64,8 @@ constexpr uint32_t kRestStride=2;
 // stand for good"). A body is live while it, or anything it waits on, makes progress; its dead age is
 // the time since that liveness last rose. The thresholds are dead ages, and every one is measured:
 //   kStandDown      a body whose step is covered only by bodies that will never move by themselves ends its
-//                   order where it stands;
+//                   order where it stands, once its own route has stood kStandMeet ticks too (the dead age
+//                   counts no gain made within the swap's cool-down; the stall clock does);
 //   kStandLong      any body does. Above the knots that undo themselves: two armies of 500 meeting on
 //                   bridges-1000 stand dead for up to 3,826 ticks and still come apart (the census's
 //                   l1_dead_max over start offsets -5..5);
@@ -77,6 +78,7 @@ constexpr uint32_t kRestStride=2;
 //                   the thinner margin (bridges-1000 at offset -4 lost a third of its arrivals to a
 //                   give-way at 600 or 1,200 dead ticks and equals stock from 2,400 on).
 constexpr uint32_t kStandDown=600;
+constexpr uint32_t kStandMeet=90;      // two crowd windows: the hold's first ways out and the settle rule come first
 constexpr uint32_t kStandLong=4800;
 constexpr uint32_t kStandSwap=600;
 constexpr uint32_t kStandPair=1200;
@@ -10093,7 +10095,13 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(dead>=kStandPair&&need>=0&&m.detour<0&&m.route.empty()&&(dead-kStandPair)%kGiveRetry==0&&knotGiveWay(u,m,ox,oz,need)) {
             m.why=LegionNavigator::WhyHoldAsk;hold(u,m);restartHold(m);return true;
         }
-        if(dead>=(terminal?kStandDown:kStandLong)) {standDown(u,m);return true;}
+        // The short stand-down waits until the body's own route has stood kStandMeet ticks as well (the stall
+        // clock): the dead age counts no gain within the swap's cool-down, so a body that has traded through an
+        // opposing file comes to its own settled crowd as dead as the trade was long, and stood down on its first
+        // held update there. The hold's own ways out (the yield, the part, the first detours) and the settle
+        // rule's windows have their turn first. A queue's bodies, and one that shuffles before the crowd
+        // without gain, have stood that long already: a dead queue still stands down rank after rank at once.
+        if(dead>=kStandLong||(terminal&&dead>=kStandDown&&stalledFor(m)>=kStandMeet)) {standDown(u,m);return true;}
         return false;
     }
     void hold(Unit& u,Member& m) {
@@ -12296,6 +12304,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(standKind(m)) {
             const uint32_t dead=deadFor(m);
             if(dead==kStandDown||dead==kStandSwap||dead==kStandLong||(dead>=kStandPair&&(dead-kStandPair)%kGiveRetry==0))return true;
+            if(dead>=kStandDown&&stall==kStandMeet)return true;
         }
         return m.passUntil==now;
     }
