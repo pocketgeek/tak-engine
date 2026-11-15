@@ -1913,6 +1913,10 @@ int main(int argc, char** argv) {
                      gameView->replayTick(), (unsigned long long)gameView->worldHashPublic(),
                      gameView->aliveUnits(), gameView->framedUnits(),
                      gameView->replayDiverged() ? " DIVERGED" : "");
+        // The winner's banner playback now shows (GameView::replayResult): only at the
+        // end of a recording that ended with one team left.
+        if (gameView->replayResult())
+            std::fprintf(stderr, "replay result: team %d wins\n", gameView->frameWinningTeam() + 1);
         // FAIL when playback did not reproduce the recording. This returned 0
         // unconditionally, so an automated verify passed a recording it had just
         // detected diverging from -- the one thing the mode exists to catch.

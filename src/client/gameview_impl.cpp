@@ -528,6 +528,23 @@
         cosmeticStep(paused_ || replayInTransit_ ? 0.0f : dt * std::min(speed, rb::kFullEffectsSpeed));
     }
 
+    bool GameView::replayResult() const {
+        if (!replayMode_ || !missionStem_.empty() || replayBundles_.empty() || replaySeekTo_ ||
+            replayTick_ < replayBundles_.size())
+            return false;
+        const Frame& f = front();
+        if (f.winningTeam < 0 || f.gameTick < replayBundles_.size()) return false;
+        int teams = 0;
+        for (int p = 0; p < f.numPlayers && p < int(f.players.size()); ++p) {
+            if (f.players[size_t(p)].built <= 0) continue;
+            bool first = true;
+            for (int q = 0; q < p && first; ++q)
+                first = f.players[size_t(q)].built <= 0 || f.players[size_t(q)].team != f.players[size_t(p)].team;
+            teams += first;
+        }
+        return teams >= 2;
+    }
+
     std::vector<uint32_t> GameView::replayKeyTicks() const {
         std::vector<uint32_t> ticks;
         ticks.reserve(replayKeys_.size());

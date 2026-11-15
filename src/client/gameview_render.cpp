@@ -2998,8 +2998,9 @@
 
         // Victory / defeat banner. A spectator/replay viewer isn't a participant,
         // so it names the winner instead of "VICTORY"/"DEFEAT". A watched game the
-        // server ended (watchOver_) shows it whether or not anyone won.
-        if ((outcome_ != 0 || watchOver_) && bigFont_.ok()) {
+        // server ended (watchOver_) shows it whether or not anyone won; so does a replay
+        // standing at the end of a recording that ended decided (replayResult()).
+        if ((outcome_ != 0 || watchOver_ || replayResult()) && bigFont_.ok()) {
             std::string msg;
             SDL_Color col{255, 220, 90, 255};
             if (spectating_ || replayMode_) {

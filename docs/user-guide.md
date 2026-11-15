@@ -3042,7 +3042,9 @@ recording. The replay bar sits at the top of the map view:
 
 Everything from [Spectating](#spectating) applies: select any unit to see its
 player's interface, **T** tracks it, and nothing you do changes anything. Chat is
-not shown in replays.
+not shown in replays. When a replay reaches the end of a game that finished with
+one team left, the banner names the winner (**TEAM 2 WINS**), as it did for
+anyone watching; jumping back takes the banner down.
 
 ![A replay with the replay bar at the top of the map view, a builder selected and its player's interface showing](img/guide/replay.jpg)
 

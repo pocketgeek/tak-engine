@@ -407,7 +407,8 @@ A watching run (`--mpspectate`, or `--mphost` with `TAK_MP_WATCH`) also ends whe
 server ends the watched game (`Msg::GameOver`): `end=gameover` when its own sim saw no
 result. `TAK_WATCH_END_TEST=1` is the watch probe: the run plays on past the result
 until the server ends the game, then through the same three-second results transition,
-and prints the result plate a watcher gets (`watch_end` tests it).
+and prints the result plate a watcher gets (`watch_end` tests it). A `TAK_REPLAY_VERIFY`
+playback that ends under the winner's banner prints `replay result: team N wins`.
 
 ## Server authentication
 

@@ -22,7 +22,12 @@ In both:
   - its plate is the winner's, not slot 1's: VICTORY on the winner's side, the winner
     named and its row the highlighted one, the match length the result's tick;
   - its recording and the server's own replay both end on the game's last tick, and
-    both play back (TAK_REPLAY_VERIFY) to that tick and to the hash the watcher ended on.
+    both play back (TAK_REPLAY_VERIFY) to that tick and to the hash the watcher ended on;
+  - played back, each ends under the banner naming the winner (the verify run's
+    "replay result" line), as the game did for its watcher.
+
+  undecided  the control for that banner: a game stopped by its time limit with both
+          sides alive plays back to its end with no winner named.
 """
 import argparse
 import concurrent.futures
@@ -141,6 +146,8 @@ def replays_end(session, out):
         end = re.search(r'replay done: tick=\d+ hash=(\w+)', played).group(1)
         assert ticks == out['ticks'], ('the %s\'s replay does not end on the game\'s last tick' % what, ticks, out['ticks'])
         assert end == out['hash'], ('the %s\'s replay does not end as the game did' % what, end, out['hash'])
+        assert 'replay result: team %d wins' % out['team'] in played, \
+            'the %s\'s replay does not end naming the winner:\n%s' % (what, played[-600:])
 
 
 def case_allai(args, base):
@@ -186,6 +193,21 @@ def case_leaver(args, base):
             '(faction %(faction)d), %(seconds)d s; both replays end at tick %(ticks)d, hash %(hash)s' % out)
 
 
+def case_undecided(args, base):
+    session = Session(args, base)
+    try:
+        player = session.client('player', '--mpai', {}, 5)
+        assert player.wait(120) == 0, text(session.roots['player'])
+    finally:
+        session.close()
+    assert 'end=timelimit' in text(session.roots['player']), text(session.roots['player'])
+    own = replays(session.roots['player'], '.takrep')
+    assert len(own) == 1, own
+    ticks, played = verify(args, session.root('verify'), own[0])
+    assert 'replay result' not in played, 'an undecided game\'s replay ends naming a winner:\n' + played[-600:]
+    return 'a replay of %d ticks that ended undecided names no winner' % ticks
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--server', required=True)
@@ -193,7 +215,7 @@ def main():
     ap.add_argument('--data', required=True)
     ap.add_argument('--case', action='append', help='run only these cases')
     args = ap.parse_args()
-    cases = {'allai': case_allai, 'leaver': case_leaver}
+    cases = {'allai': case_allai, 'leaver': case_leaver, 'undecided': case_undecided}
     names = args.case or list(cases)
     base = Path(tempfile.mkdtemp(prefix='tak-watch-end-'))
     failed = False

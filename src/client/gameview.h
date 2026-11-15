@@ -869,6 +869,10 @@ public:
     };
     std::deque<QueuedUnitSound> unitSoundQueue_; // guarded by hitQueueMutex_
     int frameWinningTeam() const { return front().winningTeam; }
+    // A replay standing at the end of a skirmish recording that ended with one team left
+    // (two or more having fielded units): the banner names the winner there, as a watcher
+    // of the game saw it. Read from the frame on show, so a jump back takes it down.
+    bool replayResult() const;
     bool frameDiscoActive(int p) const { return p>=0 && p<8 && emoteTiming_[p].active(emoteNowMs_) && framePlayer(p).emoteDisco; }
     bool frameHeadbangActive(int p) const { return p>=0 && p<8 && emoteTiming_[p].active(emoteNowMs_) && !framePlayer(p).emoteDisco; }
     float emoteSeconds(int p) const { return p>=0 && p<8 ? emoteTiming_[p].seconds(emoteNowMs_) : 0.f; }
