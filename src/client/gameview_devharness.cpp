@@ -4291,6 +4291,35 @@
             if (results.rows.size()!=2 || results.rows[1].name!="AI" || !results.rows[1].defeated)
                 throw std::runtime_error("sparse results roster lost a participant or included an empty slot");
             std::fprintf(stderr,"PASS: sparse results show participants, including defeated players\n");
+            // A watcher's plate is its winner's, whatever that side is: its race's, or
+            // Aramon's (kPlateFallback) for a side that is none of the five -- never the
+            // side the watcher's own interface opened with (side_, Taros here).
+            {
+                const tak::sim::UnitType* const god=world_.player(0).godType;
+                const tak::sim::UnitType* const aramon=registry_.find("aragod");
+                const tak::sim::UnitType* const veruna=registry_.find("vergod");
+                if(!aramon || !veruna || tak::factionIndex(veruna->side)!=2)
+                    throw std::runtime_error("watch-plate fixture needs the Aramon and Veruna gods");
+                tak::sim::UnitType stranger=*veruna;stranger.side="OTHER";
+                const std::string own=side_;
+                spectating_=true;side_="tar";
+                writableWorld().setTeam(1,0);writableWorld().tick(1.f/30);   // one team left: player 0's
+                const auto plateOf=[&](const tak::sim::UnitType* type) {   // a frame's side is its player's god's
+                    writableWorld().player(0).godType=type;publish();
+                    return resultStats();
+                };
+                const auto race=plateOf(veruna),other=plateOf(&stranger);
+                plateOf(aramon);   // the frames carry a side on: leave player 0 its own
+                writableWorld().player(0).godType=god;
+                spectating_=false;side_=own;
+                writableWorld().setTeam(1,1);writableWorld().tick(1.f/30);publish();
+                if(race.watchLine!="PLAYER wins" || other.watchLine!="PLAYER wins" || !race.rows[0].isLocal)
+                    throw std::runtime_error("watch-plate fixture has no single winner");
+                if(race.faction!=2)throw std::runtime_error("a watcher's plate is not its winner's race");
+                if(other.faction!=tak::kPlateFallback)
+                    throw std::runtime_error("a watcher's plate for a winner of no race is not the stated fallback");
+                std::fprintf(stderr,"PASS: a watcher's plate is its winner's race, Aramon's for a side that is none\n");
+            }
             resultParticipants_.reset();selection_={builder};
             return;
         }

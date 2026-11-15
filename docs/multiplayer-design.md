@@ -937,7 +937,10 @@ multiplayer game.
   the last tick -- then the same three seconds and the same result screen,
   on the winner's plate (the winning team's rows highlighted, the winner
   named, the match length the result's tick; "Game Over" on the defeat plate
-  when nobody won). A replay standing at the end of a recording that ended
+  when nobody won). The plate's art is the side of the winning team's first
+  player still standing, else of its first player; a side that is none of the
+  five races (a mod's own) has no victory plate and gets Aramon's, with a log
+  line saying so. A replay standing at the end of a recording that ended
   decided shows the winner banner too.
 - `--server`, `--name` select a server from the command line (debug builds). LAN
   play = run `takserver` on any machine on the LAN, or a LOCAL SERVER from the

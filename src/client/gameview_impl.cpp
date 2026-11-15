@@ -830,19 +830,23 @@
     //
     // A watcher is on nobody's side, so its plate is the winner's: the winning team's
     // rows are the highlighted ones, the plate is the side of its first player still
-    // standing, a line names the winner, and the match length is the tick the result
-    // landed (a game its players played on past the result is not timed at the moment
-    // the watcher left). With no winner the band reads "Game Over".
+    // standing (else of its first player), a line names the winner, and the match
+    // length is the tick the result landed (a game its players played on past the
+    // result is not timed at the moment the watcher left). With no winner the band
+    // reads "Game Over". The plate is that winner's whatever its side: one that is
+    // none of the five races (a mod's own) has no plate and gets Aramon's
+    // (kPlateFallback), said in the log -- never the side_ the watcher's interface
+    // opened with, which is only the first seat's.
     tak::ResultStats GameView::resultStats() const {
         tak::ResultStats st;
         const Frame& f = front();
         st.matchSec = int(f.gameTick / 30);
         if (spectating_ && outcomeTick_ != 0) st.matchSec = std::min(st.matchSec, int(outcomeTick_ / 30));
         static const char* kSides[5] = {"ara", "tar", "ver", "zon", "cre"};
-        for (int i = 0; i < 5; ++i) if (side_ == kSides[i]) st.faction = i;
+        if (!spectating_) for (int i = 0; i < 5; ++i) if (side_ == kSides[i]) st.faction = i;
         const int winner = spectating_ ? f.winningTeam : -1;
         int winners = 0;
-        bool plate = false, plateFell = false;
+        const PlayerR* plate = nullptr;   // the winner whose side the plate is
         std::string winnerName;
         for (int p = 0; p < f.numPlayers && p < int(f.players.size()); ++p) {
             if (resultParticipants_ && !(*resultParticipants_ & (1u<<p))) continue;
@@ -863,17 +867,20 @@
                 row.isLocal = true;
                 if (!winners++) winnerName = row.name;
                 // The plate: the first winner still standing, else the first winner.
-                if (const int side = tak::factionIndex(pr.side); side >= 0 && (!plate || (plateFell && !pr.defeated))) {
-                    st.faction = side;
-                    plate = true;
-                    plateFell = pr.defeated;
-                }
+                if (!plate || (plate->defeated && !pr.defeated)) plate = &pr;
             }
             st.rows.push_back(std::move(row));
         }
         if (spectating_) {
             if (winner < 0) st.bandWord = "Game Over";
             else st.watchLine = (winners == 1 ? winnerName : "Team " + std::to_string(winner + 1)) + " wins";
+        }
+        if (plate) {
+            st.faction = tak::factionIndex(plate->side);
+            if (st.faction < 0) {
+                std::fprintf(stderr, "result: the winner's side '%s' has no victory plate: showing Aramon's\n", plate->side.c_str());
+                st.faction = tak::kPlateFallback;
+            }
         }
         return st;
     }
