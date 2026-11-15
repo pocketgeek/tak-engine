@@ -613,9 +613,12 @@ foreach(legion_scn aware-cross aware-headon aware-seen aware-unseen aware-attack
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
 endforeach()
 # Bodies that stand for good (2026-11-14; the bounds are legion_settledcrowd, legion_passage_starve, legion_lateswap,
-# legion_escapestep, legion_idleplug, legion_siegegap, legion_siegegap_move and legion_filetrade below): the same run
-# as part A, so serial == workers and both modes on the rules' fixtures.
-foreach(legion_scn settled-crowd passage-starve headon-fight escape-step idle-plug siege-gap siege-gap-move file-trade)
+# legion_escapestep, legion_idleplug, legion_siegegap, legion_siegegap_move, legion_filetrade, legion_plugleaves,
+# legion_knotthree and legion_guardplug below): the same run as part A, so serial == workers and both modes on the
+# rules' fixtures. headon-attack has no bounds: it is a known limit (its header says which), kept as a fixture so
+# that the limit has a measure.
+foreach(legion_scn settled-crowd passage-starve headon-fight escape-step idle-plug siege-gap siege-gap-move file-trade
+                   plug-leaves knot-three guard-plug headon-attack)
   add_test(NAME legion_scenario_${legion_scn}
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
@@ -1197,6 +1200,9 @@ if(Python3_Interpreter_FOUND)
   # meet is bistable, and a rule that moves a body of a standing knot too early tips it: the give-way in a knot (below)
   # at 600 dead ticks left 302 stuck at offset -4 on move orders (565 of 1,000 arrived; 750 and none stuck without
   # it) and 197 at offset 5 on attack-move orders, which is why it waits kStandPairMove and kStandPair.
+  # Offset -4 is the thin one: 750 arrive there, on the parent of these rules as now, against 909 to 1,000 at the
+  # other five. The arrival bound alone failing at -4 with nobody stuck is a loss of over 6% at that offset from
+  # whatever changed the meet, not the gridlock this test is for (that one leaves hundreds stuck).
   add_test(NAME legion_swap_wide
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale bridges-1000 --data "${TAK_TEST_DATA}"
@@ -1281,8 +1287,39 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios file-trade
                    --min work.arrivals.total=28 --min scale.complete.n=28)
+  # plug-leaves: a plug of the player's own idle bodies that is ordered away at tick 450 (A), 900 (B) or 2,400 (C).
+  # An order the stand-down ended stays ended: C's six stand idle when their plug leaves, where all six arrived
+  # before the rule (the rule's price; Retail ends all 18 orders within 583 ticks). A plug that leaves before the
+  # bodies behind it have stood 600 dead ticks, or within the short stand-down's second clock, must cost nothing:
+  # A and B arrive, as on the parent of the stand-down (a guard for those two bounds). Asset-free.
+  add_test(NAME legion_plugleaves
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios plug-leaves
+                   --min g.A.arrived=6 --min g.B.arrived=6 --min g.C.complete_n=6)
+  # knot-three: a 3x3 body against two 2x2 bodies abreast in a corridor too narrow to pass in, on attack-move orders
+  # (F) and on move orders (M). All six stood for good with their orders. The knot has no way out, so nobody gets
+  # through now either (Retail squeezes five of the six past), but it is bounded: the big body and the small one
+  # before it give way to each other at most kMaxGiveWays times each, a cell back and a cell on, and the long
+  # stand-down then ends every order. Asset-free.
+  add_test(NAME legion_knotthree
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios knot-three --offsets 0,1,-1
+                   --min g.FB.complete_n=1 --min g.FS.complete_n=2 --min g.MB.complete_n=1 --min g.MS.complete_n=2
+                   --max scale.stuck_end=0 --max work.give_ways.total=36)
+  # guard-plug: the player's own bodies on an attack order (B) and on an attack-move order (C) stand firing at an
+  # enemy body they cannot destroy within the run and plug a corridor wall to wall; six bodies on a move order wait
+  # behind each. A firing line is its owner's to end: the orders behind it are kept past the long stand-down (read
+  # as bodies without progress, the line of C ended five of its six at 4,800 dead ticks). A guard for the rule;
+  # siege-gap is the same on a whole army. The file's part A, a plug of guards beside a still ward, keeps its
+  # orders as well and is not bounded here: whether such guards count as settled is an open question
+  # (docs/legion-pathfinding.md, "Known weaknesses"). Asset-free.
+  add_test(NAME legion_guardplug
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios guard-plug
+                   --max g.B.complete_n=0 --max g.C.complete_n=0)
   set_tests_properties(legion_doorwaypair legion_doorwaypair_move legion_lateswap legion_settledcrowd legion_escapestep
                        legion_idleplug legion_siegegap legion_siegegap_hold legion_siegegap_move legion_filetrade
+                       legion_plugleaves legion_knotthree legion_guardplug
                        PROPERTIES LABELS legion TIMEOUT 300)
   # crowdlock: the audited game's standing crowd rebuilt on its real ground (246 bodies among the wrecks of a base,
   # 147 attack-move orders). Stock Legion ended 53 of the orders in 9,000 ticks and left 85 bodies standing with
