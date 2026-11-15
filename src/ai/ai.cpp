@@ -3809,13 +3809,13 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
         const bool armed = u.type->weapon.damage > 0 ||
             std::any_of(u.type->weapons.begin(), u.type->weapons.end(), [](const auto& w) { return w.damage > 0; });
         if (!armed || reach <= 0) break;
-        // A flyer's step-out (retail's air traffic) leads for a moment: the
-        // order behind it is the task.
-        if (const size_t k = !u.orders.empty() && u.orders.front().stepOut ? 1 : 0; u.orders.size() > k) {
-            const auto& front = u.orders[k];
-            if (front.targetId || front.attackMove || front.patrol || front.guard ||
-                front.load || front.unload) break;   // already fighting, or a deliberate task
-        }
+        // The whole queue, as waveFree reads it: a flyer's step-out (retail's air
+        // traffic) or the sim's walk to a firing spot leads for a moment, and
+        // the order behind it is the task. A Creon Sage backing out of its
+        // Mortar's minimum range was sent the Attack again on every think.
+        if (std::any_of(u.orders.begin(), u.orders.end(), [](const tak::sim::Order& o) {
+                return o.targetId || o.attackMove || o.patrol || o.guard || o.load || o.unload;
+            })) break;   // already fighting, or a deliberate task
         int target = 0;
         float best = 1e18f;
         auto consider = [&](const tak::sim::Unit* e, bool heard) {

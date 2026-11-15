@@ -71,6 +71,25 @@ static void heldAttack(const sim::TypeRegistry& registry,const ai::Profile& prof
     cs=think(controller,w,360);
     check(cs.size()==1 && cs.front().kind==net::Cmd::Attack && cs.front().unitId==id,
           "a striker on a plain move with no attack behind it is free for its next order");
+    {
+        // The Monarch fights back by the same reading: it is ordered onto the
+        // armed enemy beside it once, not again on each think of its walk.
+        auto king=fighter();king.id="king";king.commander=true;king.isBuilder=true;
+        sim::World v;terrain(v);
+        const int monarch=v.spawn(&king,1000,1000,0,0);
+        const int enemy=v.spawn(&soldier,1100,1000,0,1);
+        pastStart(v);
+        ai::Controller ai(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        cs=think(ai,v,0);
+        check(cs.size()==1 && cs.front().kind==net::Cmd::Attack && cs.front().unitId==monarch && cs.front().targetId==enemy,
+              "a Monarch with an armed enemy beside it is ordered to attack it");
+        apply(v,registry,cs);
+        auto& queue=v.unit(monarch)->orders;
+        queue.insert(queue.begin(),step);
+        again=0;
+        for (uint32_t tick=30;tick<=300;tick+=30) again+=int(think(ai,v,tick).size());
+        check(again==0,"... and not again while it walks to a firing spot in front of that attack");
+    }
 }
 
 // An Attack is ordered only where the sim would take it (World::canAttackTarget):
