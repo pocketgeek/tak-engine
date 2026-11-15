@@ -1450,6 +1450,12 @@ add_executable(room_worker_test tools/room_worker_test.cpp src/server/roomtick.c
 target_link_libraries(room_worker_test PRIVATE tak-formats)
 add_test(NAME room_worker COMMAND room_worker_test)
 set_tests_properties(room_worker PROPERTIES TIMEOUT 30)
+# The match standing a room tick reports (one team left, nobody left, never for one team):
+# what the server ends a game on when no human is seated.
+add_executable(room_standing_test tools/room_standing_test.cpp src/server/roomtick.cpp src/server/rosterdump.cpp ${TAK_AI_SOURCES})
+target_link_libraries(room_standing_test PRIVATE tak-formats)
+add_test(NAME room_standing COMMAND room_standing_test)
+set_tests_properties(room_standing PROPERTIES TIMEOUT 30)
 # Server tick pacing on a simulated clock: exact rates, speed changes, bounded catch-up.
 add_executable(tick_pacer_test tools/tick_pacer_test.cpp)
 target_include_directories(tick_pacer_test PRIVATE src)
@@ -4013,6 +4019,14 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_spectators_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_spectators PROPERTIES TIMEOUT 120)
+    # The end of a game nobody is seated in: a decided match with a human seated plays on;
+    # with none the server ends it on that tick, tells the watchers (Msg::GameOver) and its
+    # replay ends there; abandoned games tell their watcher; a watcher still catching up
+    # gets the whole log before the room goes.
+    add_test(NAME server_endgame COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_endgame_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --map-tool "$<TARGET_FILE:map_transfer_test>")
+    set_tests_properties(server_endgame PROPERTIES TIMEOUT 240)
     # The disconnect wait (protocol 289): a silent or dropped seat stops the game, then a
     # server Normal AI takes it over; resume, reconnect, an explicit leave, the per-seat
     # budget counted from the last contact, short holds charged past a 1 s grace.

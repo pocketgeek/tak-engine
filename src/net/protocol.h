@@ -303,6 +303,15 @@ enum class Msg : uint8_t {
     RoomError,          // S->C: u8 request (RoomRequest), u32 serial (SetRoomMap's; 0 for
                         // SetRoomInfo), str reason. A refusal the host can act on; never fatal,
                         // always followed by a LobbyState to the same client.
+    // The end of a watched game (docs/multiplayer-design.md section 4, "Game end").
+    GameOver,           // S->C: u32 ticks, u8 winning team (0xFF = nobody). The server has ended
+                        // this running game and closes no more ticks: its bundles 0..ticks-1 are
+                        // the whole game (a watcher still catching up is sent the rest of them),
+                        // and the team is World::winningTeam() after the last one. Sent to
+                        // everyone still in the room -- its watchers -- when the match has its
+                        // result with no human seated (one team left, or nobody), or when the
+                        // last seated player has gone with a watcher still there. Never recorded
+                        // and no sim state: the replay simply ends at that tick.
 };
 
 // Room editing (323). MoveSeat to kWatchSeat: the host leaves its seat and watches.

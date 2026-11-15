@@ -70,6 +70,7 @@ legion_scenario_split-450-pocket 27
 server_disconnect 26
 server_host_authority 26
 server_room_edit 26
+server_endgame 46
 legion_gen1_route_54772_o1 25
 legion_scenario_split-450-open 25
 mapgen 25

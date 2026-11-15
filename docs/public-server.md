@@ -18,9 +18,9 @@ together. The [CHANGELOG](../CHANGELOG.md) says which releases play together.
 
 A server whose game has no human player left (AIs watched by spectators) does
 not compute the lockstep check nobody compares, except for a recorded replay's
-checkpoints. A release `takserver` reads only its four test timers
-(`TAK_TIMEOUT_MS`, `TAK_LOAD_TIMEOUT_MS`, `TAK_STALL_MS`, `TAK_DROP_WAIT_MS`)
-from the environment; its other `TAK_*` diagnostic variables work only in debug
+checkpoints. A release `takserver` reads only its five test timers
+(`TAK_TIMEOUT_MS`, `TAK_LOAD_TIMEOUT_MS`, `TAK_STALL_MS`, `TAK_DROP_WAIT_MS`,
+`TAK_OVER_DRAIN_MS`) from the environment; its other `TAK_*` diagnostic variables work only in debug
 builds. A server allows a seat 30 s of silence while its game is loading (15 s
 elsewhere), and its own start-up work does not count as player silence.
 
@@ -441,6 +441,25 @@ room inherits the rule too. Once the game starts, it is fixed: an in-game
 `SetGameOptions` changes only speed. A host who created the room to watch it
 keeps that seat.
 `server_spectators_test.py` checks each of these against a real server.
+
+A running game ends by itself; an operator never has to clear one. It is torn
+down as soon as nobody is connected to it, player or watcher, whoever was
+seated (`game N ended (last player left)`). With a watcher still connected it
+ends when every player has gone and no AI is left (`all players gone`), or when
+the match has its result and no human is seated (`match over`): an all-AI game,
+or one whose humans have left or been taken over by AIs, stops being simulated
+on the tick that leaves one team, or nobody. The watchers are told (`GameOver`)
+and see the result screen, and the replay written to `--replaydir` ends on that
+tick; the log reads `game N over after T ticks (match over): team 2 wins`. A
+game with a human still seated is never ended by the server (the players'
+clients leave it at their result). A game that cannot be decided, its last
+sides unable to reach each other, runs for as long as someone watches it:
+there is no stalemate rule and no time limit, and what it can cost is bounded
+by `--max-running-games` and the replay memory budget. An ended game's room
+stays only while a watcher who joined late is still being sent its history, and
+goes once that has not moved for 120 s (`TAK_OVER_DRAIN_MS` in tests). See
+[game end](multiplayer-design.md#4-the-server-takserver);
+`server_endgame_test.py` checks each of these against a real server.
 
 A seated player the server stops hearing from (nothing for 8 seconds, or a
 connection closed without leaving) stops the game for everyone, with a countdown on

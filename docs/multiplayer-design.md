@@ -379,6 +379,64 @@ links the sim, data loaders, `net` and the `ai` module only.
     go inert, no wait. A defeated player's departure never waits either.
   - *Spectators* catch up by rebuilding the world from tick 0, replaying the
     whole bundle log; seated players never do.
+- **Game end.** A running game ends on the server in one of three ways (the
+  run loop's scan, after every completed tick and before the next is
+  submitted; a game that exhausts its replay memory or whose simulation fails
+  is stopped with an error instead):
+  - *Nobody is connected* (no seated player's connection, no watcher): the
+    room is torn down at once, "last player left". A seat held for the
+    disconnect wait does not keep it. So a game with nobody connected never
+    runs on, all-AI or not. A watcher whose link has died without closing is
+    still "connected" until its timeout (120 s of silence), but an all-AI room
+    paces itself to its slowest watcher (`canAdvance`), so it stands still
+    within the watcher's lead (at most 120 ticks) and is torn down when the
+    watcher is dropped.
+  - *Every player has gone*, with a watcher still there and no AI seat left
+    to watch ("all players gone").
+  - *The match has its result with no human seated* ("match over"). The
+    result is the standing the referee reports with each tick
+    (`TickResult::decided`): one team is left, or nobody is, once at least two
+    teams have fielded units (the same rule the client's own victory check
+    applies); in a MAP SCENARIO, every participant has its outcome. No human
+    seated means no slot is a human's: a room of AIs from the start (a host
+    watching the AIs, single-player's WATCH included), or one whose humans
+    have all left (their slots are closed) or been taken over (their slots are
+    AIs). A seat the room is waiting for is still its player's. Before this
+    rule nothing on the server read the result, and an all-AI game was
+    simulated and recorded for as long as someone kept watching: one ran 14
+    hours past its result.
+  In the last two cases someone is watching, and the game ends in front of
+  them: the room closes no more ticks (`Room::over`), sends everyone in it
+  `GameOver{ticks, winning team}` (§5) and writes its replay. `ticks` is the
+  length of the bundle log, which is now complete; the team is
+  `World::winningTeam()` after the last tick, `0xFF` when nobody won or the
+  game was abandoned undecided. Events and commands still waiting for a tick
+  (the `Leave` of the player whose going ended the game) are never sequenced:
+  the game is the bundles that were closed. The room is erased as soon as no
+  watcher is still being sent the log (a watcher that joined late, or is still
+  fetching the map, gets all of it first); until then it refuses new watchers
+  ("game not found or ended"). It does not wait for ever: once no watcher has
+  taken another bundle for 120 s (a silent watcher's own timeout;
+  `TAK_OVER_DRAIN_MS` on a test server) the room goes anyway, so a watcher
+  that never takes the map cannot hold an ended game's room. `GameOver` is
+  not recorded and is not sim state: the watcher's recording and the server's
+  `--replaydir` replay simply end on the game's last tick, and play back to
+  the same end.
+  - *A human seated.* The server never ends such a room, decided or not. The
+    players' clients leave by themselves three seconds after their own result
+    (a defeated player even while its allies fight on), each as a `Leave`,
+    and the room ends when the last has gone: torn down if nobody is
+    connected, ended as above for its watchers. A client that stays seated
+    after the result keeps the room simulating, as before.
+  - *Never decided.* A game of one team, or one whose survivors cannot reach
+    each other, has no result and runs until its watchers leave (or its
+    replay memory is spent: Log format, below). There is no
+    stalemate, draw or game-length rule: none was invented here, and what
+    retail does with leftover units is not established
+    ([retail-engine.md](retail-engine.md) has only its commander-death rule).
+  - A campaign mission keeps its own flow (`MissionOutcome`, the client's
+    result screen) and a Benchmark ends on its clock: neither is ended by the
+    match-over rule.
 - **Log format.** Bundles including events, prefixed by a header: format
   version, build id, data checksum, and the full `GameStarting` payload (slot
   table, map, options, per-AI seeds) — that header is exactly what makes a log
@@ -647,6 +705,7 @@ a client.
 | `SpeedUpdate` | speed (tenths, 10 = 1×) | server → all; host changed speed mid-game (needs `speedUnlock`); re-cadences tick pacing, not the per-tick `dt`, so the sim stays deterministic |
 | `PlayerStatus` | slot, {connected, dropped, left} + ping | informational only — never sim-affecting (sim-affecting lifecycle is an Event in the bundle) |
 | `Rejoin` | game id, resume token, fromTick | a reconnect inside the disconnect wait → `Reseated` (slot, rotated token, fromTick, logEnd), then the bundles from fromTick → live bundles |
+| `GameOver` | ticks u32, winning team u8 (`0xFF` = nobody) | server → everyone still in the room (its watchers): the game has ended and no more ticks close (§4 game end); the first `ticks` bundles are the whole game. Not recorded |
 | `Bye` | reason | clean shutdown both ways |
 
 Bundle **Event** records (u8 kind + payload): `Forfeit{player}` (1, explicit
@@ -810,7 +869,8 @@ game), `conn_test` (the low-priority queue).
    have no living units; a *forfeited* player's units are disposed per the
    room's forfeit rule (inert or self-destruct). A defeated human stays in the
    game with their team's vision until it ends or they leave. A team is out when
-   all its players are; the game ends when one team remains. Ally vision shrinks
+   all its players are; the game ends when one team remains (who ends it, and
+   when the server does: §4 game end). Ally vision shrinks
    on defeat with no extra work — sight comes from living units.
 5. **N-player spawn.** Map start positions (`.ota` `StartPosN` specials) are
    assigned to players per the START LOCATIONS rule (§13), with per-player
@@ -1105,6 +1165,10 @@ the `gameMods` byte with the shared package's `modDigest`. The
 - `fp_contract`, `room_worker`, the voice tests (§5) and
   `tools/room_flow_test.py` (the room, scripted through `TAK_ROOM_SCRIPT`) run in
   ctest.
+- Game end (§4): `room_standing` (the standing a tick reports, on constructed
+  worlds) and `server_endgame` (a real server at protocol level: a seated human's
+  room plays on, the match-over and all-players-gone ends, `GameOver`, the
+  replay's length, a watcher still catching up).
 - `tools/desync-hunt-remote.sh`: `--minutes` limits simulated match time;
   `TAK_WALL_TIMEOUT=3600` grants each client up to one real hour for a dense
   stress run (the default is simulated seconds plus 300). The same tick,

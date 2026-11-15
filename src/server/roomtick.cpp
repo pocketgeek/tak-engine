@@ -55,7 +55,30 @@ TickResult simulateRoomTick(sim::World& world,const sim::TypeRegistry& registry,
         if(trail)result.posDigest=world.posDigest();
     }
     result.missionOutcome=world.missionOutcome();
-    for(int i=0;i<std::min(kMaxSlots,world.numPlayers());++i)result.defeated[size_t(i)]=world.player(i).defeated;
+    const int players=std::min(kMaxSlots,world.numPlayers());
+    bool undefeated=false;
+    result.fielded=input.fielded;
+    for(int i=0;i<players;++i) {
+        const auto& player=world.player(i);
+        result.defeated[size_t(i)]=player.defeated;
+        undefeated|=!player.defeated;
+        if(player.unitCount>0)result.fielded|=uint8_t(1u<<i);
+    }
+    // The standing (TickResult::decided). The teams that have fielded units are
+    // counted as World::updateOutcome counts the surviving ones: any team id, once.
+    if(world.hasScenarioOutcomes())result.decided=world.scenarioOutcome(-1)!=0;
+    else {
+        int teams=0;
+        for(int i=0;i<players;++i) {
+            if(!(result.fielded&(1u<<i)))continue;
+            bool first=true;
+            for(int j=0;j<i && first;++j)
+                first=!(result.fielded&(1u<<j)) || world.player(j).team!=world.player(i).team;
+            teams+=first;
+        }
+        result.decided=teams>=2 && (world.winningTeam()>=0 || !undefeated);
+    }
+    if(result.decided)result.winningTeam=int8_t(std::clamp(world.winningTeam(),-1,126));
     return result;
 }
 }

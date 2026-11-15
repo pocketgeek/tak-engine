@@ -285,8 +285,8 @@ and `build-o2/takclient --help`; additional harness arguments are defined in
 [src/client/main.cpp](../src/client/main.cpp). `TAK_*` diagnostic
 environment hooks (client, server, sim, AI and Cartographer) are disabled in Release
 builds; the only ones a release build reads are takserver's test timers
-`TAK_TIMEOUT_MS`, `TAK_LOAD_TIMEOUT_MS`, `TAK_STALL_MS` and `TAK_DROP_WAIT_MS`
-([public server](public-server.md)).
+`TAK_TIMEOUT_MS`, `TAK_LOAD_TIMEOUT_MS`, `TAK_STALL_MS`, `TAK_DROP_WAIT_MS` and
+`TAK_OVER_DRAIN_MS` ([public server](public-server.md)).
 
 A debug `takclient game "<map>" --data <dir>` without `--server` is single-player: it
 starts a private local `takserver` (no auth, loopback) and opens a single-player room on

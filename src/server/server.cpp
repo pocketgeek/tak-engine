@@ -182,6 +182,12 @@ constexpr size_t kCmdQueueMax = size_t(tak::net::kCmdQueueCap);
 uint64_t gStallMs = tak::net::kStallMs;
 uint64_t gDropWaitMs = tak::net::kDropWaitMs;
 constexpr uint64_t kHoldGraceMs = 1000;
+// A game that has ended keeps its room while a watcher is still being sent the bundle
+// log (Server::catchingUp), but only while that goes forward: the room is erased once
+// no watcher has taken another bundle of it for this long (a silent watcher's own
+// timeout), so one that never takes the room's map cannot hold an ended game. A test
+// server shortens it (TAK_OVER_DRAIN_MS).
+uint64_t gOverDrainMs = kSpectatorTimeoutMs;
 
 // A resume token (unguessable per session; not sim state, so no determinism or
 // cross-platform concern). std::random_device is entropy where available; mix in
@@ -425,6 +431,19 @@ struct Room {
     std::shared_ptr<tak::net::mods::Package> modPackage;
     std::future<TickResult> tickJob;
     std::array<bool,kMaxSlots> defeated{}; // last completed tick; safe during a worker tick
+    // The match's standing after the last completed tick (TickResult): who has fielded
+    // units so far, whether the result is in, and the winning team then (-1: nobody).
+    uint8_t fielded = 0;
+    bool decided = false;
+    int8_t winningTeam = -1;
+    // The game has ended here with someone still watching (Server::endGame): no tick
+    // closes any more, the watchers have been told (Msg::GameOver), and the room goes
+    // as soon as none of them is still being sent the bundle log. overWhy: the reason
+    // logged when it does. overSent / overSentMs: how many bundles those watchers had
+    // been sent in all when that last grew, and when (Server::catchingUp).
+    bool over = false;
+    const char* overWhy = "";
+    uint64_t overSent = 0, overSentMs = 0;
     std::string simulationError;
     // Last member: join on shutdown before destroying the World/AI it owns.
     // Normal room teardown waits for readiness without blocking the network loop.
@@ -435,7 +454,7 @@ struct Room {
         for (int i = 0; i < kMaxSlots; ++i) if (waitDeadline[i]) return true;
         return false;
     }
-    bool held() const { return paused || waiting(); }   // no tick closes
+    bool held() const { return paused || over || waiting(); }   // no tick closes
     int usedSlots() const {
         int n = 0;
         for (int i = 0; i < kMaxSlots; ++i) if (slots[i].type == 1 || slots[i].type == 2) ++n;
@@ -754,6 +773,12 @@ private:
     void writeSlots(Writer& w, Room& r, bool fromStart = false);
     void sendGameStarting(Client& c, Room& r, uint8_t slot, uint64_t token, bool catchUp);
     void writeReplay(Room& r);
+    // The end of a running game with someone still watching: the room closes no more
+    // ticks (Room::over) and everyone in it is told how long the game was and who won
+    // (Msg::GameOver). catchingUp: a watcher of the ended room is still being sent its
+    // log, and has taken more of it within gOverDrainMs.
+    void endGame(Room& r, const char* why);
+    bool catchingUp(Room& r, uint64_t now);
     // ---- room editing (protocol 323) ----
     // A host change in the lobby: roomRev moves on with `bits` (RoomChange) and every ready
     // guest is unreadied, in the same step as the change, before its broadcast. Returns
@@ -848,6 +873,24 @@ static bool roomOccupied(const Room& r) {
     for (int i = 0; i < kMaxSlots; ++i)
         if (r.slotClient[i] >= 0) return true;
     return !r.spectators.empty();
+}
+
+// The match has its result and nobody is seated to play on: the last completed tick
+// left one team standing, or nobody (Room::decided), and no slot is a human's -- a
+// room of AIs from the start, or one whose humans have all left (their slots are
+// closed) or been taken over (their slots are AIs). The server ends such a game at
+// that tick: it would otherwise simulate it, and record it, for as long as anyone
+// kept watching (an all-AI game once ran 14 hours past its result). A room with a
+// human still seated is never ended this way, decided or not: the players' clients
+// leave at the result themselves, and the room goes when the last of them has. Nor
+// is a campaign mission (its own outcome, Msg::MissionOutcome) or a Benchmark (its
+// end is the clock's). A match that can never be decided -- one team only, or
+// survivors that cannot reach each other -- runs until its watchers leave.
+static bool matchOver(const Room& r) {
+    if (!r.decided || !r.mission.empty() || r.opts.benchmark) return false;
+    for (int i = 0; i < kMaxSlots; ++i)
+        if (r.slots[i].type == 1) return false;
+    return true;
 }
 
 // Builds the whole replay into a second buffer and writes it synchronously on the
@@ -1728,7 +1771,8 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             if (!r.ok) return;
             auto it = rooms_.find(gid);
             auto reject = [&](const std::string& why) { sendJoin(c, false, 0, why, nullptr); };
-            if (it == rooms_.end() || !it->second.running) { reject("game not found or ended"); break; }
+            // A game that is over (Room::over) is only waiting for its watchers' logs.
+            if (it == rooms_.end() || !it->second.running || it->second.over) { reject("game not found or ended"); break; }
             Room& room = it->second;
             // The host's ALLOW SPECTATORS rule. This is the ONLY way into a room without
             // a slot after creation, so refusing it here covers a browser's WATCH, a
@@ -3203,6 +3247,7 @@ void Server::closeTick(Room& r, unsigned simThreads, size_t game) {
     input.replayTrail=!replayDir_.empty();
     input.commands=std::exchange(r.pending,{});input.events=std::exchange(r.pendingEvents,{});
     input.replayBudget=limits_.replayMemory-std::min<uint64_t>(limits_.replayMemory,r.logBytes);
+    input.fielded=r.fielded;
     if (auto it=r.pendingAt.find(r.tick);it!=r.pendingAt.end()) {
         input.scheduled=std::move(it->second);r.pendingAt.erase(it);
     }
@@ -3232,6 +3277,7 @@ void Server::finishTick(Room& r) {
     r.logBytes+=w.b.size()+2*sizeof(std::vector<uint8_t>);
     r.log.push_back(std::move(w.b));
     r.defeated=result.defeated;
+    r.fielded=result.fielded;r.decided=result.decided;r.winningTeam=result.winningTeam;
     if(result.hash) {
         r.refHash[r.tick]=*result.hash;
         if(!replayDir_.empty() && (r.tick/uint32_t(kHashPeriod))%10==0)
@@ -3253,6 +3299,38 @@ void Server::finishTick(Room& r) {
     if (paceLog && r.tick % paceLog == 0)
         std::fprintf(stderr, "PACE game %u tick %u us %llu speed %d\n", r.id, r.tick,
                      (unsigned long long)nowUs(), int(r.opts.speed));
+}
+
+// The game ends here, at the room's last completed tick (the caller has no tick in
+// flight). The log is complete from now on, so its length is the game's: a watcher is
+// done when it has played that many bundles, however far behind it is, and the replay
+// the room writes when it goes ends on the same tick. The winner is the standing of
+// that tick; a game its players abandoned undecided has none.
+void Server::endGame(Room& r, const char* why) {
+    r.over = true;
+    r.overWhy = why;
+    const int team = r.decided ? int(r.winningTeam) : -1;
+    Writer w; w.u32(uint32_t(r.log.size())); w.u8(team >= 0 ? uint8_t(team) : uint8_t(0xFF));
+    broadcastRoom(r, Msg::GameOver, w);
+    if (team >= 0) std::fprintf(stderr, "game %u over after %zu ticks (%s): team %d wins\n", r.id, r.log.size(), why, team + 1);
+    else std::fprintf(stderr, "game %u over after %zu ticks (%s): no winner\n", r.id, r.log.size(), why);
+}
+
+bool Server::catchingUp(Room& r, uint64_t now) {
+    bool any = false;
+    uint64_t sent = 0;
+    for (uint32_t sid : r.spectators) {
+        const auto it = clients_.find(sid);
+        if (it == clients_.end() || !it->second->replaying) continue;
+        any = true;
+        sent += it->second->replayPos;
+    }
+    if (!any) return false;
+    if (!r.overSentMs || sent != r.overSent) { r.overSent = sent; r.overSentMs = now; }
+    if (now - r.overSentMs < gOverDrainMs) return true;
+    std::fprintf(stderr, "game %u: a watcher took no more of the ended game's log for %llus -- not waiting for it\n",
+                 r.id, (unsigned long long)(gOverDrainMs / 1000));
+    return false;
 }
 
 void Server::dropClient(uint32_t id, const char* reason) {
@@ -3818,15 +3896,25 @@ int Server::run() {
                 }
                 doneRooms.push_back({rid,r.resourceLimited?"replay memory limit":"simulation failure"});continue;
             }
-            if (!roomOccupied(r)) doneRooms.push_back({rid, "last player left"});
-            else if (!roomActive(r)) doneRooms.push_back({rid, "all players gone"});
+            if (!roomOccupied(r)) { doneRooms.push_back({rid, "last player left"}); continue; }
+            // Someone is still connected, so a game that ends now ends in front of them:
+            // every seated player has gone (and no AI is left to watch), or the match has
+            // its result with no human seated (matchOver). They are told once, at the
+            // room's last completed tick -- this scan runs before any further tick is
+            // submitted -- and the room goes when they all have the whole log.
+            if (!r.over) {
+                const char* why = !roomActive(r) ? "all players gone" : matchOver(r) ? "match over" : nullptr;
+                if (!why) continue;
+                endGame(r, why);
+            }
+            if (!catchingUp(r, now)) doneRooms.push_back({rid, r.overWhy});
         }
         for (auto& [rid, why] : doneRooms) {
             Room& r = rooms_.at(rid);
             writeReplay(r);
             // Detach any lingering spectators before the room vanishes: reset their
-            // server-side state to Lobby (their client already shows the game's end
-            // from the sim, and can browse/leave on its own).
+            // server-side state to Lobby (their client has been told the game is over,
+            // Msg::GameOver, and shows its result; it can browse or leave on its own).
             for (uint32_t sid : r.spectators) {
                 auto it = clients_.find(sid);
                 if (it == clients_.end()) continue;
@@ -3980,13 +4068,14 @@ std::string defaultMapCacheDir() {
 }  // namespace
 
 static int serverMain(int argc, char** argv) {
-    // Test overrides for the disconnect wait and the silence timeouts (milliseconds). The
-    // only TAK_* variables a release build reads (docs/public-server.md); every other hook
-    // goes through devEnv() and is debug-only.
+    // Test overrides for the disconnect wait, the silence timeouts and an ended game's
+    // wait for its watchers (milliseconds). The only TAK_* variables a release build reads
+    // (docs/public-server.md); every other hook goes through devEnv() and is debug-only.
     if (const char* g = std::getenv("TAK_STALL_MS")) gStallMs = uint64_t(std::max(100ll, std::atoll(g)));
     if (const char* b = std::getenv("TAK_DROP_WAIT_MS")) gDropWaitMs = uint64_t(std::max(100ll, std::atoll(b)));
     if (const char* t = std::getenv("TAK_TIMEOUT_MS")) gTimeoutMs = uint64_t(std::max(500ll, std::atoll(t)));
     if (const char* t = std::getenv("TAK_LOAD_TIMEOUT_MS")) gLoadTimeoutMs = uint64_t(std::max(500ll, std::atoll(t)));
+    if (const char* t = std::getenv("TAK_OVER_DRAIN_MS")) gOverDrainMs = uint64_t(std::max(500ll, std::atoll(t)));
     uint16_t port = 7677;
     std::string dataRoot, replayDir,tlsCert,tlsKey,mapRoot;
     tak::srv::AcmeOptions acme;acme.state="takserver-acme";
