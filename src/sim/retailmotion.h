@@ -187,7 +187,8 @@ inline Fixed retailGroundAcceleration(Fixed x, Fixed z,
     const int direction = knownDirection>=0 ? knownDirection : retailDirection(x - aim.x, z - aim.z).v;
     const int angle = std::abs(direction - int(portHeadingToRetail(heading)));
     const int64_t arc = retailTurnTravel(speed, uint16_t(angle), turnRate).v;
-    auto squareHigh = [](int64_t n) { return uint32_t(uint64_t(n * n) >> 32); };
+    // (An unsigned product: a navigator point 46,341 px or more away on one axis squares past int64.)
+    auto squareHigh = [](int64_t n) { return uint32_t((uint64_t(n) * uint64_t(n)) >> 32); };
     auto distanceHigh = [&](RetailSteeringPoint p) {
         return int32_t(squareHigh(int64_t(p.x.v) - x.v) + squareHigh(int64_t(p.z.v) - z.v));
     };

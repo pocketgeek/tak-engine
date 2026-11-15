@@ -4,6 +4,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include "sim/fixed.h"
 
 namespace tak::sim {
 
@@ -41,10 +42,13 @@ inline int32_t retailSplashDistance(const std::array<int32_t,3>& impact,
         const std::array<int32_t,3>& high) {
     std::array<double,3> delta{};
     for(size_t axis=0;axis<3;++axis) {
-        const int32_t a=std::bit_cast<int32_t>(uint32_t(low[axis])+uint32_t(origin[axis]));
-        const int32_t b=std::bit_cast<int32_t>(uint32_t(high[axis])+uint32_t(origin[axis]));
-        if(impact[axis]<a)delta[axis]=std::bit_cast<int32_t>(uint32_t(a)-uint32_t(impact[axis]));
-        else if(impact[axis]>b)delta[axis]=std::bit_cast<int32_t>(uint32_t(impact[axis])-uint32_t(b));
+        // (Saturating, fixed.h: a box corner past the east or south edge of a
+        // 2048-cell map stays at the edge, where a wrapped one would sit on
+        // the wrong side of every impact.)
+        const int32_t a=satAdd32(low[axis],origin[axis]);
+        const int32_t b=satAdd32(high[axis],origin[axis]);
+        if(impact[axis]<a)delta[axis]=satSub32(a,impact[axis]);
+        else if(impact[axis]>b)delta[axis]=satSub32(impact[axis],b);
     }
     const double root=std::sqrt((delta[2]*delta[2]+delta[1]*delta[1])+delta[0]*delta[0]);
     const uint32_t whole=uint32_t(int64_t(root));

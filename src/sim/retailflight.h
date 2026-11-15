@@ -12,7 +12,19 @@ namespace tak::sim {
 
 struct RetailFlightVector { int32_t x = 0, y = 0, z = 0; };
 
-// Retail subtracts in 32-bit registers: far-apart raw values wrap.
+// Positions and the points flown to are raw 16.16 words. Retail adds and
+// subtracts them in 32-bit registers, where far-apart values wrap; the ports
+// here use satAdd32 / satSub32 (fixed.h), which give retail's result wherever
+// it is in range and stop at the end of the range where retail would wrap
+// (ours: only a map 32768 px wide, 2048 cells, reaches it). A point past the
+// east or south edge of such a map is therefore a point ON that edge, which
+// the flyer can reach, and a flyer is never steered the short way round a
+// wrapped world.
+//
+// The exception is a destination that is only a direction: VTOL_Evade's line
+// (retailAirEvade), whose far end lies outside the range on a map of any size.
+// Retail's wrapped arithmetic is what makes it work, so that one destination
+// keeps it (RetailFlightNavigation::wraps).
 inline int32_t retailWrappedSub(int32_t a, int32_t b) {
     return std::bit_cast<int32_t>(uint32_t(a) - uint32_t(b));
 }
@@ -32,8 +44,8 @@ std::optional<RetailFlightVector> retailLandingCandidates(RetailFlightVector pos
         const auto dx=uint32_t(random(half*2+1)-uint32_t(half))<<16;
         const auto dz=uint32_t(random(half*2+1)-uint32_t(half))<<16;
         RetailFlightVector candidate{
-            snap(std::bit_cast<int32_t>(uint32_t(position.x)+dx),footX),position.y,
-            snap(std::bit_cast<int32_t>(uint32_t(position.z)+dz),footZ)};
+            snap(satAdd32(position.x,std::bit_cast<int32_t>(dx)),footX),position.y,
+            snap(satAdd32(position.z,std::bit_cast<int32_t>(dz)),footZ)};
         if (landable(candidate)) return candidate;
     }
     return {};
@@ -48,8 +60,8 @@ RetailFlightVector retailLandingSearch(RetailFlightVector position,RetailFlightV
     }
     orbit=true;
     if (events&0x700) angle-=21845;
-    anchor.x=std::bit_cast<int32_t>(uint32_t(anchor.x)-uint32_t(retailScaledSine(uint16_t(angle),160*65536)));
-    anchor.z=std::bit_cast<int32_t>(uint32_t(anchor.z)-uint32_t(retailScaledCosine(uint16_t(angle),160*65536)));
+    anchor.x=satSub32(anchor.x,retailScaledSine(uint16_t(angle),160*65536));
+    anchor.z=satSub32(anchor.z,retailScaledCosine(uint16_t(angle),160*65536));
     return anchor;
 }
 
@@ -71,19 +83,19 @@ struct RetailFlightGoal {
 template<class Random>
 RetailFlightGoal retailHoverAttackGoal(RetailFlightVector position,
         RetailFlightVector target, int distance, Random random) {
-    uint16_t angle=uint16_t(retailDirection(Fixed::raw(position.x-target.x),
-                                           Fixed::raw(position.z-target.z)).v);
+    uint16_t angle=uint16_t(retailDirection(Fixed::raw(satSub32(position.x,target.x)),
+                                           Fixed::raw(satSub32(position.z,target.z))).v);
     if (random(100)==0) {
         const bool subtract=random(2)!=0;
         const int turn=int(random(2048));
         angle=uint16_t(subtract ? angle-turn : angle+turn);
     }
     const double dx=double(position.x)-target.x,dz=double(position.z)-target.z;
-    int radius=int(std::sqrt(dx*dx+dz*dz))>>16;
+    int radius=truncSat32(std::sqrt(dx*dx+dz*dz))>>16;   // past 32768 px a bare cast is undefined
     if (std::abs(radius-distance)>16 || random(100)==0)
         radius=std::abs(distance+int(random(8))-3);
-    return {{target.x+retailScaledSine(angle,Fixed::fromInt(radius).v),target.y,
-             target.z+retailScaledCosine(angle,Fixed::fromInt(radius).v)},0x68,angle,0};
+    return {{satAdd32(target.x,retailScaledSine(angle,Fixed::fromInt(radius).v)),target.y,
+             satAdd32(target.z,retailScaledCosine(angle,Fixed::fromInt(radius).v))},0x68,angle,0};
 }
 
 // 41ef00 stages 4--6: construction hover point around the placed site. Retail
@@ -92,8 +104,8 @@ RetailFlightGoal retailHoverAttackGoal(RetailFlightVector position,
 template<class Random>
 RetailFlightGoal retailConstructionHoverGoal(RetailFlightVector position,
         RetailFlightVector site, int buildDistance, Random random) {
-    uint16_t angle=uint16_t(retailDirection(Fixed::raw(position.x-site.x),
-                                           Fixed::raw(position.z-site.z)).v);
+    uint16_t angle=uint16_t(retailDirection(Fixed::raw(satSub32(position.x,site.x)),
+                                           Fixed::raw(satSub32(position.z,site.z))).v);
     const int subtractAngle=int(random(0x2492));
     const int addAngle=int(random(0x2492));
     angle=uint16_t(int(angle)-subtractAngle+addAngle);
@@ -102,9 +114,9 @@ RetailFlightGoal retailConstructionHoverGoal(RetailFlightVector position,
     const int radius=buildDistance-inward+outward;
     const int32_t fixedRadius=Fixed::fromInt(radius).v;
     RetailFlightGoal goal;
-    goal.point={std::bit_cast<int32_t>(uint32_t(site.x)+uint32_t(retailScaledSine(angle,fixedRadius))),
+    goal.point={satAdd32(site.x,retailScaledSine(angle,fixedRadius)),
                 0,
-                std::bit_cast<int32_t>(uint32_t(site.z)+uint32_t(retailScaledCosine(angle,fixedRadius)))};
+                satAdd32(site.z,retailScaledCosine(angle,fixedRadius))};
     goal.flags=0x60;goal.heading=angle;goal.radius=0;
     return goal;
 }
@@ -132,8 +144,8 @@ int retailLanding(RetailLandingState& state,uint32_t events,RetailFlightVector p
     case 1:
         if (host.velocityPercent()>10) {
             auto point=position;
-            point.x=std::bit_cast<int32_t>(uint32_t(point.x)-uint32_t(retailScaledSine(heading,32*65536)));
-            point.z=std::bit_cast<int32_t>(uint32_t(point.z)-uint32_t(retailScaledCosine(heading,32*65536)));
+            point.x=satSub32(point.x,retailScaledSine(heading,32*65536));
+            point.z=satSub32(point.z,retailScaledCosine(heading,32*65536));
             host.install(RetailFlightGoal{point}); m.waitMask=0x700;
         }
         return 1;
@@ -163,7 +175,7 @@ int retailLanding(RetailLandingState& state,uint32_t events,RetailFlightVector p
 template<class Random>
 RetailFlightGoal retailFlightPatrolGoal(RetailFlightVector position,
         RetailFlightVector waypoint, int32_t nominalSpeed, Random random) {
-    const int32_t dx=position.x-waypoint.x, dz=position.z-waypoint.z;
+    const int32_t dx=satSub32(position.x,waypoint.x), dz=satSub32(position.z,waypoint.z);
     const uint16_t heading=uint16_t(retailDirection(Fixed::raw(dx),Fixed::raw(dz)).v);
     const int32_t distance=truncSat32(std::sqrt(double(dx)*dx+double(dz)*dz));
     const int pixels=int16_t(uint32_t(distance)>>16);
@@ -171,9 +183,9 @@ RetailFlightGoal retailFlightPatrolGoal(RetailFlightVector position,
     if (ahead+spread>pixels*3) ahead=spread=0;
     const uint16_t angle=uint16_t(random(65536));
     RetailFlightGoal goal;
-    goal.point={waypoint.x-retailScaledSine(heading,ahead*65536)-retailScaledSine(angle,spread*65536),
+    goal.point={satSub32(satSub32(waypoint.x,retailScaledSine(heading,ahead*65536)),retailScaledSine(angle,spread*65536)),
                 waypoint.y,
-                waypoint.z-retailScaledCosine(heading,ahead*65536)-retailScaledCosine(angle,spread*65536)};
+                satSub32(satSub32(waypoint.z,retailScaledCosine(heading,ahead*65536)),retailScaledCosine(angle,spread*65536))};
     const int base=nominalSpeed>3*65536 ? 15 : 10;
     const int third=pixels/3;
     auto candidate=[&] { return (int(random(10))+base)*16; };
@@ -188,21 +200,33 @@ RetailFlightGoal retailFlightPatrolGoal(RetailFlightVector position,
 struct RetailFlightNavigation {
     RetailFlightVector destination, velocity;
     uint16_t heading = 0;
+    // Ours: the destination is a direction (VTOL_Evade's line, see the top of
+    // this file) and is subtracted in wrapped arithmetic, as retail does. It
+    // stays with the destination, which the mover flies on to after its
+    // controller has gone.
+    bool wraps = false;
 };
 
 // 524af0: destination motion is measured before the cruise-height override.
 // A close controller can supply a heading; otherwise the previous heading is
 // retained inside 16 pixels and the destination direction is used farther out.
+// `wraps`: this destination is a direction (RetailFlightNavigation::wraps);
+// `previousWraps`: the one it replaces was, so the step between them is taken
+// in wrapped arithmetic too.
 inline RetailFlightNavigation retailFlightNavigation(RetailFlightVector position,
         RetailFlightVector previousDestination, RetailFlightVector destination,
         uint16_t previousHeading, int32_t cruiseHeight, bool cruisingController,
-        bool hasHeading, uint16_t controllerHeading) {
+        bool hasHeading, uint16_t controllerHeading, bool wraps = false, bool previousWraps = false) {
+    const auto step = [&](int32_t a, int32_t b) {
+        return wraps || previousWraps ? retailWrappedSub(a, b) : satSub32(a, b);
+    };
+    const auto reach = [&](int32_t a, int32_t b) { return wraps ? retailWrappedSub(a, b) : satSub32(a, b); };
     RetailFlightNavigation result{destination,
-        {retailWrappedSub(destination.x, previousDestination.x),
-         retailWrappedSub(destination.y, previousDestination.y),
-         retailWrappedSub(destination.z, previousDestination.z)}, previousHeading};
-    const int32_t dx = retailWrappedSub(position.x, destination.x);
-    const int32_t dz = retailWrappedSub(position.z, destination.z);
+        {step(destination.x, previousDestination.x),
+         step(destination.y, previousDestination.y),
+         step(destination.z, previousDestination.z)}, previousHeading, wraps};
+    const int32_t dx = reach(position.x, destination.x);
+    const int32_t dz = reach(position.z, destination.z);
     const int32_t distance = truncSat32(std::sqrt(double(dx) * dx + double(dz) * dz));
     if (distance > 160 * 65536 || cruisingController) result.destination.y = cruiseHeight;
     if (distance <= 320 * 65536 && hasHeading) result.heading = controllerHeading;
@@ -218,7 +242,7 @@ inline RetailFlightVector retailFlightVelocity(RetailFlightVector velocity,
         RetailFlightVector position, RetailFlightVector destination,
         RetailFlightVector destinationVelocity, int32_t previousSpeed,
         int32_t maximumSpeed, int32_t acceleration, int32_t lateralLimit,
-        uint16_t heading, bool directControl = false) {
+        uint16_t heading, bool directControl = false, bool wraps = false) {
     assert(maximumSpeed > 0 && acceleration >= 0 && lateralLimit >= 0);
     constexpr double unit = 1.0 / 65536;
     const int32_t accelerationLimit = std::min(acceleration, maximumSpeed);
@@ -237,9 +261,12 @@ inline RetailFlightVector retailFlightVelocity(RetailFlightVector velocity,
         velocity.x = scale(velocity.x, ratio) - retailScaledSine(heading, excess);
         velocity.z = scale(velocity.z, ratio) - retailScaledCosine(heading, excess);
     }
-    const int32_t dx = retailWrappedSub(position.x, destination.x);
-    const int32_t dy = retailWrappedSub(position.y, destination.y);
-    const int32_t dz = retailWrappedSub(position.z, destination.z);
+    // `wraps`: the destination is a direction (RetailFlightNavigation::wraps).
+    // The velocities are no positions: their difference stays retail's.
+    const auto reach = [&](int32_t a, int32_t b) { return wraps ? retailWrappedSub(a, b) : satSub32(a, b); };
+    const int32_t dx = reach(position.x, destination.x);
+    const int32_t dy = reach(position.y, destination.y);
+    const int32_t dz = reach(position.z, destination.z);
     const int32_t relativeX = retailWrappedSub(velocity.x, destinationVelocity.x);
     const int32_t relativeZ = retailWrappedSub(velocity.z, destinationVelocity.z);
     if (!directControl) {

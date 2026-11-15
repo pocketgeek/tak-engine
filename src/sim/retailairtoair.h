@@ -55,8 +55,8 @@ namespace tak::sim {
 // 5360f3); the test multiplies their whole-pixel words in 16 bits.
 inline bool retailAirAhead(RetailFlightVector a,RetailFlightVector b,uint16_t heading,int octant) {
     const uint16_t toB=uint16_t(retailDirection(
-        Fixed::raw(std::bit_cast<int32_t>(uint32_t(b.x)-uint32_t(a.x))),
-        Fixed::raw(std::bit_cast<int32_t>(uint32_t(b.z)-uint32_t(a.z)))).v);
+        Fixed::raw(satSub32(b.x,a.x)),
+        Fixed::raw(satSub32(b.z,a.z))).v);
     const uint16_t look=uint16_t(heading+octant*0x2000);
     constexpr int32_t length=20*65536;
     auto whole=[](int32_t value) { return int(int16_t(uint32_t(-value)>>16)); };
@@ -82,8 +82,8 @@ struct RetailInterceptGoal {
     // at most turnrate / 8 (536143), dropping its vertical part.
     RetailFlightVector target(uint16_t turnRate) {
         const RetailFlightVector answer=point;
-        point.x=std::bit_cast<int32_t>(uint32_t(point.x)+uint32_t(velocity.x));
-        point.z=std::bit_cast<int32_t>(uint32_t(point.z)+uint32_t(velocity.z));
+        point.x=satAdd32(point.x,velocity.x);
+        point.z=satAdd32(point.z,velocity.z);
         const uint16_t moving=uint16_t(retailDirection(
             Fixed::raw(std::bit_cast<int32_t>(0u-uint32_t(velocity.x))),
             Fixed::raw(std::bit_cast<int32_t>(0u-uint32_t(velocity.z)))).v);
@@ -98,8 +98,8 @@ struct RetailInterceptGoal {
     }
     // 4e4be0: within 48 px in 2D (x87 at double precision, times 1/65536).
     bool accepts(RetailFlightVector position) const {
-        const double dx=double(std::bit_cast<int32_t>(uint32_t(position.x)-uint32_t(point.x)));
-        const double dz=double(std::bit_cast<int32_t>(uint32_t(position.z)-uint32_t(point.z)));
+        const double dx=double(satSub32(position.x,point.x));
+        const double dz=double(satSub32(position.z,point.z));
         return std::sqrt(dz*dz+dx*dx)<48.0*65536;
     }
     // 4e4b70: the navigator's heading. Inside 48 px the stored heading (the
@@ -107,8 +107,8 @@ struct RetailInterceptGoal {
     uint16_t headingFor(RetailFlightVector position,uint16_t body) const {
         if (accepts(position)) return turns ? heading : body;
         return uint16_t(retailDirection(
-            Fixed::raw(std::bit_cast<int32_t>(uint32_t(position.x)-uint32_t(point.x))),
-            Fixed::raw(std::bit_cast<int32_t>(uint32_t(position.z)-uint32_t(point.z)))).v);
+            Fixed::raw(satSub32(position.x,point.x)),
+            Fixed::raw(satSub32(position.z,point.z))).v);
     }
 };
 
@@ -142,8 +142,8 @@ int retailAirReturnToMap(RetailMissionState& m,RetailFlightVector position,int32
     };
     clamp(inside.x,width);clamp(inside.z,height);
     const uint16_t heading=uint16_t(retailDirection(
-        Fixed::raw(std::bit_cast<int32_t>(uint32_t(position.x)-uint32_t(inside.x))),
-        Fixed::raw(std::bit_cast<int32_t>(uint32_t(position.z)-uint32_t(inside.z)))).v);
+        Fixed::raw(satSub32(position.x,inside.x)),
+        Fixed::raw(satSub32(position.z,inside.z))).v);
     host.install(RetailFlightGoal{retailAirRunPoint(position,position.y,heading,800),0x30,0,128});
     m.waitMask|=0x700;
     return 2;
@@ -203,8 +203,8 @@ int retailAirToAir(RetailMissionState& m,int32_t& count,uint32_t tick,uint32_t e
     const bool sighted=seen && retailAirAhead(me,them,duel.targetHeading,7) && retailAirAhead(me,them,duel.targetHeading,1);
     const bool tailed=!ahead && seen, hunted=!ahead && sighted, apart=!ahead && !seen;
     // 41d042..41d0f8: the whole-pixel distance to P (_ftol's low word) against R.
-    const double dx=double(std::bit_cast<int32_t>(uint32_t(me.x)-uint32_t(lead.x)));
-    const double dz=double(std::bit_cast<int32_t>(uint32_t(me.z)-uint32_t(lead.z)));
+    const double dx=double(satSub32(me.x,lead.x));
+    const double dz=double(satSub32(me.z,lead.z));
     const int span=int16_t(retailFtol(std::sqrt(dz*dz+dx*dx))>>16);
     const int reach=duel.distance;
     const bool inHalf=span<reach/2, inQuarter=span<reach/4, beyond=span>3*reach/2;
@@ -243,8 +243,8 @@ int retailAirToAir(RetailMissionState& m,int32_t& count,uint32_t tick,uint32_t e
     // above half its top speed.
     RetailFlightVector point=lead;
     if (int32_t(int64_t(duel.speed)*2)>duel.maxSpeed) {
-        point.x=std::bit_cast<int32_t>(uint32_t(point.x)-uint32_t(retailScaledSine(duel.heading,32*65536)));
-        point.z=std::bit_cast<int32_t>(uint32_t(point.z)-uint32_t(retailScaledCosine(duel.heading,32*65536)));
+        point.x=satSub32(point.x,retailScaledSine(duel.heading,32*65536));
+        point.z=satSub32(point.z,retailScaledCosine(duel.heading,32*65536));
     }
     uint32_t length=uint32_t(reach);
     if (reposition) {
@@ -255,16 +255,16 @@ int retailAirToAir(RetailMissionState& m,int32_t& count,uint32_t tick,uint32_t e
     // `length` px back toward the flyer, within 90 degrees either side of
     // that line when repositioning.
     uint16_t angle=uint16_t(retailDirection(
-        Fixed::raw(std::bit_cast<int32_t>(uint32_t(point.x)-uint32_t(me.x))),
-        Fixed::raw(std::bit_cast<int32_t>(uint32_t(point.z)-uint32_t(me.z)))).v);
+        Fixed::raw(satSub32(point.x,me.x)),
+        Fixed::raw(satSub32(point.z,me.z))).v);
     if (reposition) angle=uint16_t(angle+host.random(0x8000)-0x4000);
     const int32_t magnitude=std::bit_cast<int32_t>(length<<16);
-    point.x=std::bit_cast<int32_t>(uint32_t(point.x)-uint32_t(retailScaledSine(angle,magnitude)));
-    point.z=std::bit_cast<int32_t>(uint32_t(point.z)-uint32_t(retailScaledCosine(angle,magnitude)));
+    point.x=satSub32(point.x,retailScaledSine(angle,magnitude));
+    point.z=satSub32(point.z,retailScaledCosine(angle,magnitude));
     // 41d570: the controller turns toward the line from the flyer to P.
     RetailInterceptGoal goal{point,duel.targetVelocity,uint16_t(retailDirection(
-        Fixed::raw(std::bit_cast<int32_t>(uint32_t(me.x)-uint32_t(lead.x))),
-        Fixed::raw(std::bit_cast<int32_t>(uint32_t(me.z)-uint32_t(lead.z)))).v),true};
+        Fixed::raw(satSub32(me.x,lead.x)),
+        Fixed::raw(satSub32(me.z,lead.z))).v),true};
     host.install(goal);
     m.sleep(tick,wake);
     m.waitMask|=0x68;
@@ -358,8 +358,8 @@ int retailAirEvade(RetailAirEvade& e,uint32_t tick,uint32_t events,const RetailA
     case 1: break;                                                   // 41e699
     default: return 7;
     }
-    const double dz=double(std::bit_cast<int32_t>(uint32_t(in.position.z)-uint32_t(in.target.z)));
-    const double dx=double(std::bit_cast<int32_t>(uint32_t(in.position.x)-uint32_t(in.target.x)));
+    const double dz=double(satSub32(in.position.z,in.target.z));
+    const double dx=double(satSub32(in.position.x,in.target.x));
     const int span=int16_t(retailFtol(std::sqrt(dx*dx+dz*dz))>>16);
     int32_t gap=int32_t(host.random(span));
     gap+=int32_t(host.random(span));
@@ -381,6 +381,11 @@ int retailAirEvade(RetailAirEvade& e,uint32_t tick,uint32_t events,const RetailA
         if (e.maneuver==1) angle=uint16_t(host.random(0x4000)+in.heading-0x2000);
         else if (e.maneuver==2) angle=uint16_t(in.heading-host.random(0x5555)-0x2000);
         else angle=uint16_t(host.random(0x5555)+in.heading+0x2000);
+        // The one point here that is a direction and not a place: the line ends
+        // tens of thousands of pixels out, past the end of the range on any map,
+        // so it keeps retail's wrapped subtraction, and the navigator subtracts
+        // it the same way (RetailFlightNavigation::wraps): the wrapped point
+        // less the position is the line again.
         const RetailFlightVector point{
             std::bit_cast<int32_t>(uint32_t(in.position.x)-uint32_t(retailScaledSine(angle,length))),in.position.y,
             std::bit_cast<int32_t>(uint32_t(in.position.z)-uint32_t(retailScaledCosine(angle,length)))};

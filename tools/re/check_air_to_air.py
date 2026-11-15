@@ -34,6 +34,7 @@ import struct
 import subprocess
 import sys
 
+import emurange
 from emu import Icd, HEAP
 from unicorn import UC_HOOK_CODE
 from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_FPCW
@@ -193,12 +194,20 @@ def main():
                                 text=True, capture_output=True, check=True)
         return [tuple(map(int, line.split())) for line in output.stdout.splitlines()]
 
-    def compare(name, fixtures, expected, actual):
+    # `beyond`, per fixture: it leaves the 16.16 range, where the port differs from retail on purpose
+    # (emurange.py). Those are counted; every other fixture must match exactly.
+    def compare(name, fixtures, expected, actual, beyond=None):
         if len(actual) != len(expected):
             raise AssertionError('%s: row count %d, expected %d' % (name, len(actual), len(expected)))
+        past = 0
         for i, (got, want) in enumerate(zip(actual, expected)):
             if got != want:
+                if emurange.saturated(got, want) or (beyond and beyond[i]):
+                    past += 1
+                    continue
                 raise AssertionError('%s fixture %d: %s\n  port   %s\n  native %s' % (name, i, fixtures[i], got, want))
+        if past:
+            print('%s: %d fixtures past the end of the range, where the port differs (ours)' % (name, past))
 
     # --- 41d780 ----------------------------------------------------------
     fixtures, expected = [], []
@@ -281,7 +290,7 @@ def main():
     put(target + 0x114, 'B', 0)
     put(target + 0xb4, 'I', target_kind)
     put(target_kind + 0x260, 'I', 0x800)
-    fixtures, expected = [], []
+    fixtures, expected, beyond = [], [], []
     seeks = 0
     stats = {}
     for i in range(12000):
@@ -304,10 +313,11 @@ def main():
         tx = x + rng.randrange(-spread, spread + 1) * 65536 + rng.randrange(65536)
         tz = z + rng.randrange(-spread, spread + 1) * 65536 + rng.randrange(65536)
         ty = rng.randrange(0, 512) * 65536
-        lead = (s32(tx + rng.randrange(-40, 41) * 65536), s32(ty + rng.randrange(0, 40) * 65536),
-                s32(tz + rng.randrange(-40, 41) * 65536))
+        whole = (tx + rng.randrange(-40, 41) * 65536, ty + rng.randrange(0, 40) * 65536,
+                 tz + rng.randrange(-40, 41) * 65536)
         if i % 17 == 0:
-            lead = (s32(x), s32(ty), s32(z))
+            whole = (x, ty, z)
+        lead = tuple(map(s32, whole))
         heading, target_heading = rng.randrange(65536), rng.randrange(65536)
         if i % 5 == 0:   # the target straight ahead of or behind the flyer
             angle = rng.choice((heading, (heading + 0x8000) & 0xffff))
@@ -406,6 +416,9 @@ def main():
                          len(log.get('begin', [])), len(log.get('auto', [])), len(log.get('scan', [])),
                          releases, evades, get(RNG), draws[0], len(steps), steps[-1] if steps else 0,
                          len(log.get('group', [])), len(log.get('leave', [])), formations))
+        # The flyer, its target and the led point, and the points built from them (up to twice the reach out).
+        ends = (x, z, tx, tz, whole[0], whole[2])
+        beyond.append(not emurange.fits(*ends) or (max(map(abs, ends)) >> 16) + 2 * reach + 64 >= 32768)
         fixtures.append(' '.join(map(str, (stage, events, tick, deadline, pending, flags, count, s32(x), s32(y),
                                            s32(z), heading, s32(tx), s32(ty), s32(tz), target_heading, *velocity,
                                            *lead, speed, max_speed, reach, automatic, flies, int(on_map), width,
@@ -417,13 +430,13 @@ def main():
             'reposition' if moving and 0x8000 in bounds else \
             'pursuit' if moving else 'off-map' if points else 'other'
         stats[kind_of] = stats.get(kind_of, 0) + 1
-    compare('41ca50', fixtures, expected, run('--air-to-air', fixtures))
+    compare('41ca50', fixtures, expected, run('--air-to-air', fixtures), beyond)
     print('41ca50: %d handler calls match %s; group check %s; %d lost-target VTOL_SEEKATTACK pushes '
           '(check_air_seek_attack.py)' % (len(fixtures), stats, group_stats, seeks))
     group_stats.clear()
 
     # --- VTOL_Evade 41e3d0 -----------------------------------------------
-    fixtures, expected = [], []
+    fixtures, expected, beyond = [], [], []
     stats = {}
     put(target_mover + 0x36, 'H', 0)
     for i in range(12000):
@@ -513,6 +526,8 @@ def main():
                          get(mission + 0x6a), get(mission + 0x5a), get(mission + 0x4e, 'i'),
                          get(mission + 0x52, 'i'), len(points), len(moving), *goal, goal_radius, mx, my, mz, mh,
                          get(RNG), draws[0], len(log.get('group', [])), len(log.get('leave', [])), formations))
+        # (The evade line itself is past the range by design and stays retail's: the port wraps it too.)
+        beyond.append(not emurange.fits(x, z, tx, tz))
         fixtures.append(' '.join(map(str, (stage, events, tick, deadline, pending, flags, maneuver, budget, s32(x),
                                            s32(y), s32(z), heading, s32(tx), 0, s32(tz), max_speed, type_speed,
                                            target_type_speed, turn_rate, target_turn_rate, reach, flies,
@@ -522,7 +537,7 @@ def main():
                'maneuver%d' % get(mission + 0x4e, 'i') if stage == 0 and result == 1
                else 'turn' if moving else 'line' if points else 'r%d' % s32(result))
         stats[key] = stats.get(key, 0) + 1
-    compare('41e3d0', fixtures, expected, run('--air-evade', fixtures))
+    compare('41e3d0', fixtures, expected, run('--air-evade', fixtures), beyond)
     print('41e3d0: %d handler calls match; group check %s' % (len(fixtures), group_stats))
     for key in sorted(stats):
         print('   %s: %d' % (' '.join(key), stats[key]))

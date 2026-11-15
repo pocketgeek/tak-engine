@@ -57,8 +57,8 @@ RetailFlightGoal retailStepOutGoal(RetailFlightVector position,uint16_t heading,
     const int32_t length=std::bit_cast<int32_t>(uint32_t(distance+outward-inward)<<16);
     const uint16_t angle=uint16_t(int32_t(random(0x2000))+best*0x2000+heading-0x1000);
     RetailFlightGoal goal;
-    goal.point={std::bit_cast<int32_t>(uint32_t(position.x)-uint32_t(retailScaledSine(angle,length))),position.y,
-                std::bit_cast<int32_t>(uint32_t(position.z)-uint32_t(retailScaledCosine(angle,length)))};
+    goal.point={satSub32(position.x,retailScaledSine(angle,length)),position.y,
+                satSub32(position.z,retailScaledCosine(angle,length))};
     goal.flags=0x30;
     goal.radius=int16_t((int(random(5))+5)*16);
     return goal;

@@ -64,8 +64,8 @@ struct RetailAirRun {
 // 41c5b1..41c5c9 and its relatives: `distance` px from `from` along -heading.
 inline RetailFlightVector retailAirRunPoint(RetailFlightVector from, int32_t y, uint16_t heading, uint32_t distance) {
     const int32_t magnitude=std::bit_cast<int32_t>(distance<<16);
-    return {std::bit_cast<int32_t>(uint32_t(from.x)-uint32_t(retailScaledSine(heading,magnitude))),y,
-            std::bit_cast<int32_t>(uint32_t(from.z)-uint32_t(retailScaledCosine(heading,magnitude)))};
+    return {satSub32(from.x,retailScaledSine(heading,magnitude)),y,
+            satSub32(from.z,retailScaledCosine(heading,magnitude))};
 }
 
 // The flyer attacks' group check (AirToGround 41c19a, AirStrike 41b7a4,
@@ -128,8 +128,8 @@ int retailAirToGround(RetailMissionState& m, int32_t& count, uint32_t tick, uint
         m.stage=3;
         return 4;
     case 5: {                                                // 41c531
-        const int32_t dx=std::bit_cast<int32_t>(uint32_t(run.position.x)-uint32_t(run.target.x));
-        const int32_t dz=std::bit_cast<int32_t>(uint32_t(run.position.z)-uint32_t(run.target.z));
+        const int32_t dx=satSub32(run.position.x,run.target.x);
+        const int32_t dz=satSub32(run.position.z,run.target.z);
         const uint16_t heading=uint16_t(retailDirection(Fixed::raw(dx),Fixed::raw(dz)).v);
         const int radius=int(host.random(128))+128;
         const uint32_t distance=run.runLength ? host.random(128)+run.runLength+128u : uint32_t(run.range)*3u;
@@ -161,8 +161,8 @@ int retailAirToGround(RetailMissionState& m, int32_t& count, uint32_t tick, uint
         clamp(inside.x,run.width);clamp(inside.z,run.height);
         // 51b340(unit, point): the heading of the unit as seen from the point.
         const uint16_t heading=uint16_t(retailDirection(
-            Fixed::raw(std::bit_cast<int32_t>(uint32_t(run.position.x)-uint32_t(inside.x))),
-            Fixed::raw(std::bit_cast<int32_t>(uint32_t(run.position.z)-uint32_t(inside.z)))).v);
+            Fixed::raw(satSub32(run.position.x,inside.x)),
+            Fixed::raw(satSub32(run.position.z,inside.z))).v);
         install(retailAirRunPoint(run.position,run.position.y,heading,800),128);
         m.waitMask|=0x700;
         return 2;
@@ -184,8 +184,8 @@ inline RetailFlightVector retailOffMapReturn(RetailFlightVector position,int32_t
     clamp(inside.x,width);clamp(inside.z,height);
     // 51b340(unit, point): the heading of the unit as seen from the point.
     const uint16_t heading=uint16_t(retailDirection(
-        Fixed::raw(std::bit_cast<int32_t>(uint32_t(position.x)-uint32_t(inside.x))),
-        Fixed::raw(std::bit_cast<int32_t>(uint32_t(position.z)-uint32_t(inside.z)))).v);
+        Fixed::raw(satSub32(position.x,inside.x)),
+        Fixed::raw(satSub32(position.z,inside.z))).v);
     return retailAirRunPoint(position,position.y,heading,800);
 }
 
@@ -271,8 +271,8 @@ int retailAirToGroundHover(RetailMissionState& m,int32_t& count,RetailFlightVect
     if (const int result=retailAirGroupCheck(m,host);result>=0) return result;   // 41dafa..41dc1b
     const int32_t d=in.distance;
     auto whole=[&](RetailFlightVector p) {
-        const double dx=double(std::bit_cast<int32_t>(uint32_t(p.x)-uint32_t(in.position.x)));
-        const double dz=double(std::bit_cast<int32_t>(uint32_t(p.z)-uint32_t(in.position.z)));
+        const double dx=double(satSub32(p.x,in.position.x));
+        const double dz=double(satSub32(p.z,in.position.z));
         return int(int16_t(retailFtol(std::sqrt(dx*dx+dz*dz))>>16));
     };
     switch (m.stage) {
@@ -328,8 +328,8 @@ int retailAirToGroundHover(RetailMissionState& m,int32_t& count,RetailFlightVect
         const int32_t radius=std::abs(int32_t(host.random(8))+d-3);
         const uint16_t angle=uint16_t(host.random(0x10000));
         const int32_t length=std::bit_cast<int32_t>(uint32_t(radius)<<16);
-        RetailFlightGoal goal{{std::bit_cast<int32_t>(uint32_t(point.x)+uint32_t(retailScaledSine(angle,length))),point.y,
-                               std::bit_cast<int32_t>(uint32_t(point.z)+uint32_t(retailScaledCosine(angle,length)))},
+        RetailFlightGoal goal{{satAdd32(point.x,retailScaledSine(angle,length)),point.y,
+                               satAdd32(point.z,retailScaledCosine(angle,length))},
                               0x78,angle,4};
         host.ring(goal);
         m.waitMask=0x768;
@@ -413,14 +413,14 @@ namespace detail {
 // 41b925..41b957: the 16.16 distance from the flyer to the point, through the
 // x87 and _ftol.
 inline int32_t retailStrikeDistance(RetailFlightVector from,RetailFlightVector to) {
-    const double dz=double(std::bit_cast<int32_t>(uint32_t(to.z)-uint32_t(from.z)));
-    const double dx=double(std::bit_cast<int32_t>(uint32_t(to.x)-uint32_t(from.x)));
+    const double dz=double(satSub32(to.z,from.z));
+    const double dx=double(satSub32(to.x,from.x));
     return std::bit_cast<int32_t>(retailFtol(std::sqrt(dx*dx+dz*dz)));
 }
 // 51b340(unit, point): the unit's heading as seen from the point.
 inline uint16_t retailStrikeHeading(RetailFlightVector unit,RetailFlightVector point) {
-    return uint16_t(retailDirection(Fixed::raw(std::bit_cast<int32_t>(uint32_t(unit.x)-uint32_t(point.x))),
-                                    Fixed::raw(std::bit_cast<int32_t>(uint32_t(unit.z)-uint32_t(point.z)))).v);
+    return uint16_t(retailDirection(Fixed::raw(satSub32(unit.x,point.x)),
+                                    Fixed::raw(satSub32(unit.z,point.z))).v);
 }
 } // namespace detail
 
@@ -481,9 +481,9 @@ int retailAirStrike(RetailMissionState& m,RetailFlightVector& point,uint32_t tic
         const uint16_t heading=detail::retailStrikeHeading(in.position,point);
         const int32_t half=distance/2;
         const uint16_t angle=uint16_t(host.random(0x4000)+heading-0x2000u);
-        RetailFlightGoal goal{{std::bit_cast<int32_t>(uint32_t(in.position.x)-uint32_t(retailScaledSine(angle,half))),
+        RetailFlightGoal goal{{satSub32(in.position.x,retailScaledSine(angle,half)),
                                in.position.y,
-                               std::bit_cast<int32_t>(uint32_t(in.position.z)-uint32_t(retailScaledCosine(angle,half)))},
+                               satSub32(in.position.z,retailScaledCosine(angle,half))},
                               0x30,0,480};
         host.install(goal);
         m.waitMask=0x768;

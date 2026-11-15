@@ -1174,6 +1174,11 @@ fire as they pass, fly on past the target, turn and come back. Their shots land 
 damage is measured in three dimensions, so a shell bursting on the ground does
 not hurt a flyer high above it, and a blast never hurts the unit that fired it.
 
+A run often carries a flyer past the edge of the map, and it flies back, as in
+the original game. The one exception is a map 64 sections wide or high, the
+largest size: its east edge (64 wide) and its south edge (64 high) are as far
+as the game's positions go, so a flyer stops at that edge and turns along it.
+
 Flyers are much faster than most ground units. When you put flyers and ground
 units in the same group or formation:
 

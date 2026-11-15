@@ -3822,6 +3822,111 @@ Two fields confirmed directly rather than inferred:
   * **Position** is 0x100000 per 16px cell, which is 65536 per pixel. The same
     16.16, so our Fixed matches retail's resolution exactly.
 
+## Nothing bounds a position: the largest map ends where the range does (icd; ours)
+
+A position is a 16.16 number in 32 bits, in retail and here, so the largest is
+32,767.99998 px. Retail does nothing to keep a position inside that range, or
+inside the map:
+
+- The mover adds the tick's velocity to the position with plain 32-bit adds
+  (`4dae8c`..`4daead`) and stores the sums; the commit `51b3b0` stores what it
+  is given. The unit's cell is the sum shifted down 20 bits, kept as a signed
+  16-bit word.
+- The flight missions build the points they fly to with 32-bit adds (the
+  attack run's point `41c5b1`, the turn, the off-map return, a guard's orbit,
+  VTOL_Evade's line), and the navigator `524af0` and the velocity kernel
+  `4da803` subtract position and destination in 32-bit registers. Values far
+  enough apart wrap.
+- A whole-pixel distance is read as the signed high word of a 16.16 value
+  (`movsx`: MobileBuild's reach test at `4057ec`, AirToGroundHover's approach
+  test at `41dd5f`, AirToAir's and VTOL_Evade's span, the pitch of the direct
+  aim `52c4e0`), so 32,768 px or more reads as negative.
+
+Only the size of its maps keeps retail out of trouble. A flyer does leave the
+map (a Gryphon's attack run carries it up to about 1,400 px past an edge) and
+every flight mission turns it back (the off-map branches described with each
+mission). The widest map files we know are 63 sections a side (2016 cells,
+32,256 px), which leaves 512 px before the range ends, and the shipped maps
+are far smaller.
+
+Our random maps go to 64 sections: 2048 cells, 32,768 px, one more than the
+largest position. On such a map the east and south edges are the end of the
+range. With retail's arithmetic a Gryphon that flew its run past a target at
+the east edge came out 65,536 px to the west: not drawn, without sight, out of
+every weapon's reach, its minimap dot outside the minimap, for up to 28
+seconds at a time (36 flyers did it 150 times in one recorded 18-hour game). A
+group move ordered within 60 px of that edge sent members to the far side of
+the map, a ground unit told to attack such a flyer made Legion scan the whole
+map for a place to stand, and the spatial hash, which is sized by the units,
+grew to the whole range. In C++ the plain signed add is undefined besides.
+
+**Ours, not retail.** Sums and differences of positions saturate: `satAdd32`
+and `satSub32` (`src/sim/fixed.h`), which `Fixed`'s own `+` and `-` use and
+which the flight ports call on the raw position words; `Fixed::fromInt` stops
+at the top of the range too (32,768 whole pixels, the far edge of such a map,
+used to become -32,768). Wherever retail's result is in range they give that
+result, bit for bit, so nothing changes on a map with room past its edges.
+Where retail would wrap, the value stops at the end of the range:
+
+- A flyer cannot pass the east or south edge of a 2048-cell map: its position
+  stops there (`World::tickFlightBody`). On a 63-section map it stops 512 px
+  past them. The west and north edges are as they were, with room to fly past.
+- A point a flyer is sent to past such an edge is a point on the edge: the end
+  of an attack run, the turn after it, a guard's orbit, a step-out, a hover
+  ring, a patrol's overshoot, a landing candidate, an unloading carrier's
+  departure. The flyer reaches it and the mission goes on; a Gryphon attacking
+  a target at the edge turns back at the edge and comes round again, sooner
+  than where it can fly its whole run past the target.
+- At the edge the flyer is drawn, is on the minimap and keeps its sight. While
+  its footprint does not fit the cell grid (a 4x4 flyer within 40 px of the
+  far edge) it is off the map by retail's own rule (`5066f0`), as past any
+  edge: it is in no air-occupancy cell, so no shot strikes it, and the
+  missions' off-map branches turn it back.
+- A flyer more than 32,768 px from its destination on one axis (one past the
+  west edge sent to the east edge) is steered toward it. The wrapped
+  difference steered it the other way, round the wrap.
+- A carried unit's position (the carrier's attach point, `4dad3e`), a unit's
+  script points (the SweetSpot and the muzzle, `queryUnitScriptPoint`), the
+  blast distance to a unit's box (`529f97`) and the weapons' range tests on a
+  unit and its target saturate the same way, so a unit at the edge is aimed
+  at, hit and hurt where it stands.
+- A group move's per-unit offsets (ours, `applySelectionOrder`) stay at the
+  edge.
+
+**The exception: VTOL_Evade's line.** Its far end is budget x 100 px per unit
+of top speed away, tens of thousands of pixels, outside the range on a map of
+any size. It is a direction, not a place, and retail's wrapped arithmetic is
+what makes it one: the wrapped point less the position is the line again. So
+that point keeps the wrapped subtraction, and the navigator and the velocity
+kernel subtract it the same way (`RetailFlightNavigation::wraps`, set for the
+controllers VTOL_Evade installs, kept with the destination and folded into
+the state hash only while set). A flyer evading toward the east edge of a
+2048-cell map holds at the edge until the line's time is up.
+
+Left as retail's: a shot's and a storm's own position still wraps when it
+passes the end of the range. That reads as off the map, which is what it is,
+and a shot off the map is retired on the spot as past any other edge. The
+weapons' aim arithmetic (the lead, the aim angles) is retail's too: it only
+leaves the range for a target 32,768 px or more away.
+
+`map_edge_test` covers it on constructed 2048-cell worlds: the arithmetic; the
+ports' points and the navigator's steering; guards, patrols and a move at the
+east and south edges and the corner (no step longer than the flyer's speed, no
+coordinate on the far side, still flying after 2000 ticks, the spatial hash
+within the map plus 2048 px); a group move ordered 10 px from each edge; and a
+plain shot whose last step passes the edge.
+With the shipped units, eight Gryphons fly attack runs at targets on the east
+and south edges for 3000 ticks, and every target is hit in both halves of the
+run; before the change the same flyers step 65,534 px in a tick. The recorded
+game plays out exactly as before (the same position digest at every
+checkpoint) until tick 53,965, when a Gryphon first aims an attack run whose
+far end lies past the east edge.
+
+The emulation checks that feed these ports any 32-bit value
+(`check_air_attack_run.py`, `check_air_to_air.py`, `check_air_traffic.py`)
+count the fixtures where the port differs on purpose (`tools/re/emurange.py`)
+and compare every other fixture exactly as before.
+
 ## Self-destruct: the unit quits, it does not explode
 
 Ctrl+Shift+D in retail does not kill a unit the way a weapon does. It leaves

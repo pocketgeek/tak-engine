@@ -14,8 +14,14 @@
 // a waypoint one cell clear of a body is an exact integer here, as it is there, and
 // the tangency that needed a sub-pixel slack cannot arise.
 //
-// RANGE. +/-32768 px against a map that tops out near 4096. Products use an int64
-// intermediate, so a multiply cannot overflow before it is shifted back down.
+// RANGE. +/-32768 px, and the largest map (2048 cells of 16 px) is exactly 32768 px
+// a side: its east and south edges sit at the top of the range, with no room past
+// them. So a sum or a difference never wraps: + and - SATURATE at the ends of the
+// range (satAdd32 / satSub32 below). In range that is the plain add it replaces, bit
+// for bit; out of range a plain int32 add is undefined behaviour, and in practice it
+// put a flyer that crossed the east edge of such a map 65536 px to the west. Products
+// use an int64 intermediate, so a multiply cannot overflow before it is shifted back
+// down.
 //
 // CONVERSIONS ARE EXPLICIT, deliberately. An implicit float conversion would let a
 // stray double creep back into the hashed path and be invisible; making every crossing
@@ -53,6 +59,24 @@ inline int32_t roundWrap32(double d) {
     return int32_t(std::llround(d));
 }
 
+// Saturating add and subtract of two raw 16.16 values: the result stops at INT32_MAX or
+// INT32_MIN instead of wrapping. The one helper for every sum that may pass the end of the
+// range: Fixed's own + and -, and the retail ports that work on raw position words. Retail
+// adds and subtracts those in 32-bit registers, where they wrap; none of its maps is wide
+// enough for that to happen, so wherever retail's result is in range these give the same
+// one. Past the range they are ours, not retail: a point stays at the edge it would have
+// crossed, and a difference keeps its sign.
+constexpr int32_t satAdd32(int32_t a, int32_t b) {
+    int32_t r = 0;
+    if (__builtin_add_overflow(a, b, &r)) return b < 0 ? INT32_MIN : INT32_MAX;
+    return r;
+}
+constexpr int32_t satSub32(int32_t a, int32_t b) {
+    int32_t r = 0;
+    if (__builtin_sub_overflow(a, b, &r)) return b < 0 ? INT32_MAX : INT32_MIN;
+    return r;
+}
+
 struct Fixed {
     static constexpr int kBits = 16;
     static constexpr int32_t kOne = 1 << kBits;
@@ -61,7 +85,11 @@ struct Fixed {
 
     constexpr Fixed() = default;
     static constexpr Fixed raw(int32_t r) { Fixed f; f.v = r; return f; }
-    static constexpr Fixed fromInt(int i) { return raw(int32_t(i) << kBits); }
+    // Saturating like + and -: 32768, the far edge of a 2048-cell map in pixels, is the top
+    // of the range (the bare shift made it the bottom).
+    static constexpr Fixed fromInt(int i) {
+        return raw(i > 32767 ? INT32_MAX : i < -32768 ? INT32_MIN : int32_t(i) << kBits);
+    }
     // From float ONLY at a boundary: unit data read from FBI, the renderer, a test.
     // Never inside the tick. std::lround is round-half-away-from-zero and identical
     // everywhere, unlike a bare cast's truncation-toward-zero.
@@ -89,9 +117,10 @@ struct Fixed {
     // cell 0 alongside x=+0.5.
     constexpr int32_t floorInt() const { return v >> kBits; }
 
-    constexpr Fixed operator+(Fixed o) const { return raw(v + o.v); }
-    constexpr Fixed operator-(Fixed o) const { return raw(v - o.v); }
-    constexpr Fixed operator-() const { return raw(-v); }
+    // Saturating (see RANGE above): never a wrap, never signed-overflow UB.
+    constexpr Fixed operator+(Fixed o) const { return raw(satAdd32(v, o.v)); }
+    constexpr Fixed operator-(Fixed o) const { return raw(satSub32(v, o.v)); }
+    constexpr Fixed operator-() const { return raw(satSub32(0, v)); }
     // int64 intermediate, then an ARITHMETIC shift -- guaranteed since C++20, so the
     // rounding of a negative product is the same on every compiler. Truncates toward
     // negative infinity, consistently for both signs.
@@ -111,8 +140,8 @@ struct Fixed {
     //
     // Scaling by a whole number goes through fromInt, which cannot be misread.
 
-    constexpr Fixed& operator+=(Fixed o) { v += o.v; return *this; }
-    constexpr Fixed& operator-=(Fixed o) { v -= o.v; return *this; }
+    constexpr Fixed& operator+=(Fixed o) { v = satAdd32(v, o.v); return *this; }
+    constexpr Fixed& operator-=(Fixed o) { v = satSub32(v, o.v); return *this; }
 
     constexpr bool operator==(Fixed o) const { return v == o.v; }
     constexpr bool operator!=(Fixed o) const { return v != o.v; }
@@ -140,12 +169,16 @@ constexpr uint64_t isqrt64(uint64_t n) {
 }
 
 // hypot in fixed point. The squares are computed in int64 at 32 fractional bits, so
-// the sqrt of that is back at 16 -- no intermediate rounding, and no overflow until
-// well beyond any map.
+// the sqrt of that is back at 16 -- no intermediate rounding. The sum is unsigned: two
+// saturated differences square to 2^62 apiece, one more than an int64 sum can hold.
+// The result is the low 32 bits of the length: the length itself below 32768 px, and
+// past that (two points on a map from 1449 cells a side can be that far apart) a
+// wrapped word, negative from 32768 px, as retail's ground mover reads its own square
+// root (4d9bc8).
 inline Fixed fxLen(Fixed a, Fixed b) {
-    const int64_t aa = int64_t(a.v) * int64_t(a.v);
-    const int64_t bb = int64_t(b.v) * int64_t(b.v);
-    return Fixed::raw(int32_t(isqrt64(uint64_t(aa + bb))));
+    const uint64_t aa = uint64_t(int64_t(a.v) * int64_t(a.v));
+    const uint64_t bb = uint64_t(int64_t(b.v) * int64_t(b.v));
+    return Fixed::raw(int32_t(uint32_t(isqrt64(aa + bb))));
 }
 
 // ---------------------------------------------------------------------------------

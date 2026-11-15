@@ -1896,6 +1896,9 @@ struct Projectile {
     // Position in the same 16.16 as a unit's: retail's world is 0x100000 per 16px
     // cell, i.e. 65536 per pixel (docs/retail-engine.md), and a projectile is bounded
     // by the map exactly as a unit is, so the range that rules mana out does not bite.
+    // (On a 2048-cell map the east and south edges ARE the end of that range: x and z
+    // stop there, as every Fixed sum does; the 3D `position` of a shot that flies on
+    // past them wraps as retail's does, which reads as off the map and retires it.)
     Fixed x = Fixed(), z = Fixed();
     // PER TICK, 16.16 -- retail stores weapon velocity as a fixed-point integer and
     // renders it in px/s by scaling 30/65536 (the dump at 0x4fbf2a..0x4fbf4f:

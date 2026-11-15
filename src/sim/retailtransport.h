@@ -22,7 +22,7 @@ inline std::array<int32_t,3> retailAttachPoint(const std::array<int32_t,3>& host
     const auto offset=retailPieceOrigin(model,poses,piece,heading,pitch,roll);
     std::array<int32_t,3> result{};
     for(size_t axis=0;axis<3;++axis)
-        result[axis]=std::bit_cast<int32_t>(uint32_t(host[axis])+uint32_t(offset[axis]));
+        result[axis]=satAdd32(host[axis],offset[axis]);
     return result;
 }
 
@@ -77,8 +77,8 @@ inline bool retailTransportInRange(int32_t dx,int32_t dz,uint16_t range) {
 // different passenger landing position.
 inline RetailFlightGoal retailUnloadStepOut(RetailFlightVector position,uint16_t heading,uint16_t range) {
     const int32_t distance=std::bit_cast<int32_t>((uint32_t(range)+400u)*131072u);
-    position.x=std::bit_cast<int32_t>(uint32_t(position.x)-uint32_t(retailScaledSine(heading,distance)));
-    position.z=std::bit_cast<int32_t>(uint32_t(position.z)-uint32_t(retailScaledCosine(heading,distance)));
+    position.x=satSub32(position.x,retailScaledSine(heading,distance));
+    position.z=satSub32(position.z,retailScaledCosine(heading,distance));
     return {position,0x30,0,16};
 }
 

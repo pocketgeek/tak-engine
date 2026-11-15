@@ -81,8 +81,10 @@ static void applySelectionOrder(World& world, const TypeRegistry& reg, const tak
                 constexpr int64_t kReach = int64_t(60) << 16;
                 const int64_t ox = std::clamp<int64_t>(int64_t(u->x.v) - sx / n, -kReach, kReach);
                 const int64_t oz = std::clamp<int64_t>(int64_t(u->z.v) - sz / n, -kReach, kReach);
-                m.x = Fixed::raw(int32_t(cx0.v + ox)).toFloat();
-                m.z = Fixed::raw(int32_t(cz0.v + oz)).toFloat();
+                // Saturating (fixed.h): a click within 60 px of the east or south
+                // edge of a 2048-cell map keeps its members' points on that edge.
+                m.x = Fixed::raw(satAdd32(cx0.v, int32_t(ox))).toFloat();
+                m.z = Fixed::raw(satAdd32(cz0.v, int32_t(oz))).toFloat();
             } else {
                 m.x = o.tmpl.x;
                 m.z = o.tmpl.z;

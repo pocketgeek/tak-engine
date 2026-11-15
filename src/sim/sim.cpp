@@ -2175,8 +2175,8 @@ static bool retainGroundRoute(const Unit& u,const Order& goal) {
     // 4e5563..4e55e9 uses signed wrapped fixed-point differences, x87 double
     // square roots truncated to integers, then a signed doubled-distance test.
     const auto distance=[&](Fixed x,Fixed z) {
-        const int32_t dx=std::bit_cast<int32_t>(uint32_t(x.v)-uint32_t(gx.v));
-        const int32_t dz=std::bit_cast<int32_t>(uint32_t(z.v)-uint32_t(gz.v));
+        const int32_t dx=satSub32(x.v,gx.v);
+        const int32_t dz=satSub32(z.v,gz.v);
         return uint32_t(int64_t(std::sqrt(double(dx)*dx+double(dz)*dz)));
     };
     const uint32_t endpoint=distance(Fixed::fromInt(int16_t(goal.x.floorInt())),
@@ -2742,7 +2742,7 @@ void World::tickFlightMovement(Unit& u, bool persistent) {
     if (!(goal.flags&8) && !pickupPursuit) goal.point.y=Fixed::fromInt(std::min(cruise,511)).v;
     const RetailFlightVector position{u.x.v,u.flightY.v,u.z.v};
     u.flightNavigation=retailFlightNavigation(position,u.flightNavigation.destination,goal.point,
-        u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading);
+        u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading,false,u.flightNavigation.wraps);
     // 524c10 posts arrival for a satisfied controller. 4e41b0 keeps
     // passenger pursuit alive; its mission consumes the event next tick.
     if(pickupPursuit && goal.accepts(position))order.transportMission.pending|=0x100;
@@ -2811,7 +2811,7 @@ void World::tickRetainedFlightMovement(Unit& u) {
         u.retainedFlightControllerActive=false;
     } else {
         u.flightNavigation=retailFlightNavigation(position,u.flightNavigation.destination,goal.point,
-            u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading);
+            u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading,false,u.flightNavigation.wraps);
     }
     tickFlightBody(u);
     notifyFlightOccupancy(u);
@@ -2831,7 +2831,7 @@ void World::tickFlightBody(Unit& u) {
     const auto previousVelocity=u.flightVelocity;
     u.flightVelocity=retailFlightVelocity(u.flightVelocity,position,
         u.flightNavigation.destination,u.flightNavigation.velocity,u.speed.v,std::max(1,maximum.v),
-        u.type->accel.v,u.type->brake.v,heading);
+        u.type->accel.v,u.type->brake.v,heading,false,u.flightNavigation.wraps);
     // W6 (Legion, deliberate): an escort with no way on over the ground --
     // climbing straight up from the ground at the start of a leg, or held
     // still by the ground's pace -- does not yaw on the spot toward its lead
@@ -2852,6 +2852,12 @@ void World::tickFlightBody(Unit& u) {
     const auto& v=u.flightVelocity;
     u.speed=Fixed::raw(truncSat32(std::sqrt((double(v.z)*v.z+double(v.y)*v.y)+double(v.x)*v.x)));
     const int oldX=footprintOrigin(u.x,u.type->footX),oldZ=footprintOrigin(u.z,u.type->footZ);
+    // 4dae8c adds the velocity to the position in 32-bit registers and stores
+    // the sum (51b3b0 clamps nothing): nothing in retail bounds a position,
+    // its maps are just far narrower than the range. A 2048-cell map ends
+    // where the range does, so here the sum saturates (Fixed's +=, fixed.h):
+    // a flyer stops at the east or south edge of such a map, where the plain
+    // add put it 65536 px to the west. Ours, not retail.
     u.x+=Fixed::raw(v.x); u.z+=Fixed::raw(v.z); u.flightY+=Fixed::raw(v.y);
     updateBodyIndex(u);
     if (oldX!=footprintOrigin(u.x,u.type->footX) || oldZ!=footprintOrigin(u.z,u.type->footZ)) {
@@ -3084,7 +3090,7 @@ bool World::tickLegionLift(Unit& u) {
     const RetailFlightGoal goal{{u.legionLiftX.v,Fixed::fromInt(std::min(cruise,511)).v,u.legionLiftZ.v}};
     const RetailFlightVector position{u.x.v,u.flightY.v,u.z.v};
     u.flightNavigation=retailFlightNavigation(position,u.flightNavigation.destination,goal.point,
-        u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading);
+        u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading,false,u.flightNavigation.wraps);
     tickFlightBody(u);
     notifyFlightOccupancy(u);
     // The caller skips the rest of the unit's update: the weapon timers still
@@ -3176,12 +3182,12 @@ bool World::tickHoldLift(Unit& u) {
     if (target) {
         const auto sweetSpot=queryUnitScriptPoint(target->id,true);
         goal.flags|=0x40;
-        goal.heading=uint16_t(retailDirection(Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.x.v)-uint32_t(sweetSpot[0]))),
-                                              Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.z.v)-uint32_t(sweetSpot[2])))).v);
+        goal.heading=uint16_t(retailDirection(Fixed::raw(satSub32(u.x.v,sweetSpot[0])),
+                                              Fixed::raw(satSub32(u.z.v,sweetSpot[2]))).v);
     }
     const RetailFlightVector position{u.x.v,u.flightY.v,u.z.v};
     u.flightNavigation=retailFlightNavigation(position,u.flightNavigation.destination,goal.point,
-        u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading);
+        u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading,false,u.flightNavigation.wraps);
     tickFlightBody(u);
     notifyFlightOccupancy(u);
     // The caller skips the rest of the unit's update, as for the Legion lift;
@@ -7647,7 +7653,7 @@ bool World::slotInsideMinRange(const Unit& u,const Unit& t,int slot) const {
 // so the weapon is not aimed or fired and an ordered attacker closes in.
 bool World::ballisticInRange(Fixed x,Fixed y,Fixed z,const Unit& t,const Weapon& w) const {
     const Fixed ty=t.type->canFly ? t.flightY : t.groundY;
-    auto delta=[](Fixed to,Fixed from) { return std::bit_cast<int32_t>(uint32_t(to.v)-uint32_t(from.v)); };
+    auto delta=[](Fixed to,Fixed from) { return satSub32(to.v,from.v); };
     return tak::retailBallisticInRange(delta(t.x,x),delta(ty,y),delta(t.z,z),tak::retailAimSpeed(w.projVel),
         w.gravityAdj,w.lobPreferred,ballisticGravityRaw_,w.range);
 }
@@ -8058,15 +8064,15 @@ bool World::hoverForShot(Unit& u,const Unit& t,int slot,const std::array<int32_t
     auto& order=u.orders.front();
     const int64_t lift=int64_t(queryUnitScriptPoint(u.id,false,slot)[1])-int64_t(u.flightY.v);
     const auto aim=queryUnitScriptPoint(t.id,true);
-    const uint16_t bearing=uint16_t(retailDirection(Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.x.v)-uint32_t(centre[0]))),
-                                                    Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.z.v)-uint32_t(centre[2])))).v);
+    const uint16_t bearing=uint16_t(retailDirection(Fixed::raw(satSub32(u.x.v,centre[0])),
+                                                    Fixed::raw(satSub32(u.z.v,centre[2]))).v);
     const int radius=std::max(distance,16);
     for (int k=1;k<=16;++k)
         for (const int side:{1,-1}) {
             if (k==16 && side<0) continue;   // the far side, once
             const uint16_t angle=uint16_t(bearing+side*k*2048);
-            const int32_t x=centre[0]+retailScaledSine(angle,Fixed::fromInt(radius).v);
-            const int32_t z=centre[2]+retailScaledCosine(angle,Fixed::fromInt(radius).v);
+            const int32_t x=satAdd32(centre[0],retailScaledSine(angle,Fixed::fromInt(radius).v));
+            const int32_t z=satAdd32(centre[2],retailScaledCosine(angle,Fixed::fromInt(radius).v));
             if (x<0 || z<0 || (x>>20)>=hW_ || (z>>20)>=hH_) continue;
             if (std::abs((x>>16)-u.blockedX)<=2*kBlockedSpot && std::abs((z>>16)-u.blockedZ)<=2*kBlockedSpot) continue;
             const int ground=std::max(seaLevel_,retailTerrainHeight(x,z,terW_,terH_,
@@ -9395,7 +9401,7 @@ bool World::slotReachesPoint(const Unit& u,const std::array<int32_t,3>& aim,int 
         };
         return axis(u.x,u.type->footX,aim[0]) && axis(u.z,u.type->footZ,aim[2]);
     }
-    auto delta=[](int32_t to,int32_t from) { return std::bit_cast<int32_t>(uint32_t(to)-uint32_t(from)); };
+    auto delta=[](int32_t to,int32_t from) { return satSub32(to,from); };
     if (w.ballisticClass())   // 52bbb0: the arc from the origin first, then 530500
         return tak::retailBallisticInRange(delta(aim[0],u.x.v),delta(aim[1],(u.type->canFly ? u.flightY : u.groundY).v),
             delta(aim[2],u.z.v),tak::retailAimSpeed(w.projVel),w.gravityAdj,w.lobPreferred,ballisticGravityRaw_,w.range);
@@ -9680,8 +9686,8 @@ int World::suppressStage(Unit& u,Order& o,RetailMissionState& m,uint32_t events)
         for (;;) {
             if (steps>=100) return 8;
             const uint16_t h=uint16_t(retailDirection(o.attackPointX-u.x,o.attackPointZ-u.z).v);
-            o.attackPointX=Fixed::raw(int32_t(uint32_t(o.attackPointX.v)-uint32_t(retailScaledSine(h,0x80000))));
-            o.attackPointZ=Fixed::raw(int32_t(uint32_t(o.attackPointZ.v)-uint32_t(retailScaledCosine(h,0x80000))));
+            o.attackPointX=Fixed::raw(satSub32(o.attackPointX.v,retailScaledSine(h,0x80000)));
+            o.attackPointZ=Fixed::raw(satSub32(o.attackPointZ.v,retailScaledCosine(h,0x80000)));
             ++steps;
             if (reaches()) return steps<100 ? 1 : 8;
         }
@@ -13603,8 +13609,8 @@ void World::tickFlyingGuard(Unit& u) {
         clamp(inside.x,hW_*16-32);clamp(inside.z,hH_*16-128);
         // 51b340(unit, point): the heading of the unit as seen from the point.
         const uint16_t heading=uint16_t(retailDirection(
-            Fixed::raw(std::bit_cast<int32_t>(uint32_t(position.x)-uint32_t(inside.x))),
-            Fixed::raw(std::bit_cast<int32_t>(uint32_t(position.z)-uint32_t(inside.z)))).v);
+            Fixed::raw(satSub32(position.x,inside.x)),
+            Fixed::raw(satSub32(position.z,inside.z))).v);
         install(retailAirRunPoint(position,position.y,heading,800));
         o.mission.waitMask=0x700;
         o.mission.deadline=0xffffffffu;
@@ -14550,11 +14556,11 @@ void World::flyHoverGoal(Unit& u,Order& order,const Unit* target) {
         if (!(goal.flags&8)) destination.y=Fixed::fromInt(std::min(cruise,511)).v;
         if ((goal.flags&1) && target) {
             const auto sweetSpot=queryUnitScriptPoint(target->id,true);
-            goal.heading=uint16_t(retailDirection(Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.x.v)-uint32_t(sweetSpot[0]))),
-                                                  Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.z.v)-uint32_t(sweetSpot[2])))).v);
+            goal.heading=uint16_t(retailDirection(Fixed::raw(satSub32(u.x.v,sweetSpot[0])),
+                                                  Fixed::raw(satSub32(u.z.v,sweetSpot[2]))).v);
         }
         u.flightNavigation=retailFlightNavigation(position,u.flightNavigation.destination,destination,
-            u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading);
+            u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading,false,u.flightNavigation.wraps);
         order.x=Fixed::raw(goal.point.x);order.z=Fixed::raw(goal.point.z);
         if (goal.accepts(position)) {
             if (goal.flags&1) order.mission.pending|=0x100;
@@ -14846,7 +14852,7 @@ void World::flyMissionGoal(Unit& u,Order& order) {
         // flyer's cruise height over the ground under it.
         auto destination=goal.point;destination.y=Fixed::fromInt(std::min(cruise,511)).v;
         u.flightNavigation=retailFlightNavigation(position,u.flightNavigation.destination,destination,
-            u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading);
+            u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading,false,u.flightNavigation.wraps);
         if (goal.accepts(position)) { order.mission.pending|=0x500; order.flightGoal.reset(); }
     }
     tickFlightBody(u);
@@ -15034,7 +15040,7 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
         const auto destination=goal.target(uint16_t(u.type->turnRate));
         const uint16_t heading=goal.headingFor(position,portHeadingToRetail(u.heading));
         u.flightNavigation=retailFlightNavigation(position,u.flightNavigation.destination,destination,
-            u.flightNavigation.heading,Fixed::fromInt(cruise).v,true,true,heading);
+            u.flightNavigation.heading,Fixed::fromInt(cruise).v,true,true,heading,false,u.flightNavigation.wraps);
         if (goal.accepts(position)) owner.pending|=0x100;
     } else if (order.flightGoal) {
         const auto& goal=*order.flightGoal;
@@ -15042,7 +15048,7 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
         // flyer's cruise height over the ground under it.
         auto destination=goal.point;destination.y=Fixed::fromInt(std::min(cruise,511)).v;
         u.flightNavigation=retailFlightNavigation(position,u.flightNavigation.destination,destination,
-            u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading);
+            u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading,a.evadeController,u.flightNavigation.wraps);
         if (goal.accepts(position)) { owner.pending|=0x500;order.flightGoal.reset();a.evadeController=false; }
     }
     tickFlightBody(u);
@@ -18183,7 +18189,7 @@ std::array<int32_t,3> World::queryUnitScriptPoint(int unitId,bool sweetSpot,int 
     } else offset=retailPieceOrigin(u->type->productionModel,it->peek().pieces,piece,
         portHeadingToRetail(u->heading),u->groundPitch,u->groundRoll);
     for(size_t axis=0;axis<3;++axis)
-        point[axis]=std::bit_cast<int32_t>(uint32_t(point[axis])+uint32_t(offset[axis]));
+        point[axis]=satAdd32(point[axis],offset[axis]);
     return point;
 }
 
@@ -21919,6 +21925,9 @@ uint64_t World::stateHash() const {
                 mix(uint32_t(v.x)); mix(uint32_t(v.y)); mix(uint32_t(v.z));
             }
             mix(u.flightNavigation.heading);
+            // The destination is a direction (VTOL_Evade's line): folded only
+            // while set, so every other hash is the one it was.
+            if (u.flightNavigation.wraps) mix(0x5752415053ull);
             for(int32_t value:u.flightAcceleration)mix(uint32_t(value));
         }
         if (u.type && !u.type->canFly && !u.type->isStructure()) {
