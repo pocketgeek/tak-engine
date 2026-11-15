@@ -658,9 +658,10 @@
             std::copy(std::begin(playerAi_), std::end(playerAi_), key.playerAi.begin());
             {
                 tak::client::AllocCount counted;
-                key.world = world_.clone();
+                key.world = world_.keyframe();
                 key.bytes = counted.bytes();
             }
+            key.bytes += key.world->copyOnWriteBytes();
             replayKeyLast_ = key.bytes;
             replayKeyBytes_ += key.bytes;
             const auto place = std::lower_bound(replayKeys_.begin(), replayKeys_.end(), tick,

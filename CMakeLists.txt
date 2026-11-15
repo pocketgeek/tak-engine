@@ -381,7 +381,7 @@ add_executable(crowdbench tools/crowdbench.cpp)
 add_executable(navigation_telemetry_test tools/navigation_telemetry_test.cpp)
 target_link_libraries(navigation_telemetry_test PRIVATE tak-formats)
 add_test(NAME navigation_telemetry COMMAND navigation_telemetry_test)
-add_executable(world_clone_test tools/world_clone_test.cpp)
+add_executable(world_clone_test tools/world_clone_test.cpp src/client/alloccount.cpp)   # its copies are measured as the viewer measures a keyframe
 target_link_libraries(world_clone_test PRIVATE tak-formats)
 # Extracted retail files (scripts/, objects3d/) for the tests that read loose files.
 # They sit beside the install TAK_TEST_DATA names (assets/game -> assets/extracted/all),

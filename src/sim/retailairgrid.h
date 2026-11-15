@@ -5,6 +5,8 @@
 #include <span>
 #include <vector>
 
+#include "sim/copymember.h"
+
 namespace tak::sim {
 
 // Retail's secondary (airborne) map occupant: map cell word +2, with each
@@ -48,7 +50,7 @@ struct RetailAirOccupant {
 // -- current origin +0x74/+0x76 and size +0x78/+0x7a; `bool airborne(int id)`
 // -- flight mode 2; `forEachFlyer(f)` -- every live canfly entity.
 class RetailAirOccupancy {
-    std::vector<int> cells_;
+    PackedWhenKept<int> cells_;   // a keyframe of the world holds it as runs (sim/copymember.h)
     int width_=0,height_=0;
     template<class Host> static bool footprint(Host& host,int id,int& x,int& z,int& fx,int& fz) {
         return host.footprint(id,x,z,fx,fz);

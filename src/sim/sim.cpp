@@ -1456,7 +1456,7 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
     compCache_.clear();
     seaLevel_ = seaLevel;
     noSeaLevelTrigger_ = false;
-    heights_ = heights;
+    heights_ = std::vector<uint8_t>(heights);
     hW_ = w; hH_ = h;
     airOccupancy_.reset(w,h);
     groundRebuild();
@@ -1544,8 +1544,7 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
     // Per-cell slope (max 3x3 height spread) and water depth, for per-unit
     // maxSlope / maxWaterDepth checks on top of the shared domain grids.
     terW_ = w; terH_ = h;
-    slope_.assign(size_t(w) * h, 0);
-    depth_.assign(size_t(w) * h, 0);
+    std::vector<uint8_t> slope(size_t(w) * h, 0), depth(size_t(w) * h, 0);
     for (int z = 0; z < h; ++z)
         for (int x = 0; x < w; ++x) {
             int lo = 255, hi = 0;
@@ -1556,10 +1555,12 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
                     int v = heights[size_t(nz) * w + nx];
                     lo = std::min(lo, v); hi = std::max(hi, v);
                 }
-            slope_[size_t(z) * w + x] = uint8_t(std::min(255, hi - lo));
+            slope[size_t(z) * w + x] = uint8_t(std::min(255, hi - lo));
             int d = seaLevel - int(heights[size_t(z) * w + x]);
-            depth_[size_t(z) * w + x] = uint8_t(std::clamp(d, 0, 255));
+            depth[size_t(z) * w + x] = uint8_t(std::clamp(d, 0, 255));
         }
+    slope_ = std::move(slope);
+    depth_ = std::move(depth);
 }
 
 void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool blocked) {
@@ -1580,10 +1581,11 @@ void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool bloc
 
 
 void NavGrid::block(int cx, int cz, int w, int h, bool blocked) {
+    uint8_t* const cells = cells_.edit();   // this grid's own from here on
     for (int z = cz; z < cz + h; ++z)
         for (int x = cx; x < cx + w; ++x)
             if (x >= 0 && z >= 0 && x < w_ && z < h_)
-                cells_[size_t(z) * w_ + x] = blocked ? 0 : 1;
+                cells[size_t(z) * w_ + x] = blocked ? 0 : 1;
     ++version_;   // walkability changed: component caches over this grid are stale
     // Footprint clearance depends on the walkability grid. When it has already been
     // built, refresh just the affected rect (values are clamped at kClearMax, so a
@@ -1606,13 +1608,14 @@ static constexpr uint16_t kClearMax = 15;
 // (pure function of cells_).
 void NavGrid::rebuildClearance() const {
     clear_.assign(size_t(w_) * size_t(h_), 0);
+    uint16_t* const clear = clear_.edit();
     for (int z = h_ - 1; z >= 0; --z)
         for (int x = w_ - 1; x >= 0; --x) {
             if (!walkable(x, z)) continue;   // blocked (cells_ or the overlay) -> 0
-            uint16_t r  = (x + 1 < w_)               ? clear_[size_t(z) * w_ + x + 1]     : 0;
-            uint16_t u  = (z + 1 < h_)               ? clear_[size_t(z + 1) * w_ + x]     : 0;
-            uint16_t ru = (x + 1 < w_ && z + 1 < h_) ? clear_[size_t(z + 1) * w_ + x + 1] : 0;
-            clear_[size_t(z) * w_ + x] =
+            uint16_t r  = (x + 1 < w_)               ? clear[size_t(z) * w_ + x + 1]     : 0;
+            uint16_t u  = (z + 1 < h_)               ? clear[size_t(z + 1) * w_ + x]     : 0;
+            uint16_t ru = (x + 1 < w_ && z + 1 < h_) ? clear[size_t(z + 1) * w_ + x + 1] : 0;
+            clear[size_t(z) * w_ + x] =
                 std::min<uint16_t>(kClearMax, uint16_t(1 + std::min({r, u, ru})));
         }
     clearDirty_ = false;
@@ -1635,16 +1638,18 @@ void NavGrid::updateClearanceRect(int cx, int cz, int w, int h) const {
     int z0 = std::max(0, cz - int(kClearMax));
     int x1 = std::min(w_ - 1, cx + w - 1);
     int z1 = std::min(h_ - 1, cz + h - 1);
+    if (x0 > x1 || z0 > z1) return;
+    uint16_t* const clear = clear_.edit();   // this grid's own from here on
     for (int z = z1; z >= z0; --z)
         for (int x = x1; x >= x0; --x) {
             uint16_t v = 0;
             if (walkable(x, z)) {
-                uint16_t r  = (x + 1 < w_)               ? clear_[size_t(z) * w_ + x + 1]     : 0;
-                uint16_t u  = (z + 1 < h_)               ? clear_[size_t(z + 1) * w_ + x]     : 0;
-                uint16_t ru = (x + 1 < w_ && z + 1 < h_) ? clear_[size_t(z + 1) * w_ + x + 1] : 0;
+                uint16_t r  = (x + 1 < w_)               ? clear[size_t(z) * w_ + x + 1]     : 0;
+                uint16_t u  = (z + 1 < h_)               ? clear[size_t(z + 1) * w_ + x]     : 0;
+                uint16_t ru = (x + 1 < w_ && z + 1 < h_) ? clear[size_t(z + 1) * w_ + x + 1] : 0;
                 v = std::min<uint16_t>(kClearMax, uint16_t(1 + std::min({r, u, ru})));
             }
-            clear_[size_t(z) * w_ + x] = v;
+            clear[size_t(z) * w_ + x] = v;
         }
 }
 
@@ -1659,7 +1664,7 @@ bool NavGrid::fits(int cx, int cz, int foot) const {
 
 NavGrid::NavGrid(const std::vector<uint8_t>& heights, int w, int h, int cliff)
     : w_(w), h_(h) {
-    cells_.assign(size_t(w) * h, 1);
+    std::vector<uint8_t> cells(size_t(w) * h, 1);
     for (int z = 0; z < h; ++z)
         for (int x = 0; x < w; ++x) {
             // Block a cell only if a NEIGHBOUR rises more than `cliff` above it (a
@@ -1676,15 +1681,15 @@ NavGrid::NavGrid(const std::vector<uint8_t>& heights, int w, int h, int cliff)
                     int nz = std::clamp(z + dz, 0, h - 1);
                     hi = std::max(hi, int(heights[size_t(nz) * w + nx]));
                 }
-            if (hi - self > cliff) cells_[size_t(z) * w + x] = 0;
+            if (hi - self > cliff) cells[size_t(z) * w + x] = 0;
         }
+    cells_ = std::move(cells);
 }
 
 NavGrid::NavGrid(const std::vector<uint8_t>& heights, int w, int h, int sea,
                  const Limits& lim)
     : w_(w), h_(h) {
-    cells_.assign(size_t(w) * h, 1);
-    terrainPenalty_.assign(size_t(w)*h,0);
+    std::vector<uint8_t> cells(size_t(w) * h, 1), terrainPenalty(size_t(w)*h,0);
     auto H = [&](int x, int z) {
         return int(heights[size_t(std::min(z, h - 1)) * size_t(w) + size_t(std::min(x, w - 1))]);
     };
@@ -1703,9 +1708,11 @@ NavGrid::NavGrid(const std::vector<uint8_t>& heights, int w, int h, int sea,
                     lim.maxSlope,badSlope,lim.maxWaterSlope,badWaterSlope,road);
             };
             const int ordinary=grade(false),road=grade(true);
-            cells_[size_t(z)*w+x]=uint8_t(ordinary!=0);
-            terrainPenalty_[size_t(z)*w+x]=uint8_t((ordinary==4 ? 1 : 0)|(road==4 ? 2 : 0));
+            cells[size_t(z)*w+x]=uint8_t(ordinary!=0);
+            terrainPenalty[size_t(z)*w+x]=uint8_t((ordinary==4 ? 1 : 0)|(road==4 ? 2 : 0));
         }
+    cells_ = std::move(cells);
+    terrainPenalty_ = std::move(terrainPenalty);
 }
 
 bool NavGrid::lineClear(int x0, int z0, int x1, int z1) const {
@@ -10387,7 +10394,7 @@ void World::buildNavClasses(const TypeRegistry& reg) {
         auto it = seen.find(k);
         if (it == seen.end()) {
             it = seen.emplace(k, int(navClasses_.size())).first;
-            navClasses_.push_back(NavGrid(heights_, terW_, terH_, seaLevel_, l));
+            navClasses_.push_back(NavGrid(heights_.values(), terW_, terH_, seaLevel_, l));
         }
         navIdx_[&t] = it->second;
     }
@@ -19789,6 +19796,7 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
 }
 
 void World::tick(float dt) {
+    if(kept_)throw std::logic_error("a keyframe is restored from, not run");
     bodyIndexEnabled_=true;bodyIndexValid_=false;
     struct BodyIndexScope { bool& enabled; ~BodyIndexScope(){enabled=false;} } bodyIndexScope{bodyIndexEnabled_};
     inTick_=true;
@@ -21767,6 +21775,7 @@ void World::hashTrace() const {
 #endif
 
 uint64_t World::stateHash() const {
+    if(kept_)throw std::logic_error("a keyframe is restored from, not read");
     // A 64-bit fold of the quantities that must agree between lockstep peers.
     uint64_t h = 1469598103934665603ULL;
     WordMix words(h);   // sim/statefold.h
@@ -22650,8 +22659,23 @@ void World::adoptCopy(const World& from) {
 }
 std::unique_ptr<World> World::clone() const {
     std::unique_ptr<World> copy(new World(*this));
+    copy->kept_=false;
     copy->adoptCopy(*this);
     return copy;
+}
+std::unique_ptr<World> World::keyframe() const {
+    const KeepingCopies keeping;   // the navigator's copy too, made in adoptCopy
+    std::unique_ptr<World> copy(new World(*this));
+    copy->adoptCopy(*this);
+    copy->kept_=true;
+    return copy;
+}
+uint64_t World::copyOnWriteBytes() const {
+    uint64_t bytes=0;
+    for(const NavGrid* g:{&nav_,&navWater_,&navHover_,&navalSight_})bytes+=g->copyOnWriteBytes();
+    for(const auto& g:navClasses_)bytes+=g.copyOnWriteBytes();
+    if(legion_)bytes+=legion_->copyOnWriteBytes();
+    return bytes;
 }
 void World::restoreFrom(const World& from) {
     auto pool=std::move(pool_);
@@ -22659,6 +22683,7 @@ void World::restoreFrom(const World& from) {
     *this=from;
     pool_=std::move(pool);
     autoWorkers_=autoWorkers;
+    kept_=false;
     adoptCopy(from);
 }
 void World::setPathfindingMode(PathfindingMode mode) {

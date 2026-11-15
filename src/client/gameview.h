@@ -2636,9 +2636,12 @@ private:
     bool replayMode_ = false;                     // playing a recorded .takrep
     // ---- replay transport (client/replaybar.h) -------------------------------------
     // A whole copy of the world on the way through, so a rewind starts from the nearest
-    // one behind it. `hash` is the world's at capture: a restore must land on exactly it.
-    // `bytes` is what the copy really took (client/alloccount.h). `playerAi` is the one
-    // piece of display state only the recording's events set, so a rewind takes it back.
+    // one behind it: a World::keyframe, which shares the terrain with the world and holds
+    // its sparse maps packed. `hash` is the world's at capture: a restore must land on
+    // exactly it. `bytes` is what the copy really took (client/alloccount.h) plus what it
+    // shares with the world that either may yet have to copy (World::copyOnWriteBytes):
+    // the most it can come to hold. `playerAi` is the one piece of display state only the
+    // recording's events set, so a rewind takes it back.
     struct ReplayKeyframe {
         uint32_t tick = 0;
         uint64_t hash = 0, bytes = 0;

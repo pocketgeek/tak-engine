@@ -273,6 +273,9 @@ public:
     // An exact copy of the navigator's state, bound to `world` (a copy of its world;
     // see World::clone). Between ticks only.
     std::unique_ptr<LegionNavigator> clone(World& world) const;
+    // The bytes of the planes' arrays this navigator shares with a copy (or its source):
+    // what either would copy for itself at its next static change (World::copyOnWriteBytes).
+    uint64_t copyOnWriteBytes() const;
     ~LegionNavigator();
     // Ground units whose current leg is a mission Legion routes (see
     // mission()); everything else stays Retail.

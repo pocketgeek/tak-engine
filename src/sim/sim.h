@@ -2039,6 +2039,9 @@ public:
     bool roadAt(int cx, int cz) const {
         return roads_ && (*roads_)[size_t(cz) * w_ + cx] != 0;
     }
+    // What a copy of this grid may still have to copy for itself: the clearances it
+    // shares, which the next walkability edit rewrites (World::copyOnWriteBytes).
+    uint64_t copyOnWriteBytes() const { return clear_.sharedBytes(); }
 
     // Line of sight: no blocked cell between the two world points, ignoring cells
     // within `skip0`/`skip1` cells of each endpoint — so a shooter or target's own
@@ -2065,15 +2068,19 @@ private:
     bool lineClear(int x0, int z0, int x1, int z1) const;
     void rebuildClearance() const;
 
-    std::vector<uint8_t> cells_;
-    std::vector<uint8_t> terrainPenalty_;
+    // The terrain's own cells: written by the constructor and by block() alone, so a
+    // world and its copies (World::clone) share them, as they do the clearances until
+    // a structure or a feature changes one (SharedArray, sim/copymember.h). A keyframe
+    // of the world holds the clearances as runs of its own instead.
+    SharedArray<uint8_t> cells_;
+    SharedArray<uint8_t> terrainPenalty_;
     // clear_[c] = side of the largest all-walkable square whose min corner is c.
     // Lazily rebuilt (dirtied by block()); a foot-cell unit fits at corner c iff
     // clear_[c] >= foot. mutable so fits()/pathfinding can build it on demand.
     // Values saturate at 15 (the max queryable footprint), which is what lets
     // block() refresh only a bounded rect instead of dirtying the whole grid.
     void updateClearanceRect(int cx, int cz, int w, int h) const;
-    mutable std::vector<uint16_t> clear_;
+    mutable SharedPackedArray<uint16_t> clear_;
     mutable bool clearDirty_ = true;
     uint64_t version_ = 1;
     const std::vector<uint8_t>* roads_ = nullptr;
@@ -2573,7 +2580,7 @@ public:
     // features (matchsetup's registration, the viewer's feature art) reads this,
     // never map.features. A load-time snapshot: runtime reclaim, burning and
     // corpses do not change it. Empty until setMapPlacementFeatures.
-    const std::vector<uint16_t>& installedMapFeatures() const { return installedMapFeatures_; }
+    const std::vector<uint16_t>& installedMapFeatures() const { return installedMapFeatures_.values(); }
     const std::vector<RetailMapFeatureType>& mapPlacementTypes() const { return mapPlacementTypes_; }
     // A map cell's feature grade as the search planes rate it (0 blocked, 1 a
     // clearable blocker, 7 free); needs the feature plane (mapPlacementCells).
@@ -3116,9 +3123,22 @@ public:
     // A separate, exact copy of this world between ticks: from here it runs as this
     // one would, byte for byte, sharing nothing it can change (the type registry and
     // the map data it reads are the caller's, as for any World). Its thread pool is its
-    // own and comes on first use; observers are left behind. Replay seeking keeps these
-    // as keyframes (client/replaybar.h).
+    // own and comes on first use; observers are left behind. It shares with this world
+    // the per-cell maps neither has changed since (SharedArray, sim/copymember.h).
     std::unique_ptr<World> clone() const;
+    // A copy to keep and restore from, not to run: as clone(), but its sparse per-cell
+    // maps (occupancy, ownership, sight counts, obstacles, Legion's soft stamps...) are
+    // held as runs, megabytes each in a world that runs. restoreFrom() and clone() give
+    // them back exactly; nothing else may be asked of a keyframe (tick() and stateHash()
+    // throw). The replay viewer's rewind points are these (client/replaybar.h).
+    std::unique_ptr<World> keyframe() const;
+    bool isKeyframe() const { return kept_; }
+    // What a copy just made shares with this world that either may yet have to copy for
+    // itself: the per-cell maps a structure or a feature rewrites (the grids' clearances,
+    // Legion's planes; SharedArray), not the terrain nothing writes after setup. A copy
+    // holds at most what it allocated plus this. (A keyframe packs those maps instead
+    // of sharing them, so for one this is only what did not pack.)
+    uint64_t copyOnWriteBytes() const;
     // Become an exact copy of `from` (a clone, or another world) without moving: anything
     // holding this World still holds it. Keeps this world's thread pool. A throw (out of
     // memory) leaves this world unusable.
@@ -3789,7 +3809,7 @@ private:
         // goes through componentAt(). friend rather than public so the unresolved id has
         // no route out of this struct.
         friend class World;
-        std::vector<int32_t> raw_;
+        PackedWhenKept<int32_t> raw_;   // megabytes a grid as an array, kilobytes as the runs a keyframe holds
         std::vector<int32_t> alias;   // id -> parent id; identity after a full build
         int32_t root(int32_t id) const {
             if (id < 0) return id;
@@ -3830,7 +3850,8 @@ private:
     // TAK_COMPCHECK (debug): recompute the whole labelling from scratch and abort unless
     // it partitions the cells exactly as `cg`'s roots do.
     void verifyComponents(const NavGrid& g, int foot, const CompGrid& cg) const;
-    mutable std::vector<uint32_t> compMark_;   // resolveSplit's flood marks, by epoch
+    // (Sized on use, so a copy of the world does without them.)
+    mutable LeftEmptyOnCopy<std::vector<uint32_t>> compMark_;   // resolveSplit's flood marks, by epoch
     mutable uint32_t compMarkTop_ = 0;
     mutable CompStats compStats_;
     // The mirror of the above for an edit that only CLEARS cells. Unblocking can only
@@ -3928,7 +3949,9 @@ private:
     // navIdx_ maps a type to its grid. Derived from terrain + the registry, so it is
     // not hashed -- but it MUST be identical on every peer, which it is: the table
     // is built in a deterministic order from the same data.
-    std::vector<uint8_t> obst_;   // shared obstacle overlay (see NavGrid::setObstacles)
+    // (PackedWhenKept, here and on the other per-cell state maps -- occupancy, ground owners, sight counts, the
+    // placement cells, the search grades: arrays as ever in a world that runs, runs in a keyframe; World::keyframe.)
+    PackedWhenKept<uint8_t> obst_;   // shared obstacle overlay (see NavGrid::setObstacles)
     // A sacred yard (S) may stand on fixed obstacles (placementCheck): footprint
     // origin cell -> the overlay cells already blocked when it was stamped, so its
     // removal (blockFoot) leaves those obstacles blocked. Not hashed: derived from
@@ -3945,7 +3968,7 @@ private:
         int footX=1,footZ=1;
         uint64_t navVersion=0;
         RetailGradePreparation preparation;
-        std::vector<uint8_t> cells;
+        PackedWhenKept<uint8_t> cells;
         uint64_t checksum=0;
     };
     std::vector<SearchGradePlane> searchGrades_;
@@ -4010,6 +4033,7 @@ private:
     // replays them at the start of its next tick (Legion 10,000 stage 4). Derived
     // from the call context, never hashed.
     bool inTick_=false;
+    bool kept_=false;   // a keyframe(): its packed maps are not arrays until restored from
     // Tick-local broad phase. Buckets keep conservative candidates, including
     // dead/flying bodies; exact current eligibility and yards are checked below.
     bool bodyIndexEnabled_=false;
@@ -4027,7 +4051,7 @@ private:
     // holder leaves it the cell (5066f0), and a cell is handed on only when
     // its holder leaves (506aa0 restamps the bodies it refused). Consumers
     // take the holder among the bodies that cover a cell (searchBodyRect).
-    std::vector<int32_t> groundOwner_;
+    PackedWhenKept<int32_t> groundOwner_;
     uint32_t groundLinkSerial_=0;
     bool groundHolderLive(int id) const;
     bool groundStampsCell(const Unit&,int dx,int dz) const;
@@ -4058,7 +4082,7 @@ private:
 
     // Derived occupancy: rebuilt each tick, then updated after every cell change.
     // Both moving and parked bodies reserve their whole footprint (0 = free).
-    std::vector<int32_t> occ_;
+    PackedWhenKept<int32_t> occ_;
     std::vector<size_t> occTouched_;
     std::vector<uint32_t> occParked_;   // rebuildOccupancy's scratch: parked bodies, unit order
     void setOccupant(size_t cell,int id) {
@@ -4361,14 +4385,16 @@ private:
     DamageMode damageMode_ = DamageMode::Normal;   // DoubleShot / HalfShot: every player's damage
     uint16_t powerLosOff_ = 0, powerMappingOff_ = 0;   // per-player bits
     bool patrolRepairs_ = true;
-    std::vector<uint8_t> heights_;   // raw TNT heightmap
+    // Raw TNT heightmap. Like slope_, depth_ and installedMapFeatures_, set with the
+    // terrain and never written again: a world and its copies share it (SharedArray).
+    SharedArray<uint8_t> heights_;
     std::vector<RetailExplorationHeight> explorationHeights_;
     std::vector<uint16_t> navigationExplored_; // simulation-owned persistent owner bits
     // 4c6800's per-player current-view counts (player +0x88) on the same
     // projected 32px grid, player-major. uint16 instead of retail's wrapping
     // byte: our unit caps make 256 overlapping footprints reachable; equal to
     // retail below that. Hashed.
-    std::vector<uint16_t> viewCounts_;
+    PackedWhenKept<uint16_t> viewCounts_;
     // 4c6750/4c6b30: a dying human-owned unit's footprint stays counted for
     // 60 ticks (at most 20 per player), in the planes it was counted in.
     // Hashed, in order.
@@ -4388,7 +4414,7 @@ public:
     static constexpr int32_t kRetiredTicks = 1000 * 30;    // record explicitly retired
     // Terrain accessors for offline analysis tools (tools/footprobe): the raw
     // heightmap and its dimensions. Read-only; nothing in the sim uses these.
-    const std::vector<uint8_t>& mapHeights() const { return heights_; }
+    const std::vector<uint8_t>& mapHeights() const { return heights_.values(); }
     int mapW() const { return terW_; }
     int mapH() const { return terH_; }
     int mapSea() const { return seaLevel_; }
@@ -4436,8 +4462,8 @@ private:
     std::vector<uint32_t> sacredBucketStart_,sacredBucketSites_;
     const SacredSite* sacredSiteAt(int x,int z) const;
     std::vector<Feature> features_;             // reclaimable map features
-    std::vector<RetailMapFeatureCell> mapPlacementCells_;
-    std::vector<uint16_t> installedMapFeatures_;   // load-time survivors (installedMapFeatures)
+    PackedWhenKept<RetailMapFeatureCell> mapPlacementCells_;
+    SharedArray<uint16_t> installedMapFeatures_;   // load-time survivors (installedMapFeatures)
     std::vector<RetailMapFeatureType> mapPlacementTypes_;
     struct CorpseFootprint { int x=0,z=0,type=-1; int32_t damage=0; };
     std::unordered_map<int,int> corpseAnchors_; // derived anchor -> unit ID, for weapon hits
@@ -4935,8 +4961,8 @@ private:
     NavGrid nav_, navWater_, navHover_;
     NavGrid navalSight_; // combat only: terrain at/above the water surface
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.
-    std::vector<uint8_t> slope_;   // local height spread
-    std::vector<uint8_t> depth_;   // water depth (sea level - height), 0 on land
+    SharedArray<uint8_t> slope_;   // local height spread
+    SharedArray<uint8_t> depth_;   // water depth (sea level - height), 0 on land
     std::vector<uint8_t> roads_;   // 1 = road cell (feature-plane 0xFFFB); may be empty
     int terW_ = 0, terH_ = 0;
     int seaLevel_ = 0;   // heights below this are water (kept for tools/analysis)

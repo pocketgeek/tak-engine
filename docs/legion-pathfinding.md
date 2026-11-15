@@ -1824,6 +1824,15 @@ first start of a tick always fits) and reach-ring cells.
   container, by category; the field cap is a fixed byte allowance (`kFieldBytes`, 128 MiB, never below two whole-map
   fields) over the potentials and the unfinished builds' frontiers. The process heap is measured beside it by the
   tools, never read by the sim.
+* **Copies** (`World::clone`, the replay viewer's rewind points). A copy of the navigator shares each plane's
+  legality, component and cell arrays with its source until either changes one (`SharedArray`, `sim/copymember.h`:
+  a write goes through `edit()`, which first makes the array the writer's own), so a structure that goes up in one
+  world never shows in the other (`world_clone_test`, shared maps). It does not carry what any use sizes or fills
+  again to the same answers: the planes' memos (`spanMemo`, `loneMemo`, `nearMemo`), the refresh marks and the lift
+  walk's goal map. None of this is hashed, and `NavBytes` of a copy is smaller by what it left out. A copy made to
+  keep (`World::keyframe`) holds the plane arrays as runs of its own instead of sharing them, and the per-cell soft
+  stamps, their counts and the landed and lifted flyers' cell maps as runs too (`ArrayRuns`), and gives them all
+  back exactly when it is restored from. Fields, tiles and plans are copied whole.
 * **Ordering.** Groups with no field start before stale refreshes of older groups (served the other way round,
   constant churn restarts the refreshes every tick and starves new groups). A refresh keeps building across static
   changes, as a first field does, and is installed still stale so another follows.

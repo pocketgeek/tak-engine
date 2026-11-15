@@ -396,10 +396,13 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         int maxDepth=0,minDepth=0,maxSlope=0,maxWaterSlope=0,footX=1,footZ=1;
         bool legacy=false;
         uint64_t epoch=0;   // World placement epoch + structure signature
-        std::vector<uint8_t> legal;
+        // `legal`, `comp` and `cell` change only where a structure or a feature does, so a copy of the navigator
+        // (World::clone) shares them until either side changes one: read as arrays, written through edit()
+        // (SharedArray, sim/copymember.h). A keyframe of the world holds them as runs of its own instead.
+        SharedPackedArray<uint8_t> legal;
         // Static connected component of every legal origin (-1 if illegal),
         // under the same step rule the field and the mover use.
-        std::vector<int32_t> comp;
+        SharedPackedArray<int32_t> comp;
         // Per component: origin count and bounding box {minX,minZ,maxX,maxZ}.
         std::vector<int> compSize;
         std::vector<std::array<int,4>> compBox;
@@ -407,7 +410,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // 1x1 cell legality (terrain, features, structure yards) the origin
         // plane is the footprint-rectangle test of; kept so a static change
         // recomputes only its rectangle (see refreshPlanes).
-        std::vector<uint8_t> cell;
+        SharedPackedArray<uint8_t> cell;
         int liveComps=0;    // labels with compSize>0 (dead labels are reused never)
         // Background first build (prebuildStep): 0 idle, 1 cells, 2 row
         // runs, 3 column runs, 4 labels; epoch stays ~0 until it completes.
@@ -421,23 +424,25 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // nearObstacle's static memo (C10): per origin, the packed clearance
         // and outward normal, valid where nearGen holds nearGenCur. A pure
         // function of `legal`; a new epoch starts a new generation. Derived,
-        // never hashed.
-        mutable std::vector<uint64_t> nearMemo;
-        mutable std::vector<uint32_t> nearGen;
+        // never hashed. Like the two memos below it is left out of a copy
+        // (megabytes a plane; each lookup that finds none fills it again, to
+        // the same answers).
+        mutable LeftEmptyOnCopy<std::vector<uint64_t>> nearMemo;
+        mutable LeftEmptyOnCopy<std::vector<uint32_t>> nearGen;
         mutable uint32_t nearGenCur=0;
         mutable uint64_t nearEpoch=~0ull;
         // The passage gate's static cross-sections (see gateSpan): per
         // origin the legal run west/east/north/south (kSpanCap at most), valid
         // where spanGen holds spanGenCur. Derived, never hashed.
-        mutable std::vector<uint32_t> spanMemo,spanGen;
+        mutable LeftEmptyOnCopy<std::vector<uint32_t>> spanMemo,spanGen;
         mutable uint32_t spanGenCur=0;
         mutable uint64_t spanEpoch=~0ull;
         // The pinwheel's lone tree/rock cells (see loneCell): per 1x1 cell,
         // 1 lone, 0 a wall, valid where loneGen holds loneGenCur. A pure
         // function of `cell` and the map's features (a generation per epoch
         // and cellGen); derived, never hashed.
-        mutable std::vector<uint8_t> loneMemo;
-        mutable std::vector<uint32_t> loneGen;
+        mutable LeftEmptyOnCopy<std::vector<uint8_t>> loneMemo;
+        mutable LeftEmptyOnCopy<std::vector<uint32_t>> loneGen;
         mutable uint32_t loneGenCur=0;
         mutable uint64_t loneEpoch=~0ull,loneCells=~0ull;
         // Stage 6: the routing hierarchy over `legal` (sectors, regions, portals; sim/legion_hier.h), built lazily
@@ -1597,8 +1602,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         int ox=0,oz=0,fx=0,fz=0;uint64_t owner=~0ull;
     };
     std::vector<SoftBody> softBodies;    // by unit id
-    std::vector<int32_t> soft;           // per cell: the lowest id of the stamps covering it (0 none)
-    std::vector<uint8_t> softKind;       // per cell: 0 none, 1 soft to all, 2 a settled arrival, 3 a liftable flyer (see softCell)
+    // (PackedWhenKept, here and on softCounts, grounded and liftHome: arrays in a navigator that runs, runs in a
+    // keyframe of its world; sim/copymember.h.)
+    PackedWhenKept<int32_t> soft;        // per cell: the lowest id of the stamps covering it (0 none)
+    PackedWhenKept<uint8_t> softKind;    // per cell: 0 none, 1 soft to all, 2 a settled arrival, 3 a liftable flyer (see softCell)
     size_t softCellCount=0;              // cells set in `soft`
     // Cells two or more stamps cover: every covering id, ascending (`soft`
     // holds the first). Rare (bodies do not overlap), so a map.
@@ -1632,12 +1639,12 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // who stands where (holds, detours, parting, passing), saw free ground
     // there and pressed into them. `grounded` overlays them on occ_ (see
     // occAt); rebuilt each tick from hashed unit state, so never hashed.
-    std::vector<int32_t> grounded;       // per cell: a landed flyer covering it (0 none)
+    PackedWhenKept<int32_t> grounded;    // per cell: a landed flyer covering it (0 none)
     std::vector<int> groundedCells,groundedIds;   // cells set; landed flyer ids, ascending
     // Flyers lifted to let a group pass (Unit::legionLift): the spot each
     // one left, so the members still on their way keep it up. Rebuilt each
     // tick with `grounded`; never hashed.
-    std::vector<int32_t> liftHome;
+    PackedWhenKept<int32_t> liftHome;
     std::vector<int> liftHomeCells,liftedIds;
     int32_t occAt(size_t c) const {const int32_t o=w.occ_[c];return o||groundedCells.empty()?o:grounded[c];}
     // passAhead's oncoming-sector mask (A7): per kPassBlock x kPassBlock
@@ -1881,7 +1888,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // liftable flyers' cells among them (a window holds at most 49 cells).
     // Derived from `soft`/`softKind` and kept up to date cell by cell,
     // never hashed.
-    struct SoftCounts {int fx=0,fz=0;std::vector<uint32_t> at;};
+    struct SoftCounts {int fx=0,fz=0;PackedWhenKept<uint32_t> at;};
     static constexpr uint32_t kCoverCount=0xff,kArrivalCount=0xff0000,kLiftCount=0xff000000;
     std::vector<SoftCounts> softCounts;
     void countCell(SoftCounts& k,int c,uint8_t kind,int delta) {
@@ -2809,16 +2816,17 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         p.legal.assign(size_t(std::max(0,W))*std::max(0,H),0);
         ++stats.planeBuilds;
         if(W<=0||H<=0)return;
+        uint8_t* const legal=p.legal.edit();
         if(p.legacy) {
             const auto* grid=legacyGrid(p);
             if(!grid||grid->empty())return;
             const int foot=std::clamp(std::max(p.footX,p.footZ),1,15);
             for(int z=0;z<H;++z)for(int x=0;x<W;++x)
-                p.legal[size_t(z)*W+x]=grid->fits(x+foot/2,z+foot/2,foot);
+                legal[size_t(z)*W+x]=grid->fits(x+foot/2,z+foot/2,foot);
             return;
         }
         p.cell.assign(size_t(W)*H,0);
-        auto& cell=p.cell;
+        const auto& cell=p.cell;
         computeRows(p,0,H);
         // Separable rectangle test: run of legal cells to the right >= footX
         // on footZ consecutive rows, and the footprint's bounds (x+fx<W).
@@ -2834,7 +2842,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             int r=0;
             for(int z=H-1;z>=0;--z) {
                 r=run[size_t(z)*W+x]>=p.footX?r+1:0;
-                p.legal[size_t(z)*W+x]=r>=p.footZ&&x+p.footX<W&&z+p.footZ<H;
+                legal[size_t(z)*W+x]=r>=p.footZ&&x+p.footX<W&&z+p.footZ<H;
             }
         }
     }
@@ -2927,6 +2935,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         const int W=width(),H=height();
         x0=std::max(x0,0);z0=std::max(z0,0);x1=std::min(x1,W-1);z1=std::min(z1,H-1);
         if(x0>x1||z0>z1)return 0;
+        uint8_t* const cell=p.cell.owned();   // the caller's edit() made it this navigator's own (computeRows, refreshCluster)
         auto cellAt=[&](int cx,int cz) {
             const auto& source=w.mapPlacementCells_[size_t(cz)*W+cx];
             RetailPlacementCell result;
@@ -2944,7 +2953,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             return result;
         };
         for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x)
-            p.cell[size_t(z)*W+x]=x+1<W&&z+1<H&&retailMobilePlacement(x,z,1,1,W,H,w.seaLevel_,p.maxDepth,p.minDepth,
+            cell[size_t(z)*W+x]=x+1<W&&z+1<H&&retailMobilePlacement(x,z,1,1,W,H,w.seaLevel_,p.maxDepth,p.minDepth,
                 p.maxSlope,p.maxWaterSlope,0,false,1,cellAt,[](uint16_t){return 0x20u;},
                 [](uint32_t){return RetailPlacementEntity{};});
         uint64_t work=uint64_t(x1-x0+1)*uint64_t(z1-z0+1);
@@ -2960,7 +2969,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     const char yard=u.type->yardMap[size_t(j)*u.type->footX+i];
                     if(yard=='.'||(opened&&(yard=='c'||yard=='C')))continue;
                 }
-                p.cell[size_t(cz)*W+cx]=0;++work;
+                cell[size_t(cz)*W+cx]=0;++work;
             }
         };
         if(structureIndex&&structureIndex->list==structureList) {
@@ -2996,6 +3005,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     void computeRows(Plane& p,int z0,int z1) {
         const int W=width();
         if(z1<=z0)return;
+        p.cell.edit();   // before the fork: the chunks write through owned()
         if(!prefetching()||z1-z0<2*kPlaneRowChunk) {computeCells(p,0,z0,W-1,z1-1);return;}
         const StructureScope scope(*this,true);   // each chunk stamps only the structures over its rows
         const size_t chunks=size_t(z1-z0+kPlaneRowChunk-1)/kPlaneRowChunk;
@@ -3015,17 +3025,18 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     void labelPlane(Plane& p) {
         const int W=width(),H=height();
         p.comp.assign(p.legal.size(),-1);
+        int32_t* const comp=p.comp.edit();
         p.compSize.clear();p.compBox.clear();
         std::vector<int> queue;int next=0;
         for(int start=0;start<W*H;++start) {
             if(!p.legal[size_t(start)]||p.comp[size_t(start)]>=0)continue;
-            p.comp[size_t(start)]=next;queue.assign(1,start);
+            comp[size_t(start)]=next;queue.assign(1,start);
             for(size_t head=0;head<queue.size();++head) {
                 const int x=queue[head]%W,z=queue[head]/W;
                 for(const auto& d:kDirections) {
                     if(!step(p,x,z,d[0],d[1]))continue;
                     const int c=(z+d[1])*W+x+d[0];
-                    if(p.comp[size_t(c)]<0) {p.comp[size_t(c)]=next;queue.push_back(c);}
+                    if(p.comp[size_t(c)]<0) {comp[size_t(c)]=next;queue.push_back(c);}
                 }
             }
             std::array<int,4> box{W,H,-1,-1};
@@ -3048,7 +3059,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // plane's relabel, not a sum over planes, and at 3 workers the max got
     // worse (1.7 -> up to 7 ms), so the refresh stays serial.
     struct RefreshScratch {
-        std::vector<uint32_t> seenGen;std::vector<int> seenBy;uint32_t markGen=0;
+        // (The marks are sized on use, so a copy of the navigator does without them.)
+        LeftEmptyOnCopy<std::vector<uint32_t>> seenGen;LeftEmptyOnCopy<std::vector<int>> seenBy;uint32_t markGen=0;
         uint64_t relabels=0;
         cluster::Clusters clusters;std::vector<std::array<int,4>> part;   // refreshPlane's (storage reuse only)
     };
@@ -3116,8 +3128,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                             StaticChange* change) {
         const int W=width(),H=height();
         uint64_t work=0;
+        p.cell.edit();   // computeCells writes through owned()
         for(const auto& r:rects)work+=computeCells(p,r[0],r[1],r[0]+r[2]-1,r[1]+r[3]-1);
         std::vector<int> added,removed;
+        uint8_t* legal=nullptr;   // p.legal, made this navigator's own at the first origin that changes
         int bx0=W,bz0=H,bx1=-1,bz1=-1;
         for(const auto& r:rects) {
             const int x0=std::max(0,r[0]-p.footX+1),z0=std::max(0,r[1]-p.footZ+1);
@@ -3128,7 +3142,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 work+=uint64_t(p.footX)*p.footZ;
                 const size_t c=size_t(z)*W+x;
                 if(bool(p.legal[c])==ok)continue;
-                p.legal[c]=ok;(ok?added:removed).push_back(int(c));
+                if(!legal)legal=p.legal.edit();
+                legal[c]=ok;(ok?added:removed).push_back(int(c));
                 bx0=std::min(bx0,x);bz0=std::min(bz0,z);bx1=std::max(bx1,x);bz1=std::max(bz1,z);
             }
         }
@@ -3181,6 +3196,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 for(int i=0;i<k&&dry;++i)if(find(i)==r&&head[size_t(i)]<q[size_t(i)].size())dry=false;
                 if(!dry)continue;
                 done[size_t(r)]=1;
+                int32_t* const comp=p.comp.edit();
                 const int label=int(p.compSize.size());
                 p.compSize.push_back(0);p.compBox.emplace_back();emptyBox(p.compBox.back());++p.liveComps;
                 auto& b=p.compBox.back();
@@ -3189,7 +3205,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     for(int c:q[size_t(i)]) {
                         const int old=p.comp[size_t(c)];
                         if(old>=0) {--p.compSize[size_t(old)];touched.insert(old);}
-                        p.comp[size_t(c)]=label;++p.compSize[size_t(label)];
+                        comp[size_t(c)]=label;++p.compSize[size_t(label)];
                         b={std::min(b[0],c%W),std::min(b[1],c/W),std::max(b[2],c%W),std::max(b[3],c/W)};
                     }
                     work+=q[size_t(i)].size();
@@ -3216,10 +3232,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                      RefreshScratch& scratch) {
         const int W=width(),H=height();
         uint64_t work=0;
+        int32_t* const comp=p.comp.edit();   // this navigator's own from here on
         std::set<int> touched;   // labels that lost cells (box may shrink)
         for(int c:removed) {
             const int l=p.comp[size_t(c)];
-            p.comp[size_t(c)]=-1;
+            comp[size_t(c)]=-1;
             if(l>=0) {--p.compSize[size_t(l)];touched.insert(l);}
         }
         // Local window: the change's bounding box plus a margin. Every edge
@@ -3317,7 +3334,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             auto& tb=p.compBox[size_t(t)];
             const auto b=p.compBox[size_t(c)];
             for(int z=b[1];z<=b[3];++z)for(int x=b[0];x<=b[2];++x)
-                if(p.comp[size_t(z)*W+x]==c)p.comp[size_t(z)*W+x]=t;
+                if(p.comp[size_t(z)*W+x]==c)comp[size_t(z)*W+x]=t;
             if(b[2]>=0)work+=uint64_t(b[2]-b[0]+1)*uint64_t(b[3]-b[1]+1);
             p.compSize[size_t(t)]+=p.compSize[size_t(c)];p.compSize[size_t(c)]=0;
             if(b[2]>=0)tb={std::min(tb[0],b[0]),std::min(tb[1],b[1]),std::max(tb[2],b[2]),std::max(tb[3],b[3])};
@@ -3335,7 +3352,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(p.comp[size_t(c)]>=0)continue;   // already in a component splitSearch labelled
             const int id=group[local(c)];
             const int target=labels[size_t(id)][0];
-            p.comp[size_t(c)]=target;++p.compSize[size_t(target)];
+            comp[size_t(c)]=target;++p.compSize[size_t(target)];
             auto& b=p.compBox[size_t(target)];
             const int x=c%W,z=c/W;
             b={std::min(b[0],x),std::min(b[1],z),std::max(b[2],x),std::max(b[3],z)};
@@ -6171,6 +6188,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // and plan once, however many groups and chains share it (the number of holders is itself read, see orphan), and
     // the pointers that reach them. Staged tiles are speculation: dropping them changes no decision, as a run with no
     // workers shows, so a copy starts with none. The rest is scratch that is only live inside a tick.
+    // What a copy does not carry at all: the planes' legality, component and cell arrays, which it shares with its
+    // source until either changes one (SharedArray); and what any use sizes or fills again -- the planes' memos, the
+    // refresh marks, liftFlyers' goal map. In a keyframe of the world the per-cell soft stamps, their counts and the
+    // landed and lifted flyers' cells are held as runs (PackedWhenKept).
     void copyTiles(const TileCache& from,TileCache& to,std::unordered_map<const Tile*,std::shared_ptr<Tile>>& copies,
                    std::unordered_map<const uint32_t*,const uint32_t*>& values) {
         to.bytes=from.bytes;
@@ -6769,15 +6790,17 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             } else if(p.stage==3) {   // footZ consecutive rows, rows descending
                 const int rows=std::max(1,int(budget/uint64_t(W)));
                 const int z1=std::max(-1,p.cursor-rows);
+                uint8_t* const legal=p.legal.edit();
                 for(int z=p.cursor;z>z1;--z)for(int x=0;x<W;++x) {
                     int& r=p.column[size_t(x)];
                     r=p.run[size_t(z)*W+x]>=p.footX?r+1:0;
-                    p.legal[size_t(z)*W+x]=r>=p.footZ&&x+p.footX<W&&z+p.footZ<H;
+                    legal[size_t(z)*W+x]=r>=p.footZ&&x+p.footX<W&&z+p.footZ<H;
                 }
                 budget-=std::min(budget,uint64_t(p.cursor-z1)*W);
                 p.cursor=z1;
                 if(p.cursor<0) {p.stage=4;p.cursor=0;p.head=0;p.queue.clear();std::vector<uint16_t>().swap(p.run);}
             } else {   // labelPlane's flood, resumable
+                int32_t* const comp=p.comp.edit();
                 if(p.head>=p.queue.size()) {
                     if(!p.queue.empty()) {
                         p.compSize.push_back(int(p.queue.size()));p.compBox.push_back(p.box);
@@ -6800,7 +6823,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                         break;
                     }
                     if(!budget)break;
-                    p.comp[size_t(p.cursor)]=p.nextLabel;p.queue.assign(1,p.cursor);
+                    comp[size_t(p.cursor)]=p.nextLabel;p.queue.assign(1,p.cursor);
                     p.box={p.cursor%W,p.cursor/W,p.cursor%W,p.cursor/W};
                 }
                 for(;p.head<p.queue.size()&&budget>0;++p.head) {
@@ -6809,7 +6832,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                         if(!step(p,x,z,d[0],d[1]))continue;
                         const int c=(z+d[1])*W+x+d[0];
                         if(p.comp[size_t(c)]<0) {
-                            p.comp[size_t(c)]=p.nextLabel;p.queue.push_back(c);
+                            comp[size_t(c)]=p.nextLabel;p.queue.push_back(c);
                             p.box={std::min(p.box[0],x+d[0]),std::min(p.box[1],z+d[1]),std::max(p.box[2],x+d[0]),std::max(p.box[3],z+d[1])};
                         }
                     }
@@ -6829,7 +6852,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     static constexpr uint32_t kLiftStride=4;
     static constexpr int kLiftCells=12;
     static constexpr int kLiftClear=6;   // cells round a lifted flyer: no member on its way there or bound there
-    std::vector<int32_t> liftGoal;       // liftFlyers scratch: per goal origin, a member bound there (0 none)
+    LeftEmptyOnCopy<std::vector<int32_t>> liftGoal;   // liftFlyers scratch: per goal origin, a member bound there (0 none); sized on use
     std::vector<int> liftGoalCells;
     // One lift request, counted (observation only). A request that starts a new
     // episode within 600 ticks of the flyer's previous landing is a relift.
@@ -15679,6 +15702,11 @@ LegionNavigator::~LegionNavigator() {
     if(impl_&&std::getenv("TAK_LEGION_CENSUS"))
         for(const auto& [name,v]:census())if(v)std::fprintf(stderr,"CENSUS %s=%llu\n",name.c_str(),(unsigned long long)v);
 #endif
+}
+uint64_t LegionNavigator::copyOnWriteBytes() const {
+    uint64_t bytes=0;
+    for(const auto& p:impl_->planes)bytes+=p.legal.sharedBytes()+p.comp.sharedBytes()+p.cell.sharedBytes();
+    return bytes;
 }
 bool LegionNavigator::supports(const Unit& u) const {return impl_->supports(u);}
 LegionMission LegionNavigator::mission(const Unit& u) const {return impl_->kindOf(u);}
