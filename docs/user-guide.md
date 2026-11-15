@@ -429,12 +429,21 @@ A winning AI therefore hunts down what is left, but a last unit hidden in a far
 corner can take it a long time to find, so a game between AIs does not always
 end.
 
-Defensive, Easy, Passive, Normal and Absurdly Defensive also build another lodestone
-whenever they run short of mana (less than 30% of their storage left while
-their builders and producers ask for more mana than they earn), one at a time,
-on a free deposit near their own base, as the original game's AI does. Every
-level picks only deposits on ground it knows, and a deposit counts as free unless
-it sees or remembers a lodestone on it, or a build there is refused.
+Every level also builds another lodestone whenever it runs short of mana (less
+than 30% of its storage left while its builders and producers ask for more mana
+than they earn), one at a time, as the original game's AI does: on a free
+deposit near its own base, or, for Hard and Absurd, on any deposit their
+builders may take (below). While its store is empty and something of its is
+still being built, a level starts nothing new except that lodestone. Every level
+picks only deposits on ground it knows, and a deposit counts as free unless it
+sees or remembers a lodestone on it, or a build there is refused.
+
+Hard and Absurd size their production to their income: one factory for every
+60 mana of income a second (a working factory spends 30 to 120), one more
+whenever their mana store is over 60% full, and 32 at most. Zhon has no factory
+buildings: its Beast Handlers, Tamers, Lords and Shamans conjure its army, so a
+Hard or Absurd Zhon keeps one of them for every 60 income in the same way, and a
+quarter more (two at least) for the ones away building lodestones.
 
 Every level except Easy and Retail upgrades its lodestones to divine lodestones
 once its base is full: when no free deposit within reach of home is left for a

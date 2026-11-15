@@ -11,8 +11,8 @@ retail's AI bugs faithfully. It is offered for skirmish and multiplayer AI seats
 computer player of a campaign mission plays it (there is no choice). A seat whose human disconnects
 is taken over by the Normal level. The Retail AI reads ONLY its profile file (the map's or mission's
 `aiprofile`, else `ai/default.txt`), while our six other levels share one `ai/takengine.txt` over
-their built-in tables. The Retail AI (like Passive, Easy, Normal and Absurdly Defensive) judges a mana
-shortage against the mana its builders and producers ask for, not what a short pool could pay.
+their built-in tables. The Retail AI (like every one of our levels) judges a mana shortage against the
+mana its builders and producers ask for, not what a short pool could pay.
 
 Sources: static reading of the binary and emulation of its routines (research scratch kept **outside
 the repo**, named only to say where a finding came from). Repo oracles (`tools/re/check_ai_*`,
@@ -518,7 +518,7 @@ centre, radius, counts, firepower, shot cost, draw, busy-deposit test and placer
 | 4 | Unlisted type = weight 100, unlimited | missing weight = never built | **different** (arasiege, aratrans, vercen, npctemp) |
 | 5 | Dynamic priority 0x410810 (~210-tick refresh) | none (static desire ladder per category) | **missing** |
 | 6 | One weighted draw over the whole menu, then reject another faction's pick | category planner, draw within the top category | **different** |
-| 7 | Separate lodestone draw every think, replacing the ordinary pick | manaShort trigger, priority 96, home radius gate | different |
+| 7 | Separate lodestone draw every think, replacing the ordinary pick | manaShort trigger, priority 96, home radius gate (Hard and Absurd: any safe deposit their own expansion reaches) | different |
 | 8 | Hard limits (count incl. unfinished >= limit) | limits x limitScale; Hard/defensive lift them | different |
 | 9 | No affordability check; allocation gates (0.7, 0.7/3, cost deferral) | affordability gate, over-commit throttle (mana < 50), income < 20 rule | **different** |
 | 10 | Squads: base/strike/backup/VTOL/naval; assignment every rand(7)+3 | none (pools computed per think) | **missing** |
@@ -531,7 +531,7 @@ centre, radius, counts, firepower, shot cost, draw, busy-deposit test and placer
 | 17 | Monarch alarm on hit (30..927 ticks build pause) | none | **missing** |
 | 18 | Monarch retreat by HP/mana/castable thresholds, to the safest of 20 points | Monarch "fights back" (Attack lastHitBy) + 520 px home leash | **different** |
 | 19 | Desired builders p1 = rand(2)+1, growing with population/20 | builderCap tables per level | different |
-| 20 | Duplicate-factory rule; Monarch 4-tower cap | desiredFactories per income | different |
+| 20 | Duplicate-factory rule; Monarch 4-tower cap | desiredFactories per income (Normal one per 40; Hard and Absurd one per 60, what a working factory spends, and one more while the store is over 60% full) | different |
 | 21 | Idle units: MOVE centre -> p1 -> PATROL p2 inside the base ring; re-plan 1/50 | door clearing; stationArmy (defensive only) | **missing** |
 | 22 | Base threat = visible enemy in the ring-0 radius; defenders patrol through intruders | sendDefenders (defensive levels only), radius 900/400/1500 | **missing** for attack levels |
 | 23 | Wave size from the biggest enemy population, x multipliers, cap 50, sign = keep reserve | bigPush = waveSize + income/4, raids, cooldown 750 | **different** |

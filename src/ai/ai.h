@@ -353,7 +353,8 @@ private:
     // A spotted, armed enemy within `r` of (x,z).
     bool armedEnemyNear(const tak::sim::World&, float x, float z, float r) const;
     int   desire(BuildCat, const Needs&) const;
-    // Retail's lodestone trigger: short of mana, with no lodestone under way.
+    // Retail's lodestone trigger, at every level: short of mana, with no
+    // lodestone under way.
     bool  manaShort(const tak::sim::World&, const Needs&) const;
     // Retail's base radius around home for that lodestone's deposit (icd 0x40cf30).
     float retailLodestoneRadius(const tak::sim::World&, const tak::sim::Unit& builder) const;

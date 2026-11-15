@@ -424,6 +424,13 @@ Controller::BaseLayout Controller::baseLayout(const tak::sim::World& world) cons
     return layout;
 }
 
+// Hard's and Absurd's income per factory (assessNeeds).
+static constexpr float kIncomePerFactory = 60;
+
+// How many of a Hard or Absurd Zhon's `producers` may be away building
+// lodestones at a time: a quarter, two at least.
+static int producersOut(int producers) { return std::max(2, producers / 4); }
+
 // Count the empire by category and set the targets the planner steers toward.
 Needs Controller::assessNeeds(const tak::sim::World& world) const {
     Needs n;
@@ -489,6 +496,13 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
                 planned(u.orders[i].buildType);
     }
     // One factory per ~40 income so production can actually spend what we earn.
+    // Hard and Absurd: one per kIncomePerFactory, and one more than they have
+    // while the store is over 60% full (below). A working factory spends 30 to
+    // 120 mana a second (build cost x worker time / build time: 30-45 for a
+    // keep's troops, 60-80 for a castle's); at their old one per 25 income the
+    // factories asked for half as much again as came in, the store sat empty,
+    // and the over-commit throttle (tick) stopped every new order -- the next
+    // lodestone too -- in 61-95% of thinks from minute 3 of a game on.
     // Builders count the Monarch. Normal grows to the Monarch plus four as income
     // allows: retail's ai/default.txt limits each builder type, not the total --
     // arabuild, arafly and arapries 4 each, cremech and crechie 4, tarpries,
@@ -505,9 +519,16 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
     if (aggressive || defensiveLevel(diff_)) {
         // Income limits production speed, not the eventual size of the force.
         n.desiredArmy = world.unitCap() > 0 ? world.unitCap() : INT_MAX;
-        n.desiredFactories = std::clamp(1 + int(n.income / 25), 1, 32);
-        if (me.storage > 0 && me.mana > me.storage * 0.6f)
-            n.desiredFactories = std::min(n.desiredFactories + 1, 32);
+    }
+    if (aggressive) {
+        n.desiredFactories = std::clamp(1 + int(n.income / kIncomePerFactory), 1, 32);
+        // A store filling up: production is not spending what comes in. One more
+        // factory than it has (of Zhon's producers, those not away at lodestones:
+        // four in five of them, see below).
+        if (me.storage > 0 && me.mana > me.storage * 0.6f) {
+            const int have = mobileProduction(side) ? n.factories - std::max(2, n.factories / 5) : n.factories;
+            n.desiredFactories = std::min(std::max(n.desiredFactories, have) + 1, 32);
+        }
     }
     if (dp_.unbounded) {
         // The defensive levels keep building in step with income, with no ceiling on
@@ -539,10 +560,18 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
     // Every builder=1 mobile unit counts against the cap: Aramon's and Taros's
     // priests are factories by their menus, but builders all the same. Zhon's
     // cap is its producers' allowance plus the Monarch.
+    // At Hard and Absurd a producer conjures troops all the time it is not away
+    // at a lodestone, and spends as a factory does. With another side's whole
+    // builder allowance (up to 11) on top of its factories, Zhon had twice the
+    // producers its income could keep conjuring, and sat under the over-commit
+    // throttle like the factory sides (85-88% of thinks in minutes 5-10). Its
+    // producers are the factories its income feeds plus those it may send to
+    // lodestones at a time (producersOut).
+    const int builders = aggressive ? producersOut(n.desiredFactories) : n.builderCap - 1;
     n.mobileBuilderCap = n.builderCap;
     if (mobileProduction(side)) {
-        n.mobileBuilderCap += n.desiredFactories;
-        n.desiredFactories += n.builderCap - 1;
+        n.mobileBuilderCap = 1 + n.desiredFactories + builders;
+        n.desiredFactories += builders;
     }
     const float capacity = me.manaCapacity();
     n.storeFull = capacity > 0.01f && float(me.mana) >= capacity * 0.9f;
@@ -590,13 +619,14 @@ int Controller::desire(BuildCat c, const Needs& n) const {
 // and none of that lodestone unfinished. Its constructor planner then draws
 // among the menu's lodestones separately (0x412d00) and builds that instead of
 // the ordinary pick wherever 0x412f80 finds a free deposit in the base radius (retailLodestoneRadius) -- unless a builder of the base is already on
-// one (0x40c830). Normal and the tiers sharing its economy add that trigger to their
-// own ladder, whose income target alone held them to one lodestone where a deposit
-// pays 100 a second and the store ran dry; Hard and Absurd keep their own expansion
-// ladder.
+// one (0x40c830). Every level adds that trigger to its own ladder: Normal and the
+// tiers sharing its economy, whose income target alone held them to one lodestone
+// where a deposit pays 100 a second and the store ran dry; and Hard and Absurd,
+// whose over-commit throttle (tick) otherwise stops the lodestone that would end
+// the shortage along with everything else. Theirs goes wherever their own
+// expansion reaches (weightedPick), not only inside retail's base radius.
 bool Controller::manaShort(const tak::sim::World& world, const Needs& needs) const {
-    if (diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd || !world.hasManaSpots() ||
-        needs.lodestoneProjects > 0) return false;
+    if (!world.hasManaSpots() || needs.lodestoneProjects > 0) return false;
     const auto& me = world.player(player_);
     const float capacity = me.manaCapacity();
     return (capacity > 0.01f ? float(me.mana) / capacity : 0.0f) < 0.3f &&
@@ -891,10 +921,11 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
     };
     // The trigger's lodestone replaces the ordinary pick only where retail would
     // build it: a free deposit within the base radius of home. Otherwise the
-    // ordinary ladder, with its own reach, decides as before.
+    // ordinary ladder, with its own reach, decides as before. Hard's and Absurd's
+    // bases are not retail's: theirs goes on any deposit their reach allows (0).
     const bool lodestoneTrigger = manaShort(world, needs) && !producer.type->isStructure() &&
                                   producer.type->isBuilder;
-    const float triggerRadius = lodestoneTrigger ? retailLodestoneRadius(world, producer) : 0.0f;
+    const float triggerRadius = lodestoneTrigger && !aggressive ? retailLodestoneRadius(world, producer) : 0.0f;
     std::unordered_map<const tak::sim::UnitType*,bool> triggerSites;
     auto triggered = [&](const tak::sim::UnitType* type) {
         if (!lodestoneTrigger || !type->onMana || !type->isStructure() || divine(type) ||

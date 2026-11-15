@@ -2157,6 +2157,11 @@ add_test(NAME ai_behavior COMMAND ai_behavior_test)
 if(TAK_TEST_DATA)
     add_test(NAME ai_behavior_data COMMAND ai_behavior_test "${TAK_TEST_DATA}")
 endif()
+# Hard's and Absurd's economy and army make-up, as a real Controller's orders on
+# constructed bases (factories, lodestones, deposits, Zhon's producers, limits).
+add_executable(ai_economy_test tools/ai_economy_test.cpp ${TAK_AI_SOURCES})
+target_link_libraries(ai_economy_test PRIVATE tak-formats)
+add_test(NAME ai_economy COMMAND ai_economy_test)
 
 # The Classic level's pieces (profile baker, type info, priority clock); with
 # --profile it is the native side of tools/re/check_ai_profile.py, with
