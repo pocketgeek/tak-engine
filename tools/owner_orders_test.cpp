@@ -17,7 +17,9 @@
 // synthetic mind-control caster, a gift, a scenario transfer); with a retail
 // data root it also runs the shipped roster: a Harpy's and a Mind Mage's
 // charm against Swordsman, Archer, Gryphon, Troll and Hunter holders, a Keep's
-// rally, a guard, a third player's attacker, in both pathfinding modes.
+// rally, a guard, a third player's attacker, in both pathfinding modes; and
+// under Legion, two attackers whose queued targets are both charmed (the
+// references let go share one id, which must not join them in one group).
 #include "hpi/hpi.h"
 #include "net/lockstep.h"
 #include "sim/matchsetup.h"
@@ -481,6 +483,62 @@ void friendlyFireCase(const TypeRegistry& reg,PathfindingMode mode) {
     check(fired && held,tag+": given after the change it is kept and carried out (friendly fire)");
 }
 
+// Two attackers, each with a queued Attack on a different enemy unit; their
+// player charms both units while they are still on a first target. Every
+// reference let go carries one id, the id of no unit, and Legion keys an
+// attack or guard leg, and joins its group, by the unit chased: when the legs'
+// turn comes it must not read the two holders as chasing one unit.
+void sharedIdCase(const TypeRegistry& reg) {
+    Field f(reg,PathfindingMode::Legion);World& w=f.w;
+    const std::string tag=f.label+", two charmed units (arasword, zonharp)";
+    const int a=f.spawn("arasword",2000,2000,0),b=f.spawn("arasword",2000,2060,0),first=f.spawn("zontrain",2000,2200,1);
+    const int v1=f.spawn("zontrain",2420,1960,1),v2=f.spawn("zontrain",2420,2060,1);
+    const int c1=f.spawn("zonharp",2620,1960,0),c2=f.spawn("zonharp",2620,2060,0);
+    if (!a || !b || !first || !v1 || !v2 || !c1 || !c2) return;
+    for (int id:{a,b}) command(w,reg,Cmd::Attack,0,id,first,tak::net::kQueueReplace);
+    command(w,reg,Cmd::Attack,0,a,v1,tak::net::kQueueAppend);
+    command(w,reg,Cmd::Attack,0,b,v2,tak::net::kQueueAppend);
+    f.run(30);
+    check(names(*w.unit(a),first) && names(*w.unit(a),v1) && names(*w.unit(b),first) && names(*w.unit(b),v2),
+          tag+": each attacker holds a queued attack on its own unit before the charms");
+    // Hold Fire: each Harpy charms the unit it is ordered onto and nothing
+    // else. The first target and both units must outlast the charms.
+    w.unit(c1)->fireState=0;w.unit(c2)->fireState=0;
+    command(w,reg,Cmd::Attack,0,c1,v1);command(w,reg,Cmd::Attack,0,c2,v2);
+    const auto ours=[&](int id) { const Unit* u=w.unit(id);return u && u->alive() && u->player==0; };
+    for (int t=0;t<1800 && !(ours(v1) && ours(v2));++t) {
+        for (int id:{c1,c2}) w.unit(id)->mana=w.unit(id)->type->maxMana;
+        for (int id:{first,v1,v2}) if (Unit* k=w.unit(id);k && k->alive()) k->hp=Fixed::fromInt(int(k->type->maxHp));
+        f.run(1);
+    }
+    const bool took=ours(v1) && ours(v2);
+    check(took,tag+": both charms take");
+    if (!took) return;
+    check(!anyoneNames(w,v1) && !anyoneNames(w,v2) && names(*w.unit(a),first) && names(*w.unit(b),first) &&
+          w.unit(a)->orders.size()==2 && w.unit(b)->orders.size()==2,
+          tag+": both queued legs let go at the charms and the current attacks go on");
+    const LegionNavigator* legion=w.legionNavigator();
+    const auto chasing=[&](int id) {
+        const LegionMission m=legion->mission(*w.unit(id));
+        return m==LegionMission::Attack || m==LegionMission::Guard;
+    };
+    check(legion && chasing(a) && chasing(b),tag+": the attacks on the first target are Legion's attack legs");
+    if (!legion) return;
+    w.scenarioDestroy(first);
+    bool chase=false,shared=false;
+    for (int t=0;t<60;++t) {
+        f.run(1);
+        chase|=chasing(a) || chasing(b);
+        const int ga=legion->unitGroup(a),gb=legion->unitGroup(b);
+        if (ga && ga==gb) std::printf("       tick %d: both attackers are in Legion group %d\n",t,ga);
+        shared|=ga && ga==gb;
+    }
+    check(!chase,tag+": a leg let go at a change of owner is no attack leg of Legion's when its turn comes");
+    check(!shared,tag+": the holders of two different charmed units share no Legion group");
+    check(w.unit(a)->orders.empty() && w.unit(b)->orders.empty() && ours(v1) && ours(v2),
+          tag+": both queues end and the charmed units live");
+}
+
 void rosterCases(const TypeRegistry& reg) {
     for (PathfindingMode mode:{PathfindingMode::Retail,PathfindingMode::Legion}) {
         selectionCase(reg,mode,{"arasword","araarch","zongryp"},"zontrain","zonharp",0);
@@ -493,6 +551,7 @@ void rosterCases(const TypeRegistry& reg) {
         thirdPlayerCase(reg,mode);
         friendlyFireCase(reg,mode);
     }
+    sharedIdCase(reg);
 }
 }
 

@@ -3548,9 +3548,13 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         if(const Kind work=workKind(leg);work!=Kind::None&&corners(false,false))return work;
         // Attack and guard: tickCombat owns the front order's target and
-        // writes its position into the leg every tick.
+        // writes its position into the leg every tick. A reference let go at
+        // a change of owner (kGoneUnit) is no target: all of them carry that
+        // one id, so the holders of different units would share a key
+        // (legKey) and a reach group until tickCombat drops their legs. The
+        // native navigator has such a leg for that tick.
         const auto& front=u.orders.front();
-        if(front.targetId&&leg.targetId==front.targetId&&front.guard==leg.guard&&
+        if(front.targetId>0&&leg.targetId==front.targetId&&front.guard==leg.guard&&
            routedLeg(leg,false,true)&&corners(false,true)&&u.type->canMove)
             return leg.guard?Kind::Guard:Kind::Attack;
         return Kind::None;
@@ -3560,7 +3564,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         return leg.missionTarget.value_or(std::pair{leg.x,leg.z});
     }
     // A leg's identity for a member: its controller, or for a moving goal
-    // (no controller) the chased unit.
+    // (no controller) the chased unit (a unit's id: see kindOf).
     static uint64_t legKey(const Order& leg,Kind kind) {
         if(policy(kind).moving)return 0xC000000000000000ull|uint64_t(uint8_t(kind))<<48|uint32_t(leg.targetId);
         return leg.controller;

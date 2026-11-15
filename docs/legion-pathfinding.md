@@ -86,7 +86,10 @@ native navigator.
   controller, and the group by (player, plane, kind, target id, reach bucket, the target origin it was seeded at). On
   a 16-tick grid line, once the target's origin has moved max(2, min(D/8, 8)) cells (D: the member's Chebyshev
   distance to it), the group re-seeds in place: its seed or its ring moves, a refresh builds the new field while the
-  old one steers, and its members keep their group, slot and clocks (section 7).
+  old one steers, and its members keep their group, slot and clocks (section 7). The target id is a unit's: a leg
+  whose target was let go at a change of owner (`kGoneUnit`, `World::retireReferences`) is no attack or guard leg of
+  Legion's, because every such reference carries the one id and the holders of different units would share a key and
+  a group. The native navigator has that leg for the tick or so until `tickCombat` drops it.
 * **Groups and areas.** Groups never mix kinds. Fight-move shares a destination area (formation slots) per command,
   as Move does. Each patrol lap gets its own group and field, because the outbound and return legs of one patrol
   share an issue tick and a field seeded at both ends would pull bodies toward the wrong end; the waypoint area is
