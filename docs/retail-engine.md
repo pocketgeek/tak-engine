@@ -6081,12 +6081,16 @@ top-left corner and kept those waypoints after the next tick's chase fixed the
 point (Attack, then a Shift- or box-queued Attack: 5,700-6,500 px walked
 against 450-860 px for the direct order). `tickNavigationMovement` now gives a
 ground attack leg still at the placeholder its target's position before the
-mover runs, as retail's first wake would. The other kinds that follow a unit or
-a wreck (Guard, Repair, Assist, Reclaim, Resurrect) store a real point when
-issued and were not affected; flyers fly their own goals and were not either.
-Load also stores no point, but its mission installs its own approach; a Load
-queued behind another order does not start at all (the carrier drops its
-pickup while the passenger's Load is still queued), which is a separate gap. `queued_target_test` (Retail and `--legion`) queues a melee, ranged and
+mover runs, as retail's first wake would. The test does not ask how the leg
+came to lead, so it also covers a direct or automatic attack leg that reaches
+the mover before its first chase tick (one that began in range and that
+Legion's `walkOnShot` walks on, for example). The other kinds that follow a
+unit or a wreck (Guard, Repair, Assist, Reclaim, Resurrect) store a real point
+when issued and were not affected; flyers fly their own goals and were not
+either. Load also stores no point, but its mission installs its own approach;
+a Load queued behind another order does not start at all (the carrier drops
+its pickup while the passenger's Load is still queued), which is a separate
+gap. `queued_target_test` (Retail and `--legion`) queues a melee, ranged and
 flyer Attack, Guard, Repair and Assist behind an Attack, and an Attack behind a
 Guard whose ward dies, a finished Repair and a Move.
 

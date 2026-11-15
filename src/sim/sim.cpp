@@ -19499,7 +19499,10 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
     // the map's corner -- and the next tick's chase keeps the route's
     // waypoints. Retail's dispatcher runs the new head's first wake at once
     // (4d8450), and that wake reads the target's position, so the leg starts
-    // from there.
+    // from there. The test does not ask how the leg came to lead: a direct
+    // or automatic attack leg that reaches the mover before its first chase
+    // tick (one that began in range and that Legion's walkOnShot walks on,
+    // for example) gets its point here as well.
     if (!u.type->canFly && !u.orders.empty()) {
         Order& leg=u.orders[currentLeg(u.orders)];
         if (leg.targetId>0 && !leg.guard && !leg.load && !leg.unload && !leg.transportPickup &&
