@@ -449,7 +449,7 @@ Every level also builds another lodestone whenever it runs short of mana (less
 than 30% of its storage left while its builders and producers ask for more mana
 than they earn), one at a time, as the original game's AI does: on a free
 deposit near its own base, or, for Hard and Absurd, on any deposit their
-builders may take (below). While its store is empty and something of its is
+builders may take (below). While its store is empty and something of its own is
 still being built, a level starts nothing new except that lodestone. Every level
 picks only deposits on ground it knows, and a deposit counts as free unless it
 sees or remembers a lodestone on it, or a build there is refused.
