@@ -3139,8 +3139,10 @@ near where you are:
   of the game played so far, and usually much less. It never has to start from the
   beginning unless the moment lies before the first copy after the start.
 - Near where you are the copies are closer together, so short rewinds stay quick.
-- Copies are taken for as long as the replay plays, however little memory there is.
-  With room for only one besides the start of the game, it is always the newest.
+- Copies keep being taken however long the replay is. With room for only one
+  besides the start of the game, it is always the newest. With room for none, the
+  copies already there are kept, none is taken just to see whether it would fit,
+  and copying starts again after a jump back to a part of the game where one does.
 
 Your selection and groups survive a jump; units not yet alive at that moment drop
 out of them.

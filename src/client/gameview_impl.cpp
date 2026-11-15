@@ -649,11 +649,13 @@
         const auto at = std::lower_bound(replayKeys_.begin(), replayKeys_.end(), tick,
                                          [](const ReplayKeyframe& k, uint32_t t) { return k.tick < t; });
         if (at != replayKeys_.end() && at->tick == tick) return;   // laid on an earlier pass
-        // Room for one like the last. With none to make this capture is passed over and the
-        // next one asks again: capture never stops for good. The size asked for is only
-        // the last copy's, so now and then one is taken anyway, to measure it afresh.
-        constexpr uint32_t kMeasureAgain = 20;   // captures: ten minutes of game
-        if (!replayThinKeys(replayKeyLast_) && ++replayKeySkips_ % kMeasureAgain) return;
+        // Room for one like the last, made before the copy is taken: a copy never runs the
+        // keyframes over the budget by more than it has outgrown the last. With no room to
+        // make, this capture is passed over: nothing is copied to find out (that copy would
+        // sit on top of a full budget) and nothing is given up. The size asked for is the
+        // last copy's until a jump brings that of the keyframe it restored, so a game that
+        // outgrew the budget is asked about again wherever it is rewound to.
+        if (!replayThinKeys(replayKeyLast_)) return;
         try {
             ReplayKeyframe key;
             key.tick = tick;
@@ -671,8 +673,7 @@
                                                 [](const ReplayKeyframe& k, uint32_t t) { return k.tick < t; });
             replayKeys_.insert(place, std::move(key));
             // This one can be the bigger. If even alone beside tick 0 it does not fit, it goes again.
-            if (replayThinKeys(0)) replayKeySkips_ = 0;
-            else if (replayKeys_.size() > 1) {
+            if (!replayThinKeys(0) && replayKeys_.size() > 1) {
                 const auto mine = std::lower_bound(replayKeys_.begin() + 1, replayKeys_.end(), tick,
                                                    [](const ReplayKeyframe& k, uint32_t t) { return k.tick < t; });
                 if (mine != replayKeys_.end() && mine->tick == tick) {
@@ -733,6 +734,7 @@
         }
         replayTick_ = key.tick;
         replayAccum_ = 0;
+        replayKeyLast_ = key.bytes;   // the world is this size again: what the next copy will take
         replayCheckAt_ = tak::replaybar::checkAfter(replayChecks_, replayTick_);
         std::copy(key.playerAi.begin(), key.playerAi.end(), std::begin(playerAi_));
         worldEpoch_.fetch_add(1, std::memory_order_release);

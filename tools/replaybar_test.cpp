@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -260,6 +261,75 @@ static void room() {
     for (const size_t i : plan.drop) check(i >= 1 && i <= 4, "tick 0 stays through a larger thinning");
 }
 
+// The viewer's keyframe bookkeeping (GameView::replayCaptureKeyframe, replayThinKeys and a
+// jump's restore), over sizes and budgets the test picks.
+struct Viewer {
+    std::vector<uint32_t> ticks;
+    std::vector<uint64_t> bytes;
+    uint64_t budget = 0, held = 0, last = 0;
+    uint64_t over = 0;        // the most a copy ran past the budget, beyond what it had outgrown the last
+    uint32_t played = 0, copies = 0;
+    std::string broke;        // the first time tick 0 was gone or a gap was past the bound
+
+    void erase(size_t i) {
+        held -= bytes[i];
+        ticks.erase(ticks.begin() + std::ptrdiff_t(i));
+        bytes.erase(bytes.begin() + std::ptrdiff_t(i));
+    }
+    bool thin(uint64_t incoming, uint32_t tick) {
+        rb::ThinPlan plan = rb::thinPlan(ticks, bytes, budget, incoming, tick, tick);
+        if (!plan.fits) return false;
+        std::sort(plan.drop.begin(), plan.drop.end(), std::greater<size_t>());
+        for (const size_t drop : plan.drop) erase(drop);
+        return true;
+    }
+    void capture(uint32_t tick, uint64_t size) {
+        played = std::max(played, tick);
+        if (!std::binary_search(ticks.begin(), ticks.end(), tick) && thin(last, tick)) {
+            ++copies;
+            const uint64_t grown = size > last ? size - last : 0;
+            if (held + size > budget + grown) over = std::max(over, held + size - budget - grown);
+            const size_t at = size_t(std::lower_bound(ticks.begin(), ticks.end(), tick) - ticks.begin());
+            ticks.insert(ticks.begin() + std::ptrdiff_t(at), tick);
+            bytes.insert(bytes.begin() + std::ptrdiff_t(at), size);
+            held += size;
+            last = size;
+            if (!thin(0, tick) && at > 0) erase(at);
+        }
+        uint64_t widest = 0;
+        for (size_t i = 1; i < ticks.size(); ++i) widest = std::max<uint64_t>(widest, ticks[i] - ticks[i - 1]);
+        if (broke.empty() && (ticks.empty() || ticks.front() != 0 || widest > rb::thinGapBound(played, ticks.size())))
+            broke = "at tick " + std::to_string(tick) + ", " + std::to_string(ticks.size()) + " keyframes with a gap of " +
+                    std::to_string(widest);
+    }
+    void restore(size_t i) { last = bytes[i]; }
+};
+
+// A keyframe is copied only into room made for one like the last: the budget is not passed to
+// find out whether one fits. (After twenty captures with no room one was copied anyway, on top
+// of a full budget, on the machines with the least memory.)
+static void withinBudget() {
+    const uint64_t mb = uint64_t(1) << 20;
+    // 400 MB a keyframe to capture 50, then 1400 MB: more than there is beside tick 0.
+    const auto sizeAt = [&](uint32_t s) { return (s == 0 ? 16 : s <= 50 ? 400 : 1400) * mb; };
+    Viewer v;
+    v.budget = 1300 * mb;
+    for (uint32_t s = 0; s <= 51; ++s) v.capture(s * rb::kKeyframeTicks, sizeAt(s));
+    const std::vector<uint32_t> kept = v.ticks;
+    const uint32_t copies = v.copies;
+    check(kept.size() == 3 && v.held <= v.budget, "fixture: the large one did not fit and went again");
+    for (uint32_t s = 52; s <= 120; ++s) v.capture(s * rb::kKeyframeTicks, sizeAt(s));
+    check(v.copies == copies, "with no room for one like the last, none is copied");
+    check(v.ticks == kept, "and none is given up");
+    check(v.over == 0 && v.broke.empty(), "the budget is passed only by what a keyframe outgrew the last: " + std::to_string(v.over));
+    // A jump back asks for room for one like the keyframe it restored, and capture goes on there.
+    v.restore(1);
+    for (uint32_t s = kept[1] / rb::kKeyframeTicks + 1; s <= 50; ++s) v.capture(s * rb::kKeyframeTicks, sizeAt(s));
+    check(v.copies > copies && std::binary_search(v.ticks.begin(), v.ticks.end(), 49 * rb::kKeyframeTicks) && v.held <= v.budget,
+          "after a jump back capture goes on where keyframes fit");
+    check(v.over == 0 && v.broke.empty(), "inside the budget: " + v.broke);
+}
+
 struct Check { uint32_t tick; };
 static void checks() {
     const std::vector<Check> list = {{29}, {59}, {89}};   // the state after ticks 30, 60, 90
@@ -324,7 +394,7 @@ static void allocations() {
 }
 
 int main() {
-    geometry(); mapping(); speeds(); keyframes(); spread(); room(); checks(); rules(); allocations();
+    geometry(); mapping(); speeds(); keyframes(); spread(); room(); withinBudget(); checks(); rules(); allocations();
     if (failures) { std::fprintf(stderr, "replaybar: %d failures\n", failures); return 1; }
     std::puts("replaybar passed");
     return 0;

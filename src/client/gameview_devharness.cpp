@@ -1304,8 +1304,23 @@
                 replayKeyBudget_=uint64_t(1)<<30;
                 replayJumpTo(5500);land();
                 check(replayKeys_.back().tick==5400,"and capture picks up again when there is room");
+                // Too little room for a keyframe, for as long as it lasts: none is copied to find
+                // out. (One was, every twentieth capture, on top of a full budget.)
+                replayBundles_.resize(26000);
+                replayKeyBudget_=replayKeys_.front().bytes+replayKeyLast_/2;
+                const uint64_t asked=uint64_t(1)<<40;   // no copy is this size: taking one would change it
+                replayKeyLast_=asked;
+                replayJumpTo(5500+21*rb::kKeyframeTicks);
+                for (int i=0;i<10 && replaySeekTo_;++i) land();
+                check(!replaySeekTo_ && replayKeyLast_==asked && replayKeys_.size()==3 && replayKeys_.back().tick==5400,
+                      "with no room for a keyframe, none is copied");
+                // A jump back brings the size to ask for: that of the keyframe it restored.
+                replayKeyBudget_=uint64_t(1)<<30;
                 replayJumpTo(3650);land();
                 check(replayTick_==3650,"a rewind lands from the keyframe behind it");
+                check(replayKeyLast_==replayKeys_[1].bytes,"a jump asks for room for a keyframe like the one it restored");
+                replayJumpTo(4600);land();
+                check(replayKeys_.size()==4 && replayKeys_[2].tick==4500,"and capture goes on from there");
                 sounded=0;
                 sounds_.setEffectsMuted(false);
                 replayBundles_.clear();

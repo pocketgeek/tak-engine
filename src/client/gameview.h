@@ -2650,8 +2650,7 @@ private:
     };
     std::vector<ReplayKeyframe> replayKeys_;     // ascending; the first is tick 0
     uint64_t replayKeyBytes_ = 0, replayKeyBudget_ = 0;
-    uint64_t replayKeyLast_ = 0;                 // the newest copy's size: what the next will take
-    uint32_t replayKeySkips_ = 0;                // captures passed over for want of room, in a row
+    uint64_t replayKeyLast_ = 0;                 // the size room is made for: the last copy's, or a restored one's
     bool replayKeyMismatch_ = false;             // a restore did not land on its keyframe, twice
     bool replayHalted_ = false;                  // a restore failed part way: the world is gone
     bool replayPublish_ = false;                 // a restore: publish even with no tick run
