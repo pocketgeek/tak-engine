@@ -17,7 +17,8 @@ Families (N = bodies; see the progress record for what each one stands for):
   swap-N     constant 768 x 768 map, two allied armies of N/2 exchange sides head on (crowd-density stress
              at a constant map; opposing streams): 1000, 2500, 5000, 10000
   bridges-N  a river across the map with three bridges (4, 12 and 32 cells wide); two allied armies of N/2
-             cross it in opposite directions (multiple passages, narrow bridge, crossing streams)
+             cross it in opposite directions (multiple passages, narrow bridge, crossing streams);
+             bridges-1000-fight is the same on attack-move orders (fight legs take no swap)
   maze-N     a walled compound of rooms with doors; 85% go to its central room (room entrances, destination
              crowding), 10% to an island reached by one narrow bridge, 5% to a sealed box (unreachable)
   mixed-N    one Alt+1 formation of mixed footprints (1x1 .. 4x4), speeds, hovers and flyers across a lake
@@ -161,12 +162,13 @@ def swap(n, w=768, h=768):
     write(f"swap-{n}", L, f"swap-{n}: constant {w} x {h} map, two allied armies of {half} exchange sides head on.")
 
 
-def bridges(n, w=768, h=768):
+def bridges(n, w=768, h=768, order="move"):
+    name = f"bridges-{n}" + ("" if order == "move" else "-" + order)
     half = n // 2
     s = side(half)
     z0 = (h - s) // 2
     rx = w // 2 - 24
-    L = header(f"bridges-{n}", ticks_for(w + 300), w, h, players=2, teams=[(1, 0)])
+    L = header(name, ticks_for(w + 300), w, h, players=2, teams=[(1, 0)])
     # The river: deep water (height 20) from top to bottom, with three bridges left as ground.
     spans = [(96, 4), (360, 12), (600, 32)]
     z = 0
@@ -178,9 +180,9 @@ def bridges(n, w=768, h=768):
           f"group B 1 r {half} rect {w - 16 - s} {z0} {w - 16} {z0 + s}"]
     for i, (bz, bw) in enumerate(spans):
         L.append(f"gate bridge{i} {rx} {bz} {rx + 48} {bz + bw}")
-    L += [f"at 2 move A {w - 16 - s // 2} {h // 2}", f"at 2 move B {16 + s // 2} {h // 2}"]
-    write(f"bridges-{n}", L, f"bridges-{n}: a 48-cell river with bridges 4, 12 and 32 cells wide; two allied armies of {half}\n"
-          "cross it in opposite directions.")
+    L += [f"at 2 {order} A {w - 16 - s // 2} {h // 2}", f"at 2 {order} B {16 + s // 2} {h // 2}"]
+    write(name, L, f"{name}: a 48-cell river with bridges 4, 12 and 32 cells wide; two allied armies of {half}\n"
+          "cross it in opposite directions" + ("." if order == "move" else " on attack-move orders."))
 
 
 def maze(n, w=1024, h=1024):
@@ -517,6 +519,7 @@ if __name__ == "__main__":
         many(n)
     for n in (1000, 2500, 5000, 10000):
         swap(n)
+    bridges(1000, order="fight")
     for n in (1000, 10000):
         bridges(n)
         maze(n)

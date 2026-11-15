@@ -625,6 +625,17 @@ foreach(legion_scn aware-cross aware-headon aware-seen aware-unseen aware-attack
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
 endforeach()
+# Bodies that stand for good (2026-11-14; the bounds are legion_settledcrowd, legion_passage_starve, legion_lateswap,
+# legion_escapestep, legion_idleplug, legion_siegegap, legion_siegegap_move, legion_filetrade, legion_plugleaves,
+# legion_knotthree and legion_guardplug below): the same run as part A, so serial == workers and both modes on the
+# rules' fixtures. headon-attack has no bounds: it is a known limit (its header says which), kept as a fixture so
+# that the limit has a measure.
+foreach(legion_scn settled-crowd passage-starve headon-fight escape-step idle-plug siege-gap siege-gap-move file-trade
+                   plug-leaves knot-three guard-plug headon-attack)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
+endforeach()
 # W7 step 0 scenario fixtures: the route-behind metric (`behind`) and the aware.* counters (`probe aware`).
 foreach(legion_scn aware-cross-behind crosslong)
   add_test(NAME legion_scenario_${legion_scn}
@@ -1250,6 +1261,140 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_swap_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
   set_tests_properties(legion_swap PROPERTIES LABELS legion TIMEOUT 1200 SKIP_RETURN_CODE 77)
+  # ... and the same meet at the start offsets the test above does not read (-5, -4, -3, 3, 4, 5), and on attack-move
+  # orders at the offsets where it threads (bridges-1000-fight at -2, -1, 2, 5): none of them may stand stuck. The
+  # meet is bistable, and a rule that moves a body of a standing knot too early tips it: the give-way in a knot (below)
+  # at 600 dead ticks left 302 stuck at offset -4 on move orders (565 of 1,000 arrived; 750 and none stuck without
+  # it) and 197 at offset 5 on attack-move orders, which is why it waits kStandPairMove and kStandPair.
+  # Offset -4 is the thin one: 750 arrive there, on the parent of these rules as now, against 909 to 1,000 at the
+  # other five. The arrival bound alone failing at -4 with nobody stuck is a loss of over 6% at that offset from
+  # whatever changed the meet, not the gridlock this test is for (that one leaves hundreds stuck).
+  add_test(NAME legion_swap_wide
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale bridges-1000 --data "${TAK_TEST_DATA}"
+                   --offsets -5,-4,-3,3,4,5 --min scale.arrive.n=700 --max scale.stuck_end=10)
+  add_test(NAME legion_fightmeet
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale bridges-1000-fight --data "${TAK_TEST_DATA}"
+                   --offsets -2,-1,2,5 --min scale.arrive.n=700 --max scale.stuck_end=10)
+  set_tests_properties(legion_swap_wide legion_fightmeet PROPERTIES LABELS "legion;nightly" TIMEOUT 1800 SKIP_RETURN_CODE 77)
+  # Bodies that stand for good holding an order (the audit of an 18-hour all-computer game, 2026-11-14: 148 units
+  # at its end; docs/legion-pathfinding.md, "Bodies that stand for good"). Each of these failed on the parent.
+  # doorway-pair: a 4x4 and a 3x3 body that meet at the mouth of a channel one large body wide each stood on cells the
+  # other needed, for good; the one whose step frees the other's now gives way (both arrive; Retail walks both
+  # through). On attack-move orders after kStandPair dead ticks, on move orders (doorway-pair-move) after
+  # kStandPairMove. Asset-free.
+  add_test(NAME legion_doorwaypair
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios doorway-pair
+                   --min g.S.arrived=1 --min g.K.arrived=1 --min work.give_ways.total=1)
+  add_test(NAME legion_doorwaypair_move
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios doorway-pair-move
+                   --min g.S.arrived=1 --min g.K.arrived=1 --min work.give_ways.total=1)
+  # headon-fight: two bodies of one footprint head on in a one-body lane on attack-move orders, which take no swap,
+  # stood for good; the swap serves a fight or patrol leg too once both stand dead kStandSwap ticks (both arrive;
+  # Retail ends both orders where they meet). Asset-free.
+  add_test(NAME legion_lateswap
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios headon-fight
+                   --min g.L.arrived=1 --min g.R.arrived=1 --min work.late_swaps.total=1)
+  # settled-crowd: six bodies sent through a corridor that a settled crowd of another order fills stood before it for
+  # good with their orders; the orders now end beside it (the stand-down, the counterpart of Retail's growing goal
+  # circle: Retail ends all six there as well). Asset-free.
+  add_test(NAME legion_settledcrowd
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios settled-crowd
+                   --min g.A.arrived=24 --min g.B.complete_n=6 --max open_still900=0 --min work.stand_downs.total=1)
+  # idle-plug: four corridors, each plugged wall to wall by idle bodies; six bodies sent through each stood before
+  # the plug for good. Behind the player's own idle bodies (A on a move order, D on attack-move) and an ally's (B)
+  # the orders now end; behind an enemy's (C) they are kept, as before: an enemy's body never ends an order.
+  # Asset-free.
+  add_test(NAME legion_idleplug
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios idle-plug --offsets 0,1,-1
+                   --min g.A.complete_n=6 --min g.B.complete_n=6 --min g.D.complete_n=6 --max g.C.complete_n=0)
+  # escape-step: a body on an origin illegal for its size whose straight step at its target the mover refuses stood
+  # for good; it walks to the legal origin beside it (A arrives). The same body with every such origin covered by
+  # an enemy's idle bodies keeps its order past the long stand-down (P: an enemy's bodies never end one).
+  # Asset-free.
+  add_test(NAME legion_escapestep
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios escape-step
+                   --min g.A.arrived=1 --max g.P.complete_n=0 --min work.escape_steps.total=1)
+  # siege-gap: an army on one attack-move order behind an enemy body in a gap two cells wide: the bodies in reach
+  # stand firing (an attack ahead of their leg, no Legion member: combat holds them in reach from its first tick)
+  # and the rest wait behind them for some 6,000 ticks. The stand-down read the firing line as dead and ended the
+  # waiting bodies' orders after 4,800 ticks (43, 23, 49 and 56 of 60 arrived at these offsets); a body on an attack
+  # or guard leg is its owner's to end, so all 60 go on through when the target dies. At offsets 2..5 fewer bodies
+  # reach the target and it outlives the run: the army keeps its orders to tick 14,000 (legion_siegegap_hold; 51 to
+  # 58 of the 60 orders were ended). That test bounds only the orders ended off the arrival disc, which is what a
+  # stand-down here is, so it holds as well if a change to combat lets the target die at those offsets.
+  # siege-gap-move: the same with 24 bodies on a move order queued behind the firing army (55, 25, 58 and 33 of 60
+  # arrived). All three pass on the parent of the stand-down as well: they guard the rule, with weapons on and past
+  # its long threshold. Asset-free.
+  add_test(NAME legion_siegegap
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios siege-gap
+                   --offsets 0,1,-1,-2 --min g.A.arrived=60 --max scale.complete_outside_n=0)
+  add_test(NAME legion_siegegap_hold
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios siege-gap
+                   --offsets 2,3,4,5 --max scale.complete_outside_n=0)
+  add_test(NAME legion_siegegap_move
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios siege-gap-move
+                   --offsets 0,1,-1,-2 --min g.A.arrived=36 --min g.M.arrived=24 --max scale.complete_outside_n=0)
+  # file-trade: two files of 14 on move orders trade through each other in a lane one body wide and come to their
+  # own settled arrivals with a dead age as long as the trade (a swap's gain is no progress). The short stand-down
+  # took 11 of the 28 on their first held update; it now waits until the body's route has stood kStandMeet ticks
+  # too, and the settle rule settles all 28, as on the parent of the stand-down. Asset-free.
+  add_test(NAME legion_filetrade
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios file-trade
+                   --min work.arrivals.total=28 --min scale.complete.n=28)
+  # plug-leaves: a plug of the player's own idle bodies that is ordered away at tick 450 (A), 900 (B) or 2,400 (C).
+  # An order the stand-down ended stays ended: C's six stand idle when their plug leaves, where all six arrived
+  # before the rule (the rule's price; Retail ends all 18 orders within 583 ticks). A plug that leaves before the
+  # bodies behind it have stood 600 dead ticks, or within the short stand-down's second clock, must cost nothing:
+  # A and B arrive, as on the parent of the stand-down (a guard for those two bounds). Asset-free.
+  add_test(NAME legion_plugleaves
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios plug-leaves
+                   --min g.A.arrived=6 --min g.B.arrived=6 --min g.C.complete_n=6)
+  # knot-three: a 3x3 body against two 2x2 bodies abreast in a corridor too narrow to pass in, on attack-move orders
+  # (F) and on move orders (M). All six stood for good with their orders. The knot has no way out, so nobody gets
+  # through now either (Retail squeezes five of the six past), but it is bounded: the big body and the small one
+  # before it give way to each other at most kMaxGiveWays times each, a cell back and a cell on, and the long
+  # stand-down then ends every order. Asset-free.
+  add_test(NAME legion_knotthree
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios knot-three --offsets 0,1,-1
+                   --min g.FB.complete_n=1 --min g.FS.complete_n=2 --min g.MB.complete_n=1 --min g.MS.complete_n=2
+                   --max scale.stuck_end=0 --max work.give_ways.total=36)
+  # guard-plug: the player's own bodies on an attack order (B) and on an attack-move order (C) stand firing at an
+  # enemy body they cannot destroy within the run and plug a corridor wall to wall; six bodies on a move order wait
+  # behind each. A firing line is its owner's to end: the orders behind it are kept past the long stand-down (read
+  # as bodies without progress, the line of C ended five of its six at 4,800 dead ticks). A guard for the rule;
+  # siege-gap is the same on a whole army. The file's part A, a plug of guards beside a still ward, keeps its
+  # orders as well and is not bounded here: whether such guards count as settled is an open question
+  # (docs/legion-pathfinding.md, "Known weaknesses"). Asset-free.
+  add_test(NAME legion_guardplug
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios guard-plug
+                   --max g.B.complete_n=0 --max g.C.complete_n=0)
+  set_tests_properties(legion_doorwaypair legion_doorwaypair_move legion_lateswap legion_settledcrowd legion_escapestep
+                       legion_idleplug legion_siegegap legion_siegegap_hold legion_siegegap_move legion_filetrade
+                       legion_plugleaves legion_knotthree legion_guardplug
+                       PROPERTIES LABELS legion TIMEOUT 300)
+  # crowdlock: the audited game's standing crowd rebuilt on its real ground (246 bodies among the wrecks of a base,
+  # 147 attack-move orders). Stock Legion ended 53 of the orders in 9,000 ticks and left 85 bodies standing with
+  # theirs; every order now ends and nobody stands (Retail ends 143).
+  add_test(NAME legion_crowdlock
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios crowdlock --data "${TAK_TEST_DATA}"
+                   --min scale.complete.n=147 --max scale.stuck_end=0 --max open_still900=0 --min work.stand_downs.total=1)
+  set_tests_properties(legion_crowdlock PROPERTIES LABELS legion TIMEOUT 300 SKIP_RETURN_CODE 77)
   # Corner lanes (protocol 313): a column turning from one corridor into another keeps its files (at least 3.0 past
   # the corner at offsets 0, +-1..3 and a median t90 of at most 1,400; main 2.22..2.62 files, t90 1,507;
   # tools/legion_corner_test.py). Asset-free.
@@ -1318,6 +1463,15 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios taperbridge-small --data "${TAK_TEST_DATA}"
                    --offsets 0,-8 --min scale.arrive.n=95 --max scale.stuck_end=2)
   set_tests_properties(legion_passage_small PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # ... and a lone waiter takes its turn although a body of the other way stands admitted before the passage and never
+  # uses it (passage-starve: on the parent the passage was freed every 120 ticks and retaken by that body, which has
+  # the lower unit number and updates first, for good -- three units of the audited 18-hour game stood so for 14
+  # hours). The waiter must arrive. Asset-free.
+  add_test(NAME legion_passage_starve
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios passage-starve
+                   --min g.B.arrived=1 --max g.A.complete_n=0)
+  set_tests_properties(legion_passage_starve PROPERTIES LABELS legion TIMEOUT 300)
   # Head-on meets near both goals (many-100: two pairs of 25-body orders sent to each other's positions meet
   # within kPivotNear of both goals; the meet band now holds up to the destination area plus one lead): at least
   # 98 of 100 arrive, the 90th percentile within 1,000 ticks (the previous commit 96 / 1,616; Retail 92 / 1,144).
