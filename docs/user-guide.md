@@ -1840,6 +1840,28 @@ measurements](legion-pathfinding.md)):
   further in, stop where they stand and are free for their next order, instead
   of edging round the crowd for minutes. At a wall or in a dead end the
   destination area follows the wall or the corridor.
+- **Units do not stand forever with an order they cannot carry out.** When a
+  unit can get no further because units of its own side that will not move
+  again fill the way (a crowd that has already arrived somewhere else, idle
+  units in a narrow gap), it gives the order up and is free for the next one.
+  That takes about 20 seconds at the earliest, counted from the moment
+  everything in front of the unit has come to rest; behind a crowd that is
+  still shuffling into place it can take several minutes. A unit that has
+  given its order up stays where it is: if the way opens later (you order the
+  idle units away), order it again. Two units stuck in each other's way step
+  aside for one another: after about 40 seconds on attack-move and patrol
+  orders, after a little over two minutes on plain move orders, where two
+  crossing armies usually sort themselves out first. Where neither has room to
+  step aside, both give up. A unit that waits on units that are still getting
+  somewhere keeps its order; one that is truly stuck among units that hold
+  orders too gives up a little under three minutes after the last of them made
+  any headway. Units waiting behind their own firing line keep their orders for
+  as long as the fight lasts, and go on when the target is destroyed; the same
+  goes for units behind others that are attacking or guarding, which is why a
+  unit can still wait for good behind your own guards standing in a gap, or
+  face to face with a unit on its way to attack in a lane too narrow to pass.
+  Enemy units in the way never make a unit give up; an ally's idle units do,
+  like your own.
 - **Wheeling round walls.** When a large group (16 or more) goes round the end of
   a wall, it swings round in several ranks instead of narrowing to single file.
   It drops to single file only when the gap really is too narrow. A single tree

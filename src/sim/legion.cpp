@@ -60,6 +60,41 @@ constexpr uint32_t kBlockedRetry=120;
 // staggered by unit id, unless something around it changed (heldRest).
 constexpr uint32_t kRestAfter=60;
 constexpr uint32_t kRestStride=2;
+// Liveness and its rules (see liveOf, standDown, knotGiveWay; docs/legion-pathfinding.md, "Bodies that
+// stand for good"). A body is live while it, or anything it waits on, makes progress; its dead age is
+// the time since that liveness last rose. The thresholds are dead ages, and every one is measured:
+//   kStandDown      a body whose step is covered only by bodies that will never move by themselves ends its
+//                   order where it stands, once its own route has stood kStandMeet ticks too (the dead age
+//                   counts no gain made within the swap's cool-down; the stall clock does);
+//   kStandLong      any body does. Above the knots that undo themselves: two armies of 500 meeting on
+//                   bridges-1000 stand dead for up to 3,826 ticks and still come apart (the census's
+//                   l1_dead_max over start offsets -5..5);
+//   kStandSwap      the swap serves fight and patrol legs too;
+//   kStandPair      two bodies in each other's way give way to one another, where the stock swap serves
+//                   neither leg (fight, patrol, a mission goal). Earlier it re-gridlocks the meet of two
+//                   armies on attack-move orders: at 600 offset 5 of that meet ends with 197 stuck where
+//                   none stood, at 900 offset -2 with 46;
+//   kStandPairMove  the same where one of the two is on a plain move leg: two armies on move orders are
+//                   the thinner margin (bridges-1000 at offset -4 lost a third of its arrivals to a
+//                   give-way at 600 or 1,200 dead ticks and equals stock from 2,400 on).
+constexpr uint32_t kStandDown=600;
+constexpr uint32_t kStandMeet=90;      // two crowd windows: the hold's first ways out and the settle rule come first
+constexpr uint32_t kStandLong=4800;
+constexpr uint32_t kStandSwap=600;
+constexpr uint32_t kStandPair=1200;
+constexpr uint32_t kStandPairMove=4200;
+constexpr uint32_t kGiveRetry=30;      // ticks between a held body's give-way attempts
+constexpr uint32_t kAsideTicks=90;     // a body that gave way stands aside at most this long ...
+constexpr uint32_t kAsidePassage=600;  // ... a passage's waiter while the other way is in the passage
+constexpr uint32_t kGivenCool=300;     // ticks after a give-way in which the gains of the body given way to are no progress
+constexpr int kGiveReach=4;            // origins a body steps clear at most
+constexpr uint32_t kLiveGain=8;        // px nearer its own goal than ever before: progress
+constexpr uint32_t kEscapeUpdates=60;  // updates of a walk off an illegal origin (see move)
+static_assert(kStandDown<=kStandSwap&&kStandDown<=kStandPair&&kStandPair<=kStandPairMove&&kStandPairMove<kStandLong&&
+              (kStandPairMove-kStandPair)%kGiveRetry==0,
+              "the dead age's thresholds: kStandDown is the least (the checksum folds the clocks from it), and every "
+              "give-way falls on one retry grid (restDue)");
+static_assert(kStandPairMove+kGivenCool<kStandLong,"a body given way to walks its way live again before the long stand-down");
 // Process-wide hooks (see legion.h): the rest stride for the settlelatency
 // probe, TAK_LEGION_VERIFY and the LPROBE line. Set by tools before a run.
 // A debug build also starts with the verify hook on when TAK_LEGION_VERIFY
@@ -595,6 +630,12 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         void detach() {if(totals) {--totals->fields;totals->chains-=kind==2;totals->cells-=counted;totals->inflight-=inflightBytes;totals=nullptr;}}
         FieldTotals* totals=nullptr;      // set once the window is sized (startField)
         size_t counted=0;                 // its cells in FieldTotals::cells (the window's)
+        // A window started while no seed had a legal step (a goal buried under a building: startField): the build
+        // cannot leave its seeds, so it is charged for their tiles, not for its window. Cleared, and the window
+        // charged, when a seed has a step after all (advance: a change opened one before the first slice). Hashed
+        // while set on an unfinished build; on a finished one it decides nothing more (what it left is `counted`,
+        // derived as before).
+        bool seedBound=false;
         // The scheduler's job state (Legion 10,000 stage 4; a field is one job however many groups
         // share it): its deficit round robin credit and the last tick it was given work (its start
         // tick until then). Hashed with the field. inflightBytes: its frontier's share of
@@ -777,6 +818,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         int bodyMinX=0,bodyMinZ=0,bodyMaxX=-1,bodyMaxZ=-1;
         bool full=false;
         uint32_t waited=~0u-1;           // last tick a member stood still waiting for the field
+        // The last tick a member stood off its corridor or chain waiting for the refresh a static change made due
+        // (move: the touched route does not reach it, and nothing else will): that refresh is a Waiting job and its
+        // request a Waiting request while the stamp is fresh (awaitedNow). Hashed once set.
+        static constexpr uint32_t kNeverAwaited=~0u-8;
+        uint32_t awaited=kNeverAwaited;
         bool approach=false;             // seeds are approach points of unreachable goals
         // The command its members belong to (player, the point's issue
         // tick): their own settled arrivals are never soft obstacles to it.
@@ -1049,6 +1095,19 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // only the detour, yield, part and side-step back-offs read it.
         uint32_t heldSince=kNoTick,stallTick=0,progress=0xffffffffu;
         uint32_t holdUpdates=0;
+        // Liveness (see liveOf): liveTick is the latest tick at which this body, or a body it waits on, made
+        // progress -- a value handed on from blocker to blocked -- and liveSeen the tick that value last rose
+        // as this body learnt it (its dead age is now - liveSeen). liveBest: its least distance (px) to its
+        // own goal's centre so far, for goal liveGoal. blockCell: the origin of the step its last full update
+        // was held from by bodies (-1 none); admitWait: the label of the passage it waits for (0 none).
+        // Hashed once a rule can read them (see checksum).
+        uint32_t liveTick=0,liveSeen=0,liveBest=0xffffffffu;int liveGoal=-1,blockCell=-1;uint16_t admitWait=0;
+        // The walk off an illegal origin (see move): the legal origin beside the body it walks to (-1 none)
+        // and the updates walked. Hashed while set.
+        int escapeTo=-1;uint32_t escapeTicks=0;
+        // The tick a body last gave way to this one in a knot (knotGiveWay; kNoTick none): for kGivenCool ticks
+        // its gains are no progress. Hashed while that lasts.
+        uint32_t givenTick=kNoTick;
         // Room at a merge (makeRoom): the origin this held member heads a queue for -- every body covering a
         // way down from it has waited less than it -- and the tick it last found so; -1 none. Hashed while set.
         int want=-1;uint32_t wantTick=0;
@@ -1537,9 +1596,12 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         const Unit* u=w.unit(id);
         if(isAnchor(id)&&!settledBody(u)) {yielding.erase(id);dropAnchor(id);}
         if(!watched||idleBody(u))return;
+        // A body that stood down (standDown) keeps its record while the leg it ended is still on it, as an
+        // anchor is kept on the leg it completed.
+        if(settledBody(u)&&!member(id)&&approachDone.count(id))return;
         approachDone.erase(id);
         if(u&&heldPart(*u))return;
-        parts.erase(id);yielding.erase(id);
+        parts.erase(id);yielding.erase(id);asides.erase(id);
         watchMark[size_t(id)]=0;
     }
     IdMap<Anchor>::iterator dropAnchor(IdMap<Anchor>::iterator it) {
@@ -3702,6 +3764,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         auto found=members.find(id);
         if(found==members.end())return;
         if(found->second.passLabel)clearPass(id,found->second);
+        asides.erase(id);
         releaseClaim(id,found->second);
         setWant(id,found->second,-1);
         if(const auto* u=w.unit(id);u&&u->type&&found->second.slot>=0&&found->second.state!=Arrived)
@@ -3851,6 +3914,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             }
         }
         Member m;m.controller=legKey(leg,kind);m.state=Waiting;m.windowTick=w.tickCounter_;m.stallTick=w.tickCounter_;m.headTick=w.tickCounter_;
+        m.liveTick=m.liveSeen=w.tickCounter_;
         m.kind=kind;m.seedX=gx;m.seedZ=gz;m.seededAt=w.tickCounter_;
         const uint32_t issue=rule.moving?w.tickCounter_-w.tickCounter_%kReseedTicks:
             rule.perController?uint32_t(leg.controller):command;
@@ -4006,6 +4070,69 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                                         std::min(box[2],x1+margin),std::min(box[3],z1+margin)};
         return bounded;
     }
+    // The origins a route to g's goals starts from: every legal seed, and for a seed that is not legal (a building
+    // or a corpse went up on it) the origins its steps open -- the cells a field's first relaxation writes from it
+    // (advance). Sorted, unique; g.seeds itself when every seed is legal.
+    std::vector<int> seedEntries(const Group& g,const Plane& p) const {
+        const int W=width();
+        std::vector<int> out;
+        out.reserve(g.seeds.size());
+        for(const int sd:g.seeds) {
+            const int x=sd%W,z=sd/W;
+            if(legal(p,x,z)) {out.push_back(sd);continue;}
+            const uint32_t open=steps(p,x,z);
+            for(size_t k=0;k<kDirections.size();++k)
+                if(open>>k&1)out.push_back((z+kDirections[k][1])*W+x+kDirections[k][0]);
+        }
+        std::sort(out.begin(),out.end());
+        out.erase(std::unique(out.begin(),out.end()),out.end());
+        return out;
+    }
+    // Can a route to g's goals reach origin `c`, by the static components? Joined: an entry of the group's seeds
+    // (seedEntries) lies in c's component. Cut: none does, and the seeds have an entry at all. Unknown: c has no
+    // component (an illegal origin: a body inside a yard leaves it first, see escape), or no seed has an entry (a
+    // group whose every seed is buried is left to its field, see seedsBuried). Cut is exactly what a complete,
+    // untouched field over the whole component would prove (RouteView::reach: Unreachable) -- on the labels,
+    // which are exact and current (plane), where such a field is touched by the next change anywhere and proves
+    // nothing. Every seed is asked, not the group's one component cell (groupComp): a closure can split a group's
+    // seeds, and a member beside any of them is not cut off. The first seed answers for a member that is joined.
+    enum class SeedReach : uint8_t {Unknown,Joined,Cut};
+    SeedReach seedReach(const Group& g,const Plane& p,int c) const {
+        const int mc=compAt(p,c);
+        if(mc<0)return SeedReach::Unknown;
+        const int W=width();
+        bool any=false;
+        for(const int sd:g.seeds) {
+            const int x=sd%W,z=sd/W;
+            if(legal(p,x,z)) {
+                if(compAt(p,sd)==mc)return SeedReach::Joined;
+                any=true;
+                continue;
+            }
+            const uint32_t open=steps(p,x,z);
+            for(size_t k=0;k<kDirections.size();++k)
+                if(open>>k&1) {
+                    if(compAt(p,(z+kDirections[k][1])*W+x+kDirections[k][0])==mc)return SeedReach::Joined;
+                    any=true;
+                }
+        }
+        return any?SeedReach::Cut:SeedReach::Unknown;
+    }
+    bool cutOff(const Group& g,const Plane& p,int c) const {return seedReach(g,p,c)==SeedReach::Cut;}
+    // The bounding box of g's seeds (cells, inclusive).
+    std::array<int,4> seedBox(const Group& g) const {
+        const int W=width();
+        std::array<int,4> box{W,height(),-1,-1};
+        for(const int sd:g.seeds)box={std::min(box[0],sd%W),std::min(box[1],sd/W),std::max(box[2],sd%W),std::max(box[3],sd/W)};
+        return box;
+    }
+    // No seed of g has a legal step: a field from them cannot leave them (a goal buried under a building).
+    bool seedsBuried(const Group& g,const Plane& p) const {
+        if(g.seeds.empty()||p.legal.empty())return false;
+        const int W=width();
+        for(const int sd:g.seeds)if(steps(p,sd%W,sd/W))return false;
+        return true;
+    }
     // ---- stage 6: corridors over the routing hierarchy ----------------------------------------------------------
     // A route's plan: the window field as before (kind Window), or a CORRIDOR -- the window cut down to the sectors
     // round the hierarchy's region tree from the goals to the members (sim/legion_hier.h's search), each dilated by
@@ -4041,22 +4168,37 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         std::vector<uint8_t> dAllow;       // chain: the destination's tiles (its own field)
         std::vector<ChainNode> nodes;      // chain: the transit regions, every parent before its children, then the halo
         size_t transit=0;                  // chain: how many of nodes are transit regions
+        bool fixedBox=false;               // window: the box is the plan's own (the seeds' cells: no member can be
+                                           // reached, planRoute), not the group's window; hashed with the plan
     };
     static constexpr size_t kCorridorWindow=131072;  // windows smaller than this keep the window build
     static constexpr uint8_t kMaxWiden=3;            // corridor rebuilds for members outside it, then the window
+    // A group whose bounded window failed (Group::full) still plans its routes where the whole component's window
+    // would take more than 1 / kLargeWindowDiv of the field allowance (planRoute): over 1,048,576 cells at 128 MiB.
+    static constexpr uint64_t kLargeWindowDiv=32;
     static constexpr size_t kRouteExpand=1u<<16;     // regions the abstract search may expand for one plan
     static constexpr int kCorridorHalo=32;           // cells of halo round the tree's sectors
     static constexpr int kDestMargin=8;              // cells round a chain destination's packed disc (its own field)
     // Chains or fields by demand (deterministic, with hysteresis): the bodies that would read the route -- this
-    // group's members and those of every other group with the same goals on the plane (they share one field) -- at
-    // most kChainDemand take a chain; a group that took a field keeps fields until the demand falls to
-    // kChainDemandLow. A route of fewer than kChainMinNodes transit regions is a short trip: its corridor or window.
+    // group's members and those of every other group of its command with the same goals on the plane (the parts of
+    // one order: a subgroup split off for another passage reads its parent's crowd) -- at most kChainDemand take a
+    // chain; a group that took a field keeps fields until the demand falls to kChainDemandLow. A route of fewer than
+    // kChainMinNodes transit regions is a short trip: its corridor or window.
+    // Another command's group with the same goals is not counted: startField has tried its field before it plans
+    // (sharedField), so when planRoute runs none of its bodies will read this route. Counting it made every later
+    // batch of units sent to a point another batch still walked to a high-demand route with a whole-component
+    // window of its own (the audited 2048x2048 game: 11,763 such plans, 12.5 members each, 92.6 counted). Without
+    // the own command's groups bridges-1000 gridlocks (964 -> 672 arrivals): the 32-48-body parts of one order
+    // would take chains.
     static constexpr int kChainDemand=48,kChainDemandLow=24;
     static constexpr size_t kChainMinNodes=2;
     int routeDemand(const Group& g) const {
         int n=g.members;
         if(const auto found=routeIndex.find({g.plane,seedsKey(g.seeds)});found!=routeIndex.end())
-            for(const int id:found->second)if(id!=g.id) {const auto o=groups.find(id);if(o!=groups.end()&&o->second.seeds==g.seeds)n+=o->second.members;}
+            for(const int id:found->second)if(id!=g.id) {
+                const auto o=groups.find(id);
+                if(o!=groups.end()&&o->second.command==g.command&&o->second.seeds==g.seeds)n+=o->second.members;
+            }
         return n;
     }
     // ---- stage 7: traffic in coarse route selection ------------------------------------------------------------------
@@ -4155,10 +4297,17 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         int stripLo=0,stripHi=-1,stripPlane=-1;uint64_t stripEpoch=~0ull;
         int8_t tokenDir=-1;int tokenPlayer=-1;bool closing=false;uint32_t granted=0,lastEntry=0;
         uint32_t waitSince[2]={kNoTick,kNoTick};bool waited[2]={false,false},waiting[2]={false,false};
+        // Ticks since a body of each way last asked and was refused (0: in the last tick; saturating). Derived
+        // from the asks like waited, never hashed.
+        uint8_t sinceAsk[2]={255,255};
         uint32_t occ[2]={0,0};
         uint32_t com[2]={0,0};    // admitted bodies still before the strip, by direction (counted with occ)
         uint32_t cross=0;         // the longest crossing among the open way's admitted bodies, ticks (see crossTicks)
         uint32_t active=kNoTick;   // the last tick a member asked for this passage (its strip is then watched)
+        // The liveness (see liveOf) of the bodies admitted to this passage or standing in its strip, by
+        // direction, and whether there is one: a body waiting for the passage is as live as they are.
+        // Derived at the start of every tick from the passers, like occ and com; never hashed.
+        uint32_t live[2]={0,0},liveSeen[2]={0,0};bool passing[2]={false,false};
         // The record that holds this passage's admission (see passageOf): the lowest-numbered record of its
         // passage, measured with the strip (headEpoch, headPlane) and the narrow records known (headGen). Derived
         // from the record table and the static plane, never hashed.
@@ -4539,7 +4688,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(inStrip(o,u)) {m.passLabel=label;passers.insert(u.id);return false;}
         if(o.tokenDir<0||o.tokenPlayer<0||!w.allied(o.tokenPlayer,u.player)) {
             // A free passage (or one only enemies use): taken, unless allied bodies the other way still pass in it.
-            if(o.tokenDir<0&&o.occ[1-dir]) {o.waiting[dir]=true;if(o.waitSince[dir]==kNoTick)o.waitSince[dir]=w.tickCounter_;++acct.admitWaits;return true;}
+            if(o.tokenDir<0&&o.occ[1-dir]) {o.waiting[dir]=true;if(o.waitSince[dir]==kNoTick)o.waitSince[dir]=w.tickCounter_;++acct.admitWaits;m.admitWait=label;return true;}
             o.granted=w.tickCounter_;o.closing=false;return admit();
         }
         if(o.tokenDir==dir&&!o.closing&&!o.occ[1-dir])return admit();
@@ -4547,6 +4696,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         o.waiting[dir]=true;
         if(o.waitSince[dir]==kNoTick)o.waitSince[dir]=w.tickCounter_;
         ++acct.admitWaits;
+        m.admitWait=label;
         return true;
     }
     // Start of tick: the admitted bodies still in each zone (by direction), the passers that left cleared, and the
@@ -4570,7 +4720,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // A passage stays watched while it has a token: a straggler that never asks (a wandering type's group) is
         // still an occupant once it stands in the strip, and the other way is not let in onto it.
         std::erase_if(activeOpenings,[&](uint32_t idx) {return openings[idx].tokenDir<0&&(openings[idx].active==kNoTick||w.tickCounter_-openings[idx].active>1);});
-        for(auto& o:openings)if(o.tokenDir>=0||o.waiting[0]||o.waiting[1]||o.occ[0]||o.occ[1]||o.com[0]||o.com[1]||o.cross) {o.occ[0]=o.occ[1]=o.com[0]=o.com[1]=o.cross=0;}
+        for(auto& o:openings) {
+            if(o.tokenDir>=0||o.waiting[0]||o.waiting[1]||o.occ[0]||o.occ[1]||o.com[0]||o.com[1]||o.cross) {o.occ[0]=o.occ[1]=o.com[0]=o.com[1]=o.cross=0;}
+            if(o.passing[0]||o.passing[1]) {o.live[0]=o.live[1]=o.liveSeen[0]=o.liveSeen[1]=0;o.passing[0]=o.passing[1]=false;}
+        }
         for(auto it=passers.begin();it!=passers.end();) {
             const int id=*it;
             Member* m=member(id);const Unit* u=w.unit(id);
@@ -4578,6 +4731,13 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(!m||!u||!u->alive()||!u->type||!m->passLabel||idx>=openings.size()||!inZone(openings[idx],*u)) {
                 if(m)m->passLabel=0;
                 it=passers.erase(it);continue;
+            }
+            {   // The passage is as live as its liveliest body (see liveOf).
+                Opening& o=openings[idx];
+                const int d=m->passLabel&1;
+                const Live v=liveOfMember(*m);
+                o.passing[d]=true;
+                if(v.tick>o.live[d]||(v.tick==o.live[d]&&v.seen>o.liveSeen[d])) {o.live[d]=v.tick;o.liveSeen[d]=v.seen;}
             }
             // Occupants are the bodies in the narrow part itself; an admitted body still before it is committed,
             // not an occupant (a crowd waiting at the other mouth cannot hold the passage through it).
@@ -4596,17 +4756,31 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         const uint32_t now=w.tickCounter_;
         for(auto& o:openings) {
-            if(o.tokenDir<0&&!o.waiting[0]&&!o.waiting[1])continue;
-            for(int d=0;d<2;++d) {o.waited[d]=o.waiting[d];o.waiting[d]=false;if(!o.waited[d])o.waitSince[d]=kNoTick;}
+            if(o.tokenDir<0&&!o.waiting[0]&&!o.waiting[1]) {o.sinceAsk[0]=o.sinceAsk[1]=255;continue;}
+            for(int d=0;d<2;++d) {
+                o.sinceAsk[d]=o.waiting[d]?uint8_t(0):uint8_t(std::min(255,o.sinceAsk[d]+1));
+                o.waited[d]=o.waiting[d];o.waiting[d]=false;if(!o.waited[d])o.waitSince[d]=kNoTick;
+            }
             if(o.tokenDir<0)continue;
             const int cur=o.tokenDir,other=1-cur;
+            // A body held kRestAfter ticks asks only on every kRestStride-th tick (heldRest). Where the passage
+            // turns, a waiter's ask therefore stands for the stride, and a passage that just turned keeps its way
+            // for the stride. Without the two a lone waiter never took its turn while bodies of the other way stood
+            // admitted before the passage and never used it: asked two ticks before, the passage was freed and
+            // the other way's bodies, updated first (lower unit numbers on the same ticks), took it again; asked
+            // the tick before, the passage turned to it and straight back on the next tick (it had not asked again
+            // yet, the other way's lapsed bodies had) -- every kAdmitCommit ticks, for good (the 18-hour audit:
+            // three units for 14 hours; passage-starve.scn). The run of waiting (waitSince) and the closing rule
+            // read single ticks as before: counted over the stride, a way closes where it stays open today, and
+            // bridges-100 loses a turn pattern its arrivals depend on (first army's t90 +16%).
+            const bool asked=o.sinceAsk[other]<gRestStride,fresh=now-o.granted<gRestStride;
             // An admitted body still on its way to the strip keeps the passage its way, for kAdmitCommit ticks
             // after the last admission: turned under it, the admission lapsed where it stood -- on the apron of the
             // mouth, in the exit of the stream let in next (bridges-100 at offset 0: 15 bodies admitted east of
             // the bridge lapsed when the token turned 60 ticks after the last admission, and the west army came
             // through into them and stood on the bridge for the rest of the run).
-            if(!o.occ[cur]&&now-o.lastEntry>=kAdmitClear&&(!o.com[cur]||now-o.lastEntry>=kAdmitCommit)) {
-                if(o.waited[other]) {o.tokenDir=int8_t(other);o.granted=now;o.closing=false;o.waitSince[other]=kNoTick;++acct.admitTurns;}
+            if(!fresh&&!o.occ[cur]&&now-o.lastEntry>=kAdmitClear&&(!o.com[cur]||now-o.lastEntry>=kAdmitCommit)) {
+                if(asked) {o.tokenDir=int8_t(other);o.granted=now;o.closing=false;o.waitSince[other]=kNoTick;++acct.admitTurns;}
                 else if(!o.waited[cur]) {o.tokenDir=-1;o.closing=false;}
             }
             if(o.tokenDir!=cur) {
@@ -4866,7 +5040,18 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         RoutePlan rp;
         rp.box=box;
         const size_t windowCells=size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
-        if(g.full||windowCells<kCorridorWindow||g.plane<0)return rp;
+        // A full group (a bounded window of its own failed a member: its window is the whole component's now) takes
+        // that window -- unless it is large (kLargeWindowDiv) and the group has widenings left: then it plans a
+        // chain or a corridor like any group, each failed plan is one widening (move), and the whole component
+        // comes only after kMaxWiden of them. On a 2048x2048 map the whole component is an eighth of the field
+        // allowance and 87 ticks of the whole quota; eight unfinished ones hold all of it, every other start waits
+        // behind the reservation of the ninth, and a lone builder whose 250 KB window did not see round a wall
+        // asked for one (the audited game: 1,279 such builds, a third of all field cells). Where the component is
+        // not large the window is cheap and exact and stays: sched-load (480x480) lost 16% of its arrivals
+        // without the size test, and many-10000 (832x832) 4% with the line at 1/64.
+        const bool replan=g.full&&g.widens<kMaxWiden&&uint64_t(windowCells)*NavSize::kCell32*kLargeWindowDiv>fieldAllowance();
+        if((g.full&&!replan)||windowCells<kCorridorWindow||g.plane<0)return rp;
+        acct.fullPlans+=replan;
         auto& p=planes[size_t(g.plane)];
         if(!p.hier.ready()||p.legal.empty()||p.stage>0)return rp;
         // The demand rule first (it alone moves the hysteresis state): a high-demand route keeps the window -- one
@@ -4894,20 +5079,42 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             rp=RoutePlan{};rp.box=box;
         }
         const int W=width();
+        // The targets: every live member's origin, but not a member cut off from the goals (cutOff: no route on this
+        // plane reaches it, and move traps it by its component) -- the search would run out of regions looking for
+        // it and the plan fall back to the window. (A member on an illegal origin has no component: it stays, and
+        // the search skips it, as before.)
         std::vector<int> targets;
         targets.reserve(g.ids.size());
+        size_t live=0;
         for(const int id:g.ids) {
             const Unit* u=w.unit(id);
             if(!u||!u->type||!u->alive())continue;
-            targets.push_back(footprintOrigin(u->z,u->type->footZ)*W+footprintOrigin(u->x,u->type->footX));
+            const int c=footprintOrigin(u->z,u->type->footZ)*W+footprintOrigin(u->x,u->type->footX);
+            ++live;
+            if(!cutOff(g,p,c))targets.push_back(c);
         }
+        // Every live member is cut off: the route is the seeds' own cells, a field nobody can read, instead of the
+        // whole component built (and, touched by the next change anywhere, rebuilt) to prove it.
+        if(live&&targets.empty()) {
+            rp.box=seedBox(g);
+            rp.fixedBox=true;
+            ++acct.seedPlans;
+            return rp;
+        }
+        // The goals: the seeds, an illegal one (a building or a corpse on the goal) entered through the origins its
+        // steps open, as the field enters it (seedEntries). The search skips an illegal goal; with none left it
+        // found nothing, the plan fell back to the window, and that window is the whole map (fieldWindow: an
+        // unlabelled seed) -- 22,463 fallbacks and 27% of all field cells in the audited game.
+        std::vector<int> entered;
+        const std::vector<int>* goals=&g.seeds;
+        if(std::any_of(g.seeds.begin(),g.seeds.end(),[&](int sd) {return !legal(p,sd%W,sd/W);})) {entered=seedEntries(g,p);goals=&entered;}
         uint64_t work=0;
         // Stage 7: traffic as the route's command sees it in the coarse search (trafficPenalty).
         const uint64_t trafficCommand=g.soft?g.command:kNoSoft;
         // Stage 8: and a chokepoint's queue (the delay of crossing an opening the way the bodies walk: from the
         // neighbour toward the goals) for a group whose members are entrants (kOpeningMembers or more).
         const bool queues=g.members>=kOpeningMembers&&g.soft&&!openings.empty();
-        const auto tree=p.hier.search(g.seeds,targets,p.legal.data(),kRouteExpand,work,
+        const auto tree=p.hier.search(*goals,targets,p.legal.data(),kRouteExpand,work,
             [&](int s,uint16_t r,uint64_t step,const hier::Portal& q,bool aSide) {
                 uint64_t extra=trafficPenalty(p,s,r,step,trafficCommand,work);
                 if(queues)
@@ -5085,7 +5292,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             g.plan=std::make_shared<RoutePlan>(planRoute(g,window));
             g.planTick=now;g.planEpoch=epoch;g.planMembers=g.members;
         }
-        if(g.plan->kind==KindWindow)g.plan->box=window;   // a window plan follows the window (it moves with the bodies)
+        // A window plan follows the window (it moves with the bodies), unless its box is its own (fixedBox).
+        if(g.plan->kind==KindWindow&&!g.plan->fixedBox)g.plan->box=window;
         return *g.plan;
     }
     // Another group's field that serves this group as well as its own
@@ -5270,7 +5478,14 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(plan.kind!=KindWindow)
             if(auto shared=sharedField(g,plan.box,command,own,&plan))return install(std::move(shared));
         const auto box=plan.box;
-        const size_t cells=plan.kind!=KindWindow?plan.cells:size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
+        size_t cells=plan.kind!=KindWindow?plan.cells:size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
+        // A window whose seeds have no legal step (a goal buried under a building; its window is the whole map,
+        // fieldWindow) cannot leave them: the field holds its seeds' cells, is complete after its first slice and
+        // reaches nobody. It is charged for the tiles it writes, one a seed, not for the window (Field::seedBound);
+        // charged in full it took an eighth of the allowance on a 2048x2048 map for one cell, and waited for that
+        // room. What its members read is unchanged.
+        const bool seedBound=plan.kind==KindWindow&&seedsBuried(g,planes[size_t(g.plane)]);
+        if(seedBound)cells=std::min(cells,g.seeds.size()<<(2*gSectorShift));
         if(cells/NavBudget::kInitDiv>initRoom)return Start::NoBudget;
         const uint64_t want=uint64_t(cells)*NavSize::kCell32+uint64_t(g.seeds.size())*NavSize::kKeyed,allowance=fieldAllowance();
         const bool chainStart=plan.kind==KindChain;
@@ -5351,7 +5566,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             f->bind();
             ++acct.chains;
         } else f->initTiles(width(),box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1,gSectorShift);
-        f->counted=cells;
+        f->counted=cells;f->seedBound=seedBound;acct.seedBoundStarts+=seedBound;
         navc.initCells+=cells;acct.initMax=std::max<uint64_t>(acct.initMax,cells);
         startCharge+=cells/NavBudget::kInitDiv;
         f->totals=&fieldTotals;++fieldTotals.fields;fieldTotals.cells+=cells;fieldTotals.chains+=f->kind==KindChain;
@@ -5395,6 +5610,15 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             const uint32_t g=f.cellAt(x,z);
             if(g+f.heuristic(x,z)!=f.current)continue;   // stale entry
             const uint32_t open=steps(p,x,z);
+            // A seed-bound window (startField) whose seed has a step after all -- a static change opened one between
+            // the start and this slice -- leaves its seeds: its window is charged from here on, before it writes.
+            if(f.seedBound&&open) {
+                f.seedBound=false;++acct.seedBoundRestores;
+                if(const size_t window=size_t(f.fw)*size_t(f.fh);window>f.counted) {
+                    if(f.totals)f.totals->cells+=window-f.counted;
+                    f.counted=window;
+                }
+            }
             // The relaxation of neighbour (nx,nz), whose estimate is `slot`, by a step of cost `base` from the popped
             // cell: its improved potential, or kUnreached when the step improves nothing. `label` is the opening the
             // step crosses (stage 8). Shared by the two neighbour loops below.
@@ -5538,9 +5762,14 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         for(int z=f.z0;z<f.z0+f.fh;++z)for(int x=f.x0;x<f.x0+f.fw;++x) {
             const uint32_t v=f.cellAt(x,z);
             if(v==kUnreached||v==0)continue;
+            // A legal step down -- or the cell beside a seed that is not legal (a building went up on the goal),
+            // which the build entered from that seed by this very step: the route ends there.
             bool lower=false;
-            for(const auto& d:kDirections)
-                if(step(p,x,z,d[0],d[1])&&f.cellAt(x+d[0],z+d[1])<v) {lower=true;break;}
+            for(const auto& d:kDirections) {
+                const int nx=x+d[0],nz=z+d[1];
+                const uint32_t nv=f.cellAt(nx,nz);
+                if(nv<v&&(step(p,x,z,d[0],d[1])||(nv==0&&!legal(p,nx,nz)&&step(p,nx,nz,-d[0],-d[1])))) {lower=true;break;}
+            }
             if(!lower) {
                 std::fprintf(stderr,"TAK_LEGION_VERIFY: chain %llu cell (%d,%d) estimate %u has no lower neighbour\n",
                              (unsigned long long)f.serial,x,z,v);
@@ -7069,9 +7298,19 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(liveJobs)if(const auto it=liveJobs->find(f->serial);it!=liveJobs->end()&&it->second.keep==f)--n;
         return n;
     }
+    // A member of g stood off its touched corridor or chain in the last tick, waiting for the refresh (move).
+    bool awaitedNow(const Group& g) const {return w.tickCounter_-g.awaited<=1;}
+    // A group's refresh class: Waiting while a member stands for it (awaitedNow) -- served first, outside the
+    // refresh allowance, as the first field of a group whose members stand -- else its refresh class. With every
+    // small group on a chain, the members a touched chain did not reach were most of what still stood waiting
+    // (a whole game on the audited map: 957,586 of 1,007,194 waiting member-ticks by tick 102,900), behind every
+    // refresh of a route that still steered its group, in a quarter of the quota, three builds at a time.
+    NavClass refreshBase(const Group& g) const {
+        return awaitedNow(g)?NavClass::Waiting:g.awareDemand?NavClass::AwareRepair:NavClass::StaleRefresh;
+    }
     // A group's own class for a field it waits on (f: its field or its replacement).
     NavClass jobClass(const Group& g,const Field& f) const {
-        if(&f==g.next.get())return g.awareDemand?NavClass::AwareRepair:NavClass::StaleRefresh;
+        if(&f==g.next.get())return refreshBase(g);
         return w.tickCounter_-g.waited<=1?NavClass::Waiting:NavClass::FirstRoute;
     }
     static bool refreshClass(NavClass c) {return c==NavClass::AwareRepair||c==NavClass::StaleRefresh;}
@@ -7186,7 +7425,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         for(const int id:staleDoneIds) {
             Group& g=groups.find(id)->second;
-            if(g.field&&g.stale&&!g.next&&g.field->usable())ask(g,g.awareDemand?NavClass::AwareRepair:NavClass::StaleRefresh);
+            if(g.field&&g.stale&&!g.next&&g.field->usable())ask(g,refreshBase(g));
         }
         auto older=[](const Request& a,const Request& b) {return std::tie(a.since,a.id)<std::tie(b.since,b.id);};
         {
@@ -7479,6 +7718,20 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 if(!isAnchor(id))fail("an anchor is not marked");
             }
             if(count!=anchorsAt)fail("anchorsAt differs from a count of the anchors");
+        }
+        // The give-way's records: a body standing aside is a member with a part on its leg, and its partner is
+        // another unit; a liveness clock never runs ahead of the tick; a walk off an illegal origin aims beside it.
+        for(const auto& [id,a]:asides) {
+            const Member* m=member(id);const auto part=parts.find(id);
+            if(!m||part==parts.end()||part->second.leg!=m->controller||!part->second.count)fail("a body standing aside has no member or no part on its leg");
+            if(a.partner==id||a.cell<0)fail("an aside record names no partner");
+        }
+        for(const auto& [id,m]:members) {
+            if(m.liveSeen>w.tickCounter_||m.liveTick>w.tickCounter_)fail("a liveness clock runs ahead of the tick");
+            if(m.escapeTo<0)continue;
+            const Unit* u=w.unit(id);
+            if(u&&u->type&&(std::abs(m.escapeTo%width()-footprintOrigin(u->x,u->type->footX))>1||std::abs(m.escapeTo/width()-footprintOrigin(u->z,u->type->footZ))>1))
+                fail("a walk off an illegal origin aims past its neighbours");
         }
         if(s.completionDistMax*s.arrivals<s.completionDistSum)fail("completion distance sum exceeds max x arrivals");
         if(s.schedGroupVisits>s.groupLoopIters)fail("scheduler visits exceed group loop iterations");
@@ -9757,6 +10010,336 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         return !sight.losBetween(u.x.toFloat(),u.z.toFloat(),t->x.toFloat(),t->z.toFloat(),std::max(u.type->footX,u.type->footZ)/2,
                                  std::max(t->type->footX,t->type->footZ)/2);
     }
+    // ---- Bodies that stand for good: liveness, the give-way in a knot, the stand-down ---------------------------
+    // A held body has no time-out, and every way out of a hold needs its blocker to be one particular thing (a
+    // settled arrival, an idle body, a member of its own group at a funnel, a body of its footprint on a move
+    // leg). So two bodies that both hold orders and stand on each other's cells, a body in front of a settled
+    // crowd of another destination, and everything queued behind either, stood for good (the 18-hour audit: 148
+    // units at the end). Retail ends such an order by growing the goal circle after each failed search; Legion
+    // masks that event (a blocked army must not arrive because its circle grew), so these rules are its
+    // counterpart: ours, not Retail's.
+    //
+    // Liveness. A body is live while it, or anything it waits on, makes progress: a gain on its route (the stall
+    // clock's test), a new least distance to its own goal, the settle rule still at work on it, or the liveness
+    // of the bodies covering the step it is held from (for a passage's waiter: of the bodies in the passage). The
+    // value is the tick of that progress, handed on from blocker to blocked as each updates, so a queue of any
+    // length behind a moving head is live and a ring of bodies waiting on each other is not. The rules read the
+    // DEAD AGE, the time since the value last rose as the body it came from learnt it (not the value's own age:
+    // liveness travels one body an update down a queue, so at the tail of a live queue hundreds deep the value
+    // is always that old, but it rises all the time). A blocker's stale value is no news: a body that starts
+    // waiting on one is as dead as it.
+    struct Live {uint32_t tick=0,seen=0;};   // tick 0: terminal, a body that will never move by itself
+    uint32_t deadFor(const Member& m) const {return w.tickCounter_-std::min(w.tickCounter_,m.liveSeen);}
+    void liveRise(Member& m,uint32_t seen) {
+#ifndef NDEBUG
+        // The census of dead spells that ended by themselves (the stand-down's thresholds must stay above them).
+        if(standKind(m)&&m.liveSeen) {
+            const uint32_t was=deadFor(m);
+            if(was>=kStandDown&&w.tickCounter_-seen<kStandDown) {
+                ++census.l1DeadEnded;
+                if(was>=kStandLong/2)++census.l1DeadEndedHalf;
+                census.l1DeadMax=std::max<uint64_t>(census.l1DeadMax,was);
+            }
+        }
+#endif
+        m.liveSeen=seen;
+    }
+    void liveNow(Member& m) {m.liveTick=w.tickCounter_;liveRise(m,w.tickCounter_);}
+    // A gain of this body's own is progress, except within the swap's cool-down (two files that meet head on
+    // trade through each other at that pace, not a pair every kStandPair ticks) and within kGivenCool ticks of a
+    // give-way made for it: the step a give-way frees is not headway until the body has walked on from it, so a
+    // knot that only shuffles keeps its age and the long stand-down is not put off by every give-way.
+    void liveGain(const Unit& u,Member& m) {
+        if(swapCool(u.id)||(m.givenTick!=kNoTick&&w.tickCounter_-m.givenTick<kGivenCool))return;
+        liveNow(m);
+    }
+    void liveTake(Member& m,Live v) {
+        if(v.tick<=m.liveTick)return;
+        m.liveTick=std::min(v.tick,w.tickCounter_);
+        if(const uint32_t seen=std::min(v.seen,w.tickCounter_);seen>m.liveSeen)liveRise(m,seen);
+    }
+    // The members the rules below end or move: on a leg that completes at a point, no approach to an
+    // unreachable goal (it has its own ending, see trapped) and no production exit or PARK (the exit rules end
+    // those and keep the door lane clear).
+    static bool standKind(const Member& m) {const Policy rule=policy(m.kind);return rule.completes&&!rule.exitClear&&!m.approach;}
+    // The age at which a rule may read a member's liveness clocks: from here on the checksum folds them.
+    bool liveFolded(const Member& m) const {return standKind(m)&&(m.state==Holding||m.state==Moving)&&deadFor(m)>=kStandDown;}
+    Live liveOfMember(const Member& m) const {
+        const uint32_t now=w.tickCounter_;
+        if(!policy(m.kind).completes)return {now,now};   // its owner ends it (attack, guard): never ours to end
+        if(m.state==Holding||m.state==Moving)return {std::max<uint32_t>(1,std::min(now,m.liveTick)),std::min(now,m.liveSeen+1)};
+        return m.state==Arrived||m.state==Trapped?Live{}:Live{now,now};   // else waiting for a route, engaged
+    }
+    // The liveness of body `id` as member u's blocker.
+    Live liveOf(const Unit& u,int id) const {
+        const uint32_t now=w.tickCounter_;
+        const Unit* b=w.unit(id);
+        if(!b||!b->alive())return {};
+        // An enemy's body is never a reason to end an order (Legion moves no enemy body, and neither does
+        // Retail; an ally's counts as the player's own); a body waiting to register is live now.
+        if(!w.allied(b->player,u.player)||queued(id))return {now,now};
+        // A member, also one that steps aside holding its order (a give-way is no progress).
+        if(const Member* peer=member(id))return liveOfMember(*peer);
+        // Idle, or standing on the leg it completed: live only while it steps aside (a yield, a part).
+        if(settledBody(b))return yielding.count(id)?Live{now,now}:Live{};
+        // On an attack or guard leg without a member: combat has held it in reach since the leg began, so it
+        // never asked for a route (the firing line of an attack-move order: each body that finds a target in
+        // reach gets an attack ahead of its leg and stands firing). Its owner ends that leg, as a member's
+        // (liveOfMember): the bodies waiting behind a firing line keep their orders until the target is dead.
+        if(const Kind kind=kindOf(*b);kind!=Kind::None&&!policy(kind).completes)return {now,now};
+        // An order no Legion member serves (building, loading, the native mover): as live as its last ground step.
+        const uint32_t tick=std::max<uint32_t>(1,std::min(now,b->groundMoveTick));
+        return {tick,std::min(now,tick+1)};
+    }
+    // The origins a step from (ox,oz) to origin `need` must find free: the origin itself and, for a diagonal
+    // step, both orthogonal ones (as stepFree tests them). f(x,z) is called for each.
+    template<class F> void stepOrigins(int ox,int oz,int need,const F& f) const {
+        const int nx=need%width(),nz=need/width();
+        f(nx,nz);
+        if(nx!=ox&&nz!=oz) {f(nx,oz);f(ox,nz);}
+    }
+    // The bodies covering those origins' footprints (not u itself), each once, ascending.
+    int stepBodies(const Unit& u,int ox,int oz,int need,std::array<int,16>& ids) const {
+        int count=0;
+        if(need<0)return 0;
+        const int fx=u.type->footX,fz=u.type->footZ;
+        stepOrigins(ox,oz,need,[&](int x,int z) {
+            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+                const int cx=x+i,cz=z+j;
+                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+                if(!o||o==u.id)continue;
+                bool seen=false;for(int k=0;k<count;++k)seen|=ids[size_t(k)]==o;
+                if(!seen&&count<16)ids[size_t(count++)]=o;
+            }
+        });
+        std::sort(ids.begin(),ids.begin()+count);
+        return count;
+    }
+    // Does a step of body b (from its origin) to origin `need` cover a cell of rectangle (rx,rz,rw,rh)?
+    bool stepCovers(const Unit& b,int need,int rx,int rz,int rw,int rh) const {
+        if(need<0)return false;
+        const int bfx=b.type->footX,bfz=b.type->footZ;
+        bool hit=false;
+        stepOrigins(footprintOrigin(b.x,bfx),footprintOrigin(b.z,bfz),need,[&](int x,int z) {hit|=x<rx+rw&&rx<x+bfx&&z<rz+rh&&rz<z+bfz;});
+        return hit;
+    }
+    // The liveness of the bodies on the step a member is blocked from, taken whatever the member does next (a
+    // body shuffling about in a live waiting crowd must not read as moving without gain). Returns whether the
+    // step is covered only by bodies that will never move by themselves (and by one at least).
+    bool liveStep(const Unit& u,Member& m,int ox,int oz,int need) {
+        std::array<int,16> ids{};
+        const int count=stepBodies(u,ox,oz,need,ids);
+        bool terminal=count>0;
+        for(int k=0;k<count;++k) {
+            const Live v=liveOf(u,ids[size_t(k)]);
+            if(v.tick)terminal=false;
+            liveTake(m,v);
+        }
+        return terminal;
+    }
+    // Bodies standing aside after a give-way (see knotGiveWay): unit id -> the body it gave way to, that body's
+    // origin then, the passage it waits for (0 none) and the last tick it stands aside. Hashed.
+    struct Aside {int partner=0,cell=-1;uint16_t label=0;uint32_t until=0;};
+    std::map<int,Aside> asides;
+    bool asideHolds(const Aside& a) const {
+        if(w.tickCounter_>a.until)return false;
+        const Unit* b=w.unit(a.partner);
+        if(!b||!b->alive()||!b->type||b->orders.empty())return false;
+        if(a.label) {
+            // A passage's waiter stands aside while bodies the other way are in the passage.
+            const uint32_t idx=(uint32_t(a.label)>>1)-1;
+            return idx<openings.size()&&openings[idx].occ[1-(a.label&1)]>0;
+        }
+        return footprintOrigin(b->z,b->type->footZ)*width()+footprintOrigin(b->x,b->type->footX)==a.cell;
+    }
+    // The give-ways body x made on its current leg (parts with that leg).
+    int gaveWay(int id,const Member& m) const {
+        const auto part=parts.find(id);
+        return part!=parts.end()&&part->second.leg==m.controller?int(part->second.count):0;
+    }
+    // A cell for member x to step clear to: up to kGiveReach origins along one of the eight directions from its
+    // origin, every step statically legal and free of bodies, the first origin on that direction clear of every
+    // rectangle in `avoid`; never a direction against the way it last gave way on this leg; the lowest potential
+    // on its own route (an origin the route does not reach last), then the fewest steps, then direction order.
+    using Rects=std::array<std::array<int,4>,4>;
+    int clearCell(const Unit& x,const Member& xm,const Rects& avoid,int avoids) const {
+        const auto g=groups.find(xm.group);
+        if(g==groups.end()||g->second.plane<0)return -1;
+        const Plane& p=planes[size_t(g->second.plane)];
+        const RouteView f=g->second.route().usable()?g->second.route():RouteView();
+        const int W=width(),fx=x.type->footX,fz=x.type->footZ;
+        const int bx=footprintOrigin(x.x,fx),bz=footprintOrigin(x.z,fz);
+        const auto part=parts.find(x.id);
+        const bool gave=part!=parts.end()&&part->second.leg==xm.controller;
+        int best=-1;uint64_t bestV=0;
+        for(const auto& d:kDirections) {
+            if(gave&&part->second.sx*d[0]+part->second.sz*d[1]<0)continue;
+            int cx=bx,cz=bz;
+            for(int k=1;k<=kGiveReach;++k) {
+                if(!step(p,cx,cz,d[0],d[1])||!yieldFree(x,cx+d[0],cz+d[1]))break;
+                if(d[0]&&d[1]&&(!yieldFree(x,cx+d[0],cz)||!yieldFree(x,cx,cz+d[1])))break;
+                cx+=d[0];cz+=d[1];
+                bool hit=false;
+                for(int a=0;a<avoids&&!hit;++a) {
+                    const auto& r=avoid[size_t(a)];
+                    hit=cx<r[0]+r[2]&&r[0]<cx+fx&&cz<r[1]+r[3]&&r[1]<cz+fz;
+                }
+                if(hit)continue;
+                uint64_t v=uint64_t(k);
+                if(f) {const uint32_t pv=f.known(size_t(cz*W+cx));v+=pv==kUnreached?uint64_t(1)<<40:uint64_t(pv)*8;}
+                if(best<0||v<bestV) {best=cz*W+cx;bestV=v;}
+                break;
+            }
+        }
+        return best;
+    }
+    // Member x steps clear to `cell` and stands aside for `partner`: the funnel give-way's machinery (a part
+    // with its leg, a yield step), plus the aside record that holds x there until the partner has moved.
+    void stepAside(const Unit& x,const Member& xm,int cell,int partner,int partnerCell,uint16_t label) {
+        const int W=width();
+        const int bx=footprintOrigin(x.x,x.type->footX),bz=footprintOrigin(x.z,x.type->footZ);
+        auto& part=parts[x.id];
+        if(part.leg!=xm.controller)part=Part{0,0,0,xm.controller};
+        ++part.count;++stats.parts;++stats.giveWays;markWatch(x.id);
+        part.sx=int8_t(std::clamp(cell%W-bx,-1,1));part.sz=int8_t(std::clamp(cell/W-bz,-1,1));
+        yielding[x.id]=Yield{cell,0};
+        asides[x.id]=Aside{partner,partnerCell,label,w.tickCounter_+(label?kAsidePassage:kAsideTicks)};
+        if(Member* given=member(partner))given->givenTick=w.tickCounter_;
+#ifndef NDEBUG
+        if(traced(x.id)||traced(partner))std::fprintf(stderr,"TRACE t=%u u=%d knot-give-way to=(%d,%d) for=%d label=%u\n",w.tickCounter_,x.id,cell%W,cell/W,partner,unsigned(label));
+#endif
+    }
+    // The dead age at which two members in each other's way give way: kStandPair where the stock swap serves
+    // neither leg (fight, patrol, a mission goal), kStandPairMove where one is on a plain move leg. Two armies on
+    // move orders that meet in a one-body lane are bistable, and a rule that moves a body of such a knot before
+    // the knot has had its time re-gridlocks it (see the constants).
+    static uint32_t pairAge(const Member& a,const Member& b) {return swapLeg(a)||swapLeg(b)?kStandPairMove:kStandPair;}
+    // The give-way in a knot. This held member's step is covered only by held members that are in the knot with
+    // it: each stands dead as long as the pair's age, and either its own blocked step covers a cell this body
+    // stands on (each needs cells of the other), or it waits for the passage this body is admitted to (it stands
+    // in the way out). One of the two steps clear of the other and of the other's step, and stands aside until the
+    // other has moved; with several bodies on the step all of them step clear, or none. A give-way that would not
+    // free the step is not made (a queue at a full destination would shuffle for nothing), and it is no progress:
+    // it sets no liveness. Returns whether a body was asked.
+    bool knotGiveWay(const Unit& u,Member& m,int ox,int oz,int need) {
+        std::array<int,16> ids{};
+        const int count=stepBodies(u,ox,oz,need,ids);
+        if(!count)return false;
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const uint32_t dead=deadFor(m);
+        struct Peer {const Unit* b=nullptr;const Member* m=nullptr;bool waiter=false,mutual=false;};
+        auto peerOf=[&](int id) {
+            Peer peer;
+            const Unit* b=w.unit(id);const Member* bm=member(id);
+            if(!b||!b->alive()||!b->type||!bm||!w.allied(b->player,u.player)||b->speed!=Fixed()||b->orders.empty())return peer;
+            if(yielding.count(id)||asides.count(id)||anchors.count(id)||queued(id))return peer;
+            if(bm->state!=Holding||!standKind(*bm))return peer;
+            const uint32_t age=pairAge(m,*bm);
+            if(dead<age||deadFor(*bm)<age)return peer;
+#ifndef NDEBUG
+            if(gVerify&&!liveFolded(*bm))verifyFail("a rule read a member's liveness below its fold age");
+#endif
+            peer.waiter=bm->admitWait&&m.passLabel&&(bm->admitWait>>1)==(m.passLabel>>1);
+            peer.mutual=stepCovers(*b,bm->blockCell,ox,oz,fx,fz);
+            if(peer.waiter||peer.mutual) {peer.b=b;peer.m=bm;}
+            return peer;
+        };
+        // This body and the origins of its step: what a body asked to step clear keeps off.
+        Rects mine{};int mines=0;
+        mine[size_t(mines++)]={ox,oz,fx,fz};
+        stepOrigins(ox,oz,need,[&](int x,int z) {mine[size_t(mines++)]={x,z,fx,fz};});
+        if(count>1&&count<=4) {
+            std::array<int,4> cells{};std::array<uint16_t,4> labels{};bool ok=true;
+            for(int k=0;k<count&&ok;++k) {
+                const int id=ids[size_t(k)];
+                const Peer peer=peerOf(id);
+                ok=peer.b&&gaveWay(id,*peer.m)<kMaxGiveWays;
+                if(!ok)break;
+                cells[size_t(k)]=clearCell(*peer.b,*peer.m,mine,mines);
+                labels[size_t(k)]=peer.waiter?peer.m->admitWait:uint16_t(0);
+                ok=cells[size_t(k)]>=0;
+                for(int q=0;q<k&&ok;++q) {
+                    const Unit* h=w.unit(ids[size_t(q)]);
+                    const int qx=cells[size_t(q)]%W,qz=cells[size_t(q)]/W,cx=cells[size_t(k)]%W,cz=cells[size_t(k)]/W;
+                    ok=!(cx<qx+h->type->footX&&qx<cx+peer.b->type->footX&&cz<qz+h->type->footZ&&qz<cz+peer.b->type->footZ);
+                }
+            }
+            if(ok) {
+                for(int k=0;k<count;++k)stepAside(*w.unit(ids[size_t(k)]),*member(ids[size_t(k)]),cells[size_t(k)],u.id,oz*W+ox,labels[size_t(k)]);
+                return true;
+            }
+        }
+        for(int k=0;k<count;++k) {
+            const int id=ids[size_t(k)];
+            const Peer peer=peerOf(id);
+            if(!peer.b)continue;
+            const Unit& b=*peer.b;const Member& bm=*peer.m;
+            const int bfx=b.type->footX,bfz=b.type->footZ;
+            const int bx=footprintOrigin(b.x,bfx),bz=footprintOrigin(b.z,bfz);
+            // b steps clear of this body and of its step, when it alone covers that step ...
+            const int bc=count==1&&gaveWay(id,bm)<kMaxGiveWays?clearCell(b,bm,mine,mines):-1;
+            // ... or this body of b and of b's step, when it alone covers b's (never for a passage's waiter: the
+            // waiter is the one in the way out).
+            int ac=-1;
+            if(!peer.waiter&&peer.mutual&&gaveWay(u.id,m)<kMaxGiveWays) {
+                std::array<int,16> theirs{};
+                if(stepBodies(b,bx,bz,bm.blockCell,theirs)==1&&theirs[0]==u.id) {
+                    Rects his{};int hiss=0;
+                    his[size_t(hiss++)]={bx,bz,bfx,bfz};
+                    stepOrigins(bx,bz,bm.blockCell,[&](int x,int z) {his[size_t(hiss++)]={x,z,bfx,bfz};});
+                    ac=clearCell(u,m,his,hiss);
+                }
+            }
+            if(bc<0&&ac<0)continue;
+            // The one that gave way less often on its leg steps; then the higher id.
+            const int gaveB=gaveWay(id,bm),gaveA=gaveWay(u.id,m);
+            if(bc>=0&&(ac<0||gaveB<gaveA||(gaveB==gaveA&&id>u.id)))stepAside(b,bm,bc,u.id,oz*W+ox,peer.waiter?bm.admitWait:uint16_t(0));
+            else stepAside(u,m,ac,id,bz*W+bx,0);
+            return true;
+        }
+        return false;
+    }
+    // The stand-down: the leg ends where the body stands, with the event its arrival raises (an exact goal off
+    // its geometry: the failed approach, 0x200, and the mission handler decides), as Retail's growing goal circle
+    // ends a blocked move. It is no arrival: no anchor (the body is not at its destination and must not count
+    // there), its slot and the cells it claimed at its point are given back, and it is recorded as a body stuck
+    // short of an order it could not carry out (approachDone), so that idle it parts for movers by its full width.
+    void standDown(Unit& u,Member& m) {
+        auto& leg=u.orders[World::currentLeg(u.orders)];
+        const Policy rule=policy(m.kind);
+        u.speed=Fixed();u.turnReqBam=0;
+        const uint32_t event=rule.exact&&!accepts(u,leg,m.kind)?0x200u:0x500u;
+        (rule.transport?leg.transportMission:leg.mission).pending|=event;
+        leg.controller=0;leg.navigationExhausted=true;
+        if(uint32_t(u.routeStamp)<=w.tickCounter_-6u)u.routeStamp=0;
+        ++stats.standDowns;
+#ifndef NDEBUG
+        if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d stand-down dead=%u state=%d why=%s\n",w.tickCounter_,u.id,deadFor(m),int(m.state),LegionNavigator::whyName(m.why));
+#endif
+        if(event==0x500u&&!rule.passThrough) {approachDone[u.id]=m.point;markWatch(u.id);}
+        leave(u.id);
+    }
+    // The end of a hold (drive's hold by bodies, a refused step, no aim, a refused escape): the step the body is
+    // held from is recorded for its peers (need; -1: no body holds it that Legion sees), and once the body is dead
+    // the give-way and the stand-down are tried. `terminal`: liveStep's answer for that step. Returns whether the
+    // update is over.
+    bool heldDead(Unit& u,Member& m,int ox,int oz,int need,bool terminal) {
+        m.blockCell=need;
+        if(!standKind(m))return false;
+        const uint32_t dead=deadFor(m);
+        if(dead>=kStandPair&&need>=0&&m.detour<0&&m.route.empty()&&(dead-kStandPair)%kGiveRetry==0&&knotGiveWay(u,m,ox,oz,need)) {
+            m.why=LegionNavigator::WhyHoldAsk;hold(u,m);restartHold(m);return true;
+        }
+        // The short stand-down waits until the body's own route has stood kStandMeet ticks as well (the stall
+        // clock): the dead age counts no gain within the swap's cool-down, so a body that has traded through an
+        // opposing file comes to its own settled crowd as dead as the trade was long, and stood down on its first
+        // held update there. The hold's own ways out (the yield, the part, the first detours) and the settle
+        // rule's windows have their turn first. A queue's bodies, and one that shuffles before the crowd
+        // without gain, have stood that long already: a dead queue still stands down rank after rank at once.
+        if(dead>=kStandLong||(terminal&&dead>=kStandDown&&stalledFor(m)>=kStandMeet)) {standDown(u,m);return true;}
+        return false;
+    }
     void hold(Unit& u,Member& m) {
         if(pressIn(u,m)) {m.why=LegionNavigator::WhyPress;u.speed=Fixed();u.turnReqBam=0;return;}
         if(m.state!=Holding)m.nextDetour=8;
@@ -9880,6 +10463,16 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(m.goal<0||(b[0]<=box[2]&&b[2]>=box[0]&&b[1]<=box[3]&&b[3]>=box[1]))return true;
         }
         return false;
+    }
+    // A trapped member an improvement reopened (trappedReopened): does its own static component hold an entry of
+    // its group's goals now (seedReach: Joined)? Then a route can reach it where it stands.
+    bool trappedRejoined(const Unit& u,const Member& m) {
+        if(m.goal<0||!u.type)return false;
+        const Group* g=groups.get(m.group);
+        if(!g||g->plane<0)return false;
+        const Plane& p=plane(g->plane);
+        const int ox=footprintOrigin(u.x,u.type->footX),oz=footprintOrigin(u.z,u.type->footZ);
+        return legal(p,ox,oz)&&seedReach(*g,p,oz*width()+ox)==SeedReach::Joined;
     }
     void trapped(Unit& u,Member& m) {
         m.why=LegionNavigator::WhyTrapped;
@@ -11953,6 +12546,12 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(now-m.windowTick>=kCrowdWindow||stall==20||laneDue(m))return true;
         if(n==6||n==12||n==60||n==m.nextDetour)return true;
         if(m.approach&&(uint32_t(u.id)+now)%kApproachLook==0)return true;
+        // The dead age's thresholds (see heldDead): the stand-downs, and every give-way attempt.
+        if(standKind(m)) {
+            const uint32_t dead=deadFor(m);
+            if(dead==kStandDown||dead==kStandSwap||dead==kStandLong||(dead>=kStandPair&&(dead-kStandPair)%kGiveRetry==0))return true;
+            if(dead>=kStandDown&&stall==kStandMeet)return true;
+        }
         return m.passUntil==now;
     }
     // A member holding to give way to crossing traffic waits on purpose and
@@ -11967,6 +12566,12 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // A member parting a lane (partable) takes its side-step from
         // serviceYields; it keeps its order and hold clock meanwhile.
         if(found&&yielding.count(u.id)&&heldPart(u)) {found->why=LegionNavigator::WhyHoldYielding;u.speed=Fixed();u.turnReqBam=0;return;}
+        // A member that gave way in a knot (knotGiveWay) stands aside, on the leg it gave way on, until the body
+        // it gave way to has moved.
+        if(found)if(const auto aside=asides.find(u.id);aside!=asides.end()) {
+            if(heldPart(u)&&asideHolds(aside->second)) {found->why=LegionNavigator::WhyHoldYielding;u.speed=Fixed();u.turnReqBam=0;return;}
+            asides.erase(aside);
+        }
         const auto& leg=u.orders[World::currentLeg(u.orders)];
         const Kind kind=kindOf(u);
         const Policy rule=policy(kind);
@@ -11997,9 +12602,18 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // Stage 7: a trapped (terrain-unreachable) member re-registers only after a change that could join its
         // component to another -- an improvement touching that component's box -- not after every change anywhere
         // (under endless churn elsewhere it never reached its retirement: c2c25707's island-forever).
+        // A reopened member whose component holds its group's goals again (trappedRejoined) is not registered
+        // afresh: it goes on as the member it is, with its slot, its point and its clocks -- what a body that stood
+        // at a closed gate with its order did before a cut-off body was trapped by its component (cutOff below);
+        // registered afresh it gave its slot up and settled 6 to 8 cells off the click (cutoff-reopen). One whose
+        // component an improvement touched without joining it to the goals registers afresh, as before (it may
+        // have room to approach now).
         if(found&&found->controller==key&&!found->approach&&found->state==Trapped&&found->trappedEpoch!=epoch) {
-            if(trappedReopened(u,*found))++acct.trappedReopened;
-            else {found->trappedEpoch=epoch;++acct.trappedKept;}
+            if(!trappedReopened(u,*found)) {found->trappedEpoch=epoch;++acct.trappedKept;}
+            else {
+                ++acct.trappedReopened;
+                if(trappedRejoined(u,*found)) {found->state=Waiting;found->trappedEpoch=epoch;++acct.trappedResumed;}
+            }
         }
         if(!found||found->controller!=key||found->kind!=kind||
            (found->state==Trapped&&found->trappedEpoch!=epoch)||
@@ -12062,6 +12676,22 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     {complete(u,m,true,true);return;}
             }
         }
+        // Liveness (see liveOf). A body waiting for a route or a registration, engaged or trapped is live, and
+        // a new least distance to its own goal is progress whatever the route's measure says (a formation member
+        // walking to a slot beyond the click, where the field climbs; the flat ground between seeds; liveGain).
+        if(m.state!=Holding&&m.state!=Moving)liveNow(m);
+        if(m.givenTick!=kNoTick&&w.tickCounter_-m.givenTick>=kGivenCool)m.givenTick=kNoTick;
+        m.blockCell=-1;m.admitWait=0;
+        if(m.goal>=0&&policy(m.kind).completes) {
+            if(m.liveGoal!=m.goal) {m.liveGoal=m.goal;m.liveBest=0xffffffffu;}
+            const int lw=width();
+            const int64_t dx=(int64_t(u.x.v)>>16)-(int64_t(m.goal%lw)*16+u.type->footX*8),dz=(int64_t(u.z.v)>>16)-(int64_t(m.goal/lw)*16+u.type->footZ*8);
+            const uint32_t d=uint32_t(std::min<uint64_t>(0xfffffff0u,isqrtFloor(uint64_t(dx*dx+dz*dz))));
+            if(d+kLiveGain<=m.liveBest) {m.liveBest=d;liveGain(u,m);}
+            // The long stand-down takes a body that moves without gain as well: one that twitches on another
+            // body's goal (the seeds of one command tick share a field), or walks to and fro for good.
+            if(m.state==Moving&&standKind(m)&&deadFor(m)>=kStandLong) {standDown(u,m);return;}
+        }
         if(m.goal<0) {trapped(u,m);return;}
         // Stopped at its approach point (retired by trapped), or still
         // walking to it kTrappedRetire after the order (the walk's age limit).
@@ -12073,7 +12703,48 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         const auto& p=plane(g.plane);
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
-        if(!legal(p,ox,oz)) {escape(u,maximum,leg);return;}
+        if(!legal(p,ox,oz)) {
+            // An origin the static plane rejects is left the native way: one step straight at the target (escape).
+            // Refused, the body used to stop, and its next update tried the same step again, for good. It walks
+            // instead to the legal, free origin beside it that is nearest the target: chosen once and walked to
+            // with mover steps, for at most kEscapeUpdates updates (one step toward it is undone by the next
+            // native step, which the mover accepts as far as the illegal origin's edge). With no such origin it
+            // holds, and stands down at the long threshold (never the short one: a refused step names no body
+            // that will never move): a unit completed on ground it can never walk does not keep its order for
+            // good.
+            if(m.escapeTo>=0) {
+                const Fixed x=u.x,z=u.z;
+                const auto [ax,az]=stepAim(u,m.escapeTo);
+                const int64_t sdx=int64_t(ax.v)-u.x.v,sdz=int64_t(az.v)-u.z.v,length=isqrtFloor(uint64_t(sdx*sdx+sdz*sdz));
+                const int64_t travel=std::min<int64_t>(std::max<int64_t>(1,retailGroundSpeedCap(maximum*w.groundTerrainMultiplier(u),u.groundPitch,0).v),length);
+                if(length>0&&++m.escapeTicks<=kEscapeUpdates&&bodiesFree(u,m.escapeTo%W,m.escapeTo/W))
+                    w.commitGroundStep(u,Fixed::raw(int32_t(sdx*travel/length)),Fixed::raw(int32_t(sdz*travel/length)),false);
+                if(u.x!=x||u.z!=z) {++stats.escapeSteps;liveNow(m);u.speed=Fixed::raw(int32_t(travel));return;}
+                m.escapeTo=-1;
+            }
+            const Fixed x=u.x,z=u.z;
+            escape(u,maximum,leg);
+            if(u.x!=x||u.z!=z)return;
+            const auto [tx,tz]=target(leg);
+            int best=-1;int64_t bestD=0;
+            for(const auto& d:kDirections) {
+                const int cx=ox+d[0],cz=oz+d[1];
+                if(!legal(p,cx,cz)||!bodiesFree(u,cx,cz))continue;
+                const int64_t ddx=(int64_t(centre(cx,fx).v)-tx.v)>>16,ddz=(int64_t(centre(cz,fz).v)-tz.v)>>16,dd=ddx*ddx+ddz*ddz;
+                if(best<0||dd<bestD) {best=cz*W+cx;bestD=dd;}
+            }
+            if(best>=0) {m.escapeTo=best;m.escapeTicks=0;return;}
+            if(standKind(m)) {
+                // As live as the bodies covering the legal origins beside it (an enemy's body there keeps the
+                // order: it is not ours to end); with none legal, or all of them dead, the long threshold ends it.
+                for(const auto& d:kDirections)if(legal(p,ox+d[0],oz+d[1]))liveStep(u,m,ox,oz,(oz+d[1])*W+ox+d[0]);
+                m.why=LegionNavigator::WhyHoldRefused;
+                if(heldDead(u,m,ox,oz,-1,false))return;
+                hold(u,m);
+            }
+            return;
+        }
+        m.escapeTo=-1;
         // A goal origin can stop being legal (a building went up on it): a
         // slot member gives its slot back and claims another; any other
         // member takes the nearest legal origin of its region, in its group
@@ -12118,23 +12789,44 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // refresh does finish under constant static churn, about every 85
         // ticks since the quarter-quota allowance, kRefreshQuota.)
         // Stage 6: a corridor rebuilds round the body first (its plan takes every member's region again), at most
-        // kMaxWiden times; then the whole component's window takes over, as for any bounded window.
-        if(const RouteView r=view(g.field.get());r&&r.bounded()&&!g.full&&(!r.inside(ox,oz)||(r.complete()&&r.estimate(size_t(here))==kUnreached))) {
-            // A chain's halo region: attach its tile (a repair, next tick) instead of rebuilding.
-            if(g.field->kind==KindChain&&r.complete()&&requestRepair(g,*g.field,here)) {m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;}
-            // A corridor or chain a static change touched (its group is stale): the body is unknown to it, not cut
-            // off; it waits for the refresh (demanded at once) instead of widening.
-            if(g.field->kind!=KindWindow&&g.field->touched&&(g.stale||g.improveTick!=kNoTick)) {
-                // Stage 7: a deferred improvement refresh is wanted now (this body may be reachable only by it).
-                if(g.improveTick!=kNoTick) {++acct.improveDemands;promoteImprovement(g);}
-                if(!g.demand) {g.demand=true;listGroup(g);}
+        // kMaxWiden times; then the whole component's window takes over, as for any bounded window. A full group
+        // that still plans (planRoute: a large component) holds a corridor or chain, which is widened the same way.
+        if(const RouteView r=view(g.field.get());r&&r.bounded()&&!(g.full&&g.field->kind==KindWindow)&&(!r.inside(ox,oz)||(r.complete()&&r.estimate(size_t(here))==kUnreached))) {
+            // A body cut off from every goal of its group (cutOff: a building closed the way after it registered):
+            // no route on this plane reaches it, so nothing is repaired, awaited or widened for it -- the whole
+            // component, built to find that out, is touched by the next change anywhere, proves nothing and was
+            // built again for as long as the unit kept its order. A body that is trapped already, or stands in a
+            // sealed pocket (registration's own rule, kApproachRegion), is trapped here; any other walks on toward
+            // its goal for as long as it can (the no-route branch below).
+            const bool cut=cutOff(g,p,here);
+            if(cut&&(m.state==Trapped||p.compSize[size_t(compAt(p,here))]<kApproachRegion)) {acct.cutTraps+=m.state!=Trapped;trapped(u,m);return;}
+            if(!cut) {
+                // A chain's halo region: attach its tile (a repair, next tick) instead of rebuilding.
+                if(g.field->kind==KindChain&&r.complete()&&requestRepair(g,*g.field,here)) {m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;}
+                // A corridor or chain a static change touched (its group is stale): the body is unknown to it, not cut
+                // off; it waits for the refresh (demanded at once) instead of widening. The body cannot move until
+                // that refresh is built, exactly as a member of a group with no field: it is served as one
+                // (Group::awaited, jobClass), not in the refresh classes behind every route that still steers.
+                if(g.field->kind!=KindWindow&&g.field->touched&&(g.stale||g.improveTick!=kNoTick)) {
+                    // Stage 7: a deferred improvement refresh is wanted now (this body may be reachable only by it).
+                    if(g.improveTick!=kNoTick) {++acct.improveDemands;promoteImprovement(g);}
+                    if(!g.demand) {g.demand=true;listGroup(g);}
+                    g.awaited=w.tickCounter_;++acct.awaitedTicks;
+                    m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
+                }
+                if(g.next&&!g.next->done)++stats.refreshDiscards;
+                // (A window over the seeds' own cells -- planRoute's plan while every member was cut off -- was
+                // never meant to reach a body: a member that is joined again takes the group's first plan, not
+                // the whole component.)
+                const auto sb=seedBox(g);
+                const bool seedsOnly=g.field->kind==KindWindow&&g.field->x0==sb[0]&&g.field->z0==sb[1]&&
+                                     g.field->fw==sb[2]-sb[0]+1&&g.field->fh==sb[3]-sb[1]+1;
+                if(seedsOnly) {}
+                else if(g.field->kind!=KindWindow&&g.widens<kMaxWiden) {++g.widens;++acct.corridorWidens;}
+                else g.full=true;
+                g.field.reset();g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);listGroup(g);
                 m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
             }
-            if(g.next&&!g.next->done)++stats.refreshDiscards;
-            if(g.field->kind!=KindWindow&&g.widens<kMaxWiden) {++g.widens;++acct.corridorWidens;}
-            else g.full=true;
-            g.field.reset();g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);listGroup(g);
-            m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
         }
         // The holder rule (approachSettled): checked before routes and
         // side-steps, which a body held behind its own army otherwise walks
@@ -12201,7 +12893,17 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         watchStrips(u,m);
         updateClaim(u,m,p,f,ox,oz);
         if(f&&g.field&&(g.field->labels||(g.field->kind==KindChain&&g.soft&&(g.field->chainAdmits||g.members>=kOpeningMembers)))&&m.state!=Arrived&&
-           admissionHold(u,m,g,ox,oz)) {m.why=LegionNavigator::WhyHoldAdmission;holdStall(m);hold(u,m);return;}
+           admissionHold(u,m,g,ox,oz)) {
+            m.why=LegionNavigator::WhyHoldAdmission;holdStall(m);
+            // A waiter is as live as the bodies in the passage it waits for (see liveOf); dead for the long
+            // threshold all the same -- they hold the passage and never use it -- it stands down.
+            if(m.admitWait&&policy(m.kind).completes) {
+                const Opening& o=openings[(uint32_t(m.admitWait)>>1)-1];
+                for(int d=0;d<2;++d)if(o.passing[d])liveTake(m,Live{o.live[d],o.liveSeen[d]});
+                if(standKind(m)&&deadFor(m)>=kStandLong) {standDown(u,m);return;}
+            }
+            hold(u,m);return;
+        }
         // A pressIn step (see pressIn) walks on to its point until combat
         // brakes the body in reach; it ends there, after kPressTicks
         // updates, or once the body has left its origin's neighbours. It walks
@@ -12340,7 +13042,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             const bool fresh=m.progress!=0xffffffffu&&(kind!=m.progressKind||serial!=m.progressSerial);
             const bool ontoSeed=fresh&&at==0&&m.headSerial==f.metric()&&m.headBest>0;
             if(fresh&&!ontoSeed) {m.progress=left;m.progressKind=kind;m.progressSerial=serial;}
-            else if(ontoSeed||left<m.progress) {m.progress=left;m.progressKind=kind;m.progressSerial=serial;m.stallTick=w.tickCounter_;}
+            else if(ontoSeed||left<m.progress) {
+                m.progress=left;m.progressKind=kind;m.progressSerial=serial;m.stallTick=w.tickCounter_;
+                liveGain(u,m);
+            }
             // A metric transition is never a record (stage 5): a record needs a
             // gain within the current metric (nearestHere) as well as a new low
             // of `nearest`. (Until stage 5 a body whose field went missing read
@@ -12483,24 +13188,41 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             // that does not touch the route -- another island or plane --
             // leaves it proven: nothing would refresh it.)
             if(!f||(f.estimate(size_t(here))==kUnreached&&f.reach(size_t(here))!=Reach::Unreachable)) {
-                setWaited(g);
+                // No field will: the body is cut off from every goal of its group (cutOff, see the widening above).
+                // It asks for nothing (no setWaited: a field for it would be built in vain). While its region
+                // leaves room to move it keeps heading for the goal along the proven straight segment, as a body
+                // with no route does -- a way that reopens finds it nearer -- and is trapped where the segment is
+                // blocked or it has gained nothing for kBlockedRetry ticks; in a sealed pocket at once. Trapped is
+                // the existing end of an unreachable goal (trapped: the order kept for kTrappedRetire; after an
+                // improvement that touches its component's box it goes on in place if that joined it to the
+                // goals, and registers afresh if not).
+                const bool cut=cutOff(g,p,here);
+                if(!cut)setWaited(g);
                 // No field reaches this body yet: head toward the goal along
                 // a short proven straight segment (kHeadingCells) instead of
                 // standing still; the field takes over as soon as its
                 // frontier passes here. Blocked: wait.
                 const int dx=goalX-ox,dz=goalZ-oz,span=std::max(std::abs(dx),std::abs(dz));
-                const int hx=ox+dx*kHeadingCells/span,hz=oz+dz*kHeadingCells/span;
-                if(span>kHeadingCells&&sweep(p,u,u.x,u.z,centre(hx,fx),centre(hz,fz))) {
-                    m.site=LegionNavigator::SiteDirect;m.why=LegionNavigator::WhyDirect;
-                    drive(u,m,p,nullptr,maximum,centre(hx,fx),centre(hz,fz),false,false);
-                    return;
+                const bool walk=!cut||(m.state!=Trapped&&p.compSize[size_t(compAt(p,here))]>=kApproachRegion&&stalledFor(m)<kBlockedRetry);
+                if(walk&&span>kHeadingCells) {
+                    const int hx=ox+dx*kHeadingCells/span,hz=oz+dz*kHeadingCells/span;
+                    if(sweep(p,u,u.x,u.z,centre(hx,fx),centre(hz,fz))) {
+                        m.site=LegionNavigator::SiteDirect;m.why=LegionNavigator::WhyDirect;
+                        drive(u,m,p,nullptr,maximum,centre(hx,fx),centre(hz,fz),false,false);
+                        return;
+                    }
                 }
+                if(cut) {acct.cutTraps+=m.state!=Trapped;trapped(u,m);return;}
                 m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
             }
             const uint32_t potential=f.estimate(size_t(here));
             if(potential==kUnreached) {trapped(u,m);return;}
             int cell=aimCell(u,m,p,f,ox,oz);
-            if(cell<0) {m.why=LegionNavigator::WhyHoldNoAim;hold(u,m);return;}
+            if(cell<0) {
+                m.why=LegionNavigator::WhyHoldNoAim;
+                if(heldDead(u,m,ox,oz,-1,false))return;
+                hold(u,m);return;
+            }
             m.site=LegionNavigator::SiteField;
             if(gInstrumentProbes&&f.complete()&&m.slot>=0&&m.pt&&m.vertexCell!=here&&partRefs(m)>=kPivotMembers&&formationMember(m)) {
                 m.vertexCell=here;vertexInstrument(u,m,g,p,f,ox,oz);
@@ -12517,6 +13239,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     m.pivotCell=here;m.pivotAim=pivotAim(u,m,p,f,ox,oz,laneComp);
                     if(unsure) {m.pivotCell=-1;m.pivotAim=-1;}   // not taken: evaluated again on the finished route
                 }
+                // An arc point on the body's own origin is no aim: the step to it has no length, the body read
+                // as refused and stood on that origin for as long as the memo held (pivotAim compares the body's
+                // centre cell with arc origins, which for a 2x2 differ by a cell). The field's descent leads on.
+                if(m.pivotAim==here)m.pivotAim=-1;
                 if(m.pivotAim>=0) {cell=m.pivotAim;pivoting=&m;pivotTarget=cell;m.site=LegionNavigator::SitePivot;}
             }
             if(unsure)runOnRoute(g,RouteNeed::Lanes);
@@ -12670,12 +13396,16 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     //   c1_headon_entries    awareScan head-on entries planned for a group of 16+ members (C1 seen)
     //   c1_unseen            passAhead scans that find an oncoming body of another command, for a member of a
     //                        Point of 16+ (C1 unseen)
+    //   l1_dead_ended        dead spells (see liveOf) of kStandDown ticks or more that ended by themselves, with a
+    //                        rise of liveness; l1_dead_ended_half those of half kStandLong or more; l1_dead_max the
+    //                        longest (a running maximum: kStandLong must stay above the knots that undo themselves)
     struct Census {
         uint64_t a1FormationCalls=0,a1Inside=0,a2Refusals=0,a2Seal=0,a3Creep=0,a3StallReset=0;
         uint64_t a4Releases=0,a4ReleaseSlotted=0,a4ReleaseCrossed=0;
         uint64_t b1GateScans=0,b1CenterBlocked=0,b1EngagedWall=0,b1WidthChanged=0,b2Commits=0,b2LaneDiffers=0,b2Margin=0;
         uint64_t b3Ranks=0,b3GuardRejects=0,b3RejectChord=0,b3RejectFace=0,b3FoldBinds=0,b4AimCalls=0,b4PlainHugs=0,b4ClearAlt=0;
         uint64_t b6Blocked=0,c1HeadonEntries=0,c1Unseen=0;
+        uint64_t l1DeadEnded=0,l1DeadEndedHalf=0,l1DeadMax=0;
     } census;
     // Counting helpers may run inside a census block: the fence puts the Stats back.
     struct StatsFence {
@@ -14052,8 +14782,13 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     std::map<int,uint32_t> swapTicks;
     bool swapCool(int id) const {const auto it=swapTicks.find(id);return it!=swapTicks.end()&&w.tickCounter_-it->second<kSwapCool;}
     static bool swapLeg(const Member& m) {return policy(m.kind).completes&&!engagesEnemies(m.kind)&&!policy(m.kind).exact&&!policy(m.kind).exitClear;}
+    // The late swap: a fight or patrol leg swaps too once its body stands dead kStandSwap ticks (see liveOf). On
+    // those legs the hold has no other way out of a head-on meet in a one-body lane.
+    bool swapLegLate(const Member& m) const {
+        return swapLeg(m)||(policy(m.kind).completes&&!policy(m.kind).exact&&!policy(m.kind).exitClear&&m.state==Holding&&deadFor(m)>=kStandSwap);
+    }
     Unit* swapPartner(const Unit& u,const Member& m,RouteView f,bool towardGoal,int ox,int oz,int nx,int nz) {
-        if(u.type->canFly||livelock(u)||!swapLeg(m)||!m.route.empty()||m.approach||m.pressX!=kNoPress)return nullptr;
+        if(u.type->canFly||livelock(u)||!swapLegLate(m)||!m.route.empty()||m.approach||m.pressX!=kNoPress)return nullptr;
         if(swapCool(u.id))return nullptr;
         const int fx=u.type->footX,fz=u.type->footZ,W=width();
         if(nx==ox&&nz==oz)return nullptr;
@@ -14072,7 +14807,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
            b->type->footX!=fx||b->type->footZ!=fz||b->orders.empty())return nullptr;
         if(livelock(*b)||yielding.count(other)||anchors.count(other)||queued(other))return nullptr;
         Member* bm=member(other);
-        if(!bm||(bm->state!=Moving&&bm->state!=Holding)||!swapLeg(*bm)||bm->approach||!bm->route.empty()||bm->pressX!=kNoPress)return nullptr;
+        if(!bm||(bm->state!=Moving&&bm->state!=Holding)||!swapLegLate(*bm)||bm->approach||!bm->route.empty()||bm->pressX!=kNoPress)return nullptr;
+#ifndef NDEBUG
+        if(gVerify&&!swapLeg(*bm)&&!liveFolded(*bm))verifyFail("a rule read a member's liveness below its fold age");
+#endif
         if(swapCool(other))return nullptr;
         const auto ga=groups.find(m.group),gb=groups.find(bm->group);
         if(ga==groups.end()||gb==groups.end()||ga->second.plane!=gb->second.plane)return nullptr;
@@ -14119,6 +14857,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         a.groundMoveTick=b.groundMoveTick=w.tickCounter_;a.bodyBlockStreak=b.bodyBlockStreak=0;
         w.updateBodyIndex(a);w.updateBodyIndex(b);
         ++stats.swaps;
+        if(!swapLeg(am))++stats.lateSwaps;
         for(auto it=swapTicks.begin();it!=swapTicks.end();)it=w.tickCounter_-it->second>=kSwapCool?swapTicks.erase(it):std::next(it);
         swapTicks[a.id]=w.tickCounter_;swapTicks[b.id]=w.tickCounter_;am.why=LegionNavigator::WhyPass;
         if(am.detour==bz*W+bx)am.detour=-1;
@@ -14288,6 +15027,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             // after a held window) take over. Not where walls hide the
             // target (shadowWalk): there the held queue had no way round.
             bool moved=false,passFiltered=false;
+            // The step this body is blocked from (the corner clip's legal axis where the diagonal itself is no
+            // legal step; -1: neither axis is), and the liveness of the bodies on it (see liveOf).
+            const int heldStep=!corner?nz0*W+nx0:legal(p,ox,nz0)?nz0*W+ox:legal(p,nx0,oz)?oz*W+nx0:-1;
+            const bool heldTerminal=policy(m.kind).completes&&liveStep(u,m,ox,oz,heldStep);
             // Head on with an ally that wants this body's cell: trade places before any way round.
             if((swapWith=swapPartner(u,m,f,towardGoal,ox,oz,nx0,nz0))) {
                 sx=Fixed::raw(swapWith->x.v-u.x.v);sz=Fixed::raw(swapWith->z.v-u.z.v);nx=footprintOrigin(swapWith->x,fx);nz=footprintOrigin(swapWith->z,fz);
@@ -14443,6 +15186,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d hold at=(%d,%d) want=(%d,%d) corner=%d by=[%s] held=%u head=%d\n",
                     w.tickCounter_,u.id,ox,oz,nx,nz,int(corner),dbgOccupants(u,nx,nz).c_str(),heldFor(m),int(m.want>=0));
 #endif
+                if(heldDead(u,m,ox,oz,heldStep,heldTerminal))return;
                 hold(u,m);return;
             }
         }
@@ -14460,7 +15204,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         else w.commitGroundStep(u,sx,sz,true);
         // The heading only turns with an actual step: a refused step is a
         // hold, and a held body keeps a constant heading.
-        if(u.x==beforeX&&u.z==beforeZ) {m.why=LegionNavigator::WhyHoldRefused;hold(u,m);return;}
+        if(u.x==beforeX&&u.z==beforeZ) {
+            m.why=LegionNavigator::WhyHoldRefused;
+            if(heldDead(u,m,ox,oz,-1,false))return;
+            hold(u,m);return;
+        }
         // A funnel's way is claimed on the step that reaches it (updateClaim):
         // two bodies stepping beside one way on successive updates of a tick
         // otherwise both stand on cells of it before either claims.
@@ -15082,7 +15830,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // (liftflyers' open run: 8 cells sideways); it settles here instead.
         if(m.rechoices<kRechoices&&m.goal!=oz*W+ox) {
             ++m.rechoices;
-            if(rechoose(u,m,g,p,f,potential)||!press)return false;
+            // (A slot re-choice is the settle rule at work on this body: live, see liveOf.)
+            if(rechoose(u,m,g,p,f,potential)||!press) {liveNow(m);return false;}
         }
         const uint32_t grow=uint32_t(kSettleGrow*foot*kOrthogonal),slack=uint32_t(kSettleSlack*foot*kOrthogonal);
         // C29, measured along the queue: no completion farther from the click
@@ -15120,6 +15869,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         if(!m.settleP)m.settleP=std::min(cap,areaBound(g,m,fx,fz,body)+slack);
         if(potential<=m.settleP&&(dist<=2*reach||behind)&&connected(dist)&&!inExitLane(u,body))return true;
+        // While the bound still grows toward this body it may settle in a later window: the settle rule is at
+        // work on it, so it is live (a dead-end queue settles back row by row over thousands of ticks). At the
+        // cap, or past its own potential and still refused, it is not.
+        if(m.settleP<std::min<uint32_t>(cap,potential))liveNow(m);
         m.settleP=std::min(cap,m.settleP+grow);
         return false;
     }
@@ -15557,7 +16310,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     for(const auto& c:f->charges)h=mix(h,uint64_t(c.label)<<32|c.cost);
                 }
             // Stage 6: a plan held for the next build, and corridor widenings.
-            if(g.plan&&g.planTick!=kNoTick) {h=mix(h,0x706c616eull);h=mix(h,uint64_t(g.planTick)<<8|g.plan->kind);h=mix(h,g.plan->sig);}
+            if(g.plan&&g.planTick!=kNoTick) {h=mix(h,0x706c616eull);h=mix(h,uint64_t(g.planTick)<<8|g.plan->kind);h=mix(h,g.plan->sig);
+                                             if(g.plan->fixedBox)h=mix(h,0x6669786564ull);}
             if(g.widens)h=mix(h,0x7769646e73ull^uint64_t(g.widens)<<48);
             if(g.routeMode)h=mix(h,0x6d6f6465ull^uint64_t(g.routeMode)<<48);
             // Start requests (stage 4): their age and a refusal stamp, while set.
@@ -15566,6 +16320,9 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(g.reroute)h=mix(h,0x7265726f757465ull);
             for(const auto& [label,a]:g.openArea)if(a) {h=mix(h,0x6f61726561ull^uint64_t(label)<<40);h=mix(h,a);}
             if(g.blockedSince!=NavAdmit::kNever) {h=mix(h,0x626c6f636bull);h=mix(h,g.blockedSince);}
+            // A member-awaited refresh (its class) and an unfinished seed-bound window (its charge), tagged only when set.
+            if(g.awaited!=Group::kNeverAwaited) {h=mix(h,0x61776169746564ull);h=mix(h,g.awaited);}
+            for(const Field* f:{g.field.get(),g.next.get()})if(f&&f->seedBound&&!f->done)h=mix(h,0x7365656462ull^uint64_t(f==g.next.get())<<40);
             // A paused first build (C1), tagged only when set.
             if(g.field&&g.field->runOn)h=mix(h,0x72756e6f6eull);
             if(g.field&&(g.field->covered||!g.field->demand.empty())) {
@@ -15650,6 +16407,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         // The bodies that traded places lately (swapTicks), while any.
         for(const auto& [id,t]:swapTicks) {h=mix(h,0x73776170ull^uint64_t(uint32_t(id))<<32);h=mix(h,t);}
+        // The bodies standing aside after a give-way (knotGiveWay), while any.
+        for(const auto& [id,a]:asides) {
+            h=mix(h,0x6173696465ull^uint64_t(uint32_t(id))<<40);h=mix(h,uint64_t(uint32_t(a.partner))<<32|uint32_t(a.cell));
+            h=mix(h,uint64_t(a.until)<<16|a.label);
+        }
         for(const auto& [id,m]:members) {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
             if(m.entryState) {h=mix(h,0x656e746572ull);h=mix(h,m.entryState);}
@@ -15681,6 +16443,15 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(m.slideCell>=0) {h=mix(h,0x736c696465ull);h=mix(h,uint64_t(uint32_t(m.slideCell))<<32|uint32_t(m.slideFrom));}
             if(m.meetSeen!=kNoTick) {h=mix(h,0x6d73656eull);h=mix(h,m.meetSeen);}
             if(m.passLabel) {h=mix(h,0x70617373ull);h=mix(h,m.passLabel);}
+            // The liveness clocks, from the age at which a rule can first read them (liveFolded: kStandDown dead
+            // ticks, for the members the rules end or move). Younger, they are a function of the member updates,
+            // whose inputs are hashed, and no decision reads them; every decision that does reads them folded.
+            if(liveFolded(m)) {
+                h=mix(h,0x6c697665ull);h=mix(h,uint64_t(m.liveTick)<<32|m.liveSeen);h=mix(h,uint64_t(m.liveBest)<<32|uint32_t(m.liveGoal));
+                h=mix(h,uint64_t(uint32_t(m.blockCell))<<16|m.admitWait);
+            }
+            if(m.escapeTo>=0) {h=mix(h,0x657363617065ull);h=mix(h,uint64_t(uint32_t(m.escapeTo))<<32|m.escapeTicks);}
+            if(m.givenTick!=kNoTick&&w.tickCounter_-m.givenTick<kGivenCool) {h=mix(h,0x676976656eull);h=mix(h,m.givenTick);}
             if(m.claimAt>=0) {h=mix(h,0x636c61696dull);h=mix(h,uint64_t(m.claimAt));}
             if(m.gateCell>=0) {
                 h=mix(h,0x67617465ull);h=mix(h,uint32_t(m.gateCell));
@@ -15907,7 +16678,8 @@ std::vector<std::pair<std::string,uint64_t>> LegionNavigator::census() const {
          {"b1_engaged_wall",c.b1EngagedWall},{"b1_width_changed",c.b1WidthChanged},{"b2_commits",c.b2Commits},
          {"b2_lane_differs",c.b2LaneDiffers},{"b2_margin",c.b2Margin},{"b3_ranks",c.b3Ranks},{"b3_guard_rejects",c.b3GuardRejects},{"b3_reject_chord",c.b3RejectChord},{"b3_reject_face",c.b3RejectFace},
          {"b3_fold_binds",c.b3FoldBinds},{"b4_aim_calls",c.b4AimCalls},{"b4_plain_hugs",c.b4PlainHugs},{"b4_clear_alt",c.b4ClearAlt},
-         {"b6_blocked",c.b6Blocked},{"c1_headon_entries",c.c1HeadonEntries},{"c1_unseen",c.c1Unseen}};
+         {"b6_blocked",c.b6Blocked},{"c1_headon_entries",c.c1HeadonEntries},{"c1_unseen",c.c1Unseen},
+         {"l1_dead_ended",c.l1DeadEnded},{"l1_dead_ended_half",c.l1DeadEndedHalf},{"l1_dead_max",c.l1DeadMax}};
 #endif
     return out;
 }

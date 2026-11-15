@@ -17,7 +17,8 @@ Families (N = bodies; see the progress record for what each one stands for):
   swap-N     constant 768 x 768 map, two allied armies of N/2 exchange sides head on (crowd-density stress
              at a constant map; opposing streams): 1000, 2500, 5000, 10000
   bridges-N  a river across the map with three bridges (4, 12 and 32 cells wide); two allied armies of N/2
-             cross it in opposite directions (multiple passages, narrow bridge, crossing streams)
+             cross it in opposite directions (multiple passages, narrow bridge, crossing streams);
+             bridges-1000-fight is the same on attack-move orders (fight legs take no swap)
   maze-N     a walled compound of rooms with doors; 85% go to its central room (room entrances, destination
              crowding), 10% to an island reached by one narrow bridge, 5% to a sealed box (unreachable)
   mixed-N    one Alt+1 formation of mixed footprints (1x1 .. 4x4), speeds, hovers and flyers across a lake
@@ -38,6 +39,23 @@ Families (N = bodies; see the progress record for what each one stands for):
              squads crossing the map every 4800, under `navbytes` = two whole-map fields: the fit scan, the
              reservation and request promotion in the sim, and a request-age bound derived from that
              capacity (ctest legion_sched_mix)
+  starve-1024  route requests on a big map (2026-11-15): a field allowance of eight whole-map fields, the ratio
+             of 128 MiB to a 2048 x 2048 map. 80 one-body groups whose first window lies behind a wall, six
+             waves of 30 from two allied players in turn to two points (later commands to a point another
+             still walks to), a 1 x 1 feature dropped on one point and a 2 x 2 on the other (a covered and a
+             buried goal), churn in a far corner (ctest legion_starve)
+  cutoff-1024, cutoff-reopen, cutoff-toggle
+             six one-body groups inside an enclosure ordered to a point outside; its one gap is closed at tick
+             200, before any is through (cut off from their goal after the order); churn in a far corner, 40
+             bodies of the other player walking outside. cutoff-1024: the gap stays closed. cutoff-reopen:
+             it opens again at tick 1200. cutoff-toggle: it opens and closes every 150 ticks (ctests
+             legion_cutoff_closed, legion_cutoff_reopen, legion_cutoff_toggle)
+  armies14-2048  fourteen 60-body armies, one command each, cross a 2048 x 2048 map at the game's allowance
+             while 60 one-body groups are ordered round a wall; churn in a far corner: more whole-map windows
+             than the allowance holds (ctest legion_armies)
+  seedcorpse-army  one 60-body army walks 300 cells on a 1024 x 1024 map; a 1 x 1 feature lands on its click
+             cell at tick 300 (a covered goal under a crowd over the chain demand: its window is the whole
+             map from then on); churn in a far corner (ctest legion_seedarmy)
 """
 import math
 import os
@@ -144,12 +162,13 @@ def swap(n, w=768, h=768):
     write(f"swap-{n}", L, f"swap-{n}: constant {w} x {h} map, two allied armies of {half} exchange sides head on.")
 
 
-def bridges(n, w=768, h=768):
+def bridges(n, w=768, h=768, order="move"):
+    name = f"bridges-{n}" + ("" if order == "move" else "-" + order)
     half = n // 2
     s = side(half)
     z0 = (h - s) // 2
     rx = w // 2 - 24
-    L = header(f"bridges-{n}", ticks_for(w + 300), w, h, players=2, teams=[(1, 0)])
+    L = header(name, ticks_for(w + 300), w, h, players=2, teams=[(1, 0)])
     # The river: deep water (height 20) from top to bottom, with three bridges left as ground.
     spans = [(96, 4), (360, 12), (600, 32)]
     z = 0
@@ -161,9 +180,9 @@ def bridges(n, w=768, h=768):
           f"group B 1 r {half} rect {w - 16 - s} {z0} {w - 16} {z0 + s}"]
     for i, (bz, bw) in enumerate(spans):
         L.append(f"gate bridge{i} {rx} {bz} {rx + 48} {bz + bw}")
-    L += [f"at 2 move A {w - 16 - s // 2} {h // 2}", f"at 2 move B {16 + s // 2} {h // 2}"]
-    write(f"bridges-{n}", L, f"bridges-{n}: a 48-cell river with bridges 4, 12 and 32 cells wide; two allied armies of {half}\n"
-          "cross it in opposite directions.")
+    L += [f"at 2 {order} A {w - 16 - s // 2} {h // 2}", f"at 2 {order} B {16 + s // 2} {h // 2}"]
+    write(name, L, f"{name}: a 48-cell river with bridges 4, 12 and 32 cells wide; two allied armies of {half}\n"
+          "cross it in opposite directions" + ("." if order == "move" else " on attack-move orders."))
 
 
 def maze(n, w=1024, h=1024):
@@ -414,6 +433,85 @@ def room2door():
           "through two doors (stage 8: an entrance per group, on its own plane and field).")
 
 
+def starve(size=1024, solos=80, ticks=5000):
+    """Route requests on a big map: every source of a whole-component request the audited 2048 x 2048 game had,
+    at an eighth of the allowance a whole-map field (docs/legion-pathfinding.md, sections 2 and 9)."""
+    k = size / 1024.0
+
+    def c(v):
+        return int(round(v * k))
+    L = ["scn 1", f"name starve-{size}", f"ticks {ticks}", "seed 7", "players 2", "team 1 0", "weapons off", "uplink 16",
+         "probe scale", f"navbytes {8 * 4 * size * size}", f"map flat {size} {size}",
+         f"wall {c(340)} {c(380)} 4 {c(240)}", f"wall {c(680)} {c(380)} 4 {c(240)}", "type m mover 2 2500 10 3.2"]
+    cols = 8
+    rows = (solos + cols - 1) // cols
+    pos = []
+    for i in range(solos):
+        x, z = c(250) + (i % cols) * 8, c(420) + (i // cols) * max(4, c(160) // max(1, rows - 1))
+        pos.append((x, z))
+        L.append(f"group B{i} 0 m 1 cells {x},{z}")
+    for w in range(6):
+        x0, z0 = c(420), c(430) + w * 24
+        L.append(f"group W{w} {w % 2} m 30 rect {x0} {z0} {x0 + 30} {z0 + 18} pitch=3")
+    ax, az, bx, bz = c(900), c(500), c(900), c(700)
+    L += [f"churn {c(880)} {c(60)} 2 2 every=7 walk=3,0,30 toggle",
+          f"churn {ax} {az} 1 1 every=1000000 from=600", f"churn {bx - 1} {bz - 1} 2 2 every=1000000 from=900"]
+    for i, (x, z) in enumerate(pos):
+        L.append(f"at {10 + i * 10} move B{i} {c(372) + (i % cols) * 7} {z}")
+    for w in range(6):
+        L.append(f"at {30 + w * 150} fight W{w} {ax if w < 4 else bx} {az if w < 4 else bz}")
+    write(f"starve-{size}", L, f"starve-{size}: route requests on a big map under a field allowance of eight whole-map fields (the\n"
+          "ratio of 128 MiB to a 2048 x 2048 map). 80 one-body groups, each ordered across a long wall its first window\n"
+          "(its own box plus 32 cells) lies behind; six waves of 30 of two allied players in turn, 150 ticks apart, to\n"
+          "two far points past a second wall; a 1 x 1 feature dropped on the first point at tick 600 (a covered goal)\n"
+          "and a 2 x 2 on the second at tick 900 (a buried goal); a static change every 7 ticks in a far corner.\n"
+          "docs/legion-pathfinding.md, sections 2 and 9; ctest legion_starve.")
+
+
+def cutoff(name, gap, ticks, doc, size=1024):
+    """Bodies cut off from their goal after the order: an enclosure with one gap, six one-body groups inside ordered
+    to a point outside, the gap closed by a feature at tick 200 (`gap`: the rest of that feature's churn line)."""
+    L = ["scn 1", f"name {name}", f"ticks {ticks}", "seed 7", "players 2", "team 1 0", "weapons off", "uplink 16",
+         "probe scale", f"navbytes {8 * 4 * size * size}", f"map flat {size} {size}",
+         "wall 200 200 200 4", "wall 200 396 200 4", "wall 200 200 4 200", "wall 396 200 4 96", "wall 396 304 4 96",
+         "type m mover 2 2500 10 3.2"]
+    L += [f"group C{i} 0 m 1 cells {240 + i * 8},300" for i in range(6)]
+    L += ["group O 1 m 40 rect 500 600 540 630 pitch=3", "churn 880 60 2 2 every=7 walk=3,0,30 toggle",
+          f"churn 396 296 4 8 {gap}"]
+    L += [f"at {10 + i * 5} move C{i} 800 300" for i in range(6)]
+    L += ["at 20 move O 800 760", "at 1500 move O 520 620"]
+    write(name, L, doc + "\nAn enclosure with one gap; six one-body groups inside are ordered to a point outside; a feature closes\n"
+          "the gap at tick 200, before any is through. A static change every 7 ticks in a far corner; 40 bodies of the\n"
+          "other player walk outside the whole time. docs/legion-pathfinding.md, section 2 (static changes and routes).")
+
+
+def armies(n=14, size=2048):
+    """More whole-map windows than the allowance holds: n armies of 60 (one command each: over the chain demand)
+    cross the map, 60 one-body groups are ordered round a wall while they walk."""
+    L = ["scn 1", f"name armies{n}-{size}", "ticks 5000", "seed 7", "players 2", "team 1 0", "weapons off", "uplink 16",
+         "probe scale", f"map flat {size} {size}", "wall 1000 800 4 400", "type m mover 2 2500 10 3.2"]
+    L += [f"group A{i} 0 m 60 rect 150 {150 + 125 * i} 180 {168 + 125 * i} pitch=3" for i in range(n)]
+    L += [f"group B{j} 1 m 1 cells {900 + 8 * (j % 10)},{850 + 50 * (j // 10)}" for j in range(60)]
+    L += ["churn 1900 60 2 2 every=7 walk=3,0,30 toggle"]
+    L += [f"at {20 + 40 * i} move A{i} 1850 {1900 - 125 * i}" for i in range(n)]
+    L += [f"at {700 + 10 * j} move B{j} {1040 + 7 * (j % 10)} {850 + 50 * (j // 10)}" for j in range(60)]
+    write(f"armies{n}-{size}", L, f"armies{n}-{size}: {n} armies of 60, one command each, cross a {size} x {size} map at the game's field\n"
+          "allowance; 60 one-body groups of the other player are ordered round a wall while they walk; a static change\n"
+          "every 7 ticks in a far corner. Each army is over the chain demand and builds a window over most of the map:\n"
+          "more than the allowance holds (docs/legion-pathfinding.md, Known weaknesses; ctest legion_armies).")
+
+
+def seedarmy():
+    """A covered goal under a crowd over the chain demand: the group keeps the window, and the window of a seed
+    without a component is the whole map (fieldWindow), refreshed at every change anywhere."""
+    L = ["scn 1", "name seedcorpse-army", "ticks 2500", "seed 7", "players 2", "team 1 0", "weapons off", "uplink 16",
+         "probe scale", "map flat 1024 1024", "type m mover 2 2500 10 3.2", "group A 0 m 60 rect 300 500 330 518 pitch=3",
+         "churn 60 60 2 2 every=7 walk=3,0,30 toggle", "churn 650 510 1 1 every=1000000 from=300", "at 20 move A 650 510"]
+    write("seedcorpse-army", L, "seedcorpse-army: one 60-body army (one command) walks 300 cells on a 1024 x 1024 map; a 1 x 1 feature\n"
+          "lands on its click cell at tick 300; a static change every 7 ticks in a far corner\n"
+          "(docs/legion-pathfinding.md, Known weaknesses; ctest legion_seedarmy).")
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     for n in (100, 1000, 2500, 5000, 10000):
@@ -421,6 +519,7 @@ if __name__ == "__main__":
         many(n)
     for n in (1000, 2500, 5000, 10000):
         swap(n)
+    bridges(1000, order="fight")
     for n in (1000, 10000):
         bridges(n)
         maze(n)
@@ -433,3 +532,14 @@ if __name__ == "__main__":
     sched_load()
     sched_mix()
     room2door()
+    starve()
+    cutoff("cutoff-1024", "every=1000000 from=200", 4000,
+           "cutoff-1024: bodies cut off from their goal after the order, for good (ctest legion_cutoff_closed).")
+    cutoff("cutoff-reopen", "every=1000 from=200 toggle until=1300", 6000,
+           "cutoff-reopen: bodies cut off from their goal after the order; the way opens again at tick 1200\n"
+           "(ctest legion_cutoff_reopen).")
+    cutoff("cutoff-toggle", "every=150 from=200 toggle", 6000,
+           "cutoff-toggle: bodies cut off from their goal after the order; the way opens and closes every 150 ticks\n"
+           "(ctest legion_cutoff_toggle).")
+    armies()
+    seedarmy()

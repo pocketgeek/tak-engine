@@ -468,6 +468,309 @@ void chainresolve() {
     check(done==int(ids.size()),"chainresolve: a body never arrived");
 }
 
+// ---- Route requests on large maps (2026-11-15; docs/legion-pathfinding.md "Hierarchical routes and tiles", "Static
+// changes and routes", section 9). On a 2048 x 2048 map a route over the whole component takes an eighth of the field
+// allowance; these cases build the five situations that asked for one where a small route does, on small maps with
+// the allowance shrunk (setFieldBytesForTest: never below two whole-map fields, so a whole-component window is half
+// of it), and check the routes, the storage charged and what the bodies do.
+struct RouteWatch {
+    const LegionNavigator* nav;
+    uint64_t peak=0;
+    explicit RouteWatch(World& w):nav(w.legionNavigator()) {}
+    void sample() {peak=std::max<uint64_t>(peak,nav->accounting().bytes.fields);}
+};
+struct SmallAllowance {
+    explicit SmallAllowance(uint64_t bytes) {LegionNavigator::setFieldBytesForTest(bytes);}
+    ~SmallAllowance() {LegionNavigator::setFieldBytesForTest(0);}
+};
+
+// A lone mover whose first bounded window does not see round a wall. The window fails it and the group is full: it
+// took the whole component's window. Where that window is large (over 1/32 of the allowance) the group now plans: a
+// chain, a few tiles. With the game's allowance a 512 x 512 component is not large and the window stays.
+void fullplan() {
+    struct Run {int done=-1;uint64_t chains=0,plans=0,peak=0;};
+    const auto run=[](uint64_t bytes) {
+        SmallAllowance allowance(bytes);
+        Fixture f(512,512);
+        f.rect(60,150,4,212);   // the first window (body and goal plus 34 cells) lies inside its span
+        f.publish();
+        const auto type=mover(2);
+        const int id=f.spawn(type,12,256);
+        f.start();
+        f.world.order(id,80*16,256*16,false);
+        RouteWatch watch(f.world);
+        Run out;
+        for(int t=0;t<4000&&out.done<0;++t) {
+            f.world.tick(1.f/30);watch.sample();
+            if(f.world.unit(id)->orders.empty())out.done=t;
+        }
+        const auto a=watch.nav->accounting();
+        out.chains=a.chains;out.plans=a.fullPlans;out.peak=watch.peak;
+        return out;
+    };
+    const uint64_t whole=4ull*512*512;
+    const Run large=run(1),small=run(0);
+    std::printf("fullplan large: done=%d chains=%llu full_plans=%llu field_bytes_peak=%llu | game allowance: done=%d chains=%llu full_plans=%llu field_bytes_peak=%llu\n",
+                large.done,(unsigned long long)large.chains,(unsigned long long)large.plans,(unsigned long long)large.peak,
+                small.done,(unsigned long long)small.chains,(unsigned long long)small.plans,(unsigned long long)small.peak);
+    check(large.done>=0&&small.done>=0,"fullplan: the mover did not arrive");
+    check(large.chains>=1&&large.plans>=1,"fullplan: a full group on a large component did not plan a chain");
+    check(large.peak<whole/4,"fullplan: a full group on a large component took the whole component's window");
+    check(small.chains==0&&small.plans==0&&small.peak>=whole,"fullplan: a full group took no window where its component is not large");
+}
+
+// Two batches of 30 sent to one point 40 ticks apart, as a computer player sends them: two commands. The second
+// batch's demand is its own 30 bodies (the first batch's field was tried for a share before the plan and does not
+// serve it), so it takes a chain as the first did; counted with the first batch it was "high demand" and built the
+// window of its whole way. One command of 60 keeps its one exact field.
+void demandown() {
+    struct Run {int arrived=0;uint64_t chains=0,peak=0;};
+    const auto run=[](bool oneCommand) {
+        Fixture f(512,320);
+        for(int z=0;z<320;++z)
+            if(!(z>=40&&z<52)&&!(z>=150&&z<170)&&!(z>=262&&z<268)) {f.wall(250,z);f.wall(251,z);}
+        f.publish();
+        const auto type=mover(2);
+        std::vector<int> north,south;
+        for(int i=0;i<30;++i) {north.push_back(f.spawn(type,10+(i%6)*3,20+(i/6)*3));south.push_back(f.spawn(type,10+(i%6)*3,280+(i/6)*3));}
+        f.start();
+        RouteWatch watch(f.world);
+        Run out;
+        for(int t=0;t<6000;++t) {
+            if(t==0)for(const int id:north)f.world.order(id,470*16,160*16,false);
+            if(t==(oneCommand?0:40))for(const int id:south)f.world.order(id,470*16,160*16,false);
+            f.world.tick(1.f/30);watch.sample();
+            out.arrived=0;
+            for(const auto* ids:{&north,&south})for(const int id:*ids)out.arrived+=f.world.unit(id)->orders.empty();
+            if(out.arrived==60)break;
+        }
+        out.chains=watch.nav->accounting().chains;out.peak=watch.peak;
+        return out;
+    };
+    const Run two=run(false),one=run(true);
+    std::printf("demandown two commands: arrived=%d/60 chains=%llu field_bytes_peak=%llu | one command: arrived=%d/60 chains=%llu field_bytes_peak=%llu\n",
+                two.arrived,(unsigned long long)two.chains,(unsigned long long)two.peak,one.arrived,(unsigned long long)one.chains,(unsigned long long)one.peak);
+    check(two.arrived==60&&one.arrived==60,"demandown: a body did not arrive");
+    check(two.chains>=2,"demandown: the second command to the point did not take a chain (counted with the first)");
+    check(two.peak<4ull*512*320/2,"demandown: a batch of 30 built the window of its whole way");
+    check(one.chains==0,"demandown: one command of 60 bodies took chains (its own crowd is its demand)");
+}
+
+// A corpse or a building on the goal of a body under way. seedcover: a 1 x 1 feature lands on the goal's footprint;
+// the goal origin is illegal now but has legal neighbours. When the route is next searched (a rock lifted beside
+// it: an improvement, whose refresh chooses the route afresh) the region search enters the goal through those
+// neighbours and the route stays a chain; it skipped the illegal goal, found nothing, and the plan fell back to the
+// window -- the whole map, the seed having no component. seedburied: a 2 x 2 feature covers the whole footprint: no
+// step leaves the seed, the chain's refresh reaches nobody, the group plans again and has no goal to search from; its
+// window holds one cell and is charged for one tile (it was charged the whole map); the body is trapped either way.
+void seedcover() {
+    struct Run {int done=-1;uint64_t chains=0,fallbacks=0,bound=0,peak=0,trapped=0;};
+    const auto run=[](bool buried) {
+        Fixture f(512,320);
+        for(int z=0;z<320;++z)
+            if(!(z>=40&&z<52)&&!(z>=150&&z<170)&&!(z>=262&&z<268)) {f.wall(250,z);f.wall(251,z);}
+        f.publish();
+        const auto type=mover(2);
+        const int id=f.spawn(type,20,100);
+        f.start();
+        f.world.addFeature(140*512+300,300*16+16.f,140*16+16.f,0,2,2,true,-1,true);   // a rock beside the way
+        f.world.order(id,470*16,160*16,false);   // the goal origin is (469,159): cells 469..470 x 159..160
+        RouteWatch watch(f.world);
+        Run out;
+        for(int t=0;t<(buried?600:5000)&&out.done<0;++t) {
+            if(t==30) {
+                check(watch.nav->accounting().chains==1,"seedcover: the body's first route is no chain (the case tests nothing)");
+                if(buried)f.world.addFeature(159*512+469,470*16.f,160*16.f,0,2,2,true,-1,true);
+                else f.world.addFeature(160*512+470,470*16+8.f,160*16+8.f,0,1,1,true,-1,true);
+            }
+            if(t==80&&!buried)f.world.addFeature(140*512+300,300*16+16.f,140*16+16.f,0,2,2,false,-1,true);   // the rock lifted
+            f.world.tick(1.f/30);watch.sample();
+            if(f.world.unit(id)->orders.empty())out.done=t;
+        }
+        const auto a=watch.nav->accounting();
+        out.chains=a.chains;out.fallbacks=a.routeFallbacks;out.bound=a.seedBoundStarts;out.peak=watch.peak;
+        out.trapped=f.world.legionStats().trapped;
+        return out;
+    };
+    const uint64_t whole=4ull*512*320;
+    const Run cover=run(false),buried=run(true);
+    std::printf("seedcover done=%d chains=%llu fallbacks=%llu field_bytes_peak=%llu | seedburied seed_bound=%llu fallbacks=%llu trapped=%llu field_bytes_peak=%llu\n",
+                cover.done,(unsigned long long)cover.chains,(unsigned long long)cover.fallbacks,(unsigned long long)cover.peak,
+                (unsigned long long)buried.bound,(unsigned long long)buried.fallbacks,(unsigned long long)buried.trapped,(unsigned long long)buried.peak);
+    check(cover.done>=0,"seedcover: the mover did not arrive beside its covered goal");
+    check(cover.chains>=3&&cover.fallbacks==0,"seedcover: the search did not enter the covered goal through its neighbours");
+    check(cover.peak<whole/4,"seedcover: a covered goal cost a whole-map window");
+    check(buried.fallbacks>=1&&buried.trapped>=1,"seedburied: the buried goal's group did not fall back to its window and trap its body (the case tests nothing)");
+    check(buried.bound>=1&&buried.peak<whole/4,"seedburied: a field that cannot leave its seed was charged its window");
+}
+
+// The seed-bound charge is taken back when the build can leave its seeds after all. Two bodies under way on
+// whole-map windows (the hierarchy off: every plan a window); a feature buries the second one's goal. Both routes
+// are stale in that tick: the first group's refresh starts, and its initialisation and first slice take the tick's
+// refresh allowance; the second's starts seed-bound and gets no slice. The feature is lifted before the next tick:
+// the first slice finds the seed's steps open and charges the window before it writes.
+void seedrestore() {
+    LegionNavigator::setHierarchicalRoutesForTest(false);
+    struct Reset {~Reset() {LegionNavigator::setHierarchicalRoutesForTest(true);}} reset;
+    const int S=1024;
+    Fixture f(S,S);
+    f.publish();
+    const auto type=mover(2);
+    const int far=f.spawn(type,20,20),near=f.spawn(type,20,500);
+    f.start();
+    f.world.order(far,1000*16,1000*16,false);
+    f.world.tick(1.f/30);   // its own issue tick: the lower group id, the older request
+    f.world.order(near,900*16,500*16,false);   // goal origin (899,499)
+    for(int t=0;t<60;++t)f.world.tick(1.f/30);
+    const auto* nav=f.world.legionNavigator();
+    const uint64_t whole=4ull*S*S;
+    f.world.addFeature(499*S+899,900*16.f,500*16.f,0,2,2,true,-1,true);
+    f.world.tick(1.f/30);
+    const auto a0=nav->accounting();
+    std::printf("seedrestore buried: seed_bound=%llu restores=%llu fields=%zu field_bytes=%llu\n",(unsigned long long)a0.seedBoundStarts,
+                (unsigned long long)a0.seedBoundRestores,f.world.legionStats().liveFields,(unsigned long long)a0.bytes.fields);
+    check(a0.seedBoundStarts==1&&a0.seedBoundRestores==0,"seedrestore: the buried goal's refresh did not start seed-bound and unserved (the case tests nothing)");
+    f.world.addFeature(499*S+899,900*16.f,500*16.f,0,2,2,false,-1,true);   // lifted: the seed has steps again
+    f.world.tick(1.f/30);
+    const auto a1=nav->accounting();
+    std::printf("seedrestore lifted: restores=%llu fields=%zu field_bytes=%llu\n",(unsigned long long)a1.seedBoundRestores,
+                f.world.legionStats().liveFields,(unsigned long long)a1.bytes.fields);
+    check(a1.seedBoundRestores==1,"seedrestore: the window was not charged when its seed got a step");
+    check(a1.bytes.fields>=a0.bytes.fields+whole-65536,"seedrestore: the restored window is not charged in full");
+    int t=0;
+    for(;t<9000&&!f.world.unit(near)->orders.empty();++t)f.world.tick(1.f/30);
+    check(f.world.unit(near)->orders.empty(),"seedrestore: the body of the uncovered goal did not arrive");
+}
+
+// A body cut off from its goal after it registered, on a map that keeps changing elsewhere. An enclosure with one
+// gap; the body inside is ordered to a point outside; the gap is closed while it walks. No route on its plane
+// reaches it, and the whole component built to prove that was touched by the next change anywhere and built again
+// for as long as the unit kept its order, the unit Waiting. It is trapped by its component now: it walks on toward
+// its goal until the wall stops it, asks for no field, and its order retires after the grace period. With the gap
+// reopened in time (reopen) it goes on as the member it is -- no new registration -- and arrives.
+void cutoff() {
+    struct Run {int trappedAt=-1,clearedAt=-1;uint64_t fields=0,cutTraps=0,resumed=0,registrations=0,registered=0,walked=0;bool arrived=false;};
+    const auto run=[](bool reopen) {
+        Fixture f(256,256);
+        f.rect(20,20,104,4);f.rect(20,120,104,4);f.rect(20,20,4,104);f.rect(120,20,4,46);f.rect(120,76,4,48);   // gap x 120..123, z 66..75
+        f.publish();
+        const auto type=mover(2);
+        const int id=f.spawn(type,40,70);
+        f.start();
+        f.world.order(id,220*16,70*16,false);
+        Run out;
+        const int32_t x0=f.world.unit(id)->x.v;
+        const int ticks=reopen?4000:9800;
+        for(int t=0;t<ticks;++t) {
+            if(t==30) {f.rect(120,66,4,10);f.publish();}
+            if(reopen&&t==1200) {f.open(120,66,4,10);f.publish();}
+            if(t%7==0)f.world.addFeature(230*256+20,20*16+16.f,230*16+16.f,0,2,2,(t/7)%2==0,-1,true);   // churn in a far corner
+            f.world.tick(1.f/30);
+            const int state=f.world.legionNavigator()->unitState(id);
+            if(out.trappedAt<0&&state==5) {
+                out.trappedAt=t;out.walked=uint64_t((f.world.unit(id)->x.v-x0)>>16);
+                out.registered=f.world.legionStats().registrations;
+            }
+            if(out.clearedAt<0&&f.world.unit(id)->orders.empty())out.clearedAt=t;
+            if(reopen&&out.clearedAt>=0)break;
+        }
+        const auto a=f.world.legionNavigator()->accounting();
+        const auto s=f.world.legionStats();
+        out.fields=s.fieldsBuilt;out.cutTraps=a.cutTraps;out.resumed=a.trappedResumed;out.registrations=s.registrations;
+        const auto& u=*f.world.unit(id);
+        out.arrived=std::abs(u.x.toFloat()-220*16)<24&&std::abs(u.z.toFloat()-70*16)<24;
+        return out;
+    };
+    const Run closed=run(false),reopened=run(true);
+    std::printf("cutoff closed: trapped_at=%d walked_px=%llu cleared_at=%d fields=%llu cut_traps=%llu | reopened: trapped_at=%d cleared_at=%d arrived=%d resumed=%llu registrations_after_trap=%llu fields=%llu\n",
+                closed.trappedAt,(unsigned long long)closed.walked,closed.clearedAt,(unsigned long long)closed.fields,(unsigned long long)closed.cutTraps,
+                reopened.trappedAt,reopened.clearedAt,int(reopened.arrived),(unsigned long long)reopened.resumed,(unsigned long long)(reopened.registrations-reopened.registered),(unsigned long long)reopened.fields);
+    check(closed.trappedAt>=0&&closed.trappedAt<1500&&closed.cutTraps==1,"cutoff: the cut-off body was not trapped by its component");
+    check(closed.walked>=40*16,"cutoff: the cut-off body did not walk on toward its goal before it was trapped");
+    check(closed.fields<=12,"cutoff: fields were built over and over for a body no route can reach");
+    check(closed.clearedAt>=closed.trappedAt+8950&&closed.clearedAt<=closed.trappedAt+9060,"cutoff: the cut-off order did not retire after the grace period");
+    check(reopened.arrived&&reopened.clearedAt>=0,"cutoff: the body did not arrive after its way reopened");
+    check(reopened.resumed==1&&reopened.registrations==reopened.registered,"cutoff: the reopened body was registered afresh instead of going on in place");
+}
+
+// The cut test asks every seed, not one cell standing for the group. Two bodies ordered in one tick to goals 12
+// cells apart are one group with two seeds; a wall then splits the map between the goals, each body on its goal's
+// side. The group's component cell is the first goal's: the second body's component is another, yet its own goal
+// is beside it. Both arrive, neither is trapped.
+void splitseeds() {
+    Fixture f(256,128);
+    f.publish();
+    const auto type=mover(2);
+    const int west=f.spawn(type,20,60),east=f.spawn(type,236,60);
+    f.start();
+    f.world.order(west,100*16,60*16,false);
+    f.world.order(east,112*16,60*16,false);
+    check(f.world.legionNavigator()->unitGroup(west)==f.world.legionNavigator()->unitGroup(east),"splitseeds: the two goals did not form one group (the case tests nothing)");
+    f.rect(105,0,2,128);f.publish();
+    int t=0;
+    for(;t<3000&&!(f.world.unit(west)->orders.empty()&&f.world.unit(east)->orders.empty());++t)f.world.tick(1.f/30);
+    const auto& w=*f.world.unit(west);const auto& e=*f.world.unit(east);
+    std::printf("splitseeds ticks=%d west=%.1f,%.1f east=%.1f,%.1f trapped=%llu cut_traps=%llu\n",t,w.x.toFloat()/16,w.z.toFloat()/16,
+                e.x.toFloat()/16,e.z.toFloat()/16,(unsigned long long)f.world.legionStats().trapped,
+                (unsigned long long)f.world.legionNavigator()->accounting().cutTraps);
+    check(w.orders.empty()&&e.orders.empty(),"splitseeds: a body beside its own goal did not arrive");
+    check(std::abs(w.x.toFloat()-100*16)<24&&std::abs(e.x.toFloat()-112*16)<24,"splitseeds: a body did not reach its own goal");
+    check(f.world.legionStats().trapped==0,"splitseeds: a body in its own goal's component was trapped");
+}
+
+// The new route state is copied with the world and hashed. The run holds a seed-bound window (a buried goal), a
+// plan over the seeds' cells and a trapped cut-off body (a body penned in after its order), a full group that plans
+// (a body whose first window lies behind a wall) and chains a churned gap keeps touching. Every 25 ticks the world
+// is cloned; the clone then gets the same orders and changes as the original for 20 ticks and must have the same
+// state hash after each. (Group::awaited is a plain member of the group, copied with it; legion_refreshfirst runs
+// it serial against workers.)
+void routeclone() {
+    SmallAllowance allowance(1);
+    Fixture f(512,320);
+    for(int z=0;z<320;++z)
+        if(!(z>=40&&z<52)&&!(z>=150&&z<170)&&!(z>=262&&z<268)) {f.wall(250,z);f.wall(251,z);}
+    f.rect(60,100,60,4);f.rect(60,160,60,4);f.rect(60,100,4,64);f.rect(116,100,4,24);f.rect(116,136,4,28);   // a pen, gap z 124..135
+    f.rect(180,180,4,110);   // the wall a first window lies behind
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int s=0;s<6;++s)for(int i=0;i<4;++i)ids.push_back(f.spawn(type,10+(i%2)*3,20+s*48+(i/2)*3));
+    const int penned=f.spawn(type,80,130),buried=f.spawn(type,30,300),behind=f.spawn(type,140,235);
+    f.start();
+    const auto input=[&](World& w,int t) {
+        if(t<6)for(int i=0;i<4;++i)w.order(ids[size_t(t*4+i)],float((470-(t%3)*12)*16),float((30+((t*5)%6)*48)*16),false);
+        if(t==6) {
+            w.order(penned,480*16,130*16,false);
+            w.order(buried,440*16,300*16,false);
+            w.order(behind,200*16,235*16,false);
+            w.addFeature(299*512+439,440*16.f,300*16.f,0,2,2,true,-1,true);   // the buried goal
+        }
+        if(t==40)for(int k=0;k<6;++k)w.addFeature((124+2*k)*512+116,116*16+32.f,(124+2*k)*16+16.f,0,4,2,true,-1,true);   // the pen closes
+        if(t>=60&&t%9==0)w.addFeature(140*512+256,256*16+16.f,140*16+16.f,0,2,2,(t/9)%2==0,-1,true);   // churn beside the middle gap
+        if(t==400)w.addFeature(299*512+439,440*16.f,300*16.f,0,2,2,false,-1,true);
+    };
+    std::vector<std::pair<int,std::unique_ptr<World>>> clones;
+    uint64_t compared=0;
+    for(int t=0;t<900;++t) {
+        input(f.world,t);
+        f.world.tick(1.f/30);
+        const uint64_t hash=f.world.stateHash();
+        for(auto& [since,copy]:clones) {
+            input(*copy,t);
+            copy->tick(1.f/30);
+            check(copy->stateHash()==hash,"routeclone: a clone of tick "+std::to_string(since)+" differs from the original at tick "+std::to_string(t));
+            ++compared;
+        }
+        clones.erase(std::remove_if(clones.begin(),clones.end(),[&](const auto& c) {return t-c.first>=20;}),clones.end());
+        if(t%25==7)clones.emplace_back(t,f.world.clone());
+    }
+    const auto a=f.world.legionNavigator()->accounting();
+    std::printf("routeclone compared=%llu seed_bound=%llu seed_plans=%llu cut_traps=%llu awaited_ticks=%llu full_plans=%llu chains=%llu hash=%016llx\n",
+                (unsigned long long)compared,(unsigned long long)a.seedBoundStarts,(unsigned long long)a.seedPlans,(unsigned long long)a.cutTraps,
+                (unsigned long long)a.awaitedTicks,(unsigned long long)a.fullPlans,(unsigned long long)a.chains,(unsigned long long)f.world.stateHash());
+    check(a.seedBoundStarts>0&&a.seedPlans>0&&a.cutTraps>0&&a.fullPlans>0,"routeclone: the run held no seed-bound window, no seeds-only plan, no cut-off body or no full group's plan (the case tests nothing)");
+}
+
 // Legion 10,000 stage 7: traffic in coarse route selection. A wall crosses a 640 x 384 map with two gaps; with the
 // map empty the walker's chain takes the north gap (the region search's choice on this geometry), but here 121 idle
 // bodies (another player's) stand in the sector before it. The region search charges the regions by their soft share
@@ -4873,7 +5176,8 @@ int main(int argc,char** argv) {
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainschurn",chainschurn},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
         {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"facing",facing},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"mixedrandom",mixedrandom},{"funnelmouth",funnelmouth},{"funneltie",funneltie},{"entryplanes",entryplanes},
-        {"improvedefer",improvedefer},{"chainresolve",chainresolve},{"trafficlane",trafficlane},{"staticindex",staticindex},{"routeindex",routeindex}};
+        {"improvedefer",improvedefer},{"chainresolve",chainresolve},{"trafficlane",trafficlane},{"staticindex",staticindex},{"routeindex",routeindex},
+        {"fullplan",fullplan},{"demandown",demandown},{"seedcover",seedcover},{"seedrestore",seedrestore},{"cutoff",cutoff},{"splitseeds",splitseeds},{"routeclone",routeclone}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
