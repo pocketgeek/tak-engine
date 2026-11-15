@@ -2651,7 +2651,7 @@ private:
     std::vector<ReplayKeyframe> replayKeys_;     // ascending; the first is tick 0
     uint64_t replayKeyBytes_ = 0, replayKeyBudget_ = 0;
     uint64_t replayKeyLast_ = 0;                 // the newest copy's size: what the next will take
-    bool replayKeysStopped_ = false;             // ran out of memory: tick 0 only, no more captures
+    uint32_t replayKeySkips_ = 0;                // captures passed over for want of room, in a row
     bool replayKeyMismatch_ = false;             // a restore did not land on its keyframe, twice
     bool replayHalted_ = false;                  // a restore failed part way: the world is gone
     bool replayPublish_ = false;                 // a restore: publish even with no tick run
@@ -2676,7 +2676,7 @@ private:
     std::vector<uint32_t> replayKeyTicks() const;
     void replayTickOnce();                       // one recorded tick, the same for play and jump
     void replayCaptureKeyframe();
-    bool replayThinKeys(uint64_t incoming);      // make room; false when nothing is left to give up
+    bool replayThinKeys(uint64_t incoming);      // make room at the playhead; false: there is none to make
     void replayRestore(size_t keyframe);
     void replayResetDisplay();                   // what the display built from another moment
     void replayDropQueued();                     // what the sim queued for the display

@@ -5,6 +5,7 @@
 #include "client/replaybar.h"
 #include "client/watchonly.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <memory>
 #include <span>
@@ -115,7 +116,7 @@ static void keyframes() {
     for (uint32_t t = rb::kKeyframeTicks; t < length; t += rb::kKeyframeTicks) {
         kept.push_back(t);
         while (kept.size() > capacity) {
-            const size_t drop = rb::thinChoice(kept, t, length, capacity);
+            const size_t drop = rb::thinChoice(kept, t);
             check(drop > 0 && drop + 1 < kept.size(), "the ends are never dropped");
             kept.erase(kept.begin() + std::ptrdiff_t(drop));
         }
@@ -128,7 +129,126 @@ static void keyframes() {
     }
     check(widest <= 3 * length / capacity, "far from the playhead the keyframes spread evenly");
     check(nearest == rb::kKeyframeTicks, "near the playhead they stay dense");
-    check(rb::thinChoice({0, 900}, 900, length, 2) == 2, "nothing to drop");
+    check(rb::thinChoice({0, 900}, 900) == 2, "nothing to drop");
+}
+
+// Straight playback with room for `capacity` keyframes: one laid every 30 s of game, thinned
+// to fit. Returns the widest gap between neighbours, as a fraction of what was played, at
+// its worst over the whole run; `kept` is what is held at the end.
+template <class Thin>
+static double widestGap(size_t capacity, uint32_t steps, const Thin& thin, std::vector<uint32_t>& kept) {
+    kept = {0};
+    double worst = 0;
+    for (uint32_t s = 1; s <= steps; ++s) {
+        const uint32_t t = s * rb::kKeyframeTicks;
+        kept.push_back(t);
+        while (kept.size() > capacity) {
+            const size_t drop = thin(kept, t);
+            if (drop == 0 || drop + 1 >= kept.size()) { check(false, "thinning gives up an end, or nothing"); return 1; }
+            kept.erase(kept.begin() + std::ptrdiff_t(drop));
+        }
+        uint32_t widest = 0;
+        for (size_t i = 1; i < kept.size(); ++i) widest = std::max(widest, kept[i] - kept[i - 1]);
+        check(widest <= rb::thinGapBound(t, capacity), "a gap past the bound: capacity " + std::to_string(capacity) +
+              " tick " + std::to_string(t) + " gap " + std::to_string(widest));
+        if (s >= 4 * capacity) worst = std::max(worst, double(widest) / double(t));
+    }
+    return worst;
+}
+
+// The property the rewind stands on: however long the replay and however few keyframes
+// fit, they stay spread over everything played. (They used to bunch at the playhead: on
+// an 18 hour replay with room for four, a jump to hour 17 ran from tick 0.)
+static void spread() {
+    const auto thin = [](const std::vector<uint32_t>& ticks, uint32_t playhead) { return rb::thinChoice(ticks, playhead); };
+    const uint32_t eighteenHours = 1945042 / rb::kKeyframeTicks;
+    for (const size_t capacity : {size_t(3), size_t(4), size_t(5), size_t(8), size_t(10), size_t(13), size_t(17), size_t(40)})
+        for (const uint32_t steps : {uint32_t(120), uint32_t(400), eighteenHours}) {
+            std::vector<uint32_t> kept;
+            const double worst = widestGap(capacity, steps, thin, kept);
+            const std::string at = "capacity " + std::to_string(capacity) + ", " + std::to_string(steps) + " captures";
+            if (steps >= 4 * capacity)
+                check(worst <= 2.0 / double(capacity - 1) + 1e-9, at + ": widest gap " + std::to_string(worst) + " of the played length");
+            check(kept.size() == std::min<size_t>(capacity, steps + 1) && kept.front() == 0 &&
+                  kept.back() == steps * rb::kKeyframeTicks, at + ": tick 0 and the newest are held, and the room is used");
+            // A jump back to any time restores the keyframe behind it and re-simulates the rest.
+            uint64_t farthest = 0;
+            for (uint32_t target = 0; target <= kept.back(); target += 450)
+                farthest = std::max<uint64_t>(farthest, target - kept[rb::keyframeAt(kept, target)]);
+            check(farthest <= rb::thinGapBound(kept.back(), capacity), at + ": a jump re-simulates " + std::to_string(farthest) + " ticks");
+        }
+    // The 18 hour replay with the room the default budget gives it: no jump runs more than a quarter of it.
+    {
+        std::vector<uint32_t> kept;
+        const double worst = widestGap(9, eighteenHours, thin, kept);
+        check(worst <= 0.25 + 1e-9, "nine keyframes over 18 hours: widest gap " + std::to_string(worst));
+        // Near the playhead a keyframe is close: the newest, and the one before it within five minutes more often than not.
+        check(kept.back() - kept[kept.size() - 2] <= rb::thinGapBound(kept.back(), 9), "the newest two");
+    }
+    // Rewinding and playing on thins round the playhead and keeps the spread too.
+    {
+        const size_t capacity = 8;
+        std::vector<uint32_t> kept;
+        widestGap(capacity, 400, thin, kept);
+        const uint32_t end = kept.back();
+        for (uint32_t t = 100 * rb::kKeyframeTicks; t <= 160 * rb::kKeyframeTicks; t += rb::kKeyframeTicks) {
+            if (std::binary_search(kept.begin(), kept.end(), t)) continue;
+            kept.insert(std::lower_bound(kept.begin(), kept.end(), t), t);
+            while (kept.size() > capacity) {
+                const size_t drop = rb::thinChoice(kept, t);
+                check(drop > 0 && drop + 1 < kept.size(), "the ends stay while a rewound stretch plays");
+                kept.erase(kept.begin() + std::ptrdiff_t(drop));
+            }
+            uint32_t widest = 0;
+            for (size_t i = 1; i < kept.size(); ++i) widest = std::max(widest, kept[i] - kept[i - 1]);
+            check(widest <= rb::thinGapBound(end, capacity), "a rewound stretch keeps the spread");
+        }
+        check(kept.back() == end, "what was played furthest stays reachable");
+    }
+}
+
+// Making room for the next keyframe: capture goes on whatever fits.
+static void room() {
+    const uint64_t mb = uint64_t(1) << 20;
+    // Room for all: nothing is given up.
+    auto plan = rb::thinPlan({0, 900, 1800}, {80 * mb, 400 * mb, 400 * mb}, 4096 * mb, 400 * mb, 2700, 2700);
+    check(plan.fits && plan.drop.empty(), "room for all");
+    // Full: one goes, never tick 0, and the one being laid counts as the newest.
+    plan = rb::thinPlan({0, 900, 1800, 2700}, {80 * mb, 400 * mb, 400 * mb, 400 * mb}, 1300 * mb, 400 * mb, 3600, 3600);
+    check(plan.fits && plan.drop.size() == 1 && plan.drop[0] != 0, "one is given up for the next");
+    // Room for tick 0 and one more (an 8 GB machine on a 2048x2048 map used to end capture here for good):
+    // the one held makes way for the newer one, every time.
+    {
+        std::vector<uint32_t> ticks = {0};
+        std::vector<uint64_t> bytes = {240 * mb};
+        const uint64_t budget = 2048 * mb, size = 1100 * mb;
+        for (uint32_t t = rb::kKeyframeTicks; t <= 40 * rb::kKeyframeTicks; t += rb::kKeyframeTicks) {
+            const auto p = rb::thinPlan(ticks, bytes, budget, size, t, t);
+            check(p.fits, "tick 0 and one more fit: tick " + std::to_string(t));
+            for (auto it = p.drop.rbegin(); it != p.drop.rend(); ++it) {   // ascending when one at a time
+                check(*it != 0, "tick 0 is never given up");
+                ticks.erase(ticks.begin() + std::ptrdiff_t(*it)); bytes.erase(bytes.begin() + std::ptrdiff_t(*it));
+            }
+            ticks.push_back(t); bytes.push_back(size);
+            uint64_t held = 0; for (const uint64_t b : bytes) held += b;
+            check(held <= budget, "the budget holds");
+        }
+        check(ticks.size() == 2 && ticks.back() == 40 * rb::kKeyframeTicks, "the keyframe kept follows the playhead");
+    }
+    // Not even one fits beside tick 0: nothing is given up for a capture that cannot happen.
+    plan = rb::thinPlan({0, 900}, {240 * mb, 300 * mb}, 1024 * mb, 1100 * mb, 1800, 1800);
+    check(!plan.fits && plan.drop.empty(), "no room to make: the keyframes held stay");
+    // The one just laid came out larger than the budget has room for: the pass after gives up others first.
+    plan = rb::thinPlan({0, 900, 1800, 2700}, {80 * mb, 400 * mb, 400 * mb, 700 * mb}, 1300 * mb, 0, 2700, 2700);
+    check(plan.fits && plan.drop.size() == 1 && plan.drop[0] != 0 && plan.drop[0] != 3, "a larger one makes its own room");
+    // After a rewind a keyframe is laid between two held ones; when it is the one thinning would
+    // drop again, it is not laid at all.
+    plan = rb::thinPlan({0, 90000}, {80 * mb, 400 * mb}, 600 * mb, 400 * mb, 45000, 45000);
+    check(!plan.fits && plan.drop.empty(), "a keyframe that would go at once is not laid");
+    // Several at once, when the newest is much larger than those held.
+    plan = rb::thinPlan({0, 900, 1800, 2700, 3600}, {80 * mb, 100 * mb, 100 * mb, 100 * mb, 100 * mb}, 600 * mb, 400 * mb, 4500, 4500);
+    check(plan.fits && plan.drop.size() == 3, "as many go as the next one needs");
+    for (const size_t i : plan.drop) check(i >= 1 && i <= 4, "tick 0 stays through a larger thinning");
 }
 
 struct Check { uint32_t tick; };
@@ -195,7 +315,7 @@ static void allocations() {
 }
 
 int main() {
-    geometry(); mapping(); speeds(); keyframes(); checks(); rules(); allocations();
+    geometry(); mapping(); speeds(); keyframes(); spread(); room(); checks(); rules(); allocations();
     if (failures) { std::fprintf(stderr, "replaybar: %d failures\n", failures); return 1; }
     std::puts("replaybar passed");
     return 0;

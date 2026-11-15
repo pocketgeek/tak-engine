@@ -645,12 +645,15 @@
 
     void GameView::replayCaptureKeyframe() {
         namespace rb = tak::replaybar;
-        if (replayKeysStopped_) return;
         const uint32_t tick = uint32_t(replayTick_);
         const auto at = std::lower_bound(replayKeys_.begin(), replayKeys_.end(), tick,
                                          [](const ReplayKeyframe& k, uint32_t t) { return k.tick < t; });
         if (at != replayKeys_.end() && at->tick == tick) return;   // laid on an earlier pass
-        if (!replayThinKeys(replayKeyLast_)) return;   // room for one like the last
+        // Room for one like the last. With none to make this capture is passed over and the
+        // next one asks again: capture never stops for good. The size asked for is only
+        // the last copy's, so now and then one is taken anyway, to measure it afresh.
+        constexpr uint32_t kMeasureAgain = 20;   // captures: ten minutes of game
+        if (!replayThinKeys(replayKeyLast_) && ++replayKeySkips_ % kMeasureAgain) return;
         try {
             ReplayKeyframe key;
             key.tick = tick;
@@ -667,22 +670,37 @@
             const auto place = std::lower_bound(replayKeys_.begin(), replayKeys_.end(), tick,
                                                 [](const ReplayKeyframe& k, uint32_t t) { return k.tick < t; });
             replayKeys_.insert(place, std::move(key));
-            replayThinKeys(0);   // this one can be the bigger
+            // This one can be the bigger. If even alone beside tick 0 it does not fit, it goes again.
+            if (replayThinKeys(0)) replayKeySkips_ = 0;
+            else if (replayKeys_.size() > 1) {
+                const auto mine = std::lower_bound(replayKeys_.begin() + 1, replayKeys_.end(), tick,
+                                                   [](const ReplayKeyframe& k, uint32_t t) { return k.tick < t; });
+                if (mine != replayKeys_.end() && mine->tick == tick) {
+                    replayKeyBytes_ -= mine->bytes;
+                    replayKeys_.erase(mine);
+                }
+            }
         } catch (const std::bad_alloc&) {
-            std::fprintf(stderr, "replay: out of memory at tick %u: no more keyframes\n", tick);
+            // The machine has less to give than the budget took for granted: back to tick 0
+            // and on with half the budget, which the next captures fill again.
+            std::fprintf(stderr, "replay: out of memory at tick %u: keyframe budget halved\n", tick);
             if (replayKeys_.size() > 1) replayKeys_.erase(replayKeys_.begin() + 1, replayKeys_.end());
             replayKeyBytes_ = replayKeys_.empty() ? 0 : replayKeys_.front().bytes;
-            replayKeysStopped_ = true;
+            replayKeyBudget_ /= 2;
         }
     }
 
     bool GameView::replayThinKeys(uint64_t incoming) {
         namespace rb = tak::replaybar;
-        const size_t capacity = size_t(replayKeyBudget_ / std::max<uint64_t>(replayKeyLast_, 1));
-        while (replayKeyBytes_ + incoming > replayKeyBudget_) {
-            const auto ticks = replayKeyTicks();
-            const size_t drop = rb::thinChoice(ticks, uint32_t(replayTick_), replayBundles_.size(), capacity);
-            if (drop >= ticks.size()) return false;
+        if (replayKeyBytes_ + incoming <= replayKeyBudget_) return true;
+        std::vector<uint64_t> bytes;
+        bytes.reserve(replayKeys_.size());
+        for (const auto& key : replayKeys_) bytes.push_back(key.bytes);
+        rb::ThinPlan plan = rb::thinPlan(replayKeyTicks(), bytes, replayKeyBudget_, incoming,
+                                         uint32_t(replayTick_), uint32_t(replayTick_));
+        if (!plan.fits) return false;
+        std::sort(plan.drop.begin(), plan.drop.end(), std::greater<size_t>());   // erase from the back
+        for (const size_t drop : plan.drop) {
             replayKeyBytes_ -= replayKeys_[drop].bytes;
             replayKeys_.erase(replayKeys_.begin() + std::ptrdiff_t(drop));
         }

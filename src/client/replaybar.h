@@ -150,23 +150,72 @@ inline size_t nudgeTarget(size_t playhead, size_t running, int64_t ticks, size_t
     return size_t(std::max(from, std::min(want, int64_t(playhead) + int64_t(kLongStepTicks))));
 }
 
-// Which keyframe to give up when the budget is full: the interior one with the smallest
-// gap / min(age, 2 * length / capacity), `gap` being the hole dropping it would leave and
-// `age` its distance from the playhead. Near the playhead keyframes stay dense; far from
-// it they thin to an even spread. The first (tick 0) and the last are never dropped.
-// ticks.size() when there is nothing to drop.
-inline size_t thinChoice(const std::vector<uint32_t>& ticks, uint32_t playhead, size_t length, size_t capacity) {
-    if (ticks.size() < 3) return ticks.size();
-    const double reach = 2.0 * double(length) / double(std::max<size_t>(capacity, 1));
-    size_t pick = ticks.size();
-    double best = 0;
-    for (size_t i = 1; i + 1 < ticks.size(); ++i) {
-        const double gap = double(ticks[i + 1]) - double(ticks[i - 1]);
-        const double age = std::abs(double(ticks[i]) - double(playhead));
-        const double score = gap / std::max(1.0, std::min(age, reach));
-        if (pick == ticks.size() || score < best) { best = score; pick = i; }
+// Which keyframe to give up when the budget is full; ticks.size() when there is nothing to
+// drop. The first (tick 0) and the last are never dropped.
+//
+// Only a keyframe whose loss leaves a hole of at most 2 * span / (n - 2) may go: `hole`
+// is the distance between its two neighbours, `span` what the n keyframes cover. There
+// always is one, as the n - 2 holes add up to less than 2 * span. So thinning never
+// opens a gap wider than twice an even spread of the keyframes left, however long the
+// replay and however few of them fit (thinGapBound): they stay spread over everything
+// played, and a jump back to any time re-simulates at most that much. Among those that
+// may go, the one with the smallest hole / age goes, `age` being its distance from the
+// playhead: far from it they thin first, near it they stay dense, where << lands.
+inline size_t thinChoice(const std::vector<uint32_t>& ticks, uint32_t playhead) {
+    const size_t n = ticks.size();
+    if (n < 3) return n;
+    const uint64_t span = uint64_t(ticks.back()) - ticks.front();
+    size_t pick = n;
+    uint64_t pickHole = 0, pickAge = 1;
+    for (size_t i = 1; i + 1 < n; ++i) {
+        const uint64_t hole = uint64_t(ticks[i + 1]) - ticks[i - 1];
+        if (hole * (n - 2) > 2 * span) continue;
+        const uint64_t age = std::max<uint64_t>(1, ticks[i] > playhead ? ticks[i] - playhead : playhead - ticks[i]);
+        if (pick == n || hole * pickAge < pickHole * age) { pick = i; pickHole = hole; pickAge = age; }
     }
     return pick;
+}
+
+// The widest gap thinning leaves between neighbours of `kept` keyframes covering `span`
+// ticks: twice their even spread. (A gap is never under one capture interval.)
+inline uint64_t thinGapBound(uint64_t span, size_t kept) {
+    return std::max<uint64_t>(kKeyframeTicks, 2 * span / std::max<size_t>(kept - std::min<size_t>(kept, 1), 1));
+}
+
+// Room for a keyframe of `incoming` bytes at `tick` within `budget`: which of the held
+// keyframes (`ticks` ascending from 0, their `bytes`) to give up, as indices into the
+// lists as they stand, in the order thinChoice gives them up. `fits` false: there is no
+// room to make, and then nothing is given up -- tick 0 never is, the one being laid is
+// not, and when it is itself the one thinChoice would drop, laying it gains nothing.
+// The caller lays no keyframe this time and asks again at the next; capture never stops
+// for good. `incoming` 0 with `tick` held already: the pass after a keyframe that came
+// out larger than the last.
+struct ThinPlan {
+    bool fits = true;
+    std::vector<size_t> drop;
+};
+inline ThinPlan thinPlan(std::vector<uint32_t> ticks, const std::vector<uint64_t>& bytes, uint64_t budget,
+                         uint64_t incoming, uint32_t tick, uint32_t playhead) {
+    ThinPlan plan;
+    uint64_t held = incoming;
+    for (const uint64_t b : bytes) held += b;
+    std::vector<size_t> index(ticks.size());   // each entry's place in the caller's lists
+    for (size_t i = 0; i < index.size(); ++i) index[i] = i;
+    constexpr size_t kLaid = ~size_t(0);
+    const auto at = std::lower_bound(ticks.begin(), ticks.end(), tick);
+    if (at == ticks.end() || *at != tick) {
+        index.insert(index.begin() + (at - ticks.begin()), kLaid);
+        ticks.insert(at, tick);
+    }
+    while (held > budget) {
+        const size_t drop = thinChoice(ticks, playhead);
+        if (drop >= ticks.size() || index[drop] == kLaid) return {false, {}};
+        plan.drop.push_back(index[drop]);
+        held -= bytes[index[drop]];
+        ticks.erase(ticks.begin() + std::ptrdiff_t(drop));
+        index.erase(index.begin() + std::ptrdiff_t(drop));
+    }
+    return plan;
 }
 
 // The first recorded check still ahead of a playhead standing at `tick`: a check taken

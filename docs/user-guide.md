@@ -3069,10 +3069,22 @@ the world visibly running and no sound. So:
 - A jump also runs while paused, and playback then carries on as it was. Clicking
   again while it runs picks a new target, and pausing stops it where it stands.
 
-The copies use a quarter of your memory, up to 4 GB. In a long or very large game
-the older ones are thinned out evenly, so jumps far from where you are take longer
-than jumps nearby. Your selection and groups survive a jump; units not yet alive at that
-moment drop out of them.
+The copies use a quarter of your memory, up to 4 GB. A copy shares the terrain with
+the running game and holds the rest packed, so it is far smaller than the game
+itself. In a long or very large game they still fill the memory, and then some are
+given up. The ones kept stay spread over everything played so far, with more of them
+near where you are:
+
+- No two neighbouring copies are further apart than twice an even spread of the
+  copies kept. With nine copies, a jump back to any moment plays at most a quarter
+  of the game played so far, and usually much less. It never has to start from the
+  beginning unless the moment lies before the first copy after the start.
+- Near where you are the copies are closer together, so short rewinds stay quick.
+- Copies are taken for as long as the replay plays, however little memory there is.
+  With room for only one besides the start of the game, it is always the newest.
+
+Your selection and groups survive a jump; units not yet alive at that moment drop
+out of them.
 
 A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:

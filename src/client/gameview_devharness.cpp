@@ -1289,6 +1289,23 @@
                 replayKeyBudget_=replayKeyLast_*3+replayKeyLast_/2;
                 replayJumpTo(3000);land();
                 check(replayKeyBytes_<=replayKeyBudget_ && replayKeys_.size()==3,"keyframes stay inside the budget");
+                // Room for one beside tick 0: the one kept still follows the playhead. (Capture used
+                // to end for good here, and a rewind then ran from the last one it had laid.)
+                replayBundles_.resize(4000);
+                replayKeyBudget_=replayKeys_.front().bytes+replayKeyLast_+replayKeyLast_/2;
+                replayJumpTo(3700);land();
+                check(replayKeys_.size()==2 && replayKeys_.back().tick==3600 && replayKeyBytes_<=replayKeyBudget_,
+                      "with room for one keyframe beside tick 0, capture goes on");
+                // Room for tick 0 alone: nothing is laid, nothing is given up, and a rewind still lands.
+                replayBundles_.resize(6000);
+                replayKeyBudget_=replayKeys_.front().bytes+replayKeyLast_/2;
+                replayJumpTo(4600);land();
+                check(replayKeys_.size()==2 && replayKeys_.back().tick==3600,"with no room, the keyframes held stay");
+                replayKeyBudget_=uint64_t(1)<<30;
+                replayJumpTo(5500);land();
+                check(replayKeys_.back().tick==5400,"and capture picks up again when there is room");
+                replayJumpTo(3650);land();
+                check(replayTick_==3650,"a rewind lands from the keyframe behind it");
                 sounded=0;
                 sounds_.setEffectsMuted(false);
                 replayBundles_.clear();
