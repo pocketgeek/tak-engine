@@ -20,6 +20,163 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports: the latest release's live in [`docs/`](docs/), every earlier one's
 in the source of its tag.
 
+## 1.0.6
+*2026-11-15 · protocol 330 · replay format 15 · does not play with 1.0.5, nor its replays*
+
+Fixes for what an audit of an 18-hour game found: eight Absurd computer players on the
+largest Volcano map, with Legion pathfinding and the Crusades balance.
+
+- **Hard and Absurd computer players no longer spend most of the game out of mana.**
+  They used to build far more factories than their income could feed and then could
+  afford nothing, not even another lodestone. Now they keep one factory for every 60
+  mana of income a second, add one while their store is over 60% full, and still build
+  a lodestone when they run short. A Zhon player keeps its Beast Handlers, Tamers,
+  Lords and Shamans in the same proportion. Hard and Absurd armies at 20 minutes are
+  typically two to four times larger. Normal now uses the same factory rule (8 at
+  most) and keeps adding lodestones until it earns enough for its next factory, so an
+  empty store holds back its income far less often; it still spends all it earns, and in an
+  all-Normal room it earns about a fifth more by 20 minutes and fields about a fifth
+  more fighters. Normal's builder cap, army size, pace and build-profile limits are
+  unchanged.
+- **Hard and Absurd keep their lodestones and builders in check.** They stop adding
+  lodestones once their mana store is full, and in a game with a unit cap lodestones
+  take at most a quarter of it, so a full army is no longer slowly replaced by
+  lodestones. Their builders stay away from mana deposits next to enemy troops or
+  inside an enemy's base, and do not go straight back to a spot where a lodestone or
+  its builder was just lost; a builder killed elsewhere (at home, or more than 1,000
+  pixels short of the deposit) no longer puts the deposit off limits. A Hard or Absurd
+  Zhon keeps its producers on its own side of the map and only as many as it can keep
+  busy, and Hard and Absurd no longer pile up unarmed scouts and Rocs they never use.
+  Other levels keep their own rules here, except that no level but Retail sends builders out
+  for buildings the unit cap will refuse.
+- **Computer players no longer lose units that get stuck on the way to an attack**
+  (every level except Retail). A unit that has stood for a minute with its attack
+  order without moving or fighting is stopped and sent out again, as you would click
+  again on it; units waiting behind a fight get four minutes. Before, such units stood
+  where they were for the rest of the game. Units with a minimum range (the Crusades
+  Catapults, the Tortoise, the Creon Sage) are no longer given the same attack order
+  again while they step back to fire, which used to stop them from ever firing.
+  Harpies, Mind Mages and Basilisks are no longer ordered onto buildings and other
+  targets their charm or stone gaze cannot take, nor ordered again and again to a site
+  they cannot take. A computer player that has lost its Monarch keeps playing its own
+  faction even when it holds builders captured from another.
+- **Queued attacks no longer take a detour.** With Retail pathfinding, a unit told to
+  attack one enemy and then, with Shift or a right-drag attack box, a second one used
+  to walk to the top-left corner of the map when the first enemy died, and only then
+  turn back. The same happened when a guarded unit died with an attack queued behind
+  the guard. It now heads straight for the next target.
+- **Queued loads work.** A unit told with Shift to board a transport after its other
+  orders used to finish those orders and then just stand there, because the transport
+  had already given up on the pickup. The transport now holds the pickup until the
+  unit's turn comes, stays where it is meanwhile, and takes the passengers that are
+  ready first. The same goes for a mobile builder that boards after its production, and
+  for a unit given a Ctrl order on its way to board. Give the unit a different order,
+  or stop it, and the transport lets the pickup go. A plain load is unchanged.
+- **Orders on a unit end when it changes owner**, as in the original game, where it
+  becomes a new unit for everyone. When a unit is charmed by a Harpy or Mind Mage,
+  given to an ally or transferred by a scenario, units ordered to attack it stop
+  instead of killing their own side's new unit, Gryphons no longer make attack runs
+  over it, an attack on it waiting in a queue is dropped, a production building's
+  attack rally on it is dropped, and guards stop following a unit an enemy has
+  charmed. Players still at war with its new owner lose their attack orders on it
+  too; their units shoot at it again on their own when they can see it.
+- **Conjuring: an order the game accepts is carried out.** A unit ordered on or right
+  beside its conjurer (a Beast Lord's Jungle Orc or Roc, a Beast Handler's Troll,
+  Thirsha's Beast Handler) could be accepted, wait ten seconds and vanish without a
+  word, because the conjurer itself counted as standing in the way; computer players
+  lost about one conjure order in thirty like this. A conjured unit now needs free
+  ground the size of its own body: the conjurer steps to the edge of the spot first,
+  your idle units make room (also round a conjurer they box in), and the ghost is red
+  where a unit that will not move stands (another player's, a unit still being made,
+  a builder at work). Units are no longer conjured on top of a larger unit next to the
+  spot, which used to leave both stuck. With Legion pathfinding a builder no longer
+  stands for good in front of a second builder working on the cell it was sent to; it
+  takes a free cell round its site instead.
+- **Units with a minimum range back off from every enemy that gets too close**, not
+  just the first three: after three back-offs the Tortoise, and under Crusades the
+  Catapults, Amazon Knight, Beast Rider, Sage's Mortar, Submersible and Trebuchet Ship,
+  used to ignore attack orders on close enemies.
+- **No freeze when a factory turns out its first unit of a new kind.** On the largest
+  maps that pause was a tenth of a second, several times in the opening minutes; the
+  game now does that work while it loads, which adds about a third of a second to
+  loading on the largest maps and almost nothing on normal ones.
+- **The edges of the largest maps.** On random maps 64 sections wide or high, flyers no
+  longer vanish at the east and south edges: a Gryphon flying an attack run past them
+  used to reappear on the far side of the map, unseen and unhittable for up to half a
+  minute. A flyer now stops at such an edge, turns along it and comes round again.
+  Group moves ordered right at those edges no longer send units to the opposite side,
+  shots at targets on them land, builders very far from a site no longer count as
+  close enough to place it, and with Legion pathfinding an order to a point far off the
+  map no longer causes a hitch.
+- **In very long games**, units built after the 65,536th unit of the game block other
+  units' movement again, and computer attack groups keep their targets.
+- **A game with no human player in it ends when it is decided.** If you watch the
+  computer players fight (single player's Watch, or a multiplayer game whose players
+  have all left or been replaced by AIs), the server stops the game the moment one
+  team is left instead of running it for as long as you stay, and three seconds later
+  you get the result screen players get: the winner's victory plate with the winner
+  named, timed at the moment the game was decided (Aramon's plate for a mod's side
+  that is none of the five races). If nobody is left, or the players abandoned the
+  game, it reads Game Over. The recording ends there too, so replays of watched games
+  are no longer padded with hours of nothing, and a replay that reaches the end of a
+  decided game shows the winner's banner. An ended game leaves the game list at once
+  and no longer counts against the server's limit on running games. Games with a
+  human still playing work as before, and a game that cannot be decided still runs
+  until you leave.
+- **Rewinding and jumping in long replays works much better.** The copies of the game a
+  rewind starts from now stay spread over everything you have watched instead of
+  bunching up at the end, so a jump far back no longer replays the game from the start,
+  and they keep being taken however long the replay is (on some machines they used to
+  stop for good after a few minutes; with no room for even one, capture now waits and
+  starts again after a jump back). Each copy takes a quarter to a third of the memory it
+  did, so many more fit, and if the computer runs out of memory while copying, the
+  copies kept still cover the whole game. The replay bar shows hours once a game passes
+  an hour ("18:00:34" instead of "1080:34"), and **Load Replay** lists only the replays
+  this version can play, each with the length of its game.
+- **Legion pathfinding: units no longer stand for good holding an order because their
+  own side is in the way.** A unit that cannot get on because units that will not move
+  again fill the way (a crowd that has already arrived somewhere else, idle units in a
+  gap, yours or an ally's) gives its order up and is free for the next one. That takes
+  about 20 seconds at the earliest, counted from the moment everything in front of it
+  has come to rest, and can take several minutes behind a crowd still shuffling into
+  place. A unit that has given its order up stays where it is, also when the way opens
+  later. A unit truly stuck among units that hold orders too gives up a little under
+  three minutes after the last of them made any headway. Buildings going up or coming
+  down and wrecks appearing nearby do not start that wait afresh. A change that cuts a
+  unit's only way to its goal and opens it again still does, because the order is then
+  worked out anew. Two units stuck in each other's way step aside for one another (after
+  about 40 seconds on attack-move and patrol orders, a little over two minutes on move
+  orders), and allies swap places on attack-move and patrol orders too. A unit steps
+  aside four of its own steps at most: where neither finds room that near, the two
+  shuffle a few times and then both give up. A unit waiting alone at a narrow passage is
+  no longer passed over, and a unit produced on ground it cannot stand on walks off it.
+  Units waiting behind their own firing line keep their orders while the fight lasts and
+  go on when the target is destroyed; units behind others that are attacking or guarding
+  keep theirs as well, so a unit can still wait for good behind your own guards standing
+  in a gap. Enemy units in the way never make a unit give up. Legion movement costs
+  about 4 to 5% more simulation time at 1,000 units.
+- **Legion pathfinding: units no longer stand waiting for a route on the largest
+  maps.** On a 2048x2048 map a route over the whole map takes an eighth of the route
+  memory, and five cases asked for one where a small route does: a lone unit whose
+  first short route failed, a second batch of units sent to a point another batch was
+  still walking to, a corpse or a building on the goal, a goal buried under a building,
+  and a unit cut off from its goal by a new building. Each now gets a small route, or
+  none where no route exists, and a unit left standing when the ground changes under
+  its route is served first. A unit cut off from its goal after its order (a building
+  closed the only way) walks on as far as it can and stops, keeping its order for five
+  minutes as a unit sent to an unreachable spot always has. If the way opens again in
+  that time it carries on to its place in the formation; if the ground around it
+  changes without opening the way, it walks to the nearest point it can reach and its
+  order ends there. Before, it stood with its order while a whole-map route was rebuilt
+  for it over and over. In the audited game the time units spend waiting for a route
+  falls by 97% in the two worst stretches, with 44 to 58% more arrivals, and the route
+  memory in use falls from 92 MB to 27 MB on average (the allowance stays 128 MiB).
+  Armies of more than 48 units in one order still take a route over most of a
+  2048x2048 map each. Retail pathfinding is untouched.
+
+Full notes: [release-1.0.6-notes.md](docs/release-1.0.6-notes.md) ·
+validation: [release-1.0.6-validation.md](docs/release-1.0.6-validation.md)
+
 ## 1.0.5
 *2026-11-13 · protocol 327 · replay format 15 · does not play with 1.0.4, nor its replays*
 
@@ -48,8 +205,8 @@ in the source of its tag.
 - **Watchers see kill counts.** A spectator, and anyone watching a replay, now sees the
   selected unit's kill count, as its owner does.
 
-Full notes: [release-1.0.5-notes.md](docs/release-1.0.5-notes.md) ·
-validation: [release-1.0.5-validation.md](docs/release-1.0.5-validation.md)
+Full notes: [release-1.0.5-notes.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.5/docs/release-1.0.5-notes.md) ·
+validation: [release-1.0.5-validation.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.5/docs/release-1.0.5-validation.md)
 
 ## 1.0.4
 *2026-11-12 · protocol 326 · replay format 15 · does not play with 1.0.3, nor its replays*
