@@ -1674,7 +1674,10 @@ aim when the script releases the shot (`World::fire`, `queryWeaponAim`: the
 led SweetSpot from the muzzle as it stands then) and launches from that, as an
 unscripted shot already did; with no solve, or no arc, it keeps the stored
 angles, and the shot still leaves. The gate, the timing, the reload and the
-aim record the scripts read are retail's. It covers the ballistic launch (the
+aim record the scripts read are retail's. The fresh heading is not limited
+against the body's: a Gryphon that has already turned or flown past its
+target at the release throws sideways or back at it, where retail's spear
+would go where the gate aimed it. It covers the ballistic launch (the
 Gryphon's spear, the Dirigible's and the Juggernaut's anti-air arrows) and the
 guided one (the Fallen Angel's Death Sword and Fire Bomb). The straight, Line
 of Sight and flame launches take the same rule, though no shipped flyer
