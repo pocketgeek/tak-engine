@@ -1463,10 +1463,11 @@ if(Python3_Interpreter_FOUND)
   # earlier and stop far less; a corridor 4 cells wide: no worse; nobody slow later; tools/legion_overtake_test.py).
   # One click of several speed groups and at most 48 bodies (the arrival layout, 2026-11-16): each body gets a spot
   # of its own, fast bodies in front, and the fast ones pass the slow ones anywhere on the way. Over 22 one-click
-  # fixtures of 10-48 bodies, per speed group against main: every body settles, none wanders after settling, no two
-  # settle on each other, faster groups settle deeper than slower ones, and the fast group comes in earlier (except
-  # fast bodies at the rear or middle of a short order, which walk round the slow ones; three fixtures where it is
-  # only capped). Asset-free.
+  # fixtures of 10-48 bodies, per body and per speed group against main: every body settles, none wanders after
+  # settling, no two settle on each other, at most a few settle off their own slot or a row behind a slower group's
+  # front, main's per-offset caps on the fast bodies hold, and the fast group comes in earlier (except fast bodies at
+  # the rear or middle of a short order, which walk round the slow ones, and the two 2,300 px single-file columns,
+  # whose knights come in at full speed on main too: at most 2% later). Asset-free.
   add_test(NAME legion_overtake
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_overtake_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios)

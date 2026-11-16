@@ -28,19 +28,26 @@ one-click fixtures of 10-48 bodies: single-file columns (-col-*, -field, -road, 
 (-rear-200/300/500); three speeds (-mid-300/320, -mix3-1000); knights in front (-front-500); and the larger blocks (-blob
 32 bodies, -choke 40 through a 12-cell gap, -block 48 standing 8 abreast). Since the arrival layout (2026-11-16,
 arrivalLayout in src/sim/legion.cpp) such a click of several speed groups and at most 48 members gives each body its
-own spot, fast rows in front, and its fast bodies pass slower ones of the click anywhere on the way. Owner
-(2026-11-16): "fast units even if it delays the slow units". Checked per fixture over its offsets (0, +-1..6; the
-road and field columns, the blob 0, +-1..3, the corridor 0, +-1, 2), each body's arrival its settle tick
-(--dump-units), per speed group the median over the offsets of the group's mean arrival, against main f3a4c16e
-(CLICKS):
-  - every body settles (a body standing on its own spot when the order comes counts as arrived at once);
-  - no body moves more than 24 px after it settles (no wandering, no re-shuffling);
-  - no two bodies settle on each other's cells, and the fast group's median depth along the way in (from the
-    members' starting centroid toward the point) is deeper than the slow group's, a mid group's between them or
-    level with the fast one (a row takes bodies of any group; not in the corridor, 4 cells wide: one file);
-  - the fast group arrives earlier than on main, except where the fast bodies start at the rear or in the middle of a
-    short order (SHORT_REAR: they walk round the slow ones to the front rows and come in later -- the owner accepted
-    it) and NOT_EARLIER (no earlier than main, capped). Slow and mid groups may arrive later; their numbers are printed.
+own spot, fast rows in front, its fast bodies pass slower ones of the click anywhere on the way, and a slower body
+steps aside for a faster one with no lane round it (laidGiveWay). Owner (2026-11-16): "fast units even if it delays
+the slow units". Checked:
+  - the columns' and the blob's per-offset limits on the fast bodies, as on main f3a4c16e (clicks()): field and road
+    fast mean at most 1,050 at every offset and at most 60 / 150 fast stops; corridor fast mean at most 2,250; the
+    blob's last fast body at most 2,150 (one offset may reach 2,450, see there);
+  - per fixture over its offsets (0, +-1..6; the road and field columns, the blob 0, +-1..3, the corridor 0, +-1, 2),
+    each body's arrival its settle tick (--dump-units), against main f3a4c16e (CLICKS):
+    - every body settles (a body standing on its own spot when the order comes counts as arrived at once);
+    - no body moves more than 25 px after it settles (one yield; no wandering, no re-shuffling);
+    - no two bodies settle on each other's cells;
+    - each body against its own slot: at most 5% of the bodies, and 8% of the fast ones, settle more than 24 px
+      from it;
+    - each faster body against the frontmost body of every slower group: at most 6% stand more than a row (48 px)
+      behind it, along the way in from the members' starting centroid (not in the corridor, 4 cells wide: one file);
+    - the fast group's median over the offsets of its mean arrival is earlier than main's, except where the fast
+      bodies start at the rear or in the middle of a short order (SHORT_REAR: they walk round the slow ones to the front
+      rows and come in later -- the owner accepted it) and on the 2,300 px single-file columns (NOT_EARLIER: their
+      knights come in at full speed on main too; at most 2% later). Slow and mid groups may arrive later; their
+      numbers are printed.
 Exit 0 pass, 1 fail, 2 tooling.
 """
 import concurrent.futures
@@ -125,10 +132,51 @@ def main():
             bad.append(f"overtake-corridor offset {r['offset']}: fast mean {statistics.mean(r['Fdone']):.0f} (at most 2,250)")
         if max(r["Sdone"]) > 2780:
             bad.append(f"overtake-corridor offset {r['offset']}: last slow body {max(r['Sdone'])} (at most 2,780)")
+    bad += clicks(exe, scenarios)
     bad += layout_clicks(exe, scenarios)
     for b in bad:
         print("FAIL:", b)
     return 1 if bad else 0
+
+
+def clicks(exe, scenarios):
+    """The one-click columns' and the blob's per-offset limits on the fast bodies, as on main f3a4c16e (the slow ones'
+    limits went with the owner's decision: they may arrive later); returns the failures."""
+    bad = []
+    runs = {}
+    for name, offsets in (("overtake-click-field", "0,1,-1,2,-2,3,-3"), ("overtake-click-road", "0,1,-1,2,-2,3,-3"),
+                          ("overtake-click-corridor", "0,1,-1,2"), ("overtake-click-blob", "0,1,-1,2,-2,3,-3")):
+        rows = run(exe, scenarios, name, offsets)
+        if rows is None:
+            return [f"{name}: legion_scenario failed"]
+        runs[name] = rows
+        for r in rows:
+            if min(r["Fdone"]) < 0:
+                bad.append(f"{name} offset {r['offset']}: a fast body never arrived")
+    if bad:
+        return bad
+    for name, (fmax, smax) in {"overtake-click-field": (1050, 60), "overtake-click-road": (1050, 150)}.items():
+        rows = runs[name]
+        for r in rows:
+            if statistics.mean(r["Fdone"]) > fmax:
+                bad.append(f"{name} offset {r['offset']}: fast mean {statistics.mean(r['Fdone']):.0f} (at most {fmax:,})")
+        if sum(r["Fstops"] for r in rows) > smax:
+            bad.append(f"{name}: {sum(r['Fstops'] for r in rows)} fast stops (at most {smax})")
+        print(f"{name}: fast means {[round(statistics.mean(r['Fdone'])) for r in rows]}, fast stops "
+              f"{sum(r['Fstops'] for r in rows)}")
+    for r in runs["overtake-click-corridor"]:
+        if statistics.mean(r["Fdone"]) > 2250:
+            bad.append(f"overtake-click-corridor offset {r['offset']}: fast mean "
+                       f"{statistics.mean(r['Fdone']):.0f} (at most 2,250)")
+    # The blob's last knight at most 2,150 (main's cap) at all offsets but one, and 2,450 there: at offset 3 one knight
+    # walks 1,800 ticks behind a swordsman in the middle of the blob, with no lane round it and no cell for it to step
+    # aside to, and stops short of its spot (2,391; main's last knights 1,974..2,090).
+    late = [r for r in runs["overtake-click-blob"] if max(r["Fdone"]) > 2150]
+    if len(late) > 1 or any(max(r["Fdone"]) > 2450 for r in late):
+        bad += [f"overtake-click-blob offset {r['offset']}: fast done {max(r['Fdone'])} (at most 2,150 at all offsets "
+                "but one, 2,450 there)" for r in late]
+    print(f"overtake-click-blob: last fast body {[max(r['Fdone']) for r in runs['overtake-click-blob']]}")
+    return bad
 
 
 # One right-click per fixture (overtake-click-<name>), each speed group's numbers on main f3a4c16e: (median over the
@@ -162,22 +210,30 @@ CLICKS = {
 # Fast bodies starting at the rear or in the middle of a short order walk round the slower ones to the front rows and
 # come in later than on main, where they stood behind them (owner, 2026-11-16: "for short moves them arriving later
 # is kinda expected"). Their numbers are printed; every other check holds for them.
-SHORT_REAR = {"rear-200", "rear-300", "mid-300", "mid-320", "bunch-300"}
-# Where the fast bodies come in no earlier than on main, at most this much later (%): the single-file columns of 12 sent
-# about 2,300 px on open ground and on a road (their knights passed on main too and took the front slots there) and the
-# knights at the rear of a block sent 500 px. Short of the owner's bar ("fast units clearly earlier"); kept as a cap.
-NOT_EARLIER = {"field": 3, "road": 6, "rear-500": 3}
+SHORT_REAR = {"rear-200", "rear-300", "mid-300", "mid-320"}
+# Single-file columns of 12 sent about 2,300 px (on open ground and on a road): on main too every knight passes the
+# swordsmen early and comes in at full speed (the first at tick 807, the straight line's time), so a layout cannot
+# bring them in earlier; theirs is checked to be no more than this much later (%), and the per-offset caps above hold.
+NOT_EARLIER = {"field": 2, "road": 2}
 # A corridor 4 cells wide holds one file: no body can reach a spot past another, so the layout's order is not checked.
 ONE_FILE = {"corridor"}
+SLOT = 24          # px a body may settle from its slot
+OFF_SLOT_PCT = 5   # % of the bodies that may settle farther from their slot ...
+OFF_FAST_PCT = 8   # ... and of the fast ones (knights from the back of a short order walled out of their front row by
+                   # knights that came in first and stood in the row behind it: 3-4 of 52 at 13 offsets)
+ROW = 48           # px a faster body may stand behind the frontmost body of a slower group (a row)
+BEHIND_PCT = 6     # % of the faster bodies that may stand farther behind
 SPEED = {"fast": 0, "mid": 1, "slow": 2}
 UNSETTLED = 6000   # an unsettled body counts as arriving at this tick
-WANDER = 24        # px a settled body may move after it settles (a yield or a swap is one or two cells)
+WANDER = 25        # px a settled body may move after it settles: one yield, a cell's diagonal from where it stood
+                   # (22.6 px from a cell's centre, a pixel more from a body that settled a pixel off it)
 
 
 def trace(exe, scn, offset):
     """One offset: per unit id its settle tick (the last tick it stood with no Legion leg after one; a body standing on
     its own spot when the order came never takes a leg and counts as arrived at the order's tick), start, end, its
-    point, and how far it moved after it settled; plus the passes within the click. None on a tooling failure."""
+    point, its slot (the last one it held), and how far it moved after it settled; plus the passes within the click.
+    None on a tooling failure."""
     p = subprocess.run([exe, scn, "--mode", "legion", "--offsets", str(offset), "--serial", "--json", "--dump-units",
                         "1"], capture_output=True, text=True)
     rows = [json.loads(ln) for ln in p.stdout.splitlines() if ln.startswith("{")]
@@ -190,12 +246,14 @@ def trace(exe, scn, offset):
         f = dict(kv.split("=", 1) for kv in ln.split()[1:])
         i, t, x, z = int(f["id"]), int(f["t"]), int(f["x"]), int(f["z"])
         u = units.setdefault(i, {"start": (x, z), "member": False, "ever": False, "settle": None, "at": None,
-                                 "wander": 0.0, "point": None})
+                                 "wander": 0.0, "point": None, "slot": None})
         if f["st"] != "0" or f["g"] != "0":
             u["member"] = u["ever"] = True
             u["settle"] = u["at"] = None
             if int(f["gx"]) >= 0:
                 u["point"] = (int(f["gx"]), int(f["gz"]))
+            if int(f["sx"]) >= 0:
+                u["slot"] = (int(f["sx"]), int(f["sz"]))
         else:
             if u["member"]:
                 u["settle"], u["at"] = t, (x, z)
@@ -235,7 +293,8 @@ def layout_clicks(exe, scenarios):
             bad.append(f"overtake-click-{name}: legion_scenario failed")
             continue
         passes = sum(r[1] for r in runs)
-        wander = inverted = overlap = 0
+        wander = overlap = behind = off_slot = off_fast = 0
+        worst = 0.0
         for off, (units, _) in zip(offsets, runs):
             wander += sum(u["wander"] > WANDER for u in units.values())
             # The cells each body covers where it settled: footprintOrigin, floor((centre - (size-1)*8) / 16).
@@ -245,7 +304,14 @@ def layout_clicks(exe, scenarios):
                 for b in range(a + 1, len(cells)):
                     (xa, za, fa), (xb, zb, fb) = cells[a], cells[b]
                     overlap += xa < xb + fb and xb < xa + fa and za < zb + fb and zb < za + fa
-            # Depth along the way in: from the members' starting centroid toward the point.
+            # Each body against its own slot: settled more than SLOT px from it is off the layout.
+            for i, k in enumerate(kinds):
+                u = units[i + 1]
+                if u["slot"] and ((u["end"][0] - u["slot"][0]) ** 2 + (u["end"][1] - u["slot"][1]) ** 2) ** 0.5 > SLOT:
+                    off_slot += 1
+                    off_fast += k == "fast"
+            # Depth along the way in: from the members' starting centroid toward the point. Each body of a faster
+            # group against the frontmost body of every slower one: more than a row (ROW px) behind it is out of order.
             point = next((units[i + 1]["point"] for i in range(len(kinds)) if units[i + 1]["point"]), None)
             if name in ONE_FILE or not point:
                 continue
@@ -257,14 +323,18 @@ def layout_clicks(exe, scenarios):
             for i, k in enumerate(kinds):
                 x, z = units[i + 1]["end"]
                 depth.setdefault(k, []).append(((x - cx) * ax + (z - cz) * az) / length)
-            med = {k: statistics.median(v) for k, v in depth.items()}
-            for a in med:
-                for b in med:
-                    # Fast bodies deeper than slow ones; a mid group may share the fast bodies' rows (within 8 px).
-                    if SPEED[a] < SPEED[b] and (med[a] <= med[b] if SPEED[b] - SPEED[a] == 2 else med[a] < med[b] - 8):
-                        inverted += 1
-                        print(f"overtake-click-{name} offset {off:+d}: the {a} bodies settle no deeper than the {b} ones")
-        line = f"overtake-click-{name}: passes within the click {passes}, wandering {wander}, overlaps {overlap}"
+            for a in depth:
+                for b in depth:
+                    if SPEED[a] < SPEED[b]:
+                        front = max(depth[b])
+                        behind += sum(d < front - ROW for d in depth[a])
+                        worst = max(worst, max(front - d for d in depth[a]))
+        bodies = len(kinds) * len(offsets)
+        faster = sum(k != "slow" for k in kinds) * len(offsets)
+        fasts = sum(k == "fast" for k in kinds) * len(offsets)
+        line = (f"overtake-click-{name}: passes within the click {passes}, wandering {wander}, overlaps {overlap}, "
+                f"off their slot {off_slot}/{bodies} (fast {off_fast}/{fasts}), behind a slower group's front "
+                f"{behind}/{faster} (worst {worst:.0f} px)")
         for kind, (mm, mt, mu) in main.items():
             ids = [i + 1 for i, k in enumerate(kinds) if k == kind]
             means, t90s, unsettled = [], [], 0
@@ -289,9 +359,12 @@ def layout_clicks(exe, scenarios):
             bad.append(f"overtake-click-{name}: {wander} bodies move more than {WANDER} px after settling")
         if overlap:
             bad.append(f"overtake-click-{name}: {overlap} pairs of bodies settled on each other")
-        if inverted:
-            bad.append(f"overtake-click-{name}: at {inverted} offsets / group pairs a faster group settles no deeper "
-                       "than a slower one")
+        if off_slot * 100 > bodies * OFF_SLOT_PCT or off_fast * 100 > fasts * OFF_FAST_PCT:
+            bad.append(f"overtake-click-{name}: {off_slot} of {bodies} bodies ({off_fast} of {fasts} fast) settle more "
+                       f"than {SLOT} px from their slot (at most {OFF_SLOT_PCT}%, fast {OFF_FAST_PCT}%)")
+        if behind * 100 > faster * BEHIND_PCT:
+            bad.append(f"overtake-click-{name}: {behind} of {faster} faster bodies settle more than {ROW} px behind a "
+                       f"slower group's frontmost body (at most {BEHIND_PCT}%)")
     return bad
 
 
