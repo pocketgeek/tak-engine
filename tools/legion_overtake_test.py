@@ -35,6 +35,10 @@ overtakeSlot) before this, parent 2103fb83, where a body never passed one of its
     2,082..2,141 and 2,457..2,668. Checked: fast mean at most 2,250, slow last at most 2,780.
   overtake-click-blob (a block of 32, a crowd: no pass), offsets 0, +-1..3: fast done 1,975..2,091, slow done
     2,127..2,754, unchanged. Checked: fast done at most 2,150, slow done at most 2,800.
+  overtake-click-choke (a block of 40 through a gap 12 cells wide), offsets 0, +-1, 6: commit dbe3149a passed within
+    the click past the gap, 30-40 cells short of the point, at offsets 0, -1 and 6, and a slow body paid each time
+    (offset 0: one not done, against the last at 2,895 without passes). Checked: no pass within the click there
+    (clickPass keeps out of kOvertakeHome cells round the click's area), and at most one slow body not done.
 One slow body of a one-click column settles just outside its disc at one offset of the road and of the corridor, on
 the parent as now; a fast body never does.
 
@@ -65,7 +69,8 @@ def run(exe, scenarios, name, offsets):
 
     out = []
     for i, off in enumerate(offs):
-        r = {"offset": off, "overtakes": per("work.overtakes.total")[i]}
+        r = {"offset": off, "overtakes": per("work.overtakes.total")[i],
+             "click_overtakes": per("work.click_overtakes.total")[i]}
         for kind in "FS":
             mine = [g for g in groups if g.startswith(kind)]
             done = [per(f"g.{g}.done")[i] for g in mine]
@@ -131,7 +136,8 @@ def clicks(exe, scenarios):
     bad = []
     runs = {}
     for name, offsets in (("overtake-click-field", "0,1,-1,2,-2,3,-3"), ("overtake-click-road", "0,1,-1,2,-2,3,-3"),
-                          ("overtake-click-corridor", "0,1,-1,2"), ("overtake-click-blob", "0,1,-1,2,-2,3,-3")):
+                          ("overtake-click-corridor", "0,1,-1,2"), ("overtake-click-blob", "0,1,-1,2,-2,3,-3"),
+                          ("overtake-click-choke", "0,1,-1,6")):
         rows = run(exe, scenarios, name, offsets)
         if rows is None:
             return [f"{name}: legion_scenario failed"]
@@ -176,6 +182,10 @@ def clicks(exe, scenarios):
             bad.append(f"overtake-click-blob offset {r['offset']}: fast done {max(r['Fdone'])} (at most 2,150)")
         if r["Slast"] > 2800:
             bad.append(f"overtake-click-blob offset {r['offset']}: slow done {r['Slast']} (at most 2,800)")
+    for r in runs["overtake-click-choke"]:
+        if r["click_overtakes"]:
+            bad.append(f"overtake-click-choke offset {r['offset']}: {r['click_overtakes']} passes within the click "
+                       "near its point (none)")
     return bad
 
 

@@ -854,7 +854,7 @@ route, approach or press. The computer player orders each unit of an army to a p
 under these rules alone.
 
 A body of the same click (`Member::point`: a player's mixed selection sent with one right-click, knights with archers)
-is passed under four more conditions (`clickPass`), and the passer then takes a new arrival slot (`overtakeSlot`).
+is passed under five more conditions (`clickPass`), and the passer then takes a new arrival slot (`overtakeSlot`).
 Before, the rule never passed one, because both things that went wrong were measured:
 
 * *Slots.* A click's arrival slots are its formation's shape, handed out front first, so a fast body from the rear
@@ -874,12 +874,18 @@ Before, the rule never passed one, because both things that went wrong were meas
   click of more than `kOvertakeClick` (64) members keeps its order: a crowd that size walks as a crowd, and the front
   row of its slots lies across the bodies already settled.
 
-The four conditions: the click has at most 64 members; at most `kOvertakeCrowd` (6) other bodies stand within
+The five conditions: the click has at most 64 members; at most `kOvertakeCrowd` (6) other bodies stand within
 `kOvertakeNear` (8) cells of the passer (a mixed block of 16 archers ahead of 16 knights gained nothing by passing and
 some of it finished later, so a crowd keeps its order); no Legion mover whose course is more than 90 deg from the
-passer's is within `kOvertakeClear` (16) cells; and neither body is in an Alt+N formation, which walks at its slowest
-member's pace on purpose (a formation member's speed cap is that pace, so the speed rule above would not pass within
-one anyway). No new state: the route and the slot are hashed already. `Stats::overtakes` counts the routes
+passer's is within `kOvertakeClear` (16) cells; the passer is at least `kOvertakeHome` (32) cells outside the click's
+area (its packed disc, `Point::limit`, once assigned); and neither body is in an Alt+N formation, which walks at its
+slowest member's pace on purpose (a formation member's speed cap is that pace, so the speed rule above would not pass
+within one anyway). The home limit came from a block of 40 sent through a gap 12 cells wide (`overtake-click-choke`):
+without it, the click passed only past the gap, 30-40 cells short of the point, at three of 13 offsets, and a slow
+body paid every time (offset 0: one slow body not done at all, against the last at 2,895; offset -1: the last slow
+body 2,600 -> 2,845). With it that click plays exactly as before at all 13 offsets, and the columns, whose passes come
+early on the way, are unchanged. Mid-speed bodies count as slow: the speed rule passes any body under three quarters
+of the passer's cap, so knights (2.9) pass a 1.9 body too. No new state: the route and the slot are hashed already. `Stats::overtakes` counts the routes
 (`work.overtakes`), `Stats::clickOvertakes` those past a body of the same click (`work.click_overtakes`).
 
 `ctest:legion_overtake` (asset-free; `overtake-field`, `overtake-road`, `overtake-corridor` in tools/scenarios/: a
@@ -898,13 +904,14 @@ the offsets 2,387 -> 2,397; the worst single offset 2.2% later, -3), their last 
 cells wide: fast 1,258..1,743 -> 954..998, stops 1,407 -> 60; slow mean 2,299..2,416 -> 2,258..2,421 (at most 0.6%
 later at an offset), last at most 2,573 -> 2,619 (1.8% later at offset 3, earlier or equal at five of seven).
 Corridor 4 cells wide: fast 2,170..2,205 -> 2,082..2,141, slow last 2,457..2,732 -> 2,457..2,668. The block is a
-crowd and passes nobody: unchanged. `bridges-1000` and `bridges-1000-fight` play hash-identical to main at every
-offset the tests read; over the 161 baseline scenarios at offsets 0, +-1, +-2, six changed (each a pass or two at an
-offset or so, no change in crossings, no arrival median worse by more than 1.6%): `motion-cross` one body's median
-done +1.6%, `mixed-spacing-05x` one group's done +6.6% at one offset (its other group, not done there before, now
-arrives), `gen1-route-45941` one body of `g_zongob` not done at offset -2 (done at 8,376 before; the median is
-unchanged), `motion-wall` wall touch 20 -> 21 permille at one offset, `taperbridge-small` and `mixed-spacing-04x`
-within 0.2% (the latter's aim reversals 31 -> 33).
+crowd and passes nobody: unchanged. The block of 40 through a 12-cell gap (`overtake-click-choke`, offsets 0, +-1,
+6) must pass nobody within its click (the home limit above). `bridges-1000` and `bridges-1000-fight` play
+hash-identical to main at every offset the tests read; over the 161 baseline scenarios at offsets 0, +-1, +-2, five
+changed (each a pass or two at an offset or so, no change in crossings, no arrival median worse by more than 0.3%):
+`mixed-spacing-05x` its fast group's t90 median +0.3% and its done +6.6% at one offset (its slow group, not done
+there before, now arrives), `gen1-route-45941` one body of `g_zongob` not done at offset -2 (done at 8,376 before;
+the t90 median is unchanged), `motion-wall` wall touch 20 -> 21 permille at one offset, `taperbridge-small` done
+median +0.2%, and `mixed-spacing-04x` only its aim reversals (31 -> 33).
 
 ### Oncoming and opposing traffic
 
@@ -2812,14 +2819,25 @@ Rules that come out of using them:
 * **Fog**: Legion plans on the static plane as Retail's mover sees it. It does not model unexplored terrain
   separately. The one place fog shows is group awareness, which sees an enemy mover only within sight
   (`aware-unseen:pair.contacts.permille_x100` against `aware-seen:pair.contacts.permille_x100`).
-* **A big click's fast units queue behind its slow ones.** A body passes one of its own click (section 4, "Allies
-  overtake") only in a click of at most 64 members, away from a crowd (at most 6 other bodies within 8 cells) and
-  with no mover walking against it within 16 cells. A mixed block of knights behind archers is such a crowd, and its
-  knights still walk at the archers' pace (`overtake-click-blob`: fast done 1,975..2,091, stops 765..978 per offset),
-  as do the fast bodies of a click of more than 64. The limits are the bistable meet of `bridges-1000`, where a single
-  pass by one body of a 500-body click tipped the meet into gridlock, and the crowd fixture, where passing gained
-  nothing and some bodies finished later. Measured by `ctest:legion_overtake`, `ctest:legion_swap` and
-  `ctest:legion_fightmeet`.
+* **A click that stands together keeps its slowest pace.** A body passes one of its own click (section 4, "Allies
+  overtake") only in a click of at most 64 members, away from a crowd (at most 6 other bodies within 8 cells), with
+  no mover walking against it within 16 cells and at least 32 cells outside the click's area. In practice that is a
+  selection strung out in a line or a loose column. The usual case -- knights and archers standing together as a
+  block, box-selected and right-clicked -- has more than 6 bodies within 8 cells of nearly every body as long as they
+  stand less than about 9 cells apart, so it passes nobody and its knights still walk at the archers' pace
+  (`overtake-click-blob`: fast done 1,975..2,091, stops 765..978 per offset; a 48-body mixed block 7 cells apart:
+  half its fast bodies in by about 810 ticks, but 90% only by about 2,080). Widening was measured over 13 offsets
+  against main and not taken. Counting the crowd within 4 cells instead of 8, or not at all, did free such a block's
+  knights (its fast t90 median 2,077 -> 968), but the slow and mid bodies paid: slow t90 median +1.4% there and +1.9%
+  (crowd within 4) on a 48-body block with its slow bodies in front, single offsets 18-21% later, bodies not done 3 ->
+  5 and 3 -> 7, slow t90 +2.3..2.8% through a 12-cell gap, and in a head-on meet of two 48-body mixed clicks mid bodies not done
+  5 -> 17 (no crowd limit); the 32-body block's fast bodies got later (t90 median 2,016 -> 2,057). The cost comes in
+  the packing at the point: a pass reorders the click, and in the traced case a slow body stood queued for a slot
+  and settled outside the click's area.
+  Even the column passes cost a slow body now and then at a single offset (a loose 3-wide column of 30: one offset's
+  last slow body 26% later, with the slow median no later over 13 offsets). A click of more than 64 never passes
+  within itself: in `bridges-1000` a single pass by one body of a 500-body click tipped the meet into gridlock.
+  Measured by `ctest:legion_overtake`, `ctest:legion_swap` and `ctest:legion_fightmeet`.
 
 ## Network, lobby and checksum
 

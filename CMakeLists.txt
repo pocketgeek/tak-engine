@@ -1462,7 +1462,8 @@ if(Python3_Interpreter_FOUND)
   # where there is room (single-file mixed columns on open ground and on a road 8 cells wide: fast bodies arrive
   # earlier and stop far less; a corridor 4 cells wide: no worse; nobody slow later; tools/legion_overtake_test.py).
   # The same columns sent with one click pass too and the passers take the front of the click's slots; a mixed
-  # block of 32 (a crowd) is unchanged. Asset-free.
+  # block of 32 (a crowd) is unchanged, and a block of 40 through a 12-cell gap passes nobody near its point.
+  # Asset-free.
   add_test(NAME legion_overtake
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_overtake_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios)

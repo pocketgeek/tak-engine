@@ -230,6 +230,7 @@ constexpr int kOvertakeClick=64;               // the most members a click may h
 constexpr int kOvertakeNear=8;                 // ... only with at most kOvertakeCrowd other bodies this near (cells)
 constexpr int kOvertakeCrowd=6;
 constexpr int kOvertakeClear=16;               // ... and no mover walking against it this many cells round
+constexpr int kOvertakeHome=32;                // ... nor nearer the click than its area's edge plus this many cells
 constexpr int64_t kOncomingCos2=14;            // 100*cos^2(112 deg): goal directions this far apart are oncoming
 constexpr int kLineCells=160;                  // direct-line probe reach
 constexpr int kFormationLineCells=640;         // ... for a member with a formation slot
@@ -14964,13 +14965,20 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     //    that size walks as a crowd, and a slot at the front of its area lies across the bodies settled in it).
     // And never in a crowd (more than kOvertakeCrowd other bodies within kOvertakeNear cells: a mixed block of 32
     // gained nothing by it and some of its bodies were done later), never with a mover walking against this body's
-    // course (more than 90 deg apart) within kOvertakeClear cells, and never within an Alt+N formation, which walks
-    // at its slowest member's pace on purpose.
+    // course (more than 90 deg apart) within kOvertakeClear cells, never within kOvertakeHome cells of the click's
+    // area (its packed disc, Point::limit, once assigned): a 40-body click through a 12-cell gap passed only past
+    // the gap, a few dozen cells short of the point, and every time a slow body finished later (offset 0: one not
+    // done at all, against the last at 2,895; offset -1: 2,600 -> 2,845); with the limit it plays as before at all
+    // 13 offsets, and the columns, which pass on the way, are unchanged. And never within an Alt+N formation, which
+    // walks at its slowest member's pace on purpose.
     bool clickPass(const Unit& u,const Member& m,const Unit& b,int ox,int oz) {
         if(w.legionFormationGroup(u)||w.legionFormationGroup(b))return false;
         const Point* pt=m.pt;
         if(!pt) {const auto found=points.find(m.point);pt=found==points.end()?nullptr:&found->second;}
         if(!pt||pt->refs>kOvertakeClick)return false;
+        const int64_t hx=(int64_t(std::get<2>(m.point))>>16)-(u.x.v>>16),hz=(int64_t(std::get<3>(m.point))>>16)-(u.z.v>>16);
+        const int64_t home=int64_t(kOvertakeHome)*16+(pt->assigned?pt->limit:0);
+        if(hx*hx+hz*hz<home*home)return false;
         const int fx=u.type->footX,fz=u.type->footZ;
         std::array<int32_t,kOvertakeCrowd+1> seen{};int crowd=0;
         for(int cz=std::max(oz-kOvertakeNear,0);cz<=std::min(oz+fz-1+kOvertakeNear,w.occH_-1);++cz)

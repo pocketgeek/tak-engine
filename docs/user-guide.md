@@ -1934,13 +1934,14 @@ measurements](legion-pathfinding.md)):
   yours or an ally's walking the same way, as a knight behind an archer in
   single file, steps aside and passes it when there is room beside, instead of
   stopping and starting behind it all the way. In a passage one unit wide it
-  still follows. Units you send with one order pass each other too, when the
-  order is for at most 64 units and they are not packed in a crowd: the fast
-  ones take their places at the front of the group when they get there, so the
-  slow ones are not held up. A larger order, a tightly packed block and an
-  Alt+N formation (which walks at its slowest unit's pace on purpose) keep
-  their order. Units on move and fight orders overtake, units on attack, guard
-  or patrol orders do not.
+  still follows. Units you send with one order pass each other only when they
+  are strung out in a line or a loose column (an order of at most 64 units,
+  away from the place you sent them to): the fast ones take their places at the
+  front of the group when they get there. A group standing together when you
+  give the order, such as knights and archers box-selected as a block, still
+  walks at the slow units' pace, as do a larger order and an Alt+N formation
+  (which walks at its slowest unit's pace on purpose). Units on move and fight
+  orders overtake, units on attack, guard or patrol orders do not.
 - **Unreachable orders end where the unit stops.** Ordered to a place it cannot
   reach, a unit walks to the nearest spot it can reach, and its order ends there,
   so it is free for the next one at once. Units queued behind their own army end
