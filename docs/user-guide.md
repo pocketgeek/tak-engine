@@ -1552,6 +1552,15 @@ The check is of the line between the two spots, not of the enemy: once
 either unit moves off its spot, the enemy counts as a fair target again, and a
 unit choosing its own targets fires at it as soon as it walks into the open.
 
+Charms, Turn to Stone and freeze shots take the first unit they strike. If
+one strikes a unit it cannot affect (a building, a Monarch, an immune unit or
+one of your own) instead of its target, that counts as a blocked shot too, so
+a caster stops spending mana on the building in the way. A Harpy or another
+hovering caster lets the target go after three such shots and picks another;
+it tries the target again once the target moves or the Harpy comes at it from
+another side. This is TAK Engine's own too; in the original game the caster
+keeps firing into the building.
+
 ### Selection
 
 These select your own units and replace the current selection.

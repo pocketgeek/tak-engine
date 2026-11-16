@@ -7810,11 +7810,33 @@ bool World::slotClearShot(const Unit& u,const Unit& t,int slot) const {
 static constexpr uint8_t kBlockedShots=3;    // in a row before the spot is written off
 static constexpr int kBlockedSpot=16;        // px the shooter or the target may drift and keep the count
 
+// Engine deviation (owner's call 2026-11-15), part of statusShotRefused's: a
+// flying status caster (a charm, stone or freeze weapon) hovers round its
+// ring and drifts 20-40 px between shots, so its own spot would never hold,
+// while a building beside its target stops its charms from any point on that
+// side. For it the line is its bearing from the target: the count holds until
+// the target leaves its spot or that bearing turns by more than kBlockedBearing.
+static constexpr int kBlockedBearing=0x2000;   // native angle units: 1/8 turn
+
+static bool flyingStatusCaster(const Unit& u) {
+    return u.type && u.type->canFly && std::any_of(u.type->weapons.begin(),u.type->weapons.end(),[](const Weapon& w) {
+        return w.mindControl || w.status==Weapon::Status::Stoned || w.status==Weapon::Status::Frozen;
+    });
+}
+
 // Has the shooter or its target left the spots the blocked count was taken
 // between (more than kBlockedSpot either way)?
 static bool blockedSpotLeft(const Unit& u,int64_t sx,int64_t sz,int64_t tx,int64_t tz) {
-    return std::abs(sx-u.blockedX)>kBlockedSpot || std::abs(sz-u.blockedZ)>kBlockedSpot ||
-        std::abs(tx-u.blockedTX)>kBlockedSpot || std::abs(tz-u.blockedTZ)>kBlockedSpot;
+    if (std::abs(tx-u.blockedTX)>kBlockedSpot || std::abs(tz-u.blockedTZ)>kBlockedSpot) return true;
+    if (flyingStatusCaster(u)) {
+        const auto bearing=[](int64_t dx,int64_t dz) {
+            return uint16_t(retailDirection(Fixed::fromInt(int(dx)),Fixed::fromInt(int(dz))).v);
+        };
+        const uint16_t turn=uint16_t(bearing(sx-tx,sz-tz)-bearing(int64_t(u.blockedX)-u.blockedTX,
+                                                                      int64_t(u.blockedZ)-u.blockedTZ));
+        return std::min<int>(turn,0x10000-turn)>kBlockedBearing;
+    }
+    return std::abs(sx-u.blockedX)>kBlockedSpot || std::abs(sz-u.blockedZ)>kBlockedSpot;
 }
 
 // Is (dx,dz), in whole px from a body's centre, within `slack` of the body?
@@ -7858,38 +7880,59 @@ bool World::impactIndestructible(const Weapon& w,int cx,int cz) const {
     return true;   // bare terrain, water, or a map blocker with no feature record
 }
 
-void World::noteShotImpact(int fromId,int targetId,const Weapon& w,const std::array<int32_t,3>& impact,int hitUnit,Fixed targetHp) {
+// Engine deviation (owner's call 2026-11-15): a status shot (mind control,
+// stone, freeze) takes the first body it strikes (52d8d0, 52db40, 52dda0),
+// and retail lets the caster go on firing when that body is one the shot
+// cannot take: a Harpy charming a builder behind a Barracks spent every charm
+// on the Barracks. Such a body stops the shot as surely as a wall, so a strike on
+// a body other than the target that this weapon cannot take (a charm's
+// canCaptureTarget, a stone or freeze weapon's statusCanTake, and any body
+// of the caster's own side) counts as a blocked shot (noteShotImpact). Asked
+// before the hit lands, since a charm that takes the body changes its side.
+bool World::statusShotRefused(const Weapon& w,int player,int targetId,int struckId) const {
+    if (!w.mindControl && w.status!=Weapon::Status::Stoned && w.status!=Weapon::Status::Frozen) return false;
+    const Unit* s=struckId && struckId!=targetId ? unit(struckId) : nullptr;
+    if (!s || !s->type || !s->alive()) return false;
+    if (allied(player,s->player)) return true;
+    return w.mindControl ? !canCaptureTarget(player,*s) : !statusCanTake(w,*s);
+}
+
+void World::noteShotImpact(int fromId,int targetId,const Weapon& w,const std::array<int32_t,3>& impact,int hitUnit,Fixed targetHp,
+                           bool refused) {
     Unit* u=unit(fromId);
     const Unit* t=unit(targetId);
     if (!u || !u->alive() || !u->type || !t || !t->alive() || !t->type || targetId==fromId) return;
-    if (hitUnit) {
+    if (hitUnit && !refused) {
         // The target itself: the line is open. Any other body neither opens
-        // nor blocks it (it can be killed, or it moves).
+        // nor blocks it (it can be killed, or it moves), unless it stopped a
+        // status shot that cannot take it (statusShotRefused).
         // A hit also renews the walk budget: the line it opened is spent once
         // the target or the shooter moves on.
         if (hitUnit==targetId && u->blockedTarget==targetId) { u->blockedShots=0;u->repositions=0;u->searchFailed=0; }
         return;
     }
-    // Short of the target and clear of it, in whole px: in front of the
-    // target's projection on the line of fire and outside its body (its
-    // footprint, nearBody), a body of slack and the weapon's splash. A miss
-    // beside or beyond the target reached it.
     const int64_t sx=u->x.floorInt(),sz=u->z.floorInt(),tx=t->x.floorInt(),tz=t->z.floorInt();
-    const int64_t ix=impact[0]>>16,iz=impact[2]>>16;
-    const int64_t along=(ix-sx)*(tx-sx)+(iz-sz)*(tz-sz),line=(tx-sx)*(tx-sx)+(tz-sz)*(tz-sz);
-    const bool shortOf=along<line && !nearBody(*t->type,ix-tx,iz-tz,8+24+int64_t(uint16_t(w.aoe))/2);
-    // Engine deviation: shots fly without spread, so one that lands beside
-    // or past a target standing still and leaves it unhurt will land there
-    // again (an arrow dipping into the ground at a wall's foot); it counts
-    // too. A shot whose splash hurt the target opened the line, as a hit.
-    if (t->hp<targetHp) {
-        if (u->blockedTarget==targetId) { u->blockedShots=0;u->repositions=0;u->searchFailed=0; }
-        return;
-    }
-    const bool besideStill=!shortOf && (t->type->isStructure() || t->speed==Fixed());
-    if ((!shortOf && !besideStill) || !impactIndestructible(w,int(impact[0]>>20),int(impact[2]>>20))) {
-        if (u->blockedTarget==targetId) { u->blockedShots=0;u->searchFailed=0; }
-        return;
+    if (!refused) {
+        // Short of the target and clear of it, in whole px: in front of the
+        // target's projection on the line of fire and outside its body (its
+        // footprint, nearBody), a body of slack and the weapon's splash. A miss
+        // beside or beyond the target reached it.
+        const int64_t ix=impact[0]>>16,iz=impact[2]>>16;
+        const int64_t along=(ix-sx)*(tx-sx)+(iz-sz)*(tz-sz),line=(tx-sx)*(tx-sx)+(tz-sz)*(tz-sz);
+        const bool shortOf=along<line && !nearBody(*t->type,ix-tx,iz-tz,8+24+int64_t(uint16_t(w.aoe))/2);
+        // Engine deviation: shots fly without spread, so one that lands beside
+        // or past a target standing still and leaves it unhurt will land there
+        // again (an arrow dipping into the ground at a wall's foot); it counts
+        // too. A shot whose splash hurt the target opened the line, as a hit.
+        if (t->hp<targetHp) {
+            if (u->blockedTarget==targetId) { u->blockedShots=0;u->repositions=0;u->searchFailed=0; }
+            return;
+        }
+        const bool besideStill=!shortOf && (t->type->isStructure() || t->speed==Fixed());
+        if ((!shortOf && !besideStill) || !impactIndestructible(w,int(impact[0]>>20),int(impact[2]>>20))) {
+            if (u->blockedTarget==targetId) { u->blockedShots=0;u->searchFailed=0; }
+            return;
+        }
     }
     if (u->blockedTarget!=targetId) { u->blockedTarget=targetId;u->blockedShots=0;u->repositions=0;u->searchFailed=0; }
     if (u->blockedShots && blockedSpotLeft(*u,sx,sz,tx,tz)) { u->blockedShots=0;u->searchFailed=0; }
@@ -9172,6 +9215,22 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
             u.routeStamp = -1;
             return;
         }
+    }
+    // Engine deviation (owner's call 2026-11-15): a hovering status caster
+    // (a Harpy, the Creon dragon's Freezing Breath) whose shots keep striking
+    // a body they cannot take (statusShotRefused) writes the target off and
+    // lets it go, as a ground attacker with no clear spot left does: the ring
+    // search (hoverForShot) tests the chord against terrain and scenery only,
+    // so it would not see the Barracks, and retail hovers on, spending a charm
+    // on the Barracks each reload. The scans and the sweep do not take the
+    // target again until the write-off lapses (the target moves, or the
+    // caster comes round to another side of it).
+    if (hovering && sel && flyingStatusCaster(u) && shotBlockedHere(u,*target)) {
+        if(u.scriptAimTarget)clearScriptWeaponTarget(u);
+        dropLeg(u);
+        cancelPath(u);
+        u.routeStamp = -1;
+        return;
     }
     // A unit that may not move (a building, Hold Position on an auto target)
     // whose aimed shell has no arc from here (noteNoArc wrote the target
@@ -18013,8 +18072,9 @@ void World::tickStraightProjectiles(std::span<const int> airGrid) {
                 struck=true;
                 p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
                 const Fixed shotHp=unit(p.targetId) ? unit(p.targetId)->hp : Fixed();
+                const bool refused=statusShotRefused(w,p.fromPlayer,p.targetId,hit.unitId);
                 applyHit(w,p.x.toFloat(),p.z.toFloat(),p.fromPlayer,p.fromId,unit(hit.unitId),p.position,{},p.slot);
-                noteShotImpact(p.fromId,p.targetId,w,p.position,hit.unitId,shotHp);
+                noteShotImpact(p.fromId,p.targetId,w,p.position,hit.unitId,shotHp,refused);
             }
             p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
             // A shot that runs out without striking anything missed its

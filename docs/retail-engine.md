@@ -661,6 +661,30 @@ none of them can stop on scenery:
   point's muzzle height to the target's SweetSpot is clear, and keeps that
   point until it can have flown there. The walk budget and the failed-search
   rule are the ground mover's.
+- Engine deviation (owner's call 2026-11-15): a status shot (mind control,
+  stone, freeze) that strikes a body other than its target which it cannot
+  take counts as blocked too (`World::statusShotRefused`, asked before the hit
+  lands: a charm's `canCaptureTarget`, a stone or freeze weapon's
+  `statusCanTake`, and any body of the caster's own side). The class updates
+  (`52d8d0`, `52db40`, `52dda0`) take the first unit struck, so in retail a
+  charm aimed past a Barracks goes to the Barracks' callback, which refuses
+  it, and the caster fires on: a 1.0.6 replay had eleven Harpy charms at an
+  Aramon builder all strike an Aramon Barracks (`arakeep`) standing in front
+  of it. A body the shot can take is taken, as before, and counts nothing. A
+  flying status caster drifts round its hover ring 20-40 px between shots, so
+  for it the count is kept against its bearing from the target (an eighth of a
+  turn) instead of its own spot, and a hovering one whose shots are written
+  off gives the target up at once (`tickCombat`) rather than move round the
+  ring: that search tests terrain and scenery, not bodies, and would not see
+  the Barracks. The scans and the sweep leave the target until the write-off
+  lapses. A ground caster walks and gives up as any ground attacker does; its
+  spot search cannot see bodies either, so it may spend three more at each
+  spot. `blocked_shot_test`: a Harpy at a builder with a Barracks in the line
+  struck it 14 times in a row (20 on an attack-move) and now 3, then lets the
+  builder go (on the attack-move it comes round later and takes it); a Taros
+  Mind Mage struck it 46 times in 120 s and now 12 (three at each of four
+  spots); with an enemy Swordsman in the line the charm takes the Swordsman,
+  with no blocked shot counted.
 
 `blocked_shot_test` (Retail and `--legion`) uses the shipped Aramon Archer and
 Swordsman: behind a passable ridge and behind a row of shipped `ZonFireD01`

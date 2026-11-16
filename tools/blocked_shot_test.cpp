@@ -19,7 +19,9 @@
 // (Hold Position stays; an open field is untouched); the same archer
 // against a Taros Castle behind a crest in front of its long face. A hovering Thirsha
 // whose Lightning stops on a standing stone moves round its hover ring
-// (World::hoverForShot).
+// (World::hoverForShot). A Harpy, and a ground Mind Mage, whose charms strike
+// a Barracks standing in front of their target give the target up
+// (World::statusShotRefused).
 //
 // A dev harness; not shipped in a game.
 
@@ -331,6 +333,88 @@ HoverOutcome runHover(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, int tic
     return out;
 }
 
+// The 1.0.6 replay (Zhon against Aramon): eleven Harpy charms aimed at an
+// Aramon builder all struck an Aramon Barracks (arakeep) standing in the line
+// of fire. The charm is a straight Line of Sight status shot that takes the
+// first body it strikes (52d8d0); a Barracks it cannot take stops it as
+// surely as a wall, and the Harpy (hoverattack) kept firing from its hover
+// point. Engine deviation (owner's call 2026-11-15): a status shot that
+// strikes another body it cannot take counts as blocked
+// (World::noteShotImpact). The Harpy hovers north of the builder with the
+// Barracks between them; with an enemy Swordsman in the line instead, the
+// charm takes the Swordsman, as before.
+enum class Blocker { Barracks, Swordsman };
+struct HarpyOutcome {
+    int blockerStrikes = 0;  // charms that struck the body in the line
+    int builderStrikes = 0;  // charms that struck the builder
+    int maxRun = 0;          // most blocker strikes in a row from one spot
+    int repositions = 0;
+    int blockedMax = 0;      // most blocked shots counted at once
+    bool builderTaken = false, blockerTaken = false;
+    bool dropped = false;    // the Harpy let the builder go
+};
+
+HarpyOutcome runHarpy(const sim::TypeRegistry& reg, Blocker blocker, bool attackMove, int ticks,
+                      const char* caster = "zonharp") {
+    sim::World w;
+    w.setPathfindingMode(mode);
+    w.setTerrain(std::vector<uint8_t>(64 * 64, 40), 64, 64, 0);
+    w.buildNavClasses(reg);
+    w.setPathService(true);
+    const sim::UnitType* harpy = reg.find(caster);
+    const sim::UnitType* builder = reg.find("arabuild");
+    const sim::UnitType* body = reg.find(blocker == Blocker::Barracks ? "arakeep" : "arasword");
+    if (!harpy || !builder || !body) { check(false, "shipped casters, arabuild, arakeep and arasword load"); return {}; }
+    const int target = w.spawn(builder, 512, 640, 0, 1);
+    const int wall = w.spawn(body, 512, blocker == Blocker::Barracks ? 560 : 600, 0, 1);
+    for (const int id : {target, wall}) {
+        w.setStance(id, 2);
+        w.unit(id)->moveState = 0;
+        w.unit(id)->fireState = 0;
+    }
+    const int shooter = w.spawn(harpy, 512, 360, 0, 0);
+    w.unit(shooter)->moveState = 1;
+    w.unit(shooter)->fireState = 2;
+    for (int i = 0; i < 30; ++i) w.tick(1.f / 30);
+    if (attackMove) w.attackMove(shooter, 512, 900, false);
+    else w.attack(shooter, target, false);
+    HarpyOutcome out;
+    int run = 0, lastRepositions = 0;
+    for (int i = 0; i < ticks; ++i) {
+        if (sim::Unit* a = w.unit(shooter)) a->mana = a->type->maxMana;   // a charm every reload
+        w.tick(1.f / 30);
+        const sim::Unit* a = w.unit(shooter);
+        if (!a || !a->alive()) break;
+        if (a->repositions != lastRepositions) { run = 0; lastRepositions = a->repositions; }
+        out.repositions = std::max(out.repositions, int(a->repositions));
+        if (a->blockedTarget == target) out.blockedMax = std::max(out.blockedMax, int(a->blockedShots));
+        for (const auto& h : w.hits()) {
+            if (h.fromPlayer != 0 || h.weapon != &harpy->weapons.front()) continue;
+            if (h.victimId == wall) { ++out.blockerStrikes; out.maxRun = std::max(out.maxRun, ++run); }
+            else if (h.victimId == target) { ++out.builderStrikes; run = 0; }
+        }
+        const sim::Unit* t = w.unit(target);
+        if (t && t->player == 0) { out.builderTaken = true; break; }
+        if (!out.dropped && i > 60) {
+            const bool holds = std::any_of(a->orders.begin(), a->orders.end(),
+                                           [&](const sim::Order& o) { return o.targetId == target; });
+            out.dropped = !holds && a->scriptAimTarget != target;
+        }
+    }
+    const sim::Unit* b = w.unit(wall);
+    out.blockerTaken = b && b->player == 0;
+    return out;
+}
+
+std::string describe(const HarpyOutcome& o) {
+    char buf[200];
+    std::snprintf(buf, sizeof buf, "blocker strikes=%d (most in a row %d) builder strikes=%d blocked=%d "
+                  "repositions=%d builder taken=%d blocker taken=%d dropped=%d",
+                  o.blockerStrikes, o.maxRun, o.builderStrikes, o.blockedMax, o.repositions,
+                  int(o.builderTaken), int(o.blockerTaken), int(o.dropped));
+    return buf;
+}
+
 // A long building behind a crest. Retail's collision reaches a unit through
 // the cells it owns (tools/re/probe_long_footprint_blocked.py), so a shot
 // that lands on a ridge in front of a building's long face is short of it,
@@ -552,6 +636,24 @@ int main(int argc, char** argv) {
           "the Thirsha's first bolts stop on the standing stone, then it stops firing into it");
     check(hover.hunterHits > 0 && hover.damage > 0,
           "the Thirsha reaches a clear bearing and hits the Hunter");
+    for (const bool attackMove : {false, true}) {
+        const HarpyOutcome keep = runHarpy(reg, Blocker::Barracks, attackMove, 3600);
+        const HarpyOutcome sword = runHarpy(reg, Blocker::Swordsman, attackMove, 1800);
+        std::printf("  harpy %s, barracks:  %s\n", attackMove ? "attack-move" : "attack     ", describe(keep).c_str());
+        std::printf("  harpy %s, swordsman: %s\n", attackMove ? "attack-move" : "attack     ", describe(sword).c_str());
+        const HarpyOutcome mage = runHarpy(reg, Blocker::Barracks, attackMove, 3600, "tarmind");
+        std::printf("  mind mage %s, barracks: %s\n", attackMove ? "attack-move" : "attack     ", describe(mage).c_str());
+        check(keep.blockedMax >= 3 && keep.maxRun <= 3 && keep.blockerStrikes <= 6 && (keep.dropped || keep.builderTaken),
+              attackMove ? "a Harpy on an attack-move stops charming the Barracks in the line within three charms and lets the builder go"
+                         : "an ordered Harpy stops charming the Barracks in the line within three charms and lets the builder go");
+        check(sword.blockedMax == 0 && sword.blockerTaken && sword.builderTaken,
+              "a charm that strikes an enemy it can take takes it and counts no blocked shot");
+        // A ground caster walks to another spot (repositionForShot: the
+        // chord test sees terrain only) and gives the target up when its
+        // walks are spent, three charms a spot.
+        check(mage.dropped && (attackMove || mage.blockerStrikes <= 12),
+              "a ground Mind Mage behind the Barracks gives the builder up after its walks");
+    }
     const auto [walks, hits] = runSticky(vfs, reg);
     check(walks >= 1 && hits > 0, "a failed search does not give up on the target once a clear spot is in reach",
           "walks=" + std::to_string(walks) + " hits=" + std::to_string(hits));
