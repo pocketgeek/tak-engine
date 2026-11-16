@@ -7117,6 +7117,19 @@ bool World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
     if(!scriptTriggered) {u.reloads[slot] = int32_t(rl * kTick + 0.5f);u.fireAnimations|=uint32_t(1)<<slot;u.weaponAnimations.add(tak::RetailWeaponAnimation::Fire,slot);}   // seconds -> ticks, as retail stores it
     u.justFired = true;
     if (slot < 32) u.firedWeapons |= uint32_t(1) << slot;
+    // Engine deviation (owner's call 2026-11-15): retail launches a
+    // script-timed shot (SET 23) from the heading and pitch its readiness
+    // gate (52fff0) stored when it passed, plus the body's heading at the
+    // release. A flyer on attack runs gets there about 15 ticks after the gate
+    // (the Gryphon), closing and turning all the while, so its shots land
+    // long or wide of the target (docs/retail-engine.md, "Attack runs"). A
+    // flyer that does not hover to attack re-solves its aim at the release
+    // instead, as an unscripted shot does (queryWeaponAim, the led SweetSpot
+    // from the muzzle as it stands), and launches from that; with no solve,
+    // or no arc, it keeps the stored angles. The stored aim record is left
+    // alone (the scripts read it). Readiness, timing and reload are retail's.
+    const bool solveAtRelease=!scriptTriggered ||
+        (u.type->canFly && !u.type->hoverAttack && !w.hoverAttack);
     // Remote Effect: nothing travels. The spell materialises at the slot's AIM
     // POINT and lands after builduptime -- so walking aside doesn't dodge an
     // Earthquake, you have to leave its (up to 500px) radius. decaytime is the
@@ -7274,7 +7287,7 @@ bool World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
         flame.substeps=std::max(1u,(uint32_t(raw)+0xfffffu)>>20);
         flame.speed=uint32_t(raw)/flame.substeps;
         uint16_t heading=u.weaponAim[size_t(slot)].heading,pitch=u.weaponAim[size_t(slot)].pitch;
-        if(!scriptTriggered)if(const auto aim=queryWeaponAim(u,t,slot)) {
+        if(solveAtRelease)if(const auto aim=queryWeaponAim(u,t,slot)) {
             heading=aim->heading;pitch=aim->pitch;flame.aimPoint=aim->target;
         }
         heading=uint16_t(heading+portHeadingToRetail(u.heading));
@@ -7296,7 +7309,7 @@ bool World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
         const int32_t speed=int32_t(uint32_t(raw)/p.substeps);
         uint16_t heading=u.weaponAim[size_t(slot)].heading,pitch=u.weaponAim[size_t(slot)].pitch;
         std::optional<WeaponAimSolution> aim;
-        if(!scriptTriggered)aim=queryWeaponAim(u,t,slot);
+        if(solveAtRelease)aim=queryWeaponAim(u,t,slot);
         if(aim) {heading=aim->heading;pitch=aim->pitch;}
         const auto launch=retailGuidedLaunch(p.position,portHeadingToRetail(u.heading),heading,pitch,speed);
         p.position=launch.position;p.velocity=launch.velocity;p.angles=launch.angles;
@@ -7329,7 +7342,7 @@ bool World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
         p.substeps=std::max(1u,(uint32_t(raw)+0xfffffu)>>20);
         const int32_t speed=int32_t(uint32_t(raw)/p.substeps);
         uint16_t heading=u.weaponAim[size_t(slot)].heading,pitch=u.weaponAim[size_t(slot)].pitch;
-        if(!scriptTriggered)if(const auto aim=queryWeaponAim(u,t,slot)) {
+        if(solveAtRelease)if(const auto aim=queryWeaponAim(u,t,slot)) {
             heading=aim->heading;pitch=aim->pitch;
         }
         p.angles={0,heading,uint16_t(0u-pitch)};
@@ -7422,13 +7435,13 @@ bool World::fire(Unit& u, const WeaponTarget& t, int slot,bool scriptTriggered) 
         if (rawSpeed > 0.0 && rawSpeed < double(INT32_MAX)) {
             const int32_t raw = int32_t(rawSpeed);
             const uint32_t steps = std::max(1u, (uint32_t(raw) + 0xfffffu) >> 20);
-            const auto aim = scriptTriggered ? std::optional<WeaponAimSolution>{} :
-                                               queryWeaponAim(u, t, slot);
-            if (aim && aim->unreachable) return true;   // no arc: no flat shell (queryWeaponAim)
-            const uint16_t heading = scriptTriggered ? u.weaponAim[size_t(slot)].heading :
-                aim ? aim->heading : u.weaponAim[size_t(slot)].heading;
-            const uint16_t pitch = scriptTriggered ? u.weaponAim[size_t(slot)].pitch :
-                aim ? aim->pitch : u.weaponAim[size_t(slot)].pitch;
+            auto aim = solveAtRelease ? queryWeaponAim(u, t, slot) : std::optional<WeaponAimSolution>{};
+            if (aim && aim->unreachable) {
+                if (!scriptTriggered) return true;   // no arc: no flat shell (queryWeaponAim)
+                aim.reset();                         // a released shot still leaves, on the stored angles
+            }
+            const uint16_t heading = aim ? aim->heading : u.weaponAim[size_t(slot)].heading;
+            const uint16_t pitch = aim ? aim->pitch : u.weaponAim[size_t(slot)].pitch;
             const auto muzzle = queryUnitScriptPoint(u.id, false, slot);
             const auto native = retailBallisticLaunch(muzzle, portHeadingToRetail(u.heading),
                 heading, pitch, raw / int32_t(steps));

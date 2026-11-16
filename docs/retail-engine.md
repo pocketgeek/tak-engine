@@ -1605,7 +1605,7 @@ Measured in the standard balance (Crusades within 6% unless noted), 3600 ticks
 against an immobile dummy with real weapons (shots / damage, the dummy topped
 up every tick):
 
-| flyer | held still in range | attack runs |
+| flyer | held still in range | attack runs (retail's aim, before the deviation below) |
 | --- | --- | --- |
 | Gryphon | 36 / 11405 | 12 / 998 |
 | Wrath of Tammuz | 82 / 0 | 31 / 8.5 M (Crusades: 120 / 0 held, 55 / 650 k on runs) |
@@ -1614,8 +1614,8 @@ up every tick):
 | Aerial Juggernaut | 66 / 133898 | 121 / 160486 |
 
 The runs bring the short-range Dirigible, Juggernaut and Wrath over the target.
-The Gryphon and the Fallen Angel lose most of their damage because their shots
-from a run land along their path: a Gryphon spear thrown 497 px out came down
+In retail the Gryphon and the Fallen Angel lose most of their damage because
+their shots from a run land along their path: a Gryphon spear thrown 497 px out came down
 180 px from the dummy, past it, and the Fallen Angel's Death Sword, released
 about 31 px out, lands 15-25 px past. The angles freeze at the gate and the
 shot leaves from the moved muzzle at the release frame, and each step of that is
@@ -1631,6 +1631,30 @@ sets 23 (traced on the 497 px throw: gate at tick 65, spear at tick 80), over wh
 closes about 54 px and climbs 15, so its pitch is the one for 497 px from a
 lower muzzle and the spear lands long. Retail's spear from a closing Gryphon
 should land as far off; a whole native engagement has not been run.
+
+Engine deviation (owner's call 2026-11-15): we do not copy that last step. A
+flyer that does not hover to attack (`canfly`, no `hoverattack`) re-solves its
+aim when the script releases the shot (`World::fire`, `queryWeaponAim`: the
+led SweetSpot from the muzzle as it stands then) and launches from that, as an
+unscripted shot already did; with no solve, or no arc, it keeps the stored
+angles, and the shot still leaves. The gate, the timing, the reload and the
+aim record the scripts read are retail's. It covers the ballistic launch (the
+Gryphon's spear, the Dirigible's and the Juggernaut's anti-air arrows) and the
+guided one (the Fallen Angel's Death Sword and Fire Bomb). The straight, Line
+of Sight and flame launches take the same rule, though no shipped flyer
+without `hoverattack` has one; a Dropped bomb, a Remote Effect and a storm
+already took their point at the release. A replay of a 1.0.6 game had the
+Gryphon striking with 24 of 108 spears. `flyer_combat_test` (real weapons, a
+dummy topped up every tick, 3600 ticks of runs; shots / direct hits / damage,
+both balances within 3%):
+
+| flyer | retail's stored angles | re-aimed at the release |
+| --- | --- | --- |
+| Gryphon | 12 / 4 / 1725 | 12 / 12 / 4151 |
+| Fallen Angel | 11 / 0 / 0 | 11 / 11 / 102288 (Crusades: 1 / 0 / 0 both ways) |
+
+The Dirigible, the Juggernaut (their Dropped bombs against a ground target)
+and the Wrath of Tammuz (a storm) do not change.
 
 Shooting at a Gryphon on its runs (3 trials x 1800 ticks, the shooter starting
 150 px beside the target, free to chase), hits / shots:

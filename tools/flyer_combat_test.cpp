@@ -7,6 +7,7 @@
 #include <cmath>
 #include <algorithm>
 #include <optional>
+#include <bit>
 
 namespace tak::sim { struct RetailReplayProbe {
     static void capture(World& w,int id,int owner) {w.captureUnit(*w.unit(id),owner);}
@@ -382,6 +383,44 @@ int main(int argc,char** argv) {
             check(near,"its runs carry it within half its range of the target");
             check(runs>0 && onLine==runs,"every run point lies past the target on the flyer's line through it");
             check(fired,"it fires during its runs");
+        }
+        // Engine deviation (owner's call 2026-11-15): a flyer on attack runs
+        // re-aims each script-timed release (World::fire). Retail launches
+        // from the angles its readiness gate froze about 15 ticks earlier, so
+        // a closing Gryphon's spear landed long and a turning one's wide
+        // (12 shots / 998 damage per 3600 ticks, docs/retail-engine.md
+        // "Attack runs"). Real weapons against a dummy topped up every tick:
+        // shots, direct hits and damage are reported for each, and most of
+        // the Gryphon's spears must strike it.
+        for (const auto& name:flyers) {
+            auto type=*registry.find(name);
+            if (type.hoverAttack || type.weapon.hoverAttack) continue;
+            type.maxHp=30000;type.healTime=0;
+            auto dummy=*registry.find("tarzom");dummy.maxHp=30000;dummy.healTime=0;
+            dummy.maxVel={};dummy.weapon.damage=0;dummy.weapons.clear();
+            tak::sim::World w;
+            w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+            w.buildNavClasses(registry);
+            const int ground=w.spawn(&dummy,2300,2000,0,0),flyer=w.spawn(&type,2300,2600,0,1);
+            selectWeaponFor(w,flyer,ground);
+            w.attack(flyer,ground,false);
+            const auto* hp=w.unit(ground);
+            int shots=0,hits=0;double damage=0;
+            for (int tick=0;tick<3600;++tick) {
+                w.unit(ground)->hp=tak::sim::Fixed::fromInt(dummy.maxHp);
+                w.tick(1.f/30.f);
+                const auto* u=w.unit(flyer);
+                if (!u || u->orders.empty() || u->orders.front().targetId!=ground) break;
+                shots+=std::popcount(u->firedWeapons);
+                damage+=dummy.maxHp-hp->hp.toFloat();
+                for (const auto& hit:w.hits())
+                    if (hit.victimId==ground && hit.weapon>=type.weapons.data() &&
+                        hit.weapon<type.weapons.data()+type.weapons.size()) ++hits;
+            }
+            std::printf("attack-run aim balance=%s unit=%s shots=%d hits=%d damage=%.0f\n",
+                crusades?"Crusades":"standard",name.c_str(),shots,hits,damage);
+            if (name=="zongryp")
+                check(shots>=8 && hits*2>shots,"a Gryphon on attack runs strikes the target with most of its spears");
         }
         // Retail turns the body toward the point a slot aims at (52fe30): the
         // led SweetSpot (51aa50) for every class but melee. A pivoting ground
