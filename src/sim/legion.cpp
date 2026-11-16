@@ -229,6 +229,7 @@ constexpr int kOvertakeCells=24;               // the longest forward run an ove
 constexpr int kOvertakeClick=64;               // the most members a click may have for its bodies to pass each other
 constexpr int kOvertakeNear=8;                 // ... only with at most kOvertakeCrowd other bodies this near (cells)
 constexpr int kOvertakeCrowd=6;
+constexpr int kOvertakeSmall=16;               // ... unless the click has at most this many members
 constexpr int kOvertakeClear=16;               // ... and no mover walking against it this many cells round
 constexpr int kOvertakeHome=32;                // ... nor nearer the click than its area's edge plus this many cells
 constexpr int64_t kOncomingCos2=14;            // 100*cos^2(112 deg): goal directions this far apart are oncoming
@@ -14964,15 +14965,21 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     //    stood stuck, against 750 and none). So a click of more than kOvertakeClick members keeps its order (a crowd
     //    that size walks as a crowd, and a slot at the front of its area lies across the bodies settled in it).
     // And never in a crowd (more than kOvertakeCrowd other bodies within kOvertakeNear cells: a mixed block of 32
-    // gained nothing by it and some of its bodies were done later), never with a mover walking against this body's
-    // course (more than 90 deg apart) within kOvertakeClear cells, never within kOvertakeHome cells of the click's
-    // area (its packed disc, Point::limit, once assigned): a 40-body click through a 12-cell gap passed only past
-    // the gap, a few dozen cells short of the point, and every time a slow body finished later (offset 0: one not
-    // done at all, against the last at 2,895; offset -1: 2,600 -> 2,845); with the limit it plays as before at all
-    // 13 offsets, and the columns, which pass on the way, are unchanged. Never while the click stands wider across its
-    // way than deep along it: a fast body on the right flank of a 48-body block 8 abreast had room round it and
-    // passed the slow body ahead at the start, and slow and mid bodies paid (one offset's last slow body 2,605 ->
-    // 3,156, a mid body not done); a block now passes nobody until it has strung out. And never within an Alt+N
+    // gained nothing by it and some of its bodies were done later) unless the click has at most kOvertakeSmall
+    // members (2026-11-16: a player's selections of 6-14 knights and swordsmen were refused for their crowd about 400
+    // times in one game; a click that small passes as a column does, and every one-click fixture of up to 16 bodies
+    // kept its slow bodies' arrival within 0.4%; at 24 a 20-body column's fast bodies came in 9% later and a mid
+    // body's t90 6.5%), never with a mover walking against this body's course (more than 90 deg apart) within
+    // kOvertakeClear cells, never within kOvertakeHome cells of the click's area (its packed disc, Point::limit, once
+    // assigned): a 40-body click through a 12-cell gap passed only past the gap, a few dozen cells short of the
+    // point, and every time a slow body finished later (offset 0: one not done at all, against the last at 2,895;
+    // offset -1: 2,600 -> 2,845); with the limit it plays as before at all 13 offsets, and the columns, which pass
+    // on the way, are unchanged (2026-11-16: without it, one-click fixtures of 10-16 bodies sent 300-600 px had
+    // their slow bodies' t90 median up to 58% later, a loose column at 300 px, and often the fast bodies too: a pass
+    // that close to the area gains the passer nothing and reorders the packing). Never while the click stands wider across its way than deep along it: a fast body on the right
+    // flank of a 48-body block 8 abreast had room round it and passed the slow body ahead at the start, and slow and
+    // mid bodies paid (one offset's last slow body 2,605 -> 3,156, a mid body not done); a block now passes nobody
+    // until it has strung out. And never within an Alt+N
     // formation, which walks at its slowest member's pace on purpose.
     bool clickPass(const Unit& u,const Member& m,const Unit& b,int ox,int oz) {
         if(w.legionFormationGroup(u)||w.legionFormationGroup(b))return false;
@@ -14984,13 +14991,14 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(hx*hx+hz*hz<home*home)return false;
         const int fx=u.type->footX,fz=u.type->footZ;
         std::array<int32_t,kOvertakeCrowd+1> seen{};int crowd=0;
-        for(int cz=std::max(oz-kOvertakeNear,0);cz<=std::min(oz+fz-1+kOvertakeNear,w.occH_-1);++cz)
-            for(int cx=std::max(ox-kOvertakeNear,0);cx<=std::min(ox+fx-1+kOvertakeNear,w.occW_-1);++cx) {
-                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
-                if(!o||o==u.id||std::find(seen.begin(),seen.begin()+crowd,o)!=seen.begin()+crowd)continue;
-                if(crowd==kOvertakeCrowd)return false;
-                seen[size_t(crowd++)]=o;
-            }
+        if(pt->refs>kOvertakeSmall)
+            for(int cz=std::max(oz-kOvertakeNear,0);cz<=std::min(oz+fz-1+kOvertakeNear,w.occH_-1);++cz)
+                for(int cx=std::max(ox-kOvertakeNear,0);cx<=std::min(ox+fx-1+kOvertakeNear,w.occW_-1);++cx) {
+                    const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+                    if(!o||o==u.id||std::find(seen.begin(),seen.begin()+crowd,o)!=seen.begin()+crowd)continue;
+                    if(crowd==kOvertakeCrowd)return false;
+                    seen[size_t(crowd++)]=o;
+                }
         // Strung out: the click's members reach at least as far along the way to the point as across it. A block
         // standing wider than deep (a 48-body block 8 abreast, 7 cells apart) keeps its order, flank bodies too, which
         // have room round them; a line, a column or a group spread loose along the way passes.
@@ -15017,6 +15025,33 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 if(c&&cm&&cm->state==Moving&&std::abs(retailTurnRequest(courseOf(*c),course))>=16384)return false;
             }
         return true;
+    }
+    // Speed groups (2026-11-16, ours, not retail): a click's members sorted by top speed (UnitType::maxVel) fall into
+    // groups, a new one starting at the first member at least 4/3 the speed of its group's slowest (the three quarters
+    // overtakeRoute passes under), so swordsmen (1.10) and archers (1.15) walk as one group and knights (2.9) as
+    // another. Bodies of one click pass each other only across groups: the click walks as one click per speed group.
+    // It still arrives as one: every group keeps the click's one area round its point (Point: one formation sized
+    // for all of them), and a passer takes a slot at its front (overtakeSlot). A function of the members the point
+    // lists now (at most kOvertakeClick, clickPass is asked first), so no state of its own. Whether u and b are in
+    // different groups.
+    bool speedApart(const Member& m,const Unit& u,const Unit& b) const {
+        const Point* pt=m.pt;
+        if(!pt) {const auto found=points.find(m.point);pt=found==points.end()?nullptr:&found->second;}
+        if(!pt)return false;
+        std::vector<int32_t> speeds;speeds.reserve(pt->ids.size());
+        for(const int id:pt->ids) {
+            const Member* o=member(id);const Unit* v=w.unit(id);
+            if(o&&v&&v->type&&o->point==m.point)speeds.push_back(v->type->maxVel.v);
+        }
+        std::sort(speeds.begin(),speeds.end());
+        const int32_t lo=std::min(u.type->maxVel.v,b.type->maxVel.v),hi=std::max(u.type->maxVel.v,b.type->maxVel.v);
+        int64_t slowest=-1;
+        for(const int32_t v:speeds) {
+            if(slowest>=0&&int64_t(v)*3<slowest*4)continue;
+            if(slowest>=0&&v>lo&&v<=hi)return true;   // a group starts between the two speeds
+            slowest=v;
+        }
+        return false;
     }
     // A body that passed a slower one of its own click takes its slot at the front of the click's slots: the free
     // origin nearest the point as deep along its way in as the deepest slot of the click (formationCell; the slot it
@@ -15060,7 +15095,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // run, allies walking the same way may stand in it: they move on ahead -- and the run must end nearer the goal;
     // otherwise (a corridor one body wide, slow bodies abreast, a packed crowd) nothing changes. Move and fight legs
     // only, never within 2*kPassCells of the goal (bodies packing into place), and past a body of the same click
-    // (Member::point) only as clickPass allows, after which the passer takes a slot at the front of its click's
+    // (Member::point) only of another speed group (speedApart) and as clickPass allows, after which the passer takes a slot at the front of its click's
     // slots (overtakeSlot). The slow body must be a moving Legion member at under three quarters of this body's speed
     // cap (a lesser gap would need a run past kOvertakeCells). No state of its own: the route and the slot are hashed.
     // Returns whether a route was committed.
@@ -15089,8 +15124,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(std::abs(retailTurnRequest(courseOf(*b),courseOf(u)))>=8192)return false;   // the same way: within 45 deg
         const int64_t v=full.v,vb=std::max<int64_t>(b->speed.v,int64_t((b->type->maxVel*w.groundTerrainMultiplier(*b)).v));
         if(vb*4>=v*3)return false;
-        const bool click=bm->point==m.point;   // a body of its own click (see clickPass)
-        if(click&&!clickPass(u,m,*b,ox,oz))return false;
+        const bool click=bm->point==m.point;   // a body of its own click (see clickPass, speedApart)
+        if(click&&(!clickPass(u,m,*b,ox,oz)||!speedApart(m,u,*b)))return false;
         // Travel octant of the aim, and the two lateral directions (the slow body's side last).
         const int64_t adx=std::abs(aimDx),adz=std::abs(aimDz);
         const int sdx=adx*5>=adz*2?(aimDx>0?1:-1):0,sdz=adz*5>=adx*2?(aimDz>0?1:-1):0;

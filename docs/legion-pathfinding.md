@@ -876,7 +876,8 @@ Before, the rule never passed one, because both things that went wrong were meas
 
 The six conditions: the click has at most 64 members; at most `kOvertakeCrowd` (6) other bodies stand within
 `kOvertakeNear` (8) cells of the passer (a mixed block of 16 archers ahead of 16 knights gained nothing by passing and
-some of it finished later, so a crowd keeps its order); no Legion mover whose course is more than 90 deg from the
+some of it finished later, so a crowd keeps its order) -- unless the click has at most `kOvertakeSmall` (16) members,
+see "Speed groups" below; no Legion mover whose course is more than 90 deg from the
 passer's is within `kOvertakeClear` (16) cells; the passer is at least `kOvertakeHome` (32) cells outside the click's
 area (its packed disc, `Point::limit`, once assigned); the click is strung out -- its members reach at least as far
 along the way to the point as across it; and neither body is in an Alt+N formation, which walks at its
@@ -898,6 +899,56 @@ flank about 300 ticks in, once the fast rows are out ahead (fast last 1,999 / 2,
 below play as before the rule. Mid-speed bodies count as slow: the speed rule passes any body under three quarters
 of the passer's cap, so knights (2.9) pass a 1.9 body too. No new state: the route and the slot are hashed already. `Stats::overtakes` counts the routes
 (`work.overtakes`), `Stats::clickOvertakes` those past a body of the same click (`work.click_overtakes`).
+
+**Speed groups (2026-11-16).** A click's members, sorted by top speed (`UnitType::maxVel`), fall into speed groups: a
+new group starts at the first member at least 4/3 the speed of its group's slowest (the same three quarters the speed
+rule above passes under), so Swordsmen (1.10) and Archers (1.15) are one group and Knights (2.9) another, and a click
+of slow, mid (1.9) and fast bodies has three. A body passes one of its own click only of another speed group
+(`speedApart`, a function of the members the point lists, no state of its own): the click walks as one click per
+speed group. It still arrives as ONE click: every group keeps the click's one area round its point (`Point`, one
+formation sized for all of them) and a passer takes a slot at its front (`overtakeSlot`, above). And a click of at
+most 16 members passes without the crowd limit, as a column does; the other five conditions stay. Move and fight
+(attack-move) legs alike, as every overtake (`overtake-click-field` is an attack-move order). In practice the speed
+rule already kept bodies of one group from passing each other; what is new is the small click's crowd. A player's
+selections of 6-14 knights and swordsmen in the owner's test game were refused about 400 times for their crowd: played
+over that game's commands (it diverges from the recording once the first pass changes a body's way), the knights'
+stop-starts behind their own slower units fell from 311 to 231, passes within a click from 1 to 7. Over 14 small
+one-click fixtures (`overtake-click-col-*`, `-loose-*`, `-bunch-*` sent 300, 600 and 1,000 px; knights at the rear of a
+block, `-rear-200/300/500`; three speeds, `-mid-300/320`), offsets 0, +-1..6, per speed group: orders of 600 px or less
+play exactly as before (their passes would fall inside the home limit); the loose column and the bunch sent 1,000 px
+let their knights by (fast stops 622 -> 232 and 435 -> 211, the fast group's mean arrival median 596 -> 535 and 465 ->
+435; slow 1,049 -> 1,047 and 1,010 -> 966); the single-file column sent 1,000 px passes as often as before and its fast
+group's mean arrival median is 432 -> 457 (+5.8%, a different packing; slow unchanged). Every mid and slow group's
+mean and t90 medians are within 0.4% of before or earlier, none less settled; the 12-body columns above
+(`overtake-click-field`, `-road`) differ at some offsets, their slow groups' mean median +0.4% and -0.3%. Clicks of
+more than 16 and Alt+N formations play as before (hash-identical on every larger fixture here, `bridges-1000` and its
+fight variant).
+
+What was tried for the split as the owner proposed it -- each speed group its own click, the fast passing the slow
+under the rule for other clicks, the groups sharing one area -- and measured against the parent over the same 14
+fixtures, the existing one-click fixtures and 11 mixed fixtures of 10-48 bodies (columns, open blocks, gaps 6-12
+cells wide), 13 offsets each, judged per speed group on the medians of mean arrival and t90 (more than 2% later for a
+mid or slow group is a failure):
+
+* *A separate area per group* was not built: two clicks to one point each lay their own formation over the same disc
+  and claim only their own cells, so the group arriving second packs round, or walks through, the bodies the first
+  settled -- the cost every earlier attempt measured.
+* *One area, its slots divided by group*, the fast group the side deepest along its way in and the slow group the near
+  side (the owner's "settle in an area around the spot"): 19-20 group failures (judged here on the mean and on the
+  last body), with no pass at all in most of them -- the knights at the rear of a short order must cross the slow
+  group to reach their slots (`-rear-200` slow mean +12% and last +37%, `-mid-300` fast mean +33% and slow last +43%,
+  `-bunch-300` slow mean +15%). Kept out.
+* *Groups pass with no limits of the click* (only the other-click rule): 12-13 group failures on orders of 300-600 px
+  (`-loose-300` slow t90 +56%, `-col-300` slow +18% mean, `-rear-300` fast +12% too): a pass that close to the area
+  gains the passer nothing and reorders the packing. So the home limit stays.
+* *Home limit kept, crowd and strung-out limits dropped for every click size*: the 48-body block's knights came in
+  18% earlier (t90 -53%), the 40-body choke's 16%, but the block's slow group's mean median went +2.4% and
+  `ctest:legion_overtake`'s block check failed at 12 of 13 offsets (a slow group not done at three), the choke check
+  with two slow bodies not done,
+  and a 24-body mixed column through a 12-cell gap had its mid t90 +6.5%. The crowd limit stays for clicks of more
+  than 16 (at 24 the 20-body column's knights came in 9% later).
+* Variants of the passer's new slot (on its own side of the area instead of the middle, one body deeper, none at
+  all) traded single fixtures both ways (the 1,000 px column's fast t90 +23% with the side slot) and were not taken.
 
 `ctest:legion_overtake` (asset-free; `overtake-field`, `overtake-road`, `overtake-corridor` in tools/scenarios/: a
 single-file column of 12 bodies, slow 2x2 at 1.15 and fast 3x3 at 2.9 mixed, each on an order of its own): on open
@@ -2833,11 +2884,13 @@ Rules that come out of using them:
   separately. The one place fog shows is group awareness, which sees an enemy mover only within sight
   (`aware-unseen:pair.contacts.permille_x100` against `aware-seen:pair.contacts.permille_x100`).
 * **A click that stands together keeps its slowest pace until it strings out.** A body passes one of its own click
-  (section 4, "Allies overtake") only in a click of at most 64 members that is strung out (deeper along its way than
-  wide), away from a crowd (at most 6 other bodies within 8 cells), with no mover walking against it within 16 cells
-  and at least 32 cells outside the click's area. In practice that is a selection strung out in a line or a loose
-  column. The usual case -- knights and archers standing together as a block, box-selected and right-clicked --
-  passes nobody at the start and its knights walk at the archers' pace until the click has strung out on the way
+  (section 4, "Allies overtake") only of another speed group, in a click of at most 64 members that is strung out
+  (deeper along its way than wide), away from a crowd (at most 6 other bodies within 8 cells; no crowd limit for a
+  click of at most 16), with no mover walking against it within 16 cells and at least 32 cells outside the click's
+  area. In practice that is a selection strung out in a line or a loose column, or a small one sent far. A small
+  click on a short order (600 px or less) still walks at its slow units' pace: its passes would fall inside the home
+  limit, and every way of letting them happen there was measured to cost its slow units (see "Speed groups"). The usual case -- knights and archers standing together as a block,
+  box-selected and right-clicked -- passes nobody at the start and its knights walk at the archers' pace until the click has strung out on the way
   (`overtake-click-blob`: fast done 1,975..2,091, stops 765..978 per offset, no pass; the 48-body mixed block 7 cells
   apart, `overtake-click-block`: hash-identical to main at 12 of 13 offsets, half its fast bodies in by about 810
   ticks but 90% only by about 2,050; at the 13th two knights pass on the flank about 300 ticks in and both kinds come

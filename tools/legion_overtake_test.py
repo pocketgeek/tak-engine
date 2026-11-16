@@ -50,8 +50,22 @@ overtakeSlot) before this, parent 2103fb83, where a body never passed one of its
 One slow body of a one-click column settles just outside its disc at one offset of the road and of the corridor, on
 the parent as now; a fast body never does.
 
+Speed groups (2026-11-16): a click of at most 16 members passes within itself without the crowd limit, the fast
+group past the slow one (clickPass, speedApart). Fourteen small one-click fixtures, Knights (2.9) with Swordsmen
+(1.10), three speeds in overtake-click-mid-*: single-file columns (overtake-click-col-*), loose columns two abreast
+(-loose-*) and bunches wider than deep (-bunch-*) sent 300, 600 and 1,000 px, and blocks with the knights at the rear
+(-rear-200/300/500, -mid-300/320). Each at offsets 0, +-1..6, each body's arrival its settle tick (--dump-units);
+per fixture and speed group the median over the offsets of the group's mean arrival (M) and of its t90 (T), against
+the parent f3a4c16e (SPEED_PARENT). Checked per fixture and group, never pooled: a mid or slow group's M and T no more
+than 2% later and no more of its bodies unsettled; a fast group's M no more than 6% later (the one-file column sent
+1,000 px: 432 -> 457, its passes unchanged, a different packing); and on the two sent 1,000 px in a crowd, the loose
+column and the bunch, the fast bodies pass: fast stops over the offsets 622 -> 232 and 435 -> 211 (at most 300), M
+596 -> 535 (at most 560) and 465 -> 435 (at most 450). Orders of 600 px or less play as on the parent: the passes
+there would fall within the home limit.
+
 Exit 0 pass, 1 fail, 2 tooling.
 """
+import concurrent.futures
 import json
 import os
 import statistics
@@ -135,6 +149,7 @@ def main():
             bad.append(f"overtake-corridor offset {r['offset']}: last slow body {max(r['Sdone'])} (at most 2,780)")
     bad += clicks(exe, scenarios)
     bad += block(exe, scenarios)
+    bad += speed_groups(exe, scenarios)
     for b in bad:
         print("FAIL:", b)
     return 1 if bad else 0
@@ -178,6 +193,109 @@ def block(exe, scenarios):
                 bad.append(f"overtake-click-block offset {off}: group {g} done {d} (parent {was}, at most 2% later)")
     if passing > 2:
         bad.append(f"overtake-click-block: passes within the click at {passing} offsets (at most 2)")
+    return bad
+
+
+# The small one-click fixtures on the parent f3a4c16e, per speed group: (median over offsets 0, +-1..6 of the group's
+# mean arrival, ... of its t90, bodies unsettled over the offsets, stops over the offsets).
+SPEED_PARENT = {
+    "col-300": {"fast": (168, 303, 0, 122), "slow": (301, 446, 0, 12)},
+    "col-600": {"fast": (312, 596, 0, 394), "slow": (627, 803, 0, 21)},
+    "col-1000": {"fast": (432, 635, 0, 233), "slow": (991, 1175, 0, 38)},
+    "loose-300": {"fast": (218, 339, 0, 95), "slow": (295, 350, 0, 0)},
+    "loose-600": {"fast": (417, 680, 0, 418), "slow": (608, 751, 0, 43)},
+    "loose-1000": {"fast": (596, 947, 0, 622), "slow": (1049, 1265, 0, 30)},
+    "bunch-300": {"fast": (185, 272, 0, 82), "slow": (316, 374, 0, 0)},
+    "bunch-600": {"fast": (354, 565, 0, 346), "slow": (612, 841, 0, 1)},
+    "bunch-1000": {"fast": (465, 631, 0, 435), "slow": (1010, 1094, 0, 0)},
+    "rear-200": {"fast": (151, 168, 0, 5), "slow": (176, 203, 0, 0)},
+    "rear-300": {"fast": (259, 325, 0, 188), "slow": (299, 343, 0, 1)},
+    "rear-500": {"fast": (411, 438, 0, 538), "slow": (416, 478, 0, 0)},
+    "mid-300": {"fast": (224, 265, 0, 31), "mid": (252, 285, 0, 9), "slow": (264, 301, 0, 0)},
+    "mid-320": {"fast": (260, 309, 0, 160), "mid": (228, 248, 0, 0), "slow": (298, 405, 0, 0)}}
+SPEED_OFFSETS = (0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6)
+UNSETTLED = 6000   # an unsettled body counts as arriving at this tick
+
+
+def settle(exe, scn, offset):
+    """One offset: each unit's settle tick (id -> tick; the first tick it stands with no Legion leg after one) and
+    the stops per group, or None."""
+    p = subprocess.run([exe, scn, "--mode", "legion", "--offsets", str(offset), "--serial", "--json", "--dump-units",
+                        "1"], capture_output=True, text=True)
+    rows = [json.loads(ln) for ln in p.stdout.splitlines() if ln.startswith("{")]
+    if p.returncode != 0 or not rows:
+        return None
+    member, last = {}, {}
+    for ln in p.stderr.splitlines():
+        if not ln.startswith("DUMP "):
+            continue
+        f = dict(kv.split("=", 1) for kv in ln.split()[1:])
+        i = int(f["id"])
+        if f["st"] != "0" or f["g"] != "0":
+            member[i] = True
+            last.pop(i, None)
+        else:
+            if member.get(i) and i not in last:
+                last[i] = int(f["t"])
+            member[i] = False
+    stops = {k.split(".")[1]: v for k, v in rows[0]["keys"].items() if k.startswith("g.") and k.endswith(".stops")}
+    return last, stops
+
+
+def speed_groups(exe, scenarios):
+    """The small one-click fixtures, per speed group against SPEED_PARENT; returns the failures."""
+    def t90(v):
+        v = sorted(v)
+        return v[min(len(v) - 1, (len(v) * 9 + 9) // 10 - 1)]
+    jobs = {}
+    with concurrent.futures.ThreadPoolExecutor(max(1, min(8, os.cpu_count() or 1))) as pool:
+        for name in SPEED_PARENT:
+            scn = os.path.join(scenarios, f"overtake-click-{name}.scn")
+            for off in SPEED_OFFSETS:
+                jobs[(name, off)] = pool.submit(settle, exe, scn, off)
+    bad = []
+    for name, parent in SPEED_PARENT.items():
+        # Unit ids follow the scenario's group lines; the type names are the speed groups.
+        kinds = []
+        group = []
+        for ln in open(os.path.join(scenarios, f"overtake-click-{name}.scn")):
+            w = ln.split()
+            if w and w[0] == "group":
+                kinds += [w[3]] * int(w[4])
+                group += [w[1]] * int(w[4])
+        runs = [jobs[(name, off)].result() for off in SPEED_OFFSETS]
+        if any(r is None for r in runs):
+            bad.append(f"overtake-click-{name}: legion_scenario failed")
+            continue
+        for kind, (pm, pt, pu, pstops) in parent.items():
+            ids = [i + 1 for i, k in enumerate(kinds) if k == kind]
+            groups = {g for g, k in zip(group, kinds) if k == kind}
+            means, t90s, unsettled, stops = [], [], 0, 0
+            for last, st in runs:
+                v = [last.get(i, -1) for i in ids]
+                unsettled += sum(x < 0 for x in v)
+                v = [x if x >= 0 else UNSETTLED for x in v]
+                means.append(statistics.mean(v))
+                t90s.append(t90(v))
+                stops += sum(st.get(g, 0) for g in groups)
+            m, t = statistics.median(means), statistics.median(t90s)
+            print(f"overtake-click-{name} {kind}: mean arrival median {m:.0f} (parent {pm}), t90 median {t:.0f} "
+                  f"(parent {pt}), unsettled {unsettled} (parent {pu}), stops {stops} (parent {pstops})")
+            if kind == "fast":
+                if m * 100 > pm * 106:
+                    bad.append(f"overtake-click-{name}: fast mean arrival median {m:.0f} (parent {pm}, at most 6% later)")
+            else:
+                if m * 100 > pm * 102 or t * 100 > pt * 102:
+                    bad.append(f"overtake-click-{name}: {kind} mean / t90 median {m:.0f} / {t:.0f} (parent {pm} / {pt}, "
+                               "at most 2% later)")
+            if unsettled > pu:
+                bad.append(f"overtake-click-{name}: {unsettled} {kind} bodies unsettled (parent {pu})")
+            if kind == "fast" and name in ("loose-1000", "bunch-1000"):
+                limit = {"loose-1000": 560, "bunch-1000": 450}[name]
+                if stops > 300:
+                    bad.append(f"overtake-click-{name}: {stops} fast stops (at most 300)")
+                if m > limit:
+                    bad.append(f"overtake-click-{name}: fast mean arrival median {m:.0f} (at most {limit})")
     return bad
 
 
