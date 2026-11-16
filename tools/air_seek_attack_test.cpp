@@ -65,13 +65,18 @@ Run run(const TypeRegistry& registry,const UnitType& attacker,const UnitType& vi
     const int them=w.spawn(&weak,vx,vz,0.f,1);
     w.unit(them)->standbyAllowed=false;
     w.setStance(them,2);w.unit(them)->moveState=0;w.unit(them)->fireState=0;
-    const int me=w.spawn(&attacker,vx,setup==Setup::Idle ? vz+150 : vz+600,0.f,0);
+    // An idle flyer stands inside its first weapon's range: the Fallen
+    // Angel's Death Sword reaches 140 px, and from 150 px it never took the
+    // target (unseen while its attack runs never killed and it was skipped,
+    // before flyers re-aimed at the release).
+    const auto& weapons=attacker.weapons;
+    const float idleGap=std::min(150.f,0.75f*float(weapons.front().range));
+    const int me=w.spawn(&attacker,vx,setup==Setup::Idle ? vz+idleGap : vz+600,0.f,0);
     w.unit(me)->mana=attacker.maxMana;
     w.unit(me)->fireState=uint8_t(fireState);
     w.unit(me)->moveState=2;   // Roam: some flyers' FBI holds position, and 4d7de0 refuses those
     if (setup!=Setup::Idle) w.attack(me,them,false);
     if (setup==Setup::Queued) w.order(me,vx+900,vz+900,true);
-    const auto& weapons=attacker.weapons;
     const int slot=attacker.weaponSwitching ? std::clamp(w.unit(me)->weaponSlot,0,int(weapons.size())-1) : 0;
     r.radius=float(weapons[size_t(slot)].range+160);
     float lastX=vx,lastZ=vz;
