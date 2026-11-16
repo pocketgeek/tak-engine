@@ -186,6 +186,7 @@ public:
         uint64_t passFilterHolds=0;
         uint64_t swaps=0;   // round 2 item 3: allies that traded places (swapBodies)
         uint64_t overtakes=0;   // a body held behind a slower ally walking the same way set off to pass it (overtakeRoute)
+        uint64_t clickOvertakes=0;   // ... of those, past a body of its own click (clickPass, overtakeSlot)
         // Bodies that stand for good (2026-11-14, see liveOf in legion.cpp): orders ended where the body stood
         // because nothing it waited on made progress (standDown), bodies that stepped clear in a knot
         // (knotGiveWay), swaps on fight or patrol legs (counted in swaps too), and mover steps of a walk off
@@ -254,6 +255,7 @@ public:
         f("vertex_near",s.vertexNear);f("vertex_blocked",s.vertexBlocked);f("vertex_work",s.vertexWork);
         f("gate_commits",s.gateCommits);f("gate_releases",s.gateReleases);
         f("pass_filter_holds",s.passFilterHolds);f("swaps",s.swaps);f("overtakes",s.overtakes);
+        f("click_overtakes",s.clickOvertakes);
         f("stand_downs",s.standDowns);f("give_ways",s.giveWays);f("late_swaps",s.lateSwaps);f("escape_steps",s.escapeSteps);
         f("seal_settles",s.sealSettles);f("creep_presses",s.creepPresses);f("deep_rechoices",s.deepRechoices);
         f("anchor_advances",s.anchorAdvances);f("gate_lane_moves",s.gateLaneMoves);f("gate_holds",s.gateHolds);

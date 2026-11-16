@@ -226,6 +226,10 @@ constexpr uint32_t kGiveWayHeld=2;             // hold updates before a funnel g
 constexpr int kSwapAngle=16384;                // allies swap places (swapPartner): courses at least 90 deg apart
 constexpr uint32_t kSwapCool=45;               // ticks before a body that swapped may swap again
 constexpr int kOvertakeCells=24;               // the longest forward run an overtake (overtakeRoute) plans
+constexpr int kOvertakeClick=64;               // the most members a click may have for its bodies to pass each other
+constexpr int kOvertakeNear=8;                 // ... only with at most kOvertakeCrowd other bodies this near (cells)
+constexpr int kOvertakeCrowd=6;
+constexpr int kOvertakeClear=16;               // ... and no mover walking against it this many cells round
 constexpr int64_t kOncomingCos2=14;            // 100*cos^2(112 deg): goal directions this far apart are oncoming
 constexpr int kLineCells=160;                  // direct-line probe reach
 constexpr int kFormationLineCells=640;         // ... for a member with a formation slot
@@ -14946,6 +14950,78 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(const auto g=groups.find(bm.group);g!=groups.end()&&g->second.route().usable())
             updateClaim(b,bm,planes[size_t(g->second.plane)],g->second.route(),ax,az);
     }
+    // Passing within one click (2026-11-15, ours, not retail): whether this body may pass the slower body b of its own
+    // click. A player's mixed selection sent with one right-click (knights with archers) shares one point, and its
+    // fast bodies used to stop-start behind its slow ones all the way. Passing them cost twice before:
+    //  - the click's arrival slots are its formation's shape, front first, so a fast body from the rear holds a slot
+    //    short of the slow bodies ahead of it; once it passed them it settled there first, in the lane they walk in
+    //    on, and they went round it (on a 12-body column the slow bodies reached the area on the same ticks as
+    //    before and finished 3-9% later). A body that passes within its click now takes a slot at the front of the
+    //    click's slots instead (overtakeSlot), where nobody walks through later, and the slow bodies arrive as before.
+    //  - bridges-1000's two 500-body clicks meet head on at three bridges, a bistable meet: a single pass by one
+    //    straggler at a bridge mouth, thousands of ticks in, tipped it into gridlock (offset -4: 603 arrived and 294
+    //    stood stuck, against 750 and none). So a click of more than kOvertakeClick members keeps its order (a crowd
+    //    that size walks as a crowd, and a slot at the front of its area lies across the bodies settled in it).
+    // And never in a crowd (more than kOvertakeCrowd other bodies within kOvertakeNear cells: a mixed block of 32
+    // gained nothing by it and some of its bodies were done later), never with a mover walking against this body's
+    // course (more than 90 deg apart) within kOvertakeClear cells, and never within an Alt+N formation, which walks
+    // at its slowest member's pace on purpose.
+    bool clickPass(const Unit& u,const Member& m,const Unit& b,int ox,int oz) {
+        if(w.legionFormationGroup(u)||w.legionFormationGroup(b))return false;
+        const Point* pt=m.pt;
+        if(!pt) {const auto found=points.find(m.point);pt=found==points.end()?nullptr:&found->second;}
+        if(!pt||pt->refs>kOvertakeClick)return false;
+        const int fx=u.type->footX,fz=u.type->footZ;
+        std::array<int32_t,kOvertakeCrowd+1> seen{};int crowd=0;
+        for(int cz=std::max(oz-kOvertakeNear,0);cz<=std::min(oz+fz-1+kOvertakeNear,w.occH_-1);++cz)
+            for(int cx=std::max(ox-kOvertakeNear,0);cx<=std::min(ox+fx-1+kOvertakeNear,w.occW_-1);++cx) {
+                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+                if(!o||o==u.id||std::find(seen.begin(),seen.begin()+crowd,o)!=seen.begin()+crowd)continue;
+                if(crowd==kOvertakeCrowd)return false;
+                seen[size_t(crowd++)]=o;
+            }
+        const Bam course=courseOf(u);
+        int32_t last=0;
+        for(int cz=std::max(oz-kOvertakeClear,0);cz<=std::min(oz+fz-1+kOvertakeClear,w.occH_-1);++cz)
+            for(int cx=std::max(ox-kOvertakeClear,0);cx<=std::min(ox+fx-1+kOvertakeClear,w.occW_-1);++cx) {
+                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+                if(!o||o==u.id||o==last)continue;
+                last=o;
+                const Unit* c=w.unit(o);const Member* cm=member(o);
+                if(c&&cm&&cm->state==Moving&&std::abs(retailTurnRequest(courseOf(*c),course))>=16384)return false;
+            }
+        return true;
+    }
+    // A body that passed a slower one of its own click takes its slot at the front of the click's slots: the free
+    // origin nearest the point as deep along its way in as the deepest slot of the click (formationCell; the slot it
+    // gives back stays empty). Bodies that pass first fill the front from its middle outward, the slow bodies' slots
+    // lie short of it, and nobody walks through a body settled first (see clickPass). Where no origin is free the body
+    // keeps its slot.
+    void overtakeSlot(const Unit& u,Member& m) {
+        if(m.slot<0||m.goal<0||!m.pt||!m.pt->assigned||m.pt->limit<=0)return;
+        const auto g=groups.find(m.group);
+        if(g==groups.end()||ringMember(g->second,m))return;
+        Point& pt=*m.pt;
+        const int fx=u.type->footX,fz=u.type->footZ;
+        const int64_t px=int64_t(std::get<2>(m.point))>>16,pz=int64_t(std::get<3>(m.point))>>16;
+        const int64_t dx=px-(u.x.v>>16),dz=pz-(u.z.v>>16);
+        const int64_t d=int64_t(isqrtFloor(uint64_t(dx*dx+dz*dz)));
+        if(d<=0)return;
+        // The front: the deepest slot centre of the click along the way in (at most kOvertakeClick members).
+        const int W=width();
+        int64_t front=0;
+        for(const int id:pt.ids) {
+            const Member* o=member(id);const Unit* v=w.unit(id);
+            if(!o||!v||!v->type||o->point!=m.point||o->goal<0||o->slot<0)continue;
+            const int64_t cx=int64_t(o->goal%W)*16+v->type->footX*8-px,cz=int64_t(o->goal/W)*16+v->type->footZ*8-pz;
+            front=std::max(front,(cx*dx+cz*dz)/d);
+        }
+        slotCells(m,fx,fz,false);
+        const Plane& p=plane(g->second.plane);
+        const int cell=formationCell(u,p,groupComp(g->second,p),pt,px,pz,px+dx*front/d,pz+dz*front/d);
+        if(cell<0) {slotCells(m,fx,fz,true);return;}
+        takeFormation(m,u,cell);
+    }
     // Overtaking (2026-11-15, ours, not retail): a body held behind a slower allied body walking the same way (a
     // knight behind an archer in a single file) steps aside and passes it where there is room beside, instead of
     // stop-starting behind it all the way. Flow-around takes one cell that gains on the goal, and a 3x3 body behind a
@@ -14957,14 +15033,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // the two speeds. Every cell is a legal step, reachable and free of bodies now -- past the first body length of the
     // run, allies walking the same way may stand in it: they move on ahead -- and the run must end nearer the goal;
     // otherwise (a corridor one body wide, slow bodies abreast, a packed crowd) nothing changes. Move and fight legs
-    // only, never within 2*kPassCells of the goal (bodies packing into place), and never past a body of the same click
-    // (Member::point), whose crowd keeps its own order: an Alt+N formation walks at its slowest member's pace; on a
-    // shared click of 12 passing let the fast members settle first and the slow ones arrive about 4% later; and in
-    // the 500-body clicks of bridges-1000 (no formation) three passes at the start tipped the bistable meet into
-    // gridlock (legion_swap offset 2: 724 arrived, 214 stuck; legion_fightmeet offset 2: 654, 308). The computer
-    // player orders each unit to a point of its own, so its army is not one click. The slow body must be a moving Legion
-    // member at under three quarters of this body's speed cap (a lesser gap would need a run past kOvertakeCells).
-    // No state of its own: the route is hashed. Returns whether a route was committed.
+    // only, never within 2*kPassCells of the goal (bodies packing into place), and past a body of the same click
+    // (Member::point) only as clickPass allows, after which the passer takes a slot at the front of its click's
+    // slots (overtakeSlot). The slow body must be a moving Legion member at under three quarters of this body's speed
+    // cap (a lesser gap would need a run past kOvertakeCells). No state of its own: the route and the slot are hashed.
+    // Returns whether a route was committed.
     bool overtakeRoute(const Unit& u,Member& m,const Plane& p,RouteView f,bool towardGoal,int ox,int oz,int nx,int nz,
                        int64_t aimDx,int64_t aimDz,Fixed full) {
         if(!f||u.type->canFly||livelock(u)||!m.route.empty()||m.approach||m.pressX!=kNoPress||full<=Fixed())return false;
@@ -14987,10 +15060,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         const Unit* b=w.unit(other);
         const Member* bm=member(other);
         if(!b||!bm||!b->type||b->type->canFly||bm->state!=Moving||b->speed<=Fixed()||!w.allied(b->player,u.player))return false;
-        if(bm->point==m.point)return false;   // one click's crowd keeps its own order (see above)
         if(std::abs(retailTurnRequest(courseOf(*b),courseOf(u)))>=8192)return false;   // the same way: within 45 deg
         const int64_t v=full.v,vb=std::max<int64_t>(b->speed.v,int64_t((b->type->maxVel*w.groundTerrainMultiplier(*b)).v));
         if(vb*4>=v*3)return false;
+        const bool click=bm->point==m.point;   // a body of its own click (see clickPass)
+        if(click&&!clickPass(u,m,*b,ox,oz))return false;
         // Travel octant of the aim, and the two lateral directions (the slow body's side last).
         const int64_t adx=std::abs(aimDx),adz=std::abs(aimDz);
         const int sdx=adx*5>=adz*2?(aimDx>0?1:-1):0,sdz=adz*5>=adx*2?(aimDz>0?1:-1):0;
@@ -15049,6 +15123,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 if(metric(rx,rz)>=metric(ox,oz))break;
                 m.route=std::move(lane);m.routeTicks=0;m.lineCell=-1;m.detour=-1;m.detourFlow=false;
                 ++stats.overtakes;
+                if(click) {++stats.clickOvertakes;overtakeSlot(u,m);}
                 return true;
             }
         }

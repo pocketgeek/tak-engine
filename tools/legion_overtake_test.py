@@ -22,6 +22,22 @@ spawn inside the walls.
 Every body arrives in all three, and the slow bodies' last arrival is no later than tick 2,800 on field and road
 (parent 2,640..2,784): nobody pays for a pass.
 
+The same columns sent with ONE right-click to one point (overtake-click-*, as a player sends a mixed selection), and
+a mixed block of 16 slow bodies in front of 16 fast ones (overtake-click-blob). Passing within one click (clickPass,
+overtakeSlot) before this, parent 2103fb83, where a body never passed one of its own click:
+  overtake-click-field (attack-move), offsets 0, +-1..3: fast mean 1,186..1,712, 1,223 fast stops; now 914..958, 18.
+    Slow mean 2,361..2,463 and last 2,638..2,776; now 2,376..2,448 and at most 2,778. Checked: the fast mean at most
+    1,050 at every offset, at most 60 fast stops in all, the slow mean at most 2,500 and their last at most 2,800.
+  overtake-click-road (move), offsets 0, +-1..3: fast mean 1,258..1,743, 1,407 stops; now 954..998, 60. Slow mean
+    2,299..2,416, last at most 2,573; now 2,258..2,421 and 2,619. Checked: fast mean at most 1,050, at most 150 fast
+    stops, slow mean at most 2,450 and last at most 2,650.
+  overtake-click-corridor (no room), offsets 0, +-1, 2: fast mean 2,170..2,205, slow last 2,457..2,732; now
+    2,082..2,141 and 2,457..2,668. Checked: fast mean at most 2,250, slow last at most 2,780.
+  overtake-click-blob (a block of 32, a crowd: no pass), offsets 0, +-1..3: fast done 1,975..2,091, slow done
+    2,127..2,754, unchanged. Checked: fast done at most 2,150, slow done at most 2,800.
+One slow body of a one-click column settles just outside its disc at one offset of the road and of the corridor, on
+the parent as now; a fast body never does.
+
 Exit 0 pass, 1 fail, 2 tooling.
 """
 import json
@@ -104,9 +120,63 @@ def main():
             bad.append(f"overtake-corridor offset {r['offset']}: fast mean {statistics.mean(r['Fdone']):.0f} (at most 2,250)")
         if max(r["Sdone"]) > 2780:
             bad.append(f"overtake-corridor offset {r['offset']}: last slow body {max(r['Sdone'])} (at most 2,780)")
+    bad += clicks(exe, scenarios)
     for b in bad:
         print("FAIL:", b)
     return 1 if bad else 0
+
+
+def clicks(exe, scenarios):
+    """The one-click fixtures; returns the failures (a tooling failure is one too)."""
+    bad = []
+    runs = {}
+    for name, offsets in (("overtake-click-field", "0,1,-1,2,-2,3,-3"), ("overtake-click-road", "0,1,-1,2,-2,3,-3"),
+                          ("overtake-click-corridor", "0,1,-1,2"), ("overtake-click-blob", "0,1,-1,2,-2,3,-3")):
+        rows = run(exe, scenarios, name, offsets)
+        if rows is None:
+            return [f"{name}: legion_scenario failed"]
+        runs[name] = rows
+        late = 0
+        for r in rows:
+            sdone = [d for d in r["Sdone"] if d >= 0]
+            r["Smean"] = statistics.mean(sdone) if sdone else 1 << 30
+            r["Slast"] = max(sdone) if sdone else 1 << 30
+            late += len(r["Sdone"]) - len(sdone)
+            fmean = statistics.mean(r["Fdone"]) if min(r["Fdone"]) >= 0 else -1
+            print(f"{name} offset {r['offset']:+d}: fast done {r['Fdone']} mean {fmean:.0f} stops {r['Fstops']}; "
+                  f"slow mean {r['Smean']:.0f} last {r['Slast']} not done {len(r['Sdone']) - len(sdone)}; "
+                  f"overtakes {r['overtakes']}")
+            if min(r["Fdone"]) < 0:
+                bad.append(f"{name} offset {r['offset']}: a fast body never arrived")
+        if late > 1:
+            bad.append(f"{name}: {late} slow bodies not done (at most 1)")
+    if bad:
+        return bad
+    limits = {"overtake-click-field": (1050, 60, 2500, 2800), "overtake-click-road": (1050, 150, 2450, 2650)}
+    for name, (fmax, smax, slowmean, slowlast) in limits.items():
+        rows = runs[name]
+        for r in rows:
+            if statistics.mean(r["Fdone"]) > fmax:
+                bad.append(f"{name} offset {r['offset']}: fast mean {statistics.mean(r['Fdone']):.0f} "
+                           f"(at most {fmax:,})")
+            if r["Smean"] > slowmean:
+                bad.append(f"{name} offset {r['offset']}: slow mean {r['Smean']:.0f} (at most {slowmean:,})")
+            if r["Slast"] > slowlast:
+                bad.append(f"{name} offset {r['offset']}: last slow body {r['Slast']} (at most {slowlast:,})")
+        if sum(r["Fstops"] for r in rows) > smax:
+            bad.append(f"{name}: {sum(r['Fstops'] for r in rows)} fast stops (at most {smax})")
+    for r in runs["overtake-click-corridor"]:
+        if statistics.mean(r["Fdone"]) > 2250:
+            bad.append(f"overtake-click-corridor offset {r['offset']}: fast mean "
+                       f"{statistics.mean(r['Fdone']):.0f} (at most 2,250)")
+        if r["Slast"] > 2780:
+            bad.append(f"overtake-click-corridor offset {r['offset']}: last slow body {r['Slast']} (at most 2,780)")
+    for r in runs["overtake-click-blob"]:
+        if max(r["Fdone"]) > 2150:
+            bad.append(f"overtake-click-blob offset {r['offset']}: fast done {max(r['Fdone'])} (at most 2,150)")
+        if r["Slast"] > 2800:
+            bad.append(f"overtake-click-blob offset {r['offset']}: slow done {r['Slast']} (at most 2,800)")
+    return bad
 
 
 if __name__ == "__main__":

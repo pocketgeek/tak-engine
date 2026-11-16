@@ -1461,7 +1461,8 @@ if(Python3_Interpreter_FOUND)
   # Overtaking (2026-11-15): a fast body held behind a slower ally walking the same way steps aside and passes it
   # where there is room (single-file mixed columns on open ground and on a road 8 cells wide: fast bodies arrive
   # earlier and stop far less; a corridor 4 cells wide: no worse; nobody slow later; tools/legion_overtake_test.py).
-  # Asset-free.
+  # The same columns sent with one click pass too and the passers take the front of the click's slots; a mixed
+  # block of 32 (a crowd) is unchanged. Asset-free.
   add_test(NAME legion_overtake
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_overtake_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios)
