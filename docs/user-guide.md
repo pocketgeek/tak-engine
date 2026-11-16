@@ -1930,6 +1930,15 @@ measurements](legion-pathfinding.md)):
   columns meeting on a bridge, trade places and walk on; on screen they pass
   side by side. A unit that has just swapped does not swap again for a moment,
   and units on attack, fight, guard or patrol orders never swap.
+- **Fast units overtake slow ones.** A fast unit stuck behind a slower unit of
+  yours or an ally's walking the same way, as a knight behind an archer in
+  single file, steps aside and passes it when there is room beside, instead of
+  stopping and starting behind it all the way. In a passage one unit wide it
+  still follows. Units sent with one order keep their own order among
+  themselves (an Alt+N formation walks at its slowest unit's pace anyway), so
+  this is about units on different orders, such as the computer player's
+  armies; units on move and fight orders overtake, units on attack, guard or
+  patrol orders do not.
 - **Unreachable orders end where the unit stops.** Ordered to a place it cannot
   reach, a unit walks to the nearest spot it can reach, and its order ends there,
   so it is free for the next one at once. Units queued behind their own army end

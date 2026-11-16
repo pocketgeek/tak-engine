@@ -225,6 +225,7 @@ constexpr uint8_t kMaxGiveWays=8;              // funnel give-way steps per leg 
 constexpr uint32_t kGiveWayHeld=2;             // hold updates before a funnel give-way is asked (giveWay)
 constexpr int kSwapAngle=16384;                // allies swap places (swapPartner): courses at least 90 deg apart
 constexpr uint32_t kSwapCool=45;               // ticks before a body that swapped may swap again
+constexpr int kOvertakeCells=24;               // the longest forward run an overtake (overtakeRoute) plans
 constexpr int64_t kOncomingCos2=14;            // 100*cos^2(112 deg): goal directions this far apart are oncoming
 constexpr int kLineCells=160;                  // direct-line probe reach
 constexpr int kFormationLineCells=640;         // ... for a member with a formation slot
@@ -14945,6 +14946,114 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(const auto g=groups.find(bm.group);g!=groups.end()&&g->second.route().usable())
             updateClaim(b,bm,planes[size_t(g->second.plane)],g->second.route(),ax,az);
     }
+    // Overtaking (2026-11-15, ours, not retail): a body held behind a slower allied body walking the same way (a
+    // knight behind an archer in a single file) steps aside and passes it where there is room beside, instead of
+    // stop-starting behind it all the way. Flow-around takes one cell that gains on the goal, and a 3x3 body behind a
+    // 2x2 one needs two or three cells sideways before its lane is clear, so it held, walked a cell when the slow body
+    // had walked one, and held again (an audited game's Aramon Knights stopped 2,098 times this way on attack-move
+    // orders, 7% of their lives). The overtake is a committed local route (Member::route, walked as a detour round
+    // still bodies is): the fewest lateral steps, toward the side the slow body leaves more room on, after which the
+    // body's own lane forward is free of that body, then forward far enough for it to clear the slow body's front at
+    // the two speeds. Every cell is a legal step, reachable and free of bodies now -- past the first body length of the
+    // run, allies walking the same way may stand in it: they move on ahead -- and the run must end nearer the goal;
+    // otherwise (a corridor one body wide, slow bodies abreast, a packed crowd) nothing changes. Move and fight legs
+    // only, never within 2*kPassCells of the goal (bodies packing into place), and never past a body of the same click
+    // (Member::point), whose crowd keeps its own order: an Alt+N formation walks at its slowest member's pace; on a
+    // shared click of 12 passing let the fast members settle first and the slow ones arrive about 4% later; and in
+    // the 500-body clicks of bridges-1000 (no formation) three passes at the start tipped the bistable meet into
+    // gridlock (legion_swap offset 2: 724 arrived, 214 stuck; legion_fightmeet offset 2: 654, 308). The computer
+    // player orders each unit to a point of its own, so its army is not one click. The slow body must be a moving Legion
+    // member at under three quarters of this body's speed cap (a lesser gap would need a run past kOvertakeCells).
+    // No state of its own: the route is hashed. Returns whether a route was committed.
+    bool overtakeRoute(const Unit& u,Member& m,const Plane& p,RouteView f,bool towardGoal,int ox,int oz,int nx,int nz,
+                       int64_t aimDx,int64_t aimDz,Fixed full) {
+        if(!f||u.type->canFly||livelock(u)||!m.route.empty()||m.approach||m.pressX!=kNoPress||full<=Fixed())return false;
+        if(!policy(m.kind).completes||policy(m.kind).exact||policy(m.kind).exitClear||(engagesEnemies(m.kind)&&m.kind!=Kind::Fight))return false;
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const int goalX=m.goal%W,goalZ=m.goal/W;
+        if(m.goal<0||std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=2*kPassCells)return false;
+        if(nx==ox&&nz==oz)return false;
+        // The one body covering the blocked step.
+        int other=0;
+        for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+            const int cx=nx+i,cz=nz+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)return false;
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+            if(!o||o==u.id)continue;
+            if(other&&o!=other)return false;
+            other=o;
+        }
+        if(!other)return false;
+        const Unit* b=w.unit(other);
+        const Member* bm=member(other);
+        if(!b||!bm||!b->type||b->type->canFly||bm->state!=Moving||b->speed<=Fixed()||!w.allied(b->player,u.player))return false;
+        if(bm->point==m.point)return false;   // one click's crowd keeps its own order (see above)
+        if(std::abs(retailTurnRequest(courseOf(*b),courseOf(u)))>=8192)return false;   // the same way: within 45 deg
+        const int64_t v=full.v,vb=std::max<int64_t>(b->speed.v,int64_t((b->type->maxVel*w.groundTerrainMultiplier(*b)).v));
+        if(vb*4>=v*3)return false;
+        // Travel octant of the aim, and the two lateral directions (the slow body's side last).
+        const int64_t adx=std::abs(aimDx),adz=std::abs(aimDz);
+        const int sdx=adx*5>=adz*2?(aimDx>0?1:-1):0,sdz=adz*5>=adx*2?(aimDz>0?1:-1):0;
+        if(!sdx&&!sdz)return false;
+        const int64_t side=int64_t(b->x.v-u.x.v)*(-sdz)+int64_t(b->z.v-u.z.v)*sdx;   // > 0: the slow body leans right
+        const std::array<std::array<int,2>,2> sides=side>0?std::array<std::array<int,2>,2>{{{sdz,-sdx},{-sdz,sdx}}}
+                                                            :std::array<std::array<int,2>,2>{{{-sdz,sdx},{sdz,-sdx}}};
+        const int bfx=b->type->footX,bfz=b->type->footZ;
+        const int64_t length=std::max(fx,fz)+std::max(bfx,bfz)+1;   // cells gained on the slow body to clear its front
+        auto metric=[&](int x,int z)->int64_t {
+            if(towardGoal)return int64_t(goalX-x)*(goalX-x)+int64_t(goalZ-z)*(goalZ-z);
+            return f.estimate(size_t(z*W+x));
+        };
+        auto open=[&](int x,int z,int dx,int dz) {
+            return step(p,x,z,dx,dz)&&f.estimate(size_t((z+dz)*W+x+dx))!=kUnreached&&bodiesFree(u,x+dx,z+dz)&&
+                   (!dx||!dz||(bodiesFree(u,x+dx,z)&&bodiesFree(u,x,z+dz)));
+        };
+        // A step whose cells are covered only by allied bodies walking the same way (they move on ahead).
+        auto walkers=[&](int x,int z,int dx,int dz) {
+            if(!step(p,x,z,dx,dz)||f.estimate(size_t((z+dz)*W+x+dx))==kUnreached)return false;
+            x+=dx;z+=dz;
+            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+                const int cx=x+i,cz=z+j;
+                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)return false;
+                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+                if(!o||o==u.id)continue;
+                const Unit* c=w.unit(o);const Member* cm=member(o);
+                if(!c||!cm||cm->state!=Moving||c->speed<=Fixed()||!w.allied(c->player,u.player)||
+                   std::abs(retailTurnRequest(courseOf(*c),courseOf(u)))>=8192)return false;
+            }
+            return true;
+        };
+        const int maxSide=fx+bfx;
+        for(const auto& d:sides) {
+            std::vector<int> path;
+            int x=ox,z=oz;
+            for(int k=1;k<=maxSide;++k) {
+                if(!open(x,z,d[0],d[1]))break;
+                x+=d[0];z+=d[1];path.push_back(z*W+x);
+                // The forward run: the slow body gains k*vb/v cells while this one steps aside.
+                const int64_t run=(length*v+int64_t(k)*vb+(v-vb)-1)/(v-vb);
+                if(run>kOvertakeCells)break;
+                // The lane is clear only once the slow body's footprint is beside it, not in it.
+                const int lx=x+sdx,lz=z+sdz;
+                const bool overlap=lx<footprintOrigin(b->x,bfx)+bfx&&footprintOrigin(b->x,bfx)<lx+fx&&
+                                   lz<footprintOrigin(b->z,bfz)+bfz&&footprintOrigin(b->z,bfz)<lz+fz;
+                if(overlap)continue;
+                std::vector<int> lane=path;
+                int rx=x,rz=z;bool ok=true;
+                for(int r=0;r<run&&ok;++r) {
+                    // Past the first body length the run may lead through allies walking the same way.
+                    if(!open(rx,rz,sdx,sdz)&&!(r>=length&&walkers(rx,rz,sdx,sdz))) {ok=false;break;}
+                    rx+=sdx;rz+=sdz;lane.push_back(rz*W+rx);
+                }
+                if(!ok)continue;   // a body in that lane: one more step aside
+                if(metric(rx,rz)>=metric(ox,oz))break;
+                m.route=std::move(lane);m.routeTicks=0;m.lineCell=-1;m.detour=-1;m.detourFlow=false;
+                ++stats.overtakes;
+                return true;
+            }
+        }
+        return false;
+    }
     void drive(Unit& u,Member& m,const Plane& p,RouteView f,Fixed maximum,Fixed aimX,Fixed aimZ,bool final,
                bool towardGoal=false,bool face=true,bool pass=false,bool brisk=false) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
@@ -15186,6 +15295,17 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 }
             }
             if(!moved&&corner) {moved=cornerStep();if(moved)m.why=LegionNavigator::WhyCorner;else why=LegionNavigator::WhyHoldCorner;}
+            // Held behind a slower ally walking the same way: step aside and pass it (overtakeRoute). The route's
+            // first cell is walked on this update, at travel speed and unturned, as the route walk goes on.
+            if(!moved&&overtakeRoute(u,m,p,f,towardGoal,ox,oz,nx0,nz0,aimDx,aimDz,full)) {
+                const auto [cx,cz]=stepAim(u,m.route.front());
+                dx=int64_t(cx.v)-u.x.v;dz=int64_t(cz.v)-u.z.v;
+                length=isqrtFloor(uint64_t(dx*dx+dz*dz));
+                travel=std::min<int64_t>(speed.v,length);
+                std::tie(sx,sz)=proposal(dx,dz,length,travel);
+                nx=footprintOrigin(u.x+sx,fx);nz=footprintOrigin(u.z+sz,fz);
+                if(stepFree(u,ox,oz,nx,nz)) {moved=true;face=false;m.why=LegionNavigator::WhyRouteBrisk;}
+            }
             // Blocked by a body with no way round (2026-11-02): press on as Retail's mover does. Its
             // blocked step is clamped per axis -- the free axis is walked and the other stops at the
             // body's own origin cell's edge -- so a queued body closes on the body ahead and slides

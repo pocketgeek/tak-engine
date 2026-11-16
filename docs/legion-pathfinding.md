@@ -593,7 +593,8 @@ clip changes motion at corners that flow-around already resolves. A unit standin
 **Speed-matched following.** In `drive()`, a body that has a slower body of the same player one or two cells ahead
 along its step, heading within 45 deg of its own, matches that body's speed (never below half its own) instead of
 running up and stopping dead. A leader slower than half this body's speed cap is not followed: matching a creeping
-body chains whole queues down to a crawl at door corners. No state; nothing to fold into the checksum.
+body chains whole queues down to a crawl at door corners. No state; nothing to fold into the checksum. A body held
+behind a slower ally passes it where there is room ("Allies overtake", section 4).
 
 ### Facing follows motion
 
@@ -785,6 +786,7 @@ weakness).
   facing cap (section 3) unless its target is still. A member round a still target that its last crowd window found
   still commits no new shuffle (section 7).
 * **Corner clip**: the one-axis crossing at a wall's end (section 3).
+* **Overtaking** a slower ally walking the same way (see below).
 * **Press**: with no flow-around and no corner clip, a body on a leg that completes at a point and engages no enemies
   (a move leg: not fight, attack, guard or patrol, never an exact mission goal -- Build, Repair, Reclaim, Load,
   Unload, Park -- or a production exit: `pressKind`, `engagesEnemies`) and not livelocked clamps its blocked step per
@@ -829,6 +831,42 @@ head on in a one-body lane had no way out at all. Once both are held and have st
 ("Bodies that stand for good": nothing either waits on has made progress), the swap serves them too, every other
 condition unchanged. A gain within the swap's cool-down is no progress there, so two files that meet head on trade
 through each other at the cool-down's pace. `ctest:legion_lateswap` (`headon-fight`: both arrive; before, neither).
+
+### Allies overtake (ours, not retail)
+
+`overtakeRoute` in src/sim/legion.cpp, tried in `drive`'s blocked branch after flow-around and the corner clip and
+before the press. A fast body held behind a slower allied body walking the same way used to stop-start behind it all
+the way: flow-around takes one cell that gains on the goal, and a 3x3 body behind a 2x2 one needs two or three cells
+sideways before its lane is clear, so it held, walked a cell once the slow body had walked one, and held again (an
+audited 1.0.6 game: the computer player's Aramon Knights, speed 2.9, stopped 2,098 times on attack-move orders behind
+its own Archers, Swordsmen, Ballistas and Siege Engines, 7% of their lives). Now, when the blocked step is covered by
+exactly one other body, that body is a moving Legion member of an allied player whose course is within 45 deg of this
+body's, and its speed (the larger of its current speed and its own top speed on its ground) is under three quarters of
+this body's speed cap, the body commits a local route (`Member::route`, walked as a detour round still bodies is, at
+travel speed): the fewest lateral steps, toward the side the slow body leaves more room on first, after which its
+lane ahead is clear of that body, then straight on far enough to clear the slow body's front at the two speeds (at
+most `kOvertakeCells`, 24). Every cell must be a legal step (diagonals clear both side cells), reachable, and free of
+bodies, except that cells of the forward run past the first body length may hold allies walking the same way, who move
+on ahead; the run must end nearer the goal. Where no lane qualifies -- a corridor one body wide, slow bodies walking
+abreast, a packed crowd -- nothing changes. Only plain move and fight legs (no attack, guard, patrol or mission leg),
+never within `2*kPassCells` of the goal (bodies packing into place), never by a livelocked body or one already on a
+route, approach or press, and never past a body of the same click (`Member::point`), whose crowd keeps its own order.
+An Alt+N formation walks at its slowest member's pace, so no member is faster than another there; on a shared
+right-click of the 12-body column below, passing let the fast members settle first and delayed the slow ones' last
+arrival by about 4%, with one slow body not done at one offset; and in the 500-body clicks of `bridges-1000` (no
+formation) three passes in the departing crowds tipped the bistable meet into gridlock (`ctest:legion_swap` offset 2:
+724 arrived and 214 stood stuck, against 909 and none; `ctest:legion_fightmeet` offset 2: 654 and 308, against 935
+and none). The computer player orders each unit of an army to a point of its own, so the rule serves its armies; a
+player's mixed click still queues behind its slow members (Known weaknesses). No new state: the route is hashed
+already. `Stats::overtakes` counts the routes (`work.overtakes`).
+
+`ctest:legion_overtake` (asset-free; `overtake-field`, `overtake-road`, `overtake-corridor` in tools/scenarios/: a
+single-file column of 12 bodies, slow 2x2 at 1.15 and fast 3x3 at 2.9 mixed, each on an order of its own): on open
+ground the last fast arrival went from 1,143..1,687 ticks over seven offsets to 1,128..1,148 and fast stops from 70
+to 0; on a road 8 cells wide the fast bodies' median mean arrival from 1,674 to 1,064 and their stops from 1,558 to
+173; in a corridor 4 cells wide, where no body can pass, arrival is unchanged or a little earlier (fast mean
+2,178..2,230 -> 2,117..2,171); the slow bodies arrive as before everywhere. Played over the audited game's commands,
+the knights' stops on attack-move orders fell from 2,101 to 389 (stood ticks 24,136 -> 3,358).
 
 ### Oncoming and opposing traffic
 
@@ -2736,6 +2774,12 @@ Rules that come out of using them:
 * **Fog**: Legion plans on the static plane as Retail's mover sees it. It does not model unexplored terrain
   separately. The one place fog shows is group awareness, which sees an enemy mover only within sight
   (`aware-unseen:pair.contacts.permille_x100` against `aware-seen:pair.contacts.permille_x100`).
+* **One click's fast units queue behind its slow ones.** Overtaking (section 4, "Allies overtake") never passes a body
+  of the same click: on the 12-body mixed column sent with one right-click the fast bodies still stop 81..192 times
+  over an offset (mean arrival 1,186..1,519 ticks; with passes 920..935, stops 0..3), but the slow ones then arrived
+  about 4% later, and in the 500-body clicks of `bridges-1000` passes tipped the meet into gridlock. A pass rule for
+  one click needs a bistability screen of its own before it is taken. Measured by `ctest:legion_swap` and
+  `ctest:legion_fightmeet` (the meets it must not tip).
 
 ## Network, lobby and checksum
 

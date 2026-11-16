@@ -1458,6 +1458,14 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_corner_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios)
   set_tests_properties(legion_corner PROPERTIES LABELS legion TIMEOUT 600)
+  # Overtaking (2026-11-15): a fast body held behind a slower ally walking the same way steps aside and passes it
+  # where there is room (single-file mixed columns on open ground and on a road 8 cells wide: fast bodies arrive
+  # earlier and stop far less; a corridor 4 cells wide: no worse; nobody slow later; tools/legion_overtake_test.py).
+  # Asset-free.
+  add_test(NAME legion_overtake
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_overtake_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios)
+  set_tests_properties(legion_overtake PROPERTIES LABELS legion TIMEOUT 300)
   # Legion 10,000 stage 8: shared destination areas -- churn-1000's half stopped and sent again to the point the
   # other half is arriving at joins its area instead of planning round it as traffic (at least 780 of 1,000 arrive,
   # at most 40 stuck; the previous commit 717 / 73).
