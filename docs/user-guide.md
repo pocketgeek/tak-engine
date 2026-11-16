@@ -1553,12 +1553,16 @@ either unit moves off its spot, the enemy counts as a fair target again, and a
 unit choosing its own targets fires at it as soon as it walks into the open.
 
 Charms, Turn to Stone and freeze shots take the first unit they strike. If
-one strikes a unit it cannot affect (a building, a Monarch, an immune unit or
-one of your own) instead of its target, that counts as a blocked shot too, so
-a caster stops spending mana on the building in the way. A Harpy or another
-hovering caster lets the target go after three such shots and picks another;
-it tries the target again once the target moves or the Harpy comes at it from
-another side. This is TAK Engine's own too; in the original game the caster
+one strikes a unit it cannot affect (a building, a Monarch, an immune unit),
+or a unit of your own or an ally's, instead of its target, that counts as a
+blocked shot too, so a caster stops spending mana on the building in the way
+(an ally's unit it strikes is still charmed or turned to stone as before). A
+Harpy, or a Creon dragon using its Freezing Breath, lets the target go after
+three such shots and picks another, even when you ordered the attack: the
+order is dropped, not retried. It tries the target again once the target
+moves or it comes at it from another side. The dragon's Blue Flame is not
+such a shot: blocked by a rock, the dragon moves round as other hovering
+flyers do. This is TAK Engine's own too; in the original game the caster
 keeps firing into the building.
 
 ### Selection

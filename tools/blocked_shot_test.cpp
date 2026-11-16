@@ -282,9 +282,17 @@ struct HoverOutcome {
     float damage = 0;
     int repositions = 0;
     float moved = 0;
+    bool dropped = false;    // the attack order was let go
 };
 
-HoverOutcome runHover(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, int ticks) {
+// `caster` "credrag": the Creon dragon owns Freezing Breath beside its Blue
+// Flame, and a hovering status caster whose charms strike a body they cannot
+// take drops its target (runHarpy). Its Blue Flame is no status shot: stopped
+// by the stone it hops round its ring like the Thirsha. Its stream clears the
+// stone's top onto a Hunter at the game's spot, so for it the Hunter stands
+// 22 px nearer the stone, where every flame from the first hover point stops.
+HoverOutcome runHover(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, int ticks,
+                      const char* caster = "zonhunt", int targetZ = 432) {
     tnt::Map map;
     map.width = map.height = 64;
     map.seaLevel = 0;
@@ -297,11 +305,11 @@ HoverOutcome runHover(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, int tic
     w.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
     sim::registerMapFeatures(w, map, vfs, &reg);
     w.setPathService(true);
-    const sim::UnitType* thirsha = reg.find("zonhunt");
+    const sim::UnitType* thirsha = reg.find(caster);
     const sim::UnitType* hunter = reg.find("zonter");
-    if (!thirsha || !hunter) { check(false, "shipped zonhunt and zonter load"); return {}; }
+    if (!thirsha || !hunter) { check(false, "shipped hover casters and zonter load"); return {}; }
     const float sx = 391, sz = 288;
-    const int target = w.spawn(hunter, 384, 432, 0, 1);
+    const int target = w.spawn(hunter, 384, targetZ, 0, 1);
     w.setStance(target, 2);
     w.unit(target)->moveState = 0;
     w.unit(target)->fireState = 0;
@@ -320,6 +328,7 @@ HoverOutcome runHover(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, int tic
         const sim::Unit* a = w.unit(shooter);
         if (!a || !a->alive()) break;
         out.repositions = std::max(out.repositions, int(a->repositions));
+        if (a->orders.empty() || a->orders.front().targetId != target) out.dropped = true;
         for (const auto& h : w.hits()) {
             if (h.fromPlayer != 0) continue;
             if (h.victimId == target) ++out.hunterHits;
@@ -636,6 +645,17 @@ int main(int argc, char** argv) {
           "the Thirsha's first bolts stop on the standing stone, then it stops firing into it");
     check(hover.hunterHits > 0 && hover.damage > 0,
           "the Thirsha reaches a clear bearing and hits the Hunter");
+    // The Creon dragon on its Blue Flame: a damaging stream, not a status
+    // shot, so stopped by the stone it keeps the Thirsha's ring hop instead
+    // of the status caster's write-off.
+    const HoverOutcome dragon = runHover(vfs, reg, 1800, "credrag", 410);
+    std::printf("  dragon blue flame, stone:    %s dropped=%d\n", describe(dragon).c_str(), int(dragon.dropped));
+    const sim::UnitType* credrag = reg.find("credrag");
+    check(credrag && !credrag->weapons.empty() && !credrag->weapons.front().mindControl &&
+              credrag->weapons.front().status == sim::Weapon::Status::None,
+          "the Creon dragon's selected weapon at spawn is its Blue Flame");
+    check(!dragon.dropped && dragon.repositions >= 1 && dragon.hunterHits > 0 && dragon.damage > 0,
+          "a hovering Creon dragon whose Blue Flame stops on the stone hops round its ring and burns the Hunter");
     for (const bool attackMove : {false, true}) {
         const HarpyOutcome keep = runHarpy(reg, Blocker::Barracks, attackMove, 3600);
         const HarpyOutcome sword = runHarpy(reg, Blocker::Swordsman, attackMove, 1800);
@@ -651,7 +671,11 @@ int main(int argc, char** argv) {
         // A ground caster walks to another spot (repositionForShot: the
         // chord test sees terrain only) and gives the target up when its
         // walks are spent, three charms a spot.
-        check(mage.dropped && (attackMove || mage.blockerStrikes <= 12),
+        // Without the rule it charmed the Barracks 46 times in either case.
+        // The attack-move runs straight down the line of fire, so the Mage
+        // also fires from each new spot it walks to (18 strikes, 27 on
+        // Legion's paths) before it lets the builder go.
+        check(mage.dropped && mage.blockerStrikes <= (attackMove ? 32 : 12),
               "a ground Mind Mage behind the Barracks gives the builder up after its walks");
     }
     const auto [walks, hits] = runSticky(vfs, reg);

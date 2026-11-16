@@ -7816,12 +7816,17 @@ static constexpr int kBlockedSpot=16;        // px the shooter or the target may
 // while a building beside its target stops its charms from any point on that
 // side. For it the line is its bearing from the target: the count holds until
 // the target leaves its spot or that bearing turns by more than kBlockedBearing.
+// Only while its selected weapon is the status weapon: the Creon dragon's Blue
+// Flame keeps the spot rule and the ring hop (hoverForShot) of any hoverer.
 static constexpr int kBlockedBearing=0x2000;   // native angle units: 1/8 turn
 
+static bool statusWeapon(const Weapon& w) {
+    return w.mindControl || w.status==Weapon::Status::Stoned || w.status==Weapon::Status::Frozen;
+}
+
 static bool flyingStatusCaster(const Unit& u) {
-    return u.type && u.type->canFly && std::any_of(u.type->weapons.begin(),u.type->weapons.end(),[](const Weapon& w) {
-        return w.mindControl || w.status==Weapon::Status::Stoned || w.status==Weapon::Status::Frozen;
-    });
+    if (!u.type || !u.type->canFly || u.type->weapons.empty()) return false;
+    return statusWeapon(u.type->weapons[size_t(std::clamp(u.weaponSlot,0,int(u.type->weapons.size())-1))]);
 }
 
 // Has the shooter or its target left the spots the blocked count was taken
@@ -7890,7 +7895,7 @@ bool World::impactIndestructible(const Weapon& w,int cx,int cz) const {
 // of the caster's own side) counts as a blocked shot (noteShotImpact). Asked
 // before the hit lands, since a charm that takes the body changes its side.
 bool World::statusShotRefused(const Weapon& w,int player,int targetId,int struckId) const {
-    if (!w.mindControl && w.status!=Weapon::Status::Stoned && w.status!=Weapon::Status::Frozen) return false;
+    if (!statusWeapon(w)) return false;
     const Unit* s=struckId && struckId!=targetId ? unit(struckId) : nullptr;
     if (!s || !s->type || !s->alive()) return false;
     if (allied(player,s->player)) return true;
@@ -9224,8 +9229,10 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     // so it would not see the Barracks, and retail hovers on, spending a charm
     // on the Barracks each reload. The scans and the sweep do not take the
     // target again until the write-off lapses (the target moves, or the
-    // caster comes round to another side of it).
-    if (hovering && sel && flyingStatusCaster(u) && shotBlockedHere(u,*target)) {
+    // caster comes round to another side of it). Only the status weapon's
+    // shots: the dragon's Blue Flame stopped by a stone or a ridge still hops
+    // round its ring (hoverForShot) like any hoverer's.
+    if (hovering && sel && statusWeapon(*sel) && u.type->canFly && shotBlockedHere(u,*target)) {
         if(u.scriptAimTarget)clearScriptWeaponTarget(u);
         dropLeg(u);
         cancelPath(u);
