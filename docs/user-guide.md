@@ -1935,16 +1935,19 @@ measurements](legion-pathfinding.md)):
   single file, steps aside and passes it when there is room beside, instead of
   stopping and starting behind it all the way. In a passage one unit wide it
   still follows. When you send fast and slow units together with one order
-  (up to 48 units, not an Alt+N formation), each unit gets its own spot round
-  the place you clicked: the fast units' spots are at the front, the slow
-  units' behind them, and the fast units pass the slow ones on the way, even
-  close to the place, so knights sent with swordsmen get there first. Only
-  clearly faster units pass (swordsmen and archers walk together, knights pass
-  both). On a short move, fast units that start behind slow ones have to walk
-  round them to the front and arrive later than they would by waiting
-  behind. Larger orders let fast units by only once they have strung
-  out along the way, and an Alt+N formation keeps its slowest unit's pace on
-  purpose. Units on move and fight
+  (up to 48 units, not an Alt+N formation), each unit gets its own spot: the
+  fast units stand at the place you clicked and the slow units in rows behind
+  them. The fast units pass the slow ones on the way, even close to the place,
+  and where there is no room to pass, a slow unit of the same order steps
+  aside for a moment to let a fast one by. On most orders the fast units get
+  there clearly earlier than before (often a quarter to a half sooner), and
+  the slow ones usually earlier too. On a short move, fast units that start
+  behind slow ones have to walk round them to the front and arrive later than
+  they would by waiting behind, and in a large crowd a fast unit with no room
+  at all may still end up a row behind. Only clearly faster units pass
+  (swordsmen and archers walk together, knights pass both). Larger orders let
+  fast units by only once they have strung out along the way, and an Alt+N
+  formation keeps its slowest unit's pace on purpose. Units on move and fight
   orders overtake, units on attack, guard or patrol orders do not.
 - **Unreachable orders end where the unit stops.** Ordered to a place it cannot
   reach, a unit walks to the nearest spot it can reach, and its order ends there,
