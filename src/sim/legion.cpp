@@ -14969,8 +14969,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // area (its packed disc, Point::limit, once assigned): a 40-body click through a 12-cell gap passed only past
     // the gap, a few dozen cells short of the point, and every time a slow body finished later (offset 0: one not
     // done at all, against the last at 2,895; offset -1: 2,600 -> 2,845); with the limit it plays as before at all
-    // 13 offsets, and the columns, which pass on the way, are unchanged. And never within an Alt+N formation, which
-    // walks at its slowest member's pace on purpose.
+    // 13 offsets, and the columns, which pass on the way, are unchanged. Never while the click stands wider across its
+    // way than deep along it: a fast body on the right flank of a 48-body block 8 abreast had room round it and
+    // passed the slow body ahead at the start, and slow and mid bodies paid (one offset's last slow body 2,605 ->
+    // 3,156, a mid body not done); a block now passes nobody until it has strung out. And never within an Alt+N
+    // formation, which walks at its slowest member's pace on purpose.
     bool clickPass(const Unit& u,const Member& m,const Unit& b,int ox,int oz) {
         if(w.legionFormationGroup(u)||w.legionFormationGroup(b))return false;
         const Point* pt=m.pt;
@@ -14988,6 +14991,21 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 if(crowd==kOvertakeCrowd)return false;
                 seen[size_t(crowd++)]=o;
             }
+        // Strung out: the click's members reach at least as far along the way to the point as across it. A block
+        // standing wider than deep (a 48-body block 8 abreast, 7 cells apart) keeps its order, flank bodies too, which
+        // have room round them; a line, a column or a group spread loose along the way passes.
+        const int64_t hd=int64_t(isqrtFloor(uint64_t(hx*hx+hz*hz)));
+        if(hd<=0)return false;
+        int64_t alongMin=INT64_MAX,alongMax=INT64_MIN,acrossMin=INT64_MAX,acrossMax=INT64_MIN;
+        for(const int id:pt->ids) {
+            const Member* o=member(id);const Unit* v=w.unit(id);
+            if(!o||!v||o->point!=m.point)continue;
+            const int64_t vx=v->x.v>>16,vz=v->z.v>>16;
+            const int64_t along=(vx*hx+vz*hz)/hd,across=(vx*hz-vz*hx)/hd;
+            alongMin=std::min(alongMin,along);alongMax=std::max(alongMax,along);
+            acrossMin=std::min(acrossMin,across);acrossMax=std::max(acrossMax,across);
+        }
+        if(alongMax<alongMin||alongMax-alongMin<acrossMax-acrossMin)return false;
         const Bam course=courseOf(u);
         int32_t last=0;
         for(int cz=std::max(oz-kOvertakeClear,0);cz<=std::min(oz+fz-1+kOvertakeClear,w.occH_-1);++cz)

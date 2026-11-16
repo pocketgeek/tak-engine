@@ -39,6 +39,14 @@ overtakeSlot) before this, parent 2103fb83, where a body never passed one of its
     the click past the gap, 30-40 cells short of the point, at offsets 0, -1 and 6, and a slow body paid each time
     (offset 0: one not done, against the last at 2,895 without passes). Checked: no pass within the click there
     (clickPass keeps out of kOvertakeHome cells round the click's area), and at most one slow body not done.
+  overtake-click-block (a block of 48 standing 8 abreast, 7 cells apart: the usual mixed selection), offsets 0,
+    +-1..6: commit 1707a093 passed at the start from the block's right flank at offsets -5 and -6, and slow and mid
+    bodies paid (offset -5: last slow 2,605 -> 3,156, a mid body not done; slow t90 median over the 13 offsets
+    2,782 -> 2,886). Now a block passes nobody until it has strung out: offsets 0..5 and -1..-5 play as on the
+    parent, and at -6 two fast bodies pass a slow one on the right flank about 300 ticks in, when the fast rows are
+    already out ahead (fast last 1,999 / 2,207 -> 972 / 1,817; slow 2,401 / 2,526 -> 2,437 / 2,487; mid 2,396 /
+    2,481 -> 2,439 / 2,206). Checked against the parent's numbers per group and offset (BLOCK_PARENT): a group done
+    there is done here and no more than 2% later, and passes within the click at no more than two offsets.
 One slow body of a one-click column settles just outside its disc at one offset of the road and of the corridor, on
 the parent as now; a fast body never does.
 
@@ -126,9 +134,51 @@ def main():
         if max(r["Sdone"]) > 2780:
             bad.append(f"overtake-corridor offset {r['offset']}: last slow body {max(r['Sdone'])} (at most 2,780)")
     bad += clicks(exe, scenarios)
+    bad += block(exe, scenarios)
     for b in bad:
         print("FAIL:", b)
     return 1 if bad else 0
+
+
+# overtake-click-block on the parent 2103fb83: each group's last arrival per offset (-1: not all done).
+BLOCK_PARENT = {
+    0: (2845, 3184, 2346, 2263, 2085, 2019), 1: (2976, 3092, 2259, 2340, 2100, 2013),
+    -1: (2391, 2886, 2232, 2256, 2041, 1983), 2: (2575, 2546, 2526, 2269, 2115, 1999),
+    -2: (2273, 3135, 2404, 2526, 1962, 1912), 3: (-1, 2782, 2544, -1, 2079, 2076),
+    -3: (2308, 2751, 2317, 2391, 1948, 1891), 4: (2481, 3001, 2527, 2265, 2077, 2019),
+    -4: (2527, -1, 2391, 2331, 1933, 1876), 5: (2498, 2976, 2196, 2279, 2093, 2131),
+    -5: (2605, 2582, 2351, 2180, 1933, 2018), 6: (-1, 2779, 2450, 2295, 2000, 2048),
+    -6: (2401, 2526, 2396, 2481, 1999, 2207)}
+BLOCK_GROUPS = ("S1", "S2", "M1", "M2", "F1", "F2")
+
+
+def block(exe, scenarios):
+    """overtake-click-block: a standing mixed block keeps its order until it strings out; returns the failures."""
+    scn = os.path.join(scenarios, "overtake-click-block.scn")
+    p = subprocess.run([exe, scn, "--mode", "legion", "--offsets", "0,1,-1,2,-2,3,-3,4,-4,5,-5,6,-6", "--serial",
+                        "--json"], capture_output=True, text=True)
+    rows = [json.loads(ln) for ln in p.stdout.splitlines() if ln.startswith("{")]
+    if p.returncode != 0 or not rows:
+        return ["overtake-click-block: legion_scenario failed"]
+    keys, varying, offs = rows[0]["keys"], rows[0].get("varying", {}), rows[0]["offsets"]
+
+    def per(key, i):
+        return varying[key][i] if key in varying else keys.get(key, 0)
+
+    bad = []
+    passing = 0
+    for i, off in enumerate(offs):
+        done = [per(f"g.{g}.done", i) for g in BLOCK_GROUPS]
+        passes = per("work.click_overtakes.total", i)
+        passing += passes > 0
+        print(f"overtake-click-block offset {off:+d}: done {dict(zip(BLOCK_GROUPS, done))} (parent "
+              f"{BLOCK_PARENT[off]}); passes within the click {passes}")
+        for g, d, was in zip(BLOCK_GROUPS, done, BLOCK_PARENT[off]):
+            if was >= 0 and (d < 0 or d * 100 > was * 102):
+                bad.append(f"overtake-click-block offset {off}: group {g} done {d} (parent {was}, at most 2% later)")
+    if passing > 2:
+        bad.append(f"overtake-click-block: passes within the click at {passing} offsets (at most 2)")
+    return bad
 
 
 def clicks(exe, scenarios):
