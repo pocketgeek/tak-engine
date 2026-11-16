@@ -1461,15 +1461,16 @@ if(Python3_Interpreter_FOUND)
   # Overtaking (2026-11-15): a fast body held behind a slower ally walking the same way steps aside and passes it
   # where there is room (single-file mixed columns on open ground and on a road 8 cells wide: fast bodies arrive
   # earlier and stop far less; a corridor 4 cells wide: no worse; nobody slow later; tools/legion_overtake_test.py).
-  # The same columns sent with one click pass too and the passers take the front of the click's slots; a mixed
-  # block of 32 (a crowd) is unchanged, a block of 40 through a 12-cell gap passes nobody near its point, and a
-  # block of 48 standing 8 abreast passes nobody until it has strung out. A click of at most 16 passes across its
-  # speed groups without the crowd limit: small mixed clicks sent 1,000 px in a crowd let their knights by (fast
-  # stops and arrival down), every speed group of 14 small fixtures checked against the parent. Asset-free.
+  # One click of several speed groups and at most 48 bodies (the arrival layout, 2026-11-16): each body gets a spot
+  # of its own, fast bodies in front, and the fast ones pass the slow ones anywhere on the way. Over 22 one-click
+  # fixtures of 10-48 bodies, per speed group against main: every body settles, none wanders after settling, no two
+  # settle on each other, faster groups settle deeper than slower ones, and the fast group comes in earlier (except
+  # fast bodies at the rear or middle of a short order, which walk round the slow ones; three fixtures where it is
+  # only capped). Asset-free.
   add_test(NAME legion_overtake
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_overtake_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios)
-  set_tests_properties(legion_overtake PROPERTIES LABELS legion TIMEOUT 300)
+  set_tests_properties(legion_overtake PROPERTIES LABELS legion TIMEOUT 600)
   # Legion 10,000 stage 8: shared destination areas -- churn-1000's half stopped and sent again to the point the
   # other half is arriving at joins its area instead of planning round it as traffic (at least 780 of 1,000 arrive,
   # at most 40 stuck; the previous commit 717 / 73).
