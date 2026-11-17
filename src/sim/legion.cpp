@@ -235,6 +235,9 @@ constexpr int kOvertakeClear=16;               // ... and no mover walking again
 constexpr int kOvertakeHome=32;                // ... nor nearer the click than its area's edge plus this many cells
 constexpr int kLayoutMost=48;                  // the most members of a click laid out for arrival (arrivalLayout)
 constexpr uint32_t kLayoutWait=180;            // ... and how long a faster member walks round a slower one's settled body
+constexpr int kPaceNear=16;                    // ... how near behind a slower member a faster one holds it to a pace (laidPace)
+constexpr int64_t kPaceNum=3,kPaceDen=4;       // ... that pace, of its speed
+constexpr int64_t kPaceReach=24;               // ... and how far outside the click's area, in cells, it does
 constexpr uint32_t kSpotWait=300;              // ... and the longest a slower member waits on its spot for a faster one (waitOnSpot)
 constexpr int64_t kOncomingCos2=14;            // 100*cos^2(112 deg): goal directions this far apart are oncoming
 constexpr int kLineCells=160;                  // direct-line probe reach
@@ -10545,6 +10548,40 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         return false;
     }
+    // A slower group's body of a click laid out for arrival (arrivalLayout), outside the click's area but within
+    // kPaceReach cells of it, walks at kPaceNum/kPaceDen of its speed while a faster body of its click walks behind
+    // it (farther from the point), within kPaceNear cells and beside its lane (passing it; one right behind it in a
+    // file has no room to pass, and a corridor's knights came in 9% later than main when their slow bodies slowed
+    // for them). Knights from the rear of a click that catch its slower bodies only as those reach their rows had to
+    // pass them there, through rows filling up: a 24-body click of three speeds sent 583 px, knights at its rear
+    // behind the mid bodies, had its knights 13% later than main, mid bodies 52% (owner, 2026-11-16: fast units
+    // first even if it delays the slow ones). Slowed there, the slower bodies let the knights by before their rows:
+    // knights 2% earlier than main, mid bodies 41% later. Not on the whole way (a 32-body blob sent 2,000 px had a
+    // knight lost among its slowed swordsmen for 800 ticks): passing on the way works without it. No state of its
+    // own: the positions and the layout are hashed.
+    Fixed laidPace(const Unit& u,const Member& m,Fixed maximum) const {
+        if(m.approach||m.slot<0||!policy(m.kind).area||w.legionFormationGroup(u))return maximum;
+        const Point* pt=m.pt;
+        if(!pt) {const auto found=points.find(m.point);pt=found==points.end()?nullptr:&found->second;}
+        if(!pt||pt->layout.empty())return maximum;
+        const int band=layoutBand(*pt,u.id);
+        if(band<=0)return maximum;
+        const int64_t px=int64_t(std::get<2>(m.point))>>16,pz=int64_t(std::get<3>(m.point))>>16;
+        const int64_t ux=u.x.v>>16,uz=u.z.v>>16,mine=(ux-px)*(ux-px)+(uz-pz)*(uz-pz);
+        const int64_t near=int64_t(kPaceNear)*16;
+        if(mine<=pt->limit*pt->limit||mine>(pt->limit+kPaceReach*16)*(pt->limit+kPaceReach*16))return maximum;
+        for(const int id:pt->ids) {
+            const Member* o=member(id);const Unit* v=w.unit(id);
+            if(!o||!v||o->point!=m.point||o->approach||o->state!=Moving||layoutBand(*pt,id)<0||layoutBand(*pt,id)>=band)continue;
+            const int64_t vx=v->x.v>>16,vz=v->z.v>>16;
+            if((vx-px)*(vx-px)+(vz-pz)*(vz-pz)<=mine||(vx-ux)*(vx-ux)+(vz-uz)*(vz-uz)>near*near)continue;
+            const int64_t across=std::abs((vx-ux)*(pz-uz)-(vz-uz)*(px-ux));
+            const int64_t half=int64_t(std::max(u.type->footX,u.type->footZ)+std::max(v->type->footX,v->type->footZ))*8;
+            if(across*across<half*half*mine)continue;
+            return Fixed::raw(int32_t(int64_t(maximum.v)*kPaceNum/kPaceDen));
+        }
+        return maximum;
+    }
     // Where a leg completed, from its click (Stats only): the distance
     // histogram, outside the destination area, and mid-route (well outside
     // it with no settled body of the same order near).
@@ -11099,7 +11136,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // unclaimed, inside the area), handed out front rank first, the first at once and the rest within kSlotsPerTick
     // and the tick's budget like any formation's; a queued member takes its own spot later (slotTarget). Members pass
     // each other by it (clickPass: a faster group's body passes a slower one's anywhere on the way; laidGiveWay: a
-    // slower one with no lane round it steps aside), a slower group's body on its spot waits there, still a member,
+    // slower one with no lane round it steps aside; laidPace: a slower one just outside the area slows while a faster
+    // one passes it), a slower group's body on its spot waits there, still a member,
     // while a faster one of its click walks behind it (waitOnSpot), a slower group's settled body queues no faster
     // one for kLayoutWait (settleWindow), a re-choice keeps between the faster and the slower groups' spots, within
     // two bodies across the way of its own and, for a slower body, on its side of the lane (rechoose), an
@@ -13284,6 +13322,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(m.state==Engaged)unstamp(u.id);
         if(heldRest(u,m)) {m.why=LegionNavigator::WhyHoldRest;u.speed=Fixed();u.turnReqBam=0;return;}
         ++stats.moves;
+        maximum=laidPace(u,m,maximum);
         // The native goal predicate (the circle the native mover would test)
         // also ends the leg, with the same event -- except for a member walking to its own spot of an arrival layout
         // (arrivalLayout), which walks on to it: stopped on the point, a front-row body stood on the spot of a body
