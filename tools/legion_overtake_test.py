@@ -56,6 +56,8 @@ the point, or a three-speed click's rows that stand against terrain, give the fo
       bodies start at the rear or in the middle of a short order (SHORT_REAR: they walk round the slow ones to the front
       rows and come in later -- the owner accepted it), and no later than main's where the layout gives the
       formation's own shape (FALLBACK). Slow and mid groups may arrive later; their numbers are printed.
+  The owner signed off (2026-11-16) on field and road coming in level with main (LEVEL, at most 1% later) and on
+  knights starting behind slower rows settling short of their spots (REAR_START: per-fixture bars, measured).
 Exit 0 pass, 1 fail, 2 tooling.
 """
 import concurrent.futures
@@ -226,6 +228,18 @@ SHORT_REAR = {"rear-200", "rear-300", "mid-300", "mid-320", "rear-240"}
 # terrain (-gateangle: a gap approached aslant; -wallside: a point 4 cells from a wall). No spot of the layout there, so the slot and depth-order checks do
 # not apply; the fast bodies arrive no later than on main, and every other check holds.
 FALLBACK = {"gate", "bridge", "gateangle", "wallside"}
+# Signed off by the owner on 2026-11-16 after the last verification round ("land with sign-off"):
+#  - LEVEL: on the 2,300 px single-file columns (field, road) every knight passes the swordsmen early and arrives at
+#    full speed on main too, so the fast group comes in level with main: it may be at most 1% later there.
+#  - REAR_START: knights starting behind slower rows are held behind them as those rows fill and settle up to ~180 px
+#    short of their own spots (rear-500, rear-600, rear-240). Per fixture: % of the bodies, % of the fast ones off
+#    their slot, % of the faster ones a row behind a slower front, and lanes crossed (rear-500: the held knights'
+#    re-choices and a swordsman column rounding off the way's slant cross 6 pairs where main crosses none).
+#    Measured at ec6568be: rear-500 off 8/182 (fast 6/78), lanes 6; rear-600 14/312 (11/104); rear-240 36/312
+#    (18/104), behind 7/104.
+LEVEL = {"field", "road"}
+LEVEL_PCT = 1
+REAR_START = {"rear-500": (5, 10, 6, 8), "rear-600": (6, 14, 6, 59), "rear-240": (14, 22, 9, 56)}
 # Pairs of bodies of one kind that swap sides across the way (lanes crossed) on main f3a4c16e, over the fixture's
 # offsets: a fixture may have no more.
 CROSS = {"col-300": 37, "col-600": 35, "col-1000": 16, "loose-300": 15, "loose-600": 25, "loose-1000": 36,
@@ -383,21 +397,26 @@ def layout_clicks(exe, scenarios):
                 bad.append(f"overtake-click-{name}: {unsettled} {kind} bodies never settle (main {mu})")
             if kind == "fast" and name in FALLBACK and round(m) > mm:
                 bad.append(f"overtake-click-{name}: fast mean arrival median {m:.0f}, later than main's {mm}")
-            elif kind == "fast" and name not in SHORT_REAR and name not in FALLBACK and m >= mm:
+            elif kind == "fast" and name in LEVEL and m > mm * (1 + LEVEL_PCT / 100):
+                bad.append(f"overtake-click-{name}: fast mean arrival median {m:.0f}, more than {LEVEL_PCT}% later "
+                           f"than main's {mm}")
+            elif kind == "fast" and name not in SHORT_REAR and name not in FALLBACK and name not in LEVEL and m >= mm:
                 bad.append(f"overtake-click-{name}: fast mean arrival median {m:.0f}, no earlier than main's {mm}")
         print(line)
         if wander:
             bad.append(f"overtake-click-{name}: {wander} bodies move more than {WANDER} px after settling")
         if overlap:
             bad.append(f"overtake-click-{name}: {overlap} pairs of bodies settled on each other")
-        if crossed > CROSS[name]:
-            bad.append(f"overtake-click-{name}: {crossed} pairs of bodies crossed lanes (main {CROSS[name]})")
-        if name not in FALLBACK and (off_slot * 100 > bodies * OFF_SLOT_PCT or off_fast * 100 > fasts * OFF_FAST_PCT):
+        slot_pct, fast_pct, behind_pct, cross = REAR_START.get(name, (OFF_SLOT_PCT, OFF_FAST_PCT, BEHIND_PCT,
+                                                                      CROSS[name]))
+        if crossed > cross:
+            bad.append(f"overtake-click-{name}: {crossed} pairs of bodies crossed lanes (main {CROSS[name]}, at most {cross})")
+        if name not in FALLBACK and (off_slot * 100 > bodies * slot_pct or off_fast * 100 > fasts * fast_pct):
             bad.append(f"overtake-click-{name}: {off_slot} of {bodies} bodies ({off_fast} of {fasts} fast) settle more "
-                       f"than {SLOT} px from their slot (at most {OFF_SLOT_PCT}%, fast {OFF_FAST_PCT}%)")
-        if behind * 100 > faster * BEHIND_PCT:
+                       f"than {SLOT} px from their slot (at most {slot_pct}%, fast {fast_pct}%)")
+        if behind * 100 > faster * behind_pct:
             bad.append(f"overtake-click-{name}: {behind} of {faster} faster bodies settle more than {ROW} px behind a "
-                       f"slower group's frontmost body (at most {BEHIND_PCT}%)")
+                       f"slower group's frontmost body (at most {behind_pct}%)")
     return bad
 
 

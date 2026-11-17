@@ -1469,7 +1469,9 @@ if(Python3_Interpreter_FOUND)
   # other, no more lanes crossed than on main, at most 5% (fast 8%) settle off their own slot and 6% of the faster
   # ones a row behind a slower group's front, main's per-offset caps on the fast bodies hold, and the fast group comes
   # in earlier than on main (no later where the formation's own shape is kept; not checked for fast bodies at the
-  # rear or middle of a short order, which walk round the slow ones). Asset-free.
+  # rear or middle of a short order, which walk round the slow ones). Owner sign-off (2026-11-16): field and road may
+  # come in level with main (at most 1% later) and knights starting behind slower rows have measured per-fixture bars
+  # (rear-500, rear-600, rear-240). Asset-free.
   add_test(NAME legion_overtake
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_overtake_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios)
