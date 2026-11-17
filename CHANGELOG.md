@@ -20,6 +20,74 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports: the latest release's live in [`docs/`](docs/), every earlier one's
 in the source of its tag.
 
+## 1.0.7
+*2026-11-16 · protocol 334 · replay format 15 · does not play with 1.0.6, nor its replays*
+
+Flyers that hit with their attack runs, charms and freeze shots that stop wasting mana on
+the unit in the way, and, with Legion pathfinding, fast units that pass slow ones and
+arrive first.
+
+- **Flyers on attack runs aim each shot at the moment they release it.** Before, a Zhon
+  Gryphon aimed its spear about half a second before throwing it, and most spears landed
+  long or wide, especially when it was turning. The Fallen Angel's Death Sword and the
+  Dirigible's and Juggernaut's arrows at flyers missed the same way. Now the shot is
+  aimed where the target is when it leaves: in testing, a Gryphon hit with 12 of 12
+  spears instead of 4, and a Fallen Angel with 11 of 11 instead of none. The original
+  game aimed early; this is TAK Engine's own.
+- **Charms, Turn to Stone and freeze shots no longer waste mana on a unit in the way.**
+  These shots hit the first unit they strike. When that is a unit the shot cannot affect
+  (a building, a Monarch, an immune unit, or a unit of your own or an ally's), it counts
+  as a blocked shot. An ally's unit it strikes is still charmed or turned to stone as
+  before. After three such shots a Harpy, or a Creon dragon using Freezing Breath, lets
+  the target go and picks another. This also happens when you ordered the attack: the
+  order is dropped, not retried. It tries the target again once the target moves or the
+  caster comes at it from another side. Ground casters such as the Mind Mage move to
+  another spot, then give up. The dragon's Blue Flame is not affected: blocked by a rock,
+  the dragon still circles round as other hovering flyers do. In the original game the
+  caster keeps firing into the building.
+- **Legion pathfinding: fast units overtake slow ones.** A fast unit stuck behind a
+  slower unit of yours or an ally's walking the same way, such as a knight behind an
+  archer in single file, now steps aside and passes it when there is room beside,
+  instead of stopping and starting behind it all the way. The computer player's mixed
+  armies march much more smoothly: in a recorded game the Aramon Knights' stops on the
+  march fell by over 80%. In a passage one unit wide the fast unit still follows. Only
+  clearly faster units pass (a top speed at least 4/3 of the other's: swordsmen and
+  archers walk together, knights pass both). Units on move and fight orders overtake,
+  units on attack, guard or patrol orders do not.
+- **Legion pathfinding: fast and slow units sent with one order arrive fast units
+  first.** When you send fast and slow units together with one order, for example
+  knights and swordsmen, the fast ones now pass the slow ones of the same order on the
+  way too. An order of up to 48 units, not an Alt+N formation,
+  is also laid out afresh: each unit walks to its own spot and mostly keeps its side, the
+  fast units stand in rows at the place you clicked and the slow units in rows behind
+  them, with a lane left free through the slow rows for fast units coming from behind. No
+  spot is laid on the far side of a wall from the place you clicked. Where there is no
+  room to pass, a slow unit steps aside for a moment; just before the place, slow units
+  slow down while a fast unit of the same order goes past them; and a slow unit that
+  reaches its spot first waits there, ready to step aside, until the fast units behind
+  it are through (at most about ten seconds). On most orders the fast units get there
+  clearly earlier than before (often a quarter to a half sooner), and the slow ones
+  usually earlier too; in a replayed test game the knights' stops behind slower units
+  fell from about 310 to 48. Clicked just past a gate or a bridge, and for armies of three
+  speeds whose rows would stand against a wall or in a gap, the units use the order's
+  ordinary formation instead, as before, because there is no room there for the fast
+  units to get round. Mid-speed units sent with knights and swordsmen may arrive later.
+  On a short move, fast units that start behind or among slow ones walk round them to
+  the front and arrive later than before (in tests from a few per cent to about twice as
+  late on average), and the slow units, waiting for them, may finish later too. An order
+  of 49 to 64 units lets its fast units by only once it has strung out along the way; in
+  a larger order fast units still follow slow ones of the same order, and an Alt+N
+  formation keeps its slowest unit's pace on purpose. Retail pathfinding is unchanged.
+- **Legion pathfinding: you see where each unit will stand.** A move, fight-move or
+  patrol order now briefly outlines in your colour, with a box the size of the unit,
+  where each of your units will stand, and holding Shift keeps the selected units'
+  places shown, with their order lines ending there, until they arrive. Only your own
+  units' places are shown; flyers and attack, guard and work orders show just the order
+  marker where you clicked, as before. Display only.
+
+Full notes: [release-1.0.7-notes.md](docs/release-1.0.7-notes.md) ·
+validation: [release-1.0.7-validation.md](docs/release-1.0.7-validation.md)
+
 ## 1.0.6
 *2026-11-15 · protocol 330 · replay format 15 · does not play with 1.0.5, nor its replays*
 
@@ -174,8 +242,8 @@ largest Volcano map, with Legion pathfinding and the Crusades balance.
   Armies of more than 48 units in one order still take a route over most of a
   2048x2048 map each. Retail pathfinding is untouched.
 
-Full notes: [release-1.0.6-notes.md](docs/release-1.0.6-notes.md) ·
-validation: [release-1.0.6-validation.md](docs/release-1.0.6-validation.md)
+Full notes: [release-1.0.6-notes.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.6/docs/release-1.0.6-notes.md) ·
+validation: [release-1.0.6-validation.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.6/docs/release-1.0.6-validation.md)
 
 ## 1.0.5
 *2026-11-13 · protocol 327 · replay format 15 · does not play with 1.0.4, nor its replays*
