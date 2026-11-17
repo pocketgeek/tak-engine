@@ -2405,6 +2405,9 @@ public:
     LegionNavigator::Stats legionStats() const {return legion_?legion_->stats():LegionNavigator::Stats{};}
     LegionNavigator* legionNavigator() {return legion_.get();}
     uint32_t legionSwapTick(int unitId) const {return legion_?legion_->swapTick(unitId):UINT32_MAX;}
+    // The unit's own Legion spot on its current move-like leg (LegionNavigator::destinationOf);
+    // false in Retail mode or when it has none. Display only, read with the frame capture.
+    bool legionDestination(int unitId,Fixed& x,Fixed& z) const {return legion_&&legion_->destinationOf(unitId,x,z);}
     // Legion's open convoys (sim/convoy.h) and their lookup counters. The
     // counters are observation only (never hashed); tools export them beside
     // the navigator's Stats as legion_convoy_*.

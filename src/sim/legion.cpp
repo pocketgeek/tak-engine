@@ -17910,6 +17910,16 @@ bool LegionNavigator::goalPoint(int id,int32_t& x,int32_t& z) const {
     x=Fixed::fromInt((g%W)*16+u->type->footX*8).v;z=Fixed::fromInt((g/W)*16+u->type->footZ*8).v;
     return true;
 }
+bool LegionNavigator::destinationOf(int id,Fixed& x,Fixed& z) const {
+    const auto found=impl_->members.find(id);
+    if(found==impl_->members.end())return false;
+    const auto& m=found->second;
+    const Unit* u=impl_->w.unit(id);
+    if(m.slot<0||m.goal<0||m.approach||!Impl::policy(m.kind).area||!u||!u->type)return false;
+    const int W=impl_->width();
+    x=Fixed::fromInt((m.goal%W)*16+u->type->footX*8);z=Fixed::fromInt((m.goal/W)*16+u->type->footZ*8);
+    return true;
+}
 bool LegionNavigator::anchorGoal(int id,int32_t& x,int32_t& z) const {
     const auto found=impl_->anchors.find(id);
     const Unit* u=impl_->w.unit(id);

@@ -415,6 +415,13 @@ public:
     // unit is no member or has no goal. Reads hashed member state only (the
     // formation flyers' landing points, World::planLegionFlightStations).
     bool goalPoint(int id,int32_t& x,int32_t& z) const;
+    // Display only (the client's destination markers, GameView::drawUnitSpots): the
+    // centre of the member's OWN spot on a move-like leg -- the formation, arrival-layout
+    // or packed slot it holds on its click's shared point. False for a unit that is no
+    // member, holds no slot yet (queued for one, or none was found), walks an approach
+    // stand-in, or is on a leg whose goal is not a spot of its own (attack and guard
+    // rings, work and transport legs). Reads member state only and changes nothing.
+    bool destinationOf(int id,Fixed& x,Fixed& z) const;
     // The centre (raw Fixed) of the goal footprint the unit's settled-arrival
     // record completed on (its formation slot when it arrived on a shared
     // point); false if it has none. Reads hashed state only (the formation

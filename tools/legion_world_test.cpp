@@ -5160,6 +5160,68 @@ void entryplanes() {
     check(illegal==0,"entryplanes: a member held a goal its own type cannot stand on (a slot exchanged across movement planes)");
 }
 
+// Destination markers (LegionNavigator::destinationOf, display only; the client's drawUnitSpots). One mixed-speed click
+// of 18 bodies (2x2 fast, 2x2 at half speed, 3x3 at three quarters), which takes an arrival layout: every member that
+// holds a spot reports its own (no two members the same on any tick), every body reports one before it settles, and
+// each body settles on the last spot it reported. A unit before its order, and every unit of the same click in Retail
+// pathfinding, reports none. Reading the spots every tick leaves the state hash as it is without them.
+struct DestinationsRun {uint64_t hash=0;int done=0,shared=0,never=0,off=0,earlyTrue=0;std::string offIds;};
+DestinationsRun destinationsRun(PathfindingMode mode,bool read) {
+    Fixture f(200,120);f.world.setPathfindingMode(mode);f.publish();
+    auto fast=mover(2);auto slow=mover(2);slow.id=slow.name="legion-foot-2-slow";slow.maxVel=Fixed::raw(117964/2);
+    auto mid=mover(3);mid.maxVel=Fixed::raw(117964*3/4);
+    std::vector<int> ids;
+    for(int i=0;i<18;++i) {
+        const UnitType& t=i%3==0?fast:i%3==1?slow:mid;
+        ids.push_back(f.spawn(t,20+(i/6)*5,48+(i%6)*5));
+    }
+    f.start();
+    DestinationsRun r;
+    Fixed x,z;
+    if(read)for(int id:ids)r.earlyTrue+=f.world.legionDestination(id,x,z);
+    for(int id:ids)f.world.order(id,120*16,60*16,false);
+    std::map<int,std::pair<int32_t,int32_t>> last;
+    for(int t=0;t<5000&&r.done<int(ids.size());++t) {
+        f.world.tick(1.f/30);
+        int done=0;
+        std::set<std::pair<int32_t,int32_t>> seen;
+        for(int id:ids) {
+            done+=f.world.unit(id)->orders.empty();
+            if(!read||!f.world.legionDestination(id,x,z))continue;
+            if(!seen.insert({x.v,z.v}).second)++r.shared;
+            last[id]={x.v,z.v};
+        }
+        r.done=done;
+    }
+    if(read)for(int id:ids) {
+        const auto& u=*f.world.unit(id);
+        const auto found=last.find(id);
+        if(found==last.end()) {++r.never;continue;}
+        // A spot is a footprint's centre; the body settles on it to within a pixel.
+        if(std::abs(u.x.v-found->second.first)>(1<<16)||std::abs(u.z.v-found->second.second)>(1<<16)) {
+            ++r.off;r.offIds+=" "+std::to_string(id)+"@("+std::to_string(u.x.v>>16)+","+std::to_string(u.z.v>>16)+")!=("+
+                std::to_string(found->second.first>>16)+","+std::to_string(found->second.second>>16)+")";
+        }
+    }
+    r.hash=f.world.stateHash();
+    return r;
+}
+void destinations() {
+    const auto legion=destinationsRun(PathfindingMode::Legion,true);
+    const auto plain=destinationsRun(PathfindingMode::Legion,false);
+    const auto retail=destinationsRun(PathfindingMode::Retail,true);
+    std::printf("destinations legion done=%d shared=%d never=%d off=%d%s early=%d hash=%016llx plain=%016llx retail never=%d early=%d\n",
+        legion.done,legion.shared,legion.never,legion.off,legion.offIds.c_str(),legion.earlyTrue,(unsigned long long)legion.hash,
+        (unsigned long long)plain.hash,retail.never,retail.earlyTrue);
+    check(legion.done==18,"destinations: the click did not settle");
+    check(legion.earlyTrue==0,"destinations: a unit with no order reported a spot");
+    check(legion.shared==0,"destinations: two members reported the same spot");
+    check(legion.never==0,"destinations: a body settled without reporting a spot");
+    check(legion.off==0,"destinations: a body settled off the last spot it reported:"+legion.offIds);
+    check(legion.hash==plain.hash,"destinations: reading the spots changed the state hash");
+    check(retail.never==18&&retail.earlyTrue==0,"destinations: a Retail pathfinding unit reported a spot");
+}
+
 }
 
 int main(int argc,char** argv) {
@@ -5177,7 +5239,7 @@ int main(int argc,char** argv) {
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainschurn",chainschurn},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
         {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"facing",facing},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"mixedrandom",mixedrandom},{"funnelmouth",funnelmouth},{"funneltie",funneltie},{"entryplanes",entryplanes},
         {"improvedefer",improvedefer},{"chainresolve",chainresolve},{"trafficlane",trafficlane},{"staticindex",staticindex},{"routeindex",routeindex},
-        {"fullplan",fullplan},{"demandown",demandown},{"seedcover",seedcover},{"seedrestore",seedrestore},{"cutoff",cutoff},{"splitseeds",splitseeds},{"routeclone",routeclone}};
+        {"fullplan",fullplan},{"demandown",demandown},{"seedcover",seedcover},{"seedrestore",seedrestore},{"cutoff",cutoff},{"splitseeds",splitseeds},{"routeclone",routeclone},{"destinations",destinations}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
