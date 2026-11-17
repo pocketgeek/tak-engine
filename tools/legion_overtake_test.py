@@ -25,8 +25,10 @@ Every body arrives in all three, and the slow bodies' last arrival is no later t
 The same columns sent with ONE right-click to one point (overtake-click-*, as a player sends a mixed selection), and
 one-click fixtures of 10-48 bodies: single-file columns (-col-*, -field, -road, -corridor), loose columns two abreast
 (-loose-*), bunches wider than deep (-bunch-*) sent 300, 600 and 1,000 px; knights at the rear of a block
-(-rear-200/300/500); three speeds (-mid-300/320, -mix3-1000); knights in front (-front-500); and the larger blocks (-blob
-32 bodies, -choke 40 through a 12-cell gap, -block 48 standing 8 abreast). Since the arrival layout (2026-11-16,
+(-rear-200/300/500); three speeds (-mid-300/320, -mix3-1000); knights in front (-front-500); the larger blocks (-blob
+32 bodies, -choke 40 through a 12-cell gap, -block 48 standing 8 abreast); and the point just past a narrowing the click
+comes through (-gate: 36 bodies of three speeds, knights at the rear, through a 12-cell gap in a wall to a point 10
+cells past it; -bridge: the same over a 12-cell land bridge across water). Since the arrival layout (2026-11-16,
 arrivalLayout in src/sim/legion.cpp) such a click of several speed groups and at most 48 members gives each body its
 own spot, fast rows in front, its fast bodies pass slower ones of the click anywhere on the way, and a slower body
 steps aside for a faster one with no lane round it (laidGiveWay). Owner (2026-11-16): "fast units even if it delays
@@ -204,7 +206,9 @@ CLICKS = {
     "corridor": ((0, 1, -1, 2), {"fast": (2190, 2574, 0), "slow": (2402, 2708, 0)}),
     "blob": (SEVEN, {"fast": (1933, 2015, 0), "slow": (2039, 2121, 0)}),
     "choke": (ALL_OFFSETS, {"fast": (1640, 2120, 0), "mid": (2079, 2345, 0), "slow": (2228, 2550, 0)}),
-    "block": (ALL_OFFSETS, {"fast": (1035, 1998, 0), "mid": (2083, 2330, 0), "slow": (2265, 2660, 0)})}
+    "block": (ALL_OFFSETS, {"fast": (1035, 1998, 0), "mid": (2083, 2330, 0), "slow": (2265, 2660, 0)}),
+    "gate": (ALL_OFFSETS, {"fast": (712, 894, 0), "mid": (582, 824, 0), "slow": (1006, 1269, 0)}),
+    "bridge": (ALL_OFFSETS, {"fast": (798, 1050, 0), "mid": (688, 836, 0), "slow": (1122, 1297, 0)})}
 # Fast bodies starting at the rear or in the middle of a short order walk round the slower ones to the front rows and
 # come in later than on main, where they stood behind them (owner, 2026-11-16: "for short moves them arriving later
 # is kinda expected"). Their numbers are printed; every other check holds for them.
@@ -214,7 +218,7 @@ SHORT_REAR = {"rear-200", "rear-300", "mid-300", "mid-320"}
 CROSS = {"col-300": 37, "col-600": 35, "col-1000": 16, "loose-300": 15, "loose-600": 25, "loose-1000": 36,
          "bunch-300": 4, "bunch-600": 7, "bunch-1000": 18, "rear-200": 0, "rear-300": 7, "rear-500": 0, "mid-300": 9,
          "mid-320": 2, "front-500": 0, "mix3-1000": 4, "field": 0, "road": 0, "corridor": 0, "blob": 6, "choke": 352,
-         "block": 280}
+         "block": 280, "gate": 278, "bridge": 420}
 # A corridor 4 cells wide holds one file: no body can reach a spot past another, so the layout's order is not checked.
 ONE_FILE = {"corridor"}
 SLOT = 24          # px a body may settle from its slot
