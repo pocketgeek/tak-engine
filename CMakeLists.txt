@@ -1475,7 +1475,9 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME legion_overtake
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_overtake_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios)
-  set_tests_properties(legion_overtake PROPERTIES LABELS legion TIMEOUT 600)
+  # About 70 s on 20 cores, but over 600 s on CI's 4-core Windows runners (b700ec15): nightly, so CI's Legion
+  # selection skips it (tools/legion_ci_selection.txt) while ctest -L legion / -L quick still run it locally.
+  set_tests_properties(legion_overtake PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
   # Legion 10,000 stage 8: shared destination areas -- churn-1000's half stopped and sent again to the point the
   # other half is arriving at joins its area instead of planning round it as traffic (at least 780 of 1,000 arrive,
   # at most 40 stuck; the previous commit 717 / 73).
