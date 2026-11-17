@@ -1462,12 +1462,14 @@ if(Python3_Interpreter_FOUND)
   # where there is room (single-file mixed columns on open ground and on a road 8 cells wide: fast bodies arrive
   # earlier and stop far less; a corridor 4 cells wide: no worse; nobody slow later; tools/legion_overtake_test.py).
   # One click of several speed groups and at most 48 bodies (the arrival layout, 2026-11-16): each body gets a spot
-  # of its own, fast bodies in front, and the fast ones pass the slow ones anywhere on the way. Over 24 one-click
-  # fixtures of 10-48 bodies (two with the point just past a gate and a bridge), per body and per speed group against
-  # main: every body settles, none wanders after settling, no two settle on each other, no more lanes crossed than on
-  # main, at most a few settle off their own slot or a row behind a slower group's front, main's per-offset caps on
-  # the fast bodies hold, and the fast group comes in earlier than on main (except fast bodies at the rear or middle
-  # of a short order, which walk round the slow ones). Asset-free.
+  # of its own, fast bodies in front, and the fast ones pass the slow ones anywhere on the way; by a narrowing just
+  # behind the point or by terrain beside the rows the click keeps the formation's own shape. Over 28 one-click
+  # fixtures of 10-48 bodies (four with the point past a gate, a bridge, a gap approached aslant and by a wall), per
+  # body and per speed group against main: every body settles, none wanders after settling, no two settle on each
+  # other, no more lanes crossed than on main, at most 5% (fast 8%) settle off their own slot and 6% of the faster
+  # ones a row behind a slower group's front, main's per-offset caps on the fast bodies hold, and the fast group comes
+  # in earlier than on main (no later where the formation's own shape is kept; not checked for fast bodies at the
+  # rear or middle of a short order, which walk round the slow ones). Asset-free.
   add_test(NAME legion_overtake
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_overtake_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios)

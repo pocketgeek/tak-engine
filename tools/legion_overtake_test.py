@@ -25,14 +25,18 @@ Every body arrives in all three, and the slow bodies' last arrival is no later t
 The same columns sent with ONE right-click to one point (overtake-click-*, as a player sends a mixed selection), and
 one-click fixtures of 10-48 bodies: single-file columns (-col-*, -field, -road, -corridor), loose columns two abreast
 (-loose-*), bunches wider than deep (-bunch-*) sent 300, 600 and 1,000 px; knights at the rear of a block
-(-rear-200/300/500); three speeds (-mid-300/320, -mix3-1000); knights in front (-front-500); the larger blocks (-blob
+(-rear-200/240/300/500); three speeds (-mid-300/320, -mix3-1000, -rear-600: knights behind the swordsmen behind the
+mid bodies, sent 583 px); knights in front (-front-500); the larger blocks (-blob
 32 bodies, -choke 40 through a 12-cell gap, -block 48 standing 8 abreast); and the point just past a narrowing the click
 comes through (-gate: 36 bodies of three speeds, knights at the rear, through a 12-cell gap in a wall to a point 10
-cells past it; -bridge: the same over a 12-cell land bridge across water). Since the arrival layout (2026-11-16,
-arrivalLayout in src/sim/legion.cpp) such a click of several speed groups and at most 48 members gives each body its
-own spot, fast rows in front, its fast bodies pass slower ones of the click anywhere on the way, and a slower body
-steps aside for a faster one with no lane round it (laidGiveWay). Owner (2026-11-16): "fast units even if it delays
-the slow units". Checked:
+cells past it; -bridge: the same over a 12-cell land bridge across water; -gateangle: 40 bodies through a gap they
+come at aslant, to a point 6 cells past it); a point 4 cells from a wall (-wallside: 30 bodies, knights at the rear).
+Since the arrival layout (2026-11-16, arrivalLayout in src/sim/legion.cpp) such a click of several speed groups and
+at most 48 members gives each body its own spot, fast rows in front, its fast bodies pass slower ones of the click
+anywhere on the way, a slower body steps aside for a faster one with no lane round it (laidGiveWay) and, just outside
+the click's area, slows while a faster one passes it (laidPace). Rows that would reach back onto a narrowing behind
+the point or stand against terrain give the formation's own shape instead (FALLBACK: -gate, -bridge, -gateangle,
+-wallside). Owner (2026-11-16): "fast units even if it delays the slow units". Checked:
   - the columns' and the blob's per-offset limits on the fast bodies, as on main f3a4c16e (clicks()): field and road
     fast mean at most 1,050 at every offset and at most 60 / 150 fast stops; corridor fast mean at most 2,250; the
     blob's last fast body at most 2,150;
@@ -44,14 +48,14 @@ the slow units". Checked:
     - lanes: no more pairs of bodies of one kind swap sides across the way between start and end (each more than
       16 px apart across the way, from the members' starting centroid toward the point) than on main (CROSS);
     - each body against its own slot: at most 5% of the bodies, and 8% of the fast ones, settle more than 24 px
-      from it;
+      from it (not where the layout gives the formation's own shape: FALLBACK);
     - each faster body against the frontmost body of every slower group: at most 6% of the faster bodies stand more
       than a row (48 px) behind that of any slower group, along the way in from the members' starting centroid (not in
-      the corridor, 4 cells wide: one file);
+      the corridor, 4 cells wide: one file; nor FALLBACK);
     - the fast group's median over the offsets of its mean arrival is earlier than main's, except where the fast
       bodies start at the rear or in the middle of a short order (SHORT_REAR: they walk round the slow ones to the front
-      rows and come in later -- the owner accepted it). Slow and mid groups may arrive later; their numbers are
-      printed.
+      rows and come in later -- the owner accepted it), and no later than main's where the layout gives the
+      formation's own shape (FALLBACK). Slow and mid groups may arrive later; their numbers are printed.
 Exit 0 pass, 1 fail, 2 tooling.
 """
 import concurrent.futures
@@ -208,17 +212,26 @@ CLICKS = {
     "choke": (ALL_OFFSETS, {"fast": (1640, 2120, 0), "mid": (2079, 2345, 0), "slow": (2228, 2550, 0)}),
     "block": (ALL_OFFSETS, {"fast": (1035, 1998, 0), "mid": (2083, 2330, 0), "slow": (2265, 2660, 0)}),
     "gate": (ALL_OFFSETS, {"fast": (712, 894, 0), "mid": (582, 824, 0), "slow": (1006, 1269, 0)}),
-    "bridge": (ALL_OFFSETS, {"fast": (798, 1050, 0), "mid": (688, 836, 0), "slow": (1122, 1297, 0)})}
+    "bridge": (ALL_OFFSETS, {"fast": (798, 1050, 0), "mid": (688, 836, 0), "slow": (1122, 1297, 0)}),
+    "gateangle": (ALL_OFFSETS, {"fast": (650, 860, 0), "mid": (724, 987, 0), "slow": (1142, 1490, 0)}),
+    "wallside": (ALL_OFFSETS, {"fast": (652, 911, 0), "mid": (841, 1040, 0), "slow": (860, 979, 0)}),
+    "rear-600": (ALL_OFFSETS, {"fast": (333, 499, 0), "mid": (314, 353, 0), "slow": (680, 927, 0)}),
+    "rear-240": (ALL_OFFSETS, {"fast": (174, 246, 0), "slow": (272, 504, 0)})}
 # Fast bodies starting at the rear or in the middle of a short order walk round the slower ones to the front rows and
 # come in later than on main, where they stood behind them (owner, 2026-11-16: "for short moves them arriving later
 # is kinda expected"). Their numbers are printed; every other check holds for them.
-SHORT_REAR = {"rear-200", "rear-300", "mid-300", "mid-320"}
+SHORT_REAR = {"rear-200", "rear-300", "mid-300", "mid-320", "rear-240"}
+# Where the layout gives the formation's own shape (arrivalLayout): rows that would reach back onto a narrowing the
+# click comes through (-gate, -bridge: the point just past it) or stand against terrain (-gateangle: a gap approached
+# aslant; -wallside: a point 4 cells from a wall). No spot of the layout there, so the slot and depth-order checks do
+# not apply; the fast bodies arrive no later than on main, and every other check holds.
+FALLBACK = {"gate", "bridge", "gateangle", "wallside"}
 # Pairs of bodies of one kind that swap sides across the way (lanes crossed) on main f3a4c16e, over the fixture's
 # offsets: a fixture may have no more.
 CROSS = {"col-300": 37, "col-600": 35, "col-1000": 16, "loose-300": 15, "loose-600": 25, "loose-1000": 36,
          "bunch-300": 4, "bunch-600": 7, "bunch-1000": 18, "rear-200": 0, "rear-300": 7, "rear-500": 0, "mid-300": 9,
          "mid-320": 2, "front-500": 0, "mix3-1000": 4, "field": 0, "road": 0, "corridor": 0, "blob": 6, "choke": 352,
-         "block": 280, "gate": 278, "bridge": 420}
+         "block": 280, "gate": 278, "bridge": 420, "gateangle": 1118, "wallside": 189, "rear-600": 59, "rear-240": 56}
 # A corridor 4 cells wide holds one file: no body can reach a spot past another, so the layout's order is not checked.
 ONE_FILE = {"corridor"}
 SLOT = 24          # px a body may settle from its slot
@@ -335,7 +348,7 @@ def layout_clicks(exe, scenarios):
                     s0 = across(units[a + 1]["start"]) - across(units[b + 1]["start"])
                     s1 = across(units[a + 1]["end"]) - across(units[b + 1]["end"])
                     crossed += abs(s0) > 16 and abs(s1) > 16 and (s0 > 0) != (s1 > 0)
-            if name in ONE_FILE:
+            if name in ONE_FILE or name in FALLBACK:
                 continue
             depth = {}
             for i, k in enumerate(kinds):
@@ -368,7 +381,9 @@ def layout_clicks(exe, scenarios):
                      f"{(t / mt - 1) * 100:+.1f}%)" + (f" unsettled {unsettled}" if unsettled else ""))
             if unsettled > mu:
                 bad.append(f"overtake-click-{name}: {unsettled} {kind} bodies never settle (main {mu})")
-            if kind == "fast" and name not in SHORT_REAR and m >= mm:
+            if kind == "fast" and name in FALLBACK and round(m) > mm:
+                bad.append(f"overtake-click-{name}: fast mean arrival median {m:.0f}, later than main's {mm}")
+            elif kind == "fast" and name not in SHORT_REAR and name not in FALLBACK and m >= mm:
                 bad.append(f"overtake-click-{name}: fast mean arrival median {m:.0f}, no earlier than main's {mm}")
         print(line)
         if wander:
@@ -377,7 +392,7 @@ def layout_clicks(exe, scenarios):
             bad.append(f"overtake-click-{name}: {overlap} pairs of bodies settled on each other")
         if crossed > CROSS[name]:
             bad.append(f"overtake-click-{name}: {crossed} pairs of bodies crossed lanes (main {CROSS[name]})")
-        if off_slot * 100 > bodies * OFF_SLOT_PCT or off_fast * 100 > fasts * OFF_FAST_PCT:
+        if name not in FALLBACK and (off_slot * 100 > bodies * OFF_SLOT_PCT or off_fast * 100 > fasts * OFF_FAST_PCT):
             bad.append(f"overtake-click-{name}: {off_slot} of {bodies} bodies ({off_fast} of {fasts} fast) settle more "
                        f"than {SLOT} px from their slot (at most {OFF_SLOT_PCT}%, fast {OFF_FAST_PCT}%)")
         if behind * 100 > faster * BEHIND_PCT:
