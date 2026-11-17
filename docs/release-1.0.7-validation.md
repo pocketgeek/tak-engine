@@ -2,8 +2,9 @@
 
 Protocol **334**, replay format **15**, random map generator version **10**.
 
-[LANDER: tag `v1.0.7` -> `<version commit>`; annotated tag object `<id>`.
-Published `<date time>` UTC as the Latest release.]
+Tag `v1.0.7` -> `be0a81c2` (the version commit); annotated tag object `0bfb9b8c`.
+Published 2026-11-17 07:26:09 UTC as the Latest release; 1.0.0 to 1.0.6 stay GitHub
+releases.
 
 ## Scope and compatibility
 
@@ -82,7 +83,24 @@ determinism workflow and builds every package.
 
 ## Tag CI and packages
 
-[LANDER: main's CI on the version commit; tag CI run ids (Determinism, Linux packages,
-Windows build, macOS build with Sign + notarize); asset count and SHA-256 digest check;
-AppImage and Fedora package `--version`; Windows Authenticode on oden-win; macOS
-stapler, spctl and codesign on the MacBook; draft created before the tag; link check.]
+Main's CI on `be0a81c2` (Determinism, macOS, Windows, Linux packages) was green after one
+rerun: openSUSE Leap 16.0 x64 failed in `stream_test` ("unwritable folder: copy failed,
+stream runs"; the arm64 leg failed the same test on the commit before), and passed on
+rerun; no streaming code changed in this release. `legion_overtake` timed out at 600 s on
+both 4-core Windows runners on `b700ec15` and is labelled nightly since `ba2ab75a`, like
+the other long Legion scenarios; it passes locally. Tag CI on `v1.0.7`: Determinism (sim)
+44032335080 (dispatched), Linux packages 44032335639, Windows build 44032335637 and macOS
+build 44032335753 (both Sign + notarize jobs included) all green at the first attempt.
+
+39 assets, the same set as 1.0.6's. All 39 were downloaded and match the release's SHA-256
+digests. `takclient` and `takserver` from the Ubuntu 24.04 x64 package report `1.0.7
+(build v1.0.7)`, and its `takclient` links no libsecret or GLib.
+Windows: on oden-win (scratch `C:/tak/w/rel107sig`), `Get-AuthenticodeSignature` reports
+**Valid** (timestamped, "Curtis Edge") for the x64 setup program and `takclient`,
+`takserver` and `cartographer` in both zips; the x64 `takclient.exe` and `takserver.exe`
+report `1.0.7 (build v1.0.7)`.
+macOS: the MacBook was not reachable, so the hands-on check was not run. In tag CI's Sign
++ notarize jobs Apple accepted every submission for both architectures, the staple and
+validate step passed for each, and `spctl` accepted both DMGs.
+The draft was created with the notes before the tag was pushed, and tag CI uploaded into
+it. Every link in the notes answers 200.
