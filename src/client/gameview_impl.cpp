@@ -415,6 +415,8 @@
     void GameView::issue(tak::net::Command c) {
         if (watchOnly()) return;   // the backstop: a command from a watcher disconnects it
         c.player = uint8_t(localPlayer_);
+        if (c.kind == tak::net::Cmd::Move || c.kind == tak::net::Cmd::AttackMove || c.kind == tak::net::Cmd::Patrol)
+            noteSpotFlash(c.unitId);
         if (click_) { click_->cmds.push_back(std::move(c)); return; }
         if (mp_) outbox_.push_back(c);
         else apply(c);
@@ -1203,7 +1205,14 @@
         // Copying them for every unit was the bulk of the capture cost at 10k units. Queues are tiny and only factories hold
         // one, so an ally's stay visible for the HUD -- and every player's for a spectator
         // or replay viewer, whose info panel shows any selected factory's queue.
-        if (u.player==localPlayer_ || (watchOnly() && !benchmarkMode_)) s.captureOrders(u);
+        if (u.player==localPlayer_ || (watchOnly() && !benchmarkMode_)) {
+            s.captureOrders(u);
+            // The unit's own spot (destination markers, drawUnitSpots): one navigator
+            // lookup, and only for a unit with orders, read like legionSwapTick below.
+            tak::sim::Fixed spotX, spotZ;
+            s.hasSpot = !s.orders.empty() && u.alive() && world_.legionDestination(u.id, spotX, spotZ);
+            if (s.hasSpot) { s.spotX = spotX.toFloat(); s.spotZ = spotZ.toFloat(); }
+        }
         else s.clearOrders();
         if (u.player==localPlayer_ || alliedToLocal(u.player) || spectating_ || replayMode_) s.buildQueue = u.buildQueue;
         else s.buildQueue.clear();

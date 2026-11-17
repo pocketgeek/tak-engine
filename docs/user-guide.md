@@ -1776,7 +1776,10 @@ repair, reclaim, area reclaim, load, unload and building.
   for it until then and takes the passengers that are ready first. Give the unit
   a different order, or stop it, and the transport lets that pickup go.
 - **Hold Shift to see the plan.** The selected units show a dotted line through
-  their queued orders, including building sites and area jobs.
+  their queued orders, including building sites and area jobs. In **Legion**
+  mode a unit's line for its current move ends on its own place in the group's
+  destination area, outlined in your colour, until it gets there; the order's
+  marker stays where you clicked.
 - **Queued buildings show as see-through outlines** on their sites until a
   builder starts them. A building that is under construction is drawn as itself,
   in its proper place under any flyer above it, with no outline laid over it.
@@ -1851,6 +1854,14 @@ measurements](legion-pathfinding.md)):
   not both walk on and jam in the middle: one is let across while the other
   waits at its end. Groups entering one room by different doors each
   fill it from their own door.
+- **You see where each unit will stand.** When you give a move, fight-move or
+  patrol order, each unit's own place in the destination area is outlined in
+  your colour (a box the size of the unit) for about two seconds; in a big
+  order, places handed out a moment later appear as they are given. Hold Shift
+  to keep the selected units' places shown until they arrive. Only your own
+  units' places are shown. Units with no place of their own, such as flyers,
+  units still waiting for theirs, and attack, guard and work orders, show just
+  the order marker where you clicked, as in Retail.
 - **Arrivals settle.** Units take up places around the destination point, and
   once they are close they stop. Large groups do not keep shuffling forever:
   the last units of a group, pressed against the group's own crowd with no way

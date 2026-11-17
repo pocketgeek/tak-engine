@@ -393,6 +393,26 @@ public:
     // Retail's order line: beads strung between a selected unit's queued orders.
     void drawOrderTrails(int mvw, int winH);
     void drawRangeCircles(int mvw, int winH);   // retail's Shift range circles (0x4d6530)
+    // Destination markers (ours, not retail): the footprint outline of each own unit's
+    // OWN Legion spot (UnitR::hasSpot), flashed for kSpotFlashMs after a move-like order
+    // and held under Shift for the selected units until they get there.
+    void drawUnitSpots(int mvw, int winH);
+    // A unit's spot belongs to its current leg; usable only when that leg is the first
+    // goal order shown, a plain point leg, and (minIssued) was issued at or after a tick.
+    static bool spotLeg(const UnitR& u, uint32_t minIssued);
+    void noteSpotFlash(int unitId);
+    struct SpotFlash {
+        int id = 0;
+        uint32_t tick = 0;      // front().gameTick when the order was issued
+        uint64_t issuedMs = 0;  // wall clock at the order
+        uint64_t seenMs = 0;    // wall clock the spot first showed (0: not yet)
+    };
+    static constexpr uint64_t kSpotFlashMs = 2000;   // the marker's life once shown
+    static constexpr uint64_t kSpotWaitMs = 8000;    // how long a spot handed out late is waited for
+    static constexpr size_t kSpotFlashMax = 512;     // remembered orders (a few hundred markers at most)
+    static constexpr int kSpotDrawMax = 400;         // markers per frame
+    std::vector<SpotFlash> spotFlash_;
+    std::vector<SDL_Vertex> spotBatch_;
     static constexpr int kTrailUnits = 3;    // retail beaded only its few "focus" units
     static constexpr int kTrailBeads = 96;   // per leg, so a map-long order can't run away
     struct OrderTrailCache {

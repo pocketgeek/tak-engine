@@ -2731,6 +2731,7 @@
             }
         }
         drawRangeCircles(mvw, winH);
+        drawUnitSpots(mvw, winH);
 
         // Workstream L: each per-unit overlay below examines only the units the grid
         // returns for its own screen band -- the band its exact test accepts for the
@@ -8117,11 +8118,17 @@
             }
             ++drawn;
             float px = up->x, pz = up->z;                  // running position
+            // The current leg's line ends on the unit's OWN Legion spot when it has
+            // one (drawUnitSpots marks it), not on the click every member shares.
+            const bool spot = spotLeg(*up, 0);
+            bool firstGoal = true;
             for (const auto& o : *trail) {
                 // Only the ends of the player's own orders are line vertices; the
                 // Route waypoints between them are the navigator's business, exactly
                 // as retail's order list held goals and not path nodes.
                 if (!o.goal) continue;
+                const bool atSpot = spot && firstGoal;
+                firstGoal = false;
                 if (o.manaBuildArea || o.reclaimArea) continue;
                 float qx = o.x.toFloat(), qz = o.z.toFloat();
                 if (o.targetId && !o.guard && !o.load) {
@@ -8131,6 +8138,7 @@
                     if (tu && tu->alive() && canPickUnit(*tu)) { qx = tu->x; qz = tu->z; }
                     else if (o.x.v == 0 && o.z.v == 0) continue;
                 }
+                if (atSpot) { qx = up->spotX; qz = up->spotZ; }
                 const bool line = o.targetId == 0;         // attack orders: marker only
                 if (beads && line) {
                     float dx = qx - px, dz = qz - pz;
@@ -8213,6 +8221,95 @@
                 }
                 px = qx; pz = qz;                          // advance either way
             }
+        }
+    }
+
+    // ---- destination markers (ours, not retail) ----------------------------------
+    // Legion hands each member of a move click its own spot round the click (formation,
+    // arrival-layout and packed slots), so the click marker alone does not say where a
+    // given body will stand. When the player gives a move, fight-move or patrol order,
+    // each of those units' own spot gets a thin outline of the unit's footprint in the
+    // player's colour, held for a moment and faded out over kSpotFlashMs; a spot handed
+    // out a few ticks later (a big click is handed out over several) appears when it is
+    // handed out. With Shift held every selected unit's spot stays outlined -- its order
+    // line ends there -- until it gets there and the leg ends.
+    //
+    // An outline rather than another cursor glyph: retail's order markers are the order
+    // kind's own animated cursor at the click, uncoloured, and a second glyph per unit
+    // would bury that one under a crowd. A footprint box in player colour reads as "a
+    // body this size stands here", tells a big unit's spot from a small one's, and stays
+    // legible packed edge to edge (each is inset 2 px so neighbours do not merge).
+    //
+    // Display only: the spot is captured with the unit's orders (UnitR::hasSpot), so it
+    // exists only for units whose orders this client reads, and only the viewed player's
+    // are drawn. A unit with no spot of its own (Retail pathfinding, flyers, a member
+    // still queued for its slot, attack/guard/work legs) keeps the click marker alone.
+    bool GameView::spotLeg(const UnitR& u, uint32_t minIssued) {
+        if (!u.hasSpot || u.holdsRally()) return false;
+        for (const auto& o : u.orders) {
+            if (!o.goal) continue;
+            return o.issuedTick >= minIssued && !o.targetId && !o.buildType && !o.reclaimFeat &&
+                   !o.repairTarget && !o.load && !o.unload && !o.guard && !o.reclaimArea && !o.manaBuildArea;
+        }
+        return false;
+    }
+
+    void GameView::noteSpotFlash(int unitId) {
+        if (unitId <= 0) return;
+        const SpotFlash f{unitId, front().gameTick, SDL_GetTicks64(), 0};
+        for (auto& g : spotFlash_) if (g.id == unitId) { g = f; return; }
+        if (spotFlash_.size() >= kSpotFlashMax) spotFlash_.erase(spotFlash_.begin());
+        spotFlash_.push_back(f);
+    }
+
+    void GameView::drawUnitSpots(int mvw, int winH) {
+        const bool shiftHeld = (SDL_GetModState() & KMOD_SHIFT) != 0;
+        if (spotFlash_.empty() && (!shiftHeld || selection_.empty())) return;
+        const uint64_t now = SDL_GetTicks64();
+        const float zm = mapView_.zoom();
+        const float th = std::max(1.0f, zm);
+        spotBatch_.clear();
+        int drawn = 0;
+        const auto mark = [&](const UnitR& u, float alpha) {
+            if (drawn >= kSpotDrawMax || alpha <= 0.0f) return;
+            const float hx = std::max(4.0f, float(u.type->footX) * 8.0f - 2.0f) * zm;
+            const float hz = std::max(4.0f, float(u.type->footZ) * 8.0f - 2.0f) * zm;
+            // On the tile art at the spot, where the body will be drawn lifted to.
+            const float cx = (u.spotX - mapView_.offX()) * zm - terrainLiftX(u.spotX, u.spotZ) * zm;
+            const float cy = (u.spotZ - mapView_.offY()) * zm - terrainLift(u.spotX, u.spotZ) * zm;
+            if (cx + hx < 0 || cx - hx > float(mvw) || cy + hz < 0 || cy - hz > float(winH)) return;
+            SDL_Color c = playerColor(u.player);
+            c.a = Uint8(std::clamp(alpha, 0.0f, 1.0f) * 230.0f);
+            pushSeg(spotBatch_, cx - hx, cy - hz, cx + hx, cy - hz, th, c);
+            pushSeg(spotBatch_, cx + hx, cy - hz, cx + hx, cy + hz, th, c);
+            pushSeg(spotBatch_, cx + hx, cy + hz, cx - hx, cy + hz, th, c);
+            pushSeg(spotBatch_, cx - hx, cy + hz, cx - hx, cy - hz, th, c);
+            ++drawn;
+        };
+        for (auto& f : spotFlash_) {
+            const UnitR* u = frameUnitP(f.id);
+            if (!u || !u->alive() || !u->type || u->player != hudPlayer()) { f.id = 0; continue; }
+            // Waits until the order is in the unit's queue and its spot handed out.
+            if (!spotLeg(*u, f.tick)) {
+                if (f.seenMs) f.id = 0;   // the leg ended (or lost its spot) while shown
+                continue;
+            }
+            if (!f.seenMs) f.seenMs = now;
+            if (shiftHeld && selSet_.count(f.id)) continue;   // held whole below
+            const uint64_t age = now - f.seenMs, hold = kSpotFlashMs * 3 / 5;
+            mark(*u, age < hold ? 1.0f : 1.0f - float(age - hold) / float(kSpotFlashMs - hold));
+        }
+        std::erase_if(spotFlash_, [&](const SpotFlash& f) {
+            return f.id == 0 || (f.seenMs ? now - f.seenMs >= kSpotFlashMs : now - f.issuedMs >= kSpotWaitMs);
+        });
+        if (shiftHeld)
+            for (int id : selection_) {
+                const UnitR* u = frameUnitP(id);
+                if (u && u->alive() && u->type && u->player == hudPlayer() && spotLeg(*u, 0)) mark(*u, 1.0f);
+            }
+        if (!spotBatch_.empty()) {
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            SDL_RenderGeometry(ren_, nullptr, spotBatch_.data(), int(spotBatch_.size()), nullptr, 0);
         }
     }
 

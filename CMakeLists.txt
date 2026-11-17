@@ -3039,6 +3039,16 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1200 800 --shot "${CMAKE_CURRENT_BINARY_DIR}/area-ghosts.png")
       set_tests_properties(area_build_ghosts PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: an area lodestone job ghosts every deposit")
+      # Destination markers: every unit of a mixed-speed Legion move shows its own spot,
+      # flashed after the order and held under Shift (GameView::drawUnitSpots).
+      add_test(NAME unit_spot_markers COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_UNIT_SPOTS_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/unit-spots-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/unit-spots-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1200 800 --shot "${CMAKE_CURRENT_BINARY_DIR}/unit-spots.png")
+      set_tests_properties(unit_spot_markers PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: every unit of a mixed Legion move shows its own spot")
       add_test(NAME area_drag_input COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_AREA_DRAG_TEST=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/area-drag-profile

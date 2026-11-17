@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 
 #ifndef NDEBUG
 
@@ -663,6 +664,8 @@
             const int tower=spawn("arakeep",kx,kz,0,0);
             const int blip=spawn("arasword",kx+rd,kz,0,1);
             check(own>0 && inside>0 && outside>0 && high>0 && below>0 && tower>0 && blip>0,"fixture spawned");
+            // A big click's spots are handed out over a few ticks (kSlotsPerTick); one second
+            // covers this one.
             for (int i=0;i<30;++i) writableWorld().tick(1.f/30);
             const char* capture=tak::devEnv("TAK_RETAIL_FOG_CAPTURE");
             const auto frame=[&](float cx,float cz,const char* tag,float zoom=1.0f) {
@@ -3216,6 +3219,61 @@
             std::fprintf(stderr,"area ghosts: %zu deposits in the box, %zu planned ghosts\n",spots.size(),planned);
             if (planned<spots.size()) throw std::runtime_error("area ghosts: not every deposit has a ghost");
             std::fprintf(stderr,"PASS: an area lodestone job ghosts every deposit it will build\n");
+            return;
+        }
+        if (tak::devFlag("TAK_UNIT_SPOTS_TEST")) {
+            // Destination markers (GameView::drawUnitSpots): a mixed-speed right-click
+            // move of swordsmen, knights and catapults under Legion. Every unit's own
+            // spot is captured (UnitR::hasSpot), no two alike, and outlined; with
+            // TAK_UNIT_SPOTS_CAPTURE=<prefix> the flash and the Shift view are saved.
+            constexpr int W=1200,H=800;
+            winW_=W;winH_=H;noFog_=true;edgeScrollOn_=false;uiScale_=1.0f;
+            if(!cursors_.ok()) {cursorsInit_=true;cursors_.load(ren_,vfs_,settings_);}
+            writableWorld().setPathfindingMode(tak::sim::PathfindingMode::Legion);
+            writableWorld().setPathService(true);   // as a real match's setup (sim/matchsetup.cpp): Legion plans through it
+            const float cx=float(mapView_.map().blocksX)*16.0f,cz=float(mapView_.map().blocksY)*16.0f;
+            static constexpr const char* kinds[]={"arasword","araknigh","arapult"};
+            std::vector<int> ids;
+            for (int i=0;i<15;++i) {
+                const float x=cx-300+float(i%5)*44,z=cz-90+float(i/5)*60;
+                const auto* type=registry_.find(kinds[i%3]);
+                if (!type || !world_.canPlace(type,x,z)) continue;
+                if (const int id=spawn(kinds[i%3],x,z,0,localPlayer_); id>0) ids.push_back(id);
+            }
+            if (ids.size()<9) throw std::runtime_error("unit spots: fixture");
+            selection_=ids;
+            const auto publish=[&] {captureFrame();beginFrame();cosmeticStep(0);};
+            publish();
+            const float tx=cx+260,tz=cz;
+            issueClickPlan(planClick(0,tx,tz,nullptr,0,false,true),0,0);
+            for (int i=0;i<30;++i) writableWorld().tick(1.f/30);
+            publish();
+            std::set<std::pair<float,float>> spots;
+            for (const int id:ids)
+                if (const UnitR* u=frameUnitP(id); u && spotLeg(*u,0)) spots.insert({u->spotX,u->spotZ});
+            mapView_.setZoom(1.0f);
+            mapView_.setOffset((cx-300+tx)*0.5f-float(W-300)*0.5f,cz-terrainLift(cx,cz)-float(H)*0.5f);
+            const char* cap=tak::devEnv("TAK_UNIT_SPOTS_CAPTURE");
+            const auto frame=[&](SDL_Keymod mods,const char* tag) {
+                SDL_SetModState(mods);
+                for (int i=0;i<20;++i) {beginFrame();prepare(W,H);draw(W,H);}   // terrain tiles stream in
+                if (cap) {
+                    int ow=0,oh=0;SDL_GetRendererOutputSize(ren_,&ow,&oh);
+                    std::vector<uint8_t> px4(size_t(ow)*size_t(oh)*4);
+                    if (SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px4.data(),ow*4)==0)
+                        tak::png::write(std::string(cap)+"-"+tag+".png",ow,oh,px4);
+                }
+            };
+            frame(KMOD_NONE,"flash");
+            const size_t flashed=spotBatch_.size()/24;   // four segments of six vertices a marker
+            frame(KMOD_LSHIFT,"shift");
+            const size_t held=spotBatch_.size()/24;
+            SDL_SetModState(KMOD_NONE);
+            std::fprintf(stderr,"unit spots: %zu units, %zu own spots, %zu flashed, %zu held under Shift\n",
+                         ids.size(),spots.size(),flashed,held);
+            if (spots.size()!=ids.size()) throw std::runtime_error("unit spots: a unit has no spot of its own, or two share one");
+            if (flashed!=ids.size() || held!=ids.size()) throw std::runtime_error("unit spots: not every spot is outlined");
+            std::fprintf(stderr,"PASS: every unit of a mixed Legion move shows its own spot\n");
             return;
         }
         if (tak::devFlag("TAK_AREA_DRAG_TEST")) {

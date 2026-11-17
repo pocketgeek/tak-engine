@@ -109,6 +109,11 @@ struct UnitR {
     bool yardOpen = false;
     std::vector<const tak::sim::UnitType*> buildQueue;
     std::vector<RenderOrder> orders, rally;
+    // Its own Legion spot on its current move-like leg (World::legionDestination), for
+    // the destination markers; captured with the orders, so only for the units whose
+    // orders are (never another side's destination for a player). hasSpot false: none.
+    bool hasSpot = false;
+    float spotX = 0, spotZ = 0;
     // Deposits the first lodestone area job has already tried (sorted spot
     // indices); the order-line preview plans the remaining ones from it.
     std::vector<uint32_t> areaVisited;
@@ -119,7 +124,7 @@ struct UnitR {
         for (const auto& o : unit.orders)
             if (o.manaBuildArea) {areaVisited=o.manaBuildArea->visited;break;}
     }
-    void clearOrders() {orders.clear();rally.clear();areaVisited.clear();}
+    void clearOrders() {orders.clear();rally.clear();areaVisited.clear();hasSpot=false;}
     // Orders given to this unit set its output's rally instead (World::setRally):
     // a production building, or a mobile builder while it repeats production.
     bool holdsRally() const { return type && (type->producesUnits() || repeatType); }
