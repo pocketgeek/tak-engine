@@ -11145,7 +11145,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // Returns the rows ([begin, end) of `bodies`, width, depth, their edges across the way and where each starts
         // along the way) and their whole depth.
         struct Row {size_t begin,end;int64_t width,depth,lo,hi,top;};
-        const int64_t disc=std::max<int64_t>(widest,pt.limit-widest/2);
+        const int64_t radius=std::max<int64_t>(widest,pt.limit-widest/2);
         const Plane& wp=plane(groups.find(widestMember->group)->second.plane);
         const int wfx=widestUnit->type->footX,wfz=widestUnit->type->footZ;
         // A narrowing behind the point (a gate, a bridge's end, a door the click comes through): walking back from the
@@ -11154,14 +11154,12 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // the point. No row stands on it or past it (`narrow`, px along from the point): with the point just past a
         // gate the slower rows stood in the gap and on the near side of the wall, and knights from the rear of a
         // 36-body click could not get through them (10-11 of 12 settled 100-300 px off their spots, 17% later than
-        // main). The rows move forward past the point instead (below), and may be a quarter wider (the disc's radius
-        // 5/4: the ground past such a narrowing is the room the click came for, and rows as deep as the disc's moved
-        // the fast ones about 170 px past the point beyond a bridge). The run, not the line's legal places nor its
+        // main). The rows move forward past the point instead (below). The run, not the line's legal places nor its
         // walled ends: a click coming at a gate aslant has its lines cross the wall, open ground on both sides of it.
         // The lines are read once, charged to the tick's budget.
         int64_t narrow=INT64_MIN;
         {
-            const int64_t K=2*disc/16+1;
+            const int64_t K=2*radius/16+1;
             auto run=[&](int64_t y) {
                 auto at=[&](int64_t j) {
                     const int64_t x=px+y*ax/L+j*16*az/L,z=pz+y*az/L-j*16*ax/L;
@@ -11180,11 +11178,9 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             };
             const int64_t n0=run(0);
             int64_t y=-16;
-            for(;y>=-4*disc;y-=16)if(2*run(y)<n0) {narrow=y+8;break;}
+            for(;y>=-4*radius;y-=16)if(2*run(y)<n0) {narrow=y+8;break;}
             ringCells+=uint64_t(2*K+1)*uint64_t(-y/16+1);
         }
-        const int64_t radius=narrow==INT64_MIN?disc:disc*5/4;
-        pt.limit+=radius-disc;
         int64_t back=0;   // how far behind the point the disc's centre lies (below)
         // Ground a short way from the point: every place is reached from the point's origin by legal steps of the
         // widest body (no corner cut) within 5/4 of the straight line plus 48 px. Legal ground alone let a knight's
@@ -11316,11 +11312,13 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             }
         }
         // ... and forward again, past the point, while the last row stands on a narrowing behind it or past it
-        // (`narrow`); ground ahead too short for that (a room's far wall): the formation's own shape, as before.
+        // (`narrow`), at most the disc's radius past it; ground ahead too short for that (a room's far wall, the
+        // buildings round a town's lanes, where rows found no ground ahead went 1,100-1,650 px past the point): the
+        // formation's own shape, as before.
         if(narrow!=INT64_MIN) {
             auto low=[&] {return rows.back().top-rows.back().depth-back;};
-            for(int k=0;k<4&&low()<narrow;++k) {back-=narrow-low();depth=lay(front,rows);}
-            if(low()<narrow)return false;
+            for(int k=0;k<4&&low()<narrow&&-back<=radius;++k) {back-=narrow-low();depth=lay(front,rows);}
+            if(low()<narrow||-back>radius)return false;
         }
         pt.limit+=std::abs(back);
         // Places across a row: each body's own place across the way, scaled to the row when the click is wider, then
