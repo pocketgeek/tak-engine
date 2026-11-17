@@ -11140,7 +11140,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // one passes it), a slower group's body on its spot waits there, still a member,
     // while a faster one of its click walks behind it (waitOnSpot), a slower group's settled body queues no faster
     // one for kLayoutWait (settleWindow), a re-choice keeps between the faster and the slower groups' spots, within
-    // two bodies across the way of its own and, for a slower body, on its side of the lane (rechoose), an
+    // two bodies across the way of its own, not past a spot of its group beside its own and, for a slower body, on
+    // its side of the lane (rechoose), an
     // exchange at the area's entrance stays within a speed group (enterArea) and an attack-move body walks on past the
     // point to its spot (the native goal circle does not end its leg). One speed group, more members than
     // kLayoutMost, or a click on its own centroid: the formation's own shape, as before. Returns whether laid out.
@@ -17265,6 +17266,17 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                         acrossLo=c-reach;acrossHi=c+reach;
                         if(band>0&&pt->lane) {const int64_t k=pt->lane+int64_t(std::max(fx,fz))*8;if(c<0)acrossHi=std::min(acrossHi,-k);else acrossLo=std::max(acrossLo,k);}
                     }
+                }
+                // ... nor across the way past a spot of its own group beside its own (more than a cell across from
+                // it): two bodies of a group re-choosing past each other crossed lanes (rear-500: a knight from the
+                // right of its file re-chose a cell left of its neighbour's, 4 pairs over 13 offsets, none on main).
+                int64_t mine=INT64_MIN;
+                for(const Point::Spot& sp:pt->layout)if(sp.id==u.id)mine=((sp.x-px)*wz-(sp.z-pz)*wx)/wl;
+                if(mine!=INT64_MIN)for(const Point::Spot& sp:pt->layout) {
+                    if(sp.band!=band||sp.id==u.id)continue;
+                    const int64_t c=((sp.x-px)*wz-(sp.z-pz)*wx)/wl;
+                    if(c<mine-16)acrossLo=std::max(acrossLo,c+1);
+                    else if(c>mine+16)acrossHi=std::min(acrossHi,c-1);
                 }
             }
             for(const int local:queue) {
