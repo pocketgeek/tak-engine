@@ -35,8 +35,8 @@ Since the arrival layout (2026-11-16, arrivalLayout in src/sim/legion.cpp) such 
 at most 48 members gives each body its own spot, fast rows in front, its fast bodies pass slower ones of the click
 anywhere on the way, a slower body steps aside for a faster one with no lane round it (laidGiveWay) and, just outside
 the click's area, slows while a faster one passes it (laidPace). Rows that would reach back onto a narrowing behind
-the point or stand against terrain give the formation's own shape instead (FALLBACK: -gate, -bridge, -gateangle,
--wallside). Owner (2026-11-16): "fast units even if it delays the slow units". Checked:
+the point, or a three-speed click's rows that stand against terrain, give the formation's own shape instead
+(FALLBACK: -gate, -bridge, -gateangle, -wallside). Owner (2026-11-16): "fast units even if it delays the slow units". Checked:
   - the columns' and the blob's per-offset limits on the fast bodies, as on main f3a4c16e (clicks()): field and road
     fast mean at most 1,050 at every offset and at most 60 / 150 fast stops; corridor fast mean at most 2,250; the
     blob's last fast body at most 2,150;
@@ -222,8 +222,8 @@ CLICKS = {
 # is kinda expected"). Their numbers are printed; every other check holds for them.
 SHORT_REAR = {"rear-200", "rear-300", "mid-300", "mid-320", "rear-240"}
 # Where the layout gives the formation's own shape (arrivalLayout): rows that would reach back onto a narrowing the
-# click comes through (-gate, -bridge: the point just past it) or stand against terrain (-gateangle: a gap approached
-# aslant; -wallside: a point 4 cells from a wall). No spot of the layout there, so the slot and depth-order checks do
+# click comes through (-gate, -bridge: the point just past it) or, in a click of three speed groups, stand against
+# terrain (-gateangle: a gap approached aslant; -wallside: a point 4 cells from a wall). No spot of the layout there, so the slot and depth-order checks do
 # not apply; the fast bodies arrive no later than on main, and every other check holds.
 FALLBACK = {"gate", "bridge", "gateangle", "wallside"}
 # Pairs of bodies of one kind that swap sides across the way (lanes crossed) on main f3a4c16e, over the fixture's

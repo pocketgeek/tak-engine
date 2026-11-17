@@ -1463,7 +1463,7 @@ if(Python3_Interpreter_FOUND)
   # earlier and stop far less; a corridor 4 cells wide: no worse; nobody slow later; tools/legion_overtake_test.py).
   # One click of several speed groups and at most 48 bodies (the arrival layout, 2026-11-16): each body gets a spot
   # of its own, fast bodies in front, and the fast ones pass the slow ones anywhere on the way; by a narrowing just
-  # behind the point or by terrain beside the rows the click keeps the formation's own shape. Over 28 one-click
+  # behind the point, or a three-speed click by terrain beside its rows, the click keeps the formation's own shape. Over 28 one-click
   # fixtures of 10-48 bodies (four with the point past a gate, a bridge, a gap approached aslant and by a wall), per
   # body and per speed group against main: every body settles, none wanders after settling, no two settle on each
   # other, no more lanes crossed than on main, at most 5% (fast 8%) settle off their own slot and 6% of the faster

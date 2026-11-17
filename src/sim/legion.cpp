@@ -11119,9 +11119,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     //    holds no row); the rows are centred on the point along the way, then moved back until the fastest group's
     //    front row stands on the point and its mean depth is no deeper than the formation's own shape would put it;
     //    the area grows by as much. Rows that would reach back onto a narrowing the click comes through (a gate or a
-    //    bridge just behind the point), or that stand against terrain (no open ground a body past either end of a
-    //    row: a wall beside the point, a gap approached aslant; not for a click that comes as one file), give the
-    //    formation's own shape instead: the bodies had no room there to walk round each other. A row
+    //    bridge just behind the point), or, in a click of three speed groups, that stand against terrain (no open
+    //    ground a body past either end of a row: a wall beside the point, a gap approached aslant; not for a click
+    //    that comes as one file), give the formation's own shape instead: the bodies had no room there to walk round
+    //    each other. A row
     //    takes the next ranks whatever their group (rows of one group each made a small click a long column: ten
     //    5-body clicks over a long bridge left one more body outside its disc).
     //  - Places across a row: the click's spread scaled into the packed disc of its bodies (as the formation's own
@@ -11483,18 +11484,31 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // aslant whose rows stood in it and behind the wall) left the bodies no room to walk round each other where
         // they settle: knights from the rear of a 30-body click of three speeds, sent to a point 4 cells from a wall,
         // came in 20% later than main, and a 40-body click to a point 6 cells past a gap it came at aslant 26% later.
-        // A click that comes as one file (no wider across the way than its widest body) keeps its rows however narrow
-        // the way (a road 8 cells wide: its knights pass the slow bodies on the road and stand in front of them).
-        // Read once per row, charged to the tick's budget.
-        if(spanHi-spanLo>widest)for(const Row& r:rows) {
+        // Clicks of three speed groups only: their knights pass two groups of slower rows, the middle one arriving
+        // about when they do. Clicks of two by terrain did well laid out (24 bodies by water 14% earlier than main,
+        // 30 by a wall 12%, 20 short of a wall 21%), and a played game's 10-14 body clicks of knights and swordsmen
+        // stood by such ground in three of seven layouts: without them their knights stop-started twice as often
+        // behind swordsmen. Ground narrower than a body across the line (a tree, a rock) does not count either: a
+        // body walks round it. A click that comes as one file (no wider across the way than its widest body) keeps
+        // its rows however narrow the way (a road 8 cells wide: its knights pass the slow bodies on the road and stand
+        // in front of them). Read once per row (and as far again as a body past its ends), charged to the tick's
+        // budget.
+        if(starts.size()>2&&spanHi-spanLo>widest)for(const Row& r:rows) {
             int64_t a=INT64_MAX,e=INT64_MIN;
             for(size_t i=r.begin;i<r.end;++i) {a=std::min(a,place[i].second-bodies[i].pitch/2);e=std::max(e,place[i].second+bodies[i].pitch/2);}
             const int64_t c=place[r.begin].first;
-            for(int64_t x=a-widest;x<=e+widest;x+=16) {
+            auto open=[&](int64_t x) {
                 const int64_t gx0=px+(c*ax+x*az)/L,gz0=pz+(c*az-x*ax)/L;
                 const int gx=footprintOrigin(Fixed::fromInt(int32_t(gx0)),wfx),gz=footprintOrigin(Fixed::fromInt(int32_t(gz0)),wfz);
                 ++ringCells;
-                if(!legal(wp,gx,gz)||!near(gx,gz)) {pt.limit=limit0;pt.lane=0;pt.layout.clear();return false;}
+                return legal(wp,gx,gz)&&near(gx,gz);
+            };
+            for(int64_t x=a-widest;x<=e+widest;x+=16) {
+                if(open(x))continue;
+                int64_t y=x+16;
+                while(y-x<widest&&!open(y))y+=16;
+                if(y-x>=widest) {pt.limit=limit0;pt.lane=0;pt.layout.clear();return false;}
+                x=y;
             }
         }
         // Which body of a group takes which of its group's places: the places in columns across the way (places of
