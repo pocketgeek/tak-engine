@@ -1937,8 +1937,12 @@ measurements](legion-pathfinding.md)):
   still follows. When you send fast and slow units together with one order
   (up to 48 units, not an Alt+N formation), each unit gets its own spot: the
   fast units stand in rows at the place you clicked and the slow units in rows
-  behind them, each unit keeping its side (units do not cross each other's
-  paths to their spots). The fast units pass the slow ones on the way, even
+  behind them, with a lane left free through the slow rows so that fast units
+  coming from behind can get through. Units mostly keep their side (in tests
+  fewer units cross each other's paths to their spots than before, but a few
+  still do, mostly on short moves). Clicked just past a gate or a bridge, the
+  rows stand on the near side of the place, clear of the gap, a little further
+  from it if needed. The fast units pass the slow ones on the way, even
   close to the place; where there is no room to pass, a slow unit of the same
   order steps aside for a moment to let a fast one by, and a slow unit that
   reaches its spot first waits there, ready to step aside, until the fast ones
@@ -1946,13 +1950,18 @@ measurements](legion-pathfinding.md)):
   units get there clearly earlier than before (often a quarter to a half
   sooner), and the slow ones usually earlier too. On a short move, fast units
   that start behind or among slow ones have to walk round them to the front:
-  they arrive later than they would by waiting behind (in tests a tenth to a
-  half later, and well over twice as late when they start right at the back of
-  a crowd of three speeds), and the slow units, waiting for them, finish later
-  too; the slow units at the front of such a move may hardly move at all, as
-  their spots are behind the place you clicked. A long single file of knights
-  and swordsmen arrives about as before. In a dense crowd a fast unit with no
-  room at all may still follow a slow one for a long way. Only clearly faster units pass
+  they arrive later than they would by waiting behind (in tests up to a fifth
+  later on average, and nearly twice as late when they start right at the back
+  of a crowd of three speeds), and the slow units, waiting for them, may finish
+  later too; the slow units at the front of such a move may hardly move at all,
+  as their spots are behind the place you clicked. A long single file of knights
+  and swordsmen arrives about as before, and so does a mixed army sent over a
+  narrow bridge (the units cross it in files and the fast ones cannot pass
+  there); through a gate the fast units come in a little earlier, but some of
+  those from the back stop short of their spots. In a dense crowd a fast unit
+  with no room at all may still follow a slow one for a long way, and in a large
+  crowd of three speeds the fast units at its very back can arrive somewhat
+  later than before. Only clearly faster units pass
   (swordsmen and archers walk together, knights pass both). Larger orders let
   fast units by only once they have strung out along the way, and an Alt+N
   formation keeps its slowest unit's pace on purpose. Units on move and fight

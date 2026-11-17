@@ -940,13 +940,43 @@ its size is fixed then, not the members that remain as others arrive):
   stand at the point and the slower bodies behind them, nearer where they come from. Centred on the point, the fast
   rows stood half the slower rows' depth past it and every knight walked that much farther than with the formation's
   own shape (a 44-body block's knights 10-20% later); with the fast group's mean depth on the point, ten knights in
-  two rows still came in 2-3% later on some orders.
+  two rows still came in 2-3% later on some orders. They move further back while the fast group's mean depth is
+  deeper than the formation's own shape would put it (its bodies' places along the way in the click, scaled into the
+  area): knights from the rear of a click stood behind the point in their own shape and walked farther to a front row
+  on it (24 bodies at an L-shaped wall corner: 0.2% later than main, 1.8% earlier with this).
+* A narrowing behind the point -- walking back from the point along the way, the first line across it whose run of
+  legal places through the way's line (or the nearest to it), out to twice the disc's radius either side, is under
+  half the run through the point: a gate, a bridge's end, a room's door the click comes through -- bounds the rows:
+  they move forward past the point until the last one stands short of the narrowing, at most the disc's radius past
+  it; needing more (a room's far wall, buildings round the point, the 36 bodies' rows past a bridge) the click keeps
+  the formation's own shape. In a cluttered map the line test finds such narrowings for many clicks whose rows never
+  reach them, so nothing else changes: widening the rows by a quarter whenever one was found failed
+  `ctest:legion_crowdlock_churn` (145 of 147 orders ended, a body stuck), and unbounded, rows that found no ground
+  ahead went 1,100-1,650 px past the point among a town's buildings. With the point 10 cells past a 12-cell gate,
+  the mid and slow spots stood in the gap and on the near side of the wall, and 10-11 of 12 knights from the rear of
+  the 36-body click settled 100-300 px off their spots behind them, 17% later than main. The run, not the line's
+  legal places nor its walled ends: a click coming at the gate aslant has its lines cross the wall with open ground
+  at both ends (the first version, ends walled on both sides, missed it at three of 13 offsets and the knights
+  settled 120-330 px off their spots in the gap there).
 * Places across a row: the click's spread across the way scaled into the packed disc of its bodies as the
   formation's own shape is (over the whole area a siege engine and a knight sent together settled 130 px apart,
   outside their disc: `ctest:legion_doorwaypair`), pushed apart to a pitch each, the row centred on the places asked
   for. A speed group in more than one row stands in columns: each of its other rows moves across by under half a
   body onto the places of its fullest row (the shorter way, and up to half a body past the disc's chord on such
-  ground), so a body of the row behind stands right behind one in front, not half a body aside in its lane.
+  ground), so a body of the row behind stands right behind one in front, not half a body aside in its lane; the places
+  of a column (below) stand on one line across the way, their mean (rows of two groups each stood a few px aside, and
+  a column's front place to the nearest body crossed the other's lane by 17-32 px: a 10-body click with its knights at
+  the rear, 7 pairs over 13 offsets where main had none).
+* A lane through the slower rows (`Point::lane`, hashed): the places of every row of slower groups only are pushed
+  apart from the way's line through the point, the widest faster body's pitch and a cell wide, so faster bodies still
+  behind those rows walk through them to their own spots. Packed a cell apart across the way, the slower rows stood as
+  a wall once the slower bodies got there, and knights from the rear of a click came to them later and could not get
+  through (laidGiveWay moves a settled body one cell, and a 3x3 knight needs three between two 2x2 swordsmen): past a
+  gate the rear knights settled behind the slower rows, three speeds in interleaved rows had their knights 8% later
+  than main, and slow bodies of short rear orders re-chose cells off their spots and crossed lanes. No lane when a
+  row's places would leave legal ground near the point, nor for a click that comes as one file (no wider across the
+  way than the lane): its slow bodies, steering for places pushed apart, walked two abreast down an 8-cell road and
+  kept its rear knights behind them (one offset 1,095 against main's mean 959). The area grows by half the lane.
 * Which body of a group takes which of its group's places: the bodies in their order across the way take the places
   in theirs, a column (places of several rows at most a cell apart across) taking the next of them, its front place
   to the one nearest it (it gets there first), and the bodies of a file (within a cell of each other across the way)
@@ -993,7 +1023,8 @@ settling behind, and settles where it stands only after that. A re-choice (`rech
 along the way than a faster group's shallowest spot, nor shallower than a slower group's deepest (a mid body re-chose
 the front row's free cells, 100 px in front of the knights' row; a knight walled in near its spot re-chose a cell
 behind the swordsmen), nor farther across the way from its own spot than two bodies (a swordsman that stepped aside
-for a knight re-chose a cell 100-200 px across the others' lanes). The exchange of slots at the
+for a knight re-chose a cell 100-200 px across the others' lanes), nor, for a slower body, into the lane or across it
+(a swordsman held short of its spot re-chose a free cell in the lane and stood in the knights' way). The exchange of slots at the
 area's entrance (`enterArea`) stays within one speed group, and an attack-move body walks on past the point to its
 spot (the native goal circle does not end its leg: a front-row body stopped on the point stood on the spot of a body
 behind it). Clicks of one speed group, of more than 48 members (`battle-assault`'s 55-body and `battle-field-2x60`'s
@@ -1003,37 +1034,51 @@ walk, on the way or near the spots -- lane crossings 27 -> 391..538 on the blob,
 a settled body step two cells aside -- bodies moved 32-36 px after settling; laying the rows only on the legal ground
 ahead of the point -- no gain on the two columns sent to the map's edge, a little worse by water.)
 
-Measured by `ctest:legion_overtake` on 22 one-click fixtures (13 offsets each, 7 or 4 for the columns and the blob),
+Measured by `ctest:legion_overtake` on 24 one-click fixtures (13 offsets each, 7 or 4 for the columns and the blob),
 per speed group against main f3a4c16e, the median over the offsets of the group's mean arrival (settle tick), fast (and
-mid) / slow: the columns `-col-300/600/1000` -13.5/-21.0/-11.8% / -17.6/-24.9/-14.8%; loose columns
-`-loose-300/600/1000` -21.6/-36.7/-31.9% / -0.2/-25.8/-23.6%; bunches `-bunch-300/600/1000` -13.9/-25.8/-13.2% /
--18.8/-17.0/-13.4%; knights in front `-front-500` -7.4% / -5.7%; three speeds `-mix3-1000` -36.0% (mid -12.1%) / +0.5%;
-the knights at the rear of a block sent 500 px `-rear-500` -26.7% / -2.4%; the blob of 32 -47.1% / -10.8%; the 40
-through a 12-cell gap `-choke` -23.8% (mid -11.3%) / -4.3%; the 48-body block -20.6% (mid -12.5%) / -6.9%; the corridor
-4 cells wide -2.8% / -0.3%. Fast bodies at the rear or in the middle of a short order walk round the slow ones to the
-front rows and come in later, as the owner expected ("for short moves them arriving later is kinda expected"), and the
-slower ones there wait on their spots for them: `-rear-200` fast +12.1% (t90 +29.8%) / slow +20.9%, `-rear-300` +15.4%
-(t90 +74.8%) / +20.3%, `-mid-300` +44.4% (t90 +122%; mid +108%) / +80.6%, `-mid-320` +21.5% (t90 +76%; mid +58.8%) /
-+17.7%. The two 12-body single-file columns sent about 2,300 px are level with main, not earlier (`-field` +0.2%, t90
--2.5%; `-road` +0.6%, t90 +0.2%): on main too every knight passes the swordsmen early and comes in at full speed, and
-a knight behind another walks at the slower one's individual pace either way; the test fails on them. Per body, over
-all offsets: every body settles, none moves more than 25 px after settling, no two settle on each other's cells; off
-their own slot by more than 24 px 0-18 bodies a fixture (over 5% of them on `-rear-500` 11/182 and `-mid-320` 13/208,
-fast 8/78 and 7/52: the test fails on those two); a faster body more than a row (48 px) behind every slower group's
-frontmost body 0-7 a fixture (at most 4% of them; worst 161 px on `-mid-300`); lanes crossed (pairs of one kind on
-opposite sides of each other across the way at the end, both more than 16 px apart) fewer than on main on 12 fixtures
-(the block 60 against 280, the choke 58 against 352), as many on five, more on five: `-rear-200` 7 (main 0), `-rear-300` 11 (7), `-rear-500` 10 (0), `-mid-300` 12 (9),
-`-mid-320` 7 (2), mostly slow bodies whose spots end a cell apart in the other order after a re-choice, and the test
-fails on them. The blob's knight at offset 3 still walks 1,800 ticks behind a swordsman boxed in mid-blob with no lane
-and no cell for it to step aside to and comes in at 2,391 (main's last knights 1,974..2,090); the test fails on it.
-Verifier fixtures (7 offsets, fast / slow against main): 44 bodies of three speeds through a block 750 px +1.5% (mid
-+0.7%, slow -6.3%; its rear knights pass 30 bodies in a converging crowd: still short of the bar), 24 knights at the
-rear by an L-shaped wall 1,400 px +0.2% / -15.8% (still short of the bar), 30 of three speeds in the open with the
-knights in front -4.8% (mid -4.8%) / +7.5%, 36 on a diagonal -8.5% (mid +6.5%) / -4.2%, 46 of three speeds through a
-gap -11.7% (mid -5.6%) / -7.7%, 20 by a cliff -14.3% (mid -38.0%) / -11.6%, 24 fighting -17.0% / -35.3%, knights in the
-middle 600 px -1.6% / -29.4%, 24 by water -14.2% / -25.4%, 40 of three speeds through a gap -19.3% (mid -6.3%) / -5.7%,
-knights at the rear 280 px +4.7% / -10.8%, three speeds with the knights at the rear 250 px +142% (mid +149%) /
-+133%, a column with knights behind 200 px +122% / +177% (short orders, the owner's exception).
+mid) / slow: the columns `-col-300/600/1000` -13.5/-21.0/-11.8% / -17.2/-24.9/-14.8%; loose columns
+`-loose-300/600/1000` -31.2/-40.0/-35.5% / -17.1/-27.8/-24.4%; bunches `-bunch-300/600/1000` -6.3/-27.6/-14.1% /
+-13.3/-19.4/-14.9%; knights in front `-front-500` -7.4% / -5.5%; three speeds `-mix3-1000` -39.6% (mid -20.4%) / -6.2%;
+the knights at the rear of a block sent 500 px `-rear-500` -33.8% / -16.5%; three speeds with the knights at the rear
+320 px `-mid-320` -15.8% (mid +14.5%) / -23.0%; the blob of 32 -48.8% / -11.7% (its last knight 1,241..1,698, cap
+2,150); the 40 through a 12-cell gap `-choke` -25.2% (mid -14.5%) / -7.4%; the 48-body block -20.6% (mid -18.6%) /
+-8.5%; the corridor 4 cells wide -2.8% / -0.3%; the point 10 cells past a 12-cell gate `-gate` -6.8% (t90 -3.8%; mid
++37.7%, the mid bodies start in front and give the gap up to the knights) / -2.0%. Fast bodies at the rear or in the middle of a short order walk round the slow ones to the front rows
+and come in later, as the owner expected ("for short moves them arriving later is kinda expected"): `-rear-200` fast
++2.0% (t90 +30.4%) / slow +1.1%, `-rear-300` +7.3% (t90 +41.2%) / +13.5%, `-mid-300` +18.4% (t90 +39.2%; mid +28.4%) /
++22.7%. The same 36 over a 12-cell land bridge across water to a point 10 cells past it (`-bridge`) would need their
+rows more than the disc's radius past the point and keep the formation's own shape: hash-identical to main at all 13
+offsets, so the test's layout checks fail there as they do on main (108 of 468 bodies off their slot, 167 of 312
+faster bodies behind a slower group's front); laid out anyway they came in 2-17% later than main (the bodies cross
+the bridge two files abreast, knights and mid bodies alternating, and cannot pass on it). Not earlier, and the test
+fails on them: the two 12-body single-file columns sent about
+2,300 px, level with main (`-field` +0.2%, t90 -2.5%; `-road` +0.6%, t90 +0.2%): on main too every knight passes the
+swordsmen early and comes in at full speed, and a knight behind another walks at the slower one's individual pace
+either way. Per body, over all offsets: every body settles, none moves more than 25 px after settling, no two settle
+on each other's cells; off their own slot by more than 24 px 0-5 bodies a fixture on 22 of them, but 37/468 (fast
+26/156) on `-gate`, knights from the rear that come through the gap behind the mid bodies and stop short (main 84;
+the test fails on it); a faster body more than a row (48 px) behind every slower group's frontmost body 0-6 a fixture
+on the laid-out ones (at most 2% of them); lanes crossed (pairs of one kind on opposite sides of each other across the
+way at the end, both more than 16 px apart) fewer than on main on 16 fixtures (the block 19 against 280, the choke 31
+against 352, the gate 30 against 278), as many on seven, more on one: `-rear-500` 4 (main 0), knights that settle off
+their spot after a re-choice ahead of the others, and the test fails on it. Verifier fixtures (7 offsets, fast / slow
+against main): the 36 past a gate -7.5% (t90 -2.7%; mid +43.2%) / -3.7%, off their slot 43 -> 16, lanes crossed 142 ->
+19; 42 of three speeds in interleaved rows 600 px -3.4% (mid +19.7%) / +0.3%; 46 of three speeds through a gap -17.5%
+(mid -8.9%) / -12.1%; 40 of three speeds through a gap -21.6% (mid -12.4%) / -10.5%; 24 by a cliff of three speeds -15.6% (mid -35.3%) / -27.6%; 20 three cells short of a
+wall -20.8% / -23.6%; 24 knights at the rear by an L-shaped wall 1,400 px -1.8% / -19.8%; 36 on a diagonal -11.7% (mid
+-3.4%) / -8.4%; 30 of three speeds with the knights in front -4.8% (mid -11.1%) / +8.6%; 24 by water -14.2% / -25.4%;
+24 fighting -18.0% / -38.3%; knights in the middle 600 px -4.7% / -30.1%. Still later: 44 of three speeds through a
+block 750 px with seven knights at its very rear +4.4% (mid 0.0%, slow -6.3%): its front knights come in 10-30%
+earlier, its rear ones pass 30 bodies in a converging crowd and come in about 20% later. Short orders (the owner's
+exception): knights at the rear 280 px +1.5% / -5.5%, 250 px +12.8% / -29.7%, 260 px +56.6% / +62.1%, three speeds with
+the knights at the rear 250 px +95.5% (mid +109%) / +72.5%, a column with knights behind 200 px +86.8% / +164%.
+(Measured and dropped in this round: rows of one speed group each -- the blob's last knight 2,339..2,358 at three
+offsets, `-mid-300` 16 lanes crossed against main's 9; slower bodies counted two cells wider -- rows 760 px deep, a blob
+knight never arriving at six offsets; a lane half as wide again -- the 44-body click +3.8%, `-mid-320` 4 lanes crossed
+against 2; rows kept one to two rows short of a gate -- knights 4-13% later than main; finding the narrowing from where
+the walk from the point thins out -- it never thins past a wall the whole width of the map: gate +29%, bridge +52%;
+rows a quarter or half as wide again past a narrowing -- see above, and the gate +2.1% at half; keeping a re-choice
+within its own group's depth -- `-rear-300` 9 of 208 bodies off their slot.)
 
 `ctest:legion_overtake` (asset-free; `overtake-field`, `overtake-road`, `overtake-corridor` in tools/scenarios/: a
 single-file column of 12 bodies, slow 2x2 at 1.15 and fast 3x3 at 2.9 mixed, each on an order of its own): on open
@@ -2973,26 +3018,31 @@ Rules that come out of using them:
   several speed groups and at most 48 members is laid out with its fast bodies in front (section 4, "Arrival
   layout"). Fast bodies that start at the rear or in the middle of a short order walk round the slow ones to the front
   rows and come in later than on main, where they stood behind them, and the slow ones wait on their spots for them
-  (`overtake-click-rear-200` fast +12%, `-rear-300` +15%, `-mid-300` +44%, `-mid-320` +22% mean, t90 up to +122%;
-  their slow groups +18..+81%; three speeds with the knights at the rear of a 250 px order +142%; accepted by the
-  owner for the fast bodies' arrival). There a few slow bodies end a cell out of their lane order (lanes crossed 7-12
-  pairs a fixture over 13 offsets against 0-9 on main) and up to 6% of the bodies settle more than 24 px from their
-  spot. The slow front bodies of a short order may barely move: their spots lie behind the point, where they already
-  stand. The 12-body single-file columns sent about 2,300 px come in level with main, not earlier (`-field` +0.2%,
-  `-road` +0.6%): their knights already reach the point at full speed there, and a knight behind another walks at the
-  slower one's individual pace either way. In a dense crowd a knight boxed in behind a swordsman with no lane and no
-  cell for the swordsman to step aside to still walks at its pace (`overtake-click-blob` offset 3: the last knight
-  2,391 against main's 1,974..2,090), and two scratch fixtures bring their knights in level with main, not earlier (44
-  bodies of three speeds spread through a block 750 px +1.5%; 24 knights behind 14 swordsmen sent 1,400 px into an
-  L-shaped wall corner +0.2%). Give-ways, waits on spots and overtake lanes cost movement quality on the 48-unit
-  `motion-*` clicks: on `motion-open` backward steps 0-1 -> 44-136 a run and aim reversals 0-7 -> 12-28 (offsets 0,
+  (`overtake-click-rear-200` fast +2%, `-rear-300` +7%, `-mid-300` +18% mean, t90 up to +41%; their slow groups
+  +1..+23%; scratch fixtures: three speeds with the knights at the rear of a 250 px order +96%, a column with its
+  knights behind 200 px +87%; accepted by the owner for the fast bodies' arrival). The slow front bodies of a short
+  order may barely move: their spots lie behind the point, where they already stand. Knights from the back of a click
+  sent 500 px can settle off their spot after re-choosing a cell ahead of the others (`-rear-500`: 4 pairs of knights
+  end out of their lane order over 13 offsets, none on main). The 12-body single-file columns sent about 2,300 px come
+  in level with main, not earlier (`-field` +0.2%, `-road` +0.6%): their knights already reach the point at full speed
+  there, and a knight behind another walks at the slower one's individual pace either way. Through a gate just short
+  of the point the knights come in earlier (`-gate` -6.8%) but those from the rear come through the gap behind the
+  mid bodies and 26 of 156 stop more than 24 px short of their spots; past a bridge the rows would stand more than the
+  disc's radius beyond the point and the click keeps the formation's own shape (`-bridge`: as on main). The mid bodies
+  of such a click come in 38-43% later: they start in front and give the gap up to the knights. A click of three speeds
+  with its knights at the very rear of a 750 px block brings them in later than main (scratch, 44 bodies: fast +4.4%,
+  its rear knights pass 30 bodies in a converging crowd and come in about 20% later, its front ones 10-30% earlier).
+  In a dense crowd a knight boxed in behind a swordsman with no lane and no cell for the swordsman to step aside to
+  still walks at its pace. Give-ways, waits on spots and overtake lanes cost movement quality on the 48-unit
+  `motion-*` clicks: on `motion-open` backward steps 0-1 -> 49-171 a run and aim reversals 0-7 -> 23-30 (offsets 0,
   +-1, +-2). Over the 161 baseline scenarios at those offsets, 155 play as on main and six changed, all with
-  mixed-speed clicks of at most 48: `motion-open`, `motion-wall` and `motion-cross` leave no more units unsettled at
-  the end (9 -> 6-9, 14-17 -> 14-15, 7-8 -> 1-5) but more of their slow units settle on spots behind the point outside
-  their own arrival radius, which the harness counts as not done (groups not done 9 -> 18-20, 14-17 -> 21-23, 8-9 ->
-  11-14, so their done medians read worse); `taperbridge-100` arrives a little later (t90 median 19,010 -> 19,093) and
-  one of its groups ends outside its radius at two offsets (every body settled); `taperbridge-small` has one more
-  group not done at the median; `battle-assault` changes only its reversals (969 -> 962). Clicks of more than 48 members keep the earlier rules: they pass
+  mixed-speed clicks of at most 48: `motion-open`, `motion-wall` and `motion-cross` leave fewer units unsettled at
+  the end (9 -> 3-8, 14-17 -> 11-14, 7-8 -> 2-7) but more of their slow units settle on spots behind the point
+  outside their own arrival radius, the lane and the rows further back taking room, which the harness counts as not
+  done (units inside it 39 -> 25-28 of 48, 31-34 -> 23-25, 39-40 -> 28-32; groups not done 9 -> 21, 16 -> 24, 8 -> 19
+  at the median, so their done medians read worse); `taperbridge-100` arrives a little earlier (t90 median 19,010 ->
+  18,745, done 19,829 -> 20,139); `taperbridge-small` has one more group not done at the median; `battle-assault`
+  changes only its reversals (969 -> 962). Clicks of more than 48 members keep the earlier rules: they pass
   within themselves only of another speed group, at most 64 members, strung out, away from a crowd and 32 cells outside
   the click's area; a click of more than 64 never does (in `bridges-1000` a single pass by one body of a 500-body click
   tipped the meet into gridlock). Measured by `ctest:legion_overtake`, `ctest:legion_swap` and `ctest:legion_fightmeet`.
