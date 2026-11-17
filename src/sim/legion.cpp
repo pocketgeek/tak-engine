@@ -2381,6 +2381,9 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // arrive, leave or die never change it. Empty: the formation's own shape. Hashed while set.
         struct Spot {int id;int64_t x,z;int band;};
         std::vector<Spot> layout;
+        // The lane kept free through its slower rows along the way's line (arrivalLayout): half the widest faster
+        // body's pitch (px), the half-width a slower body's re-choice keeps clear of; 0 none. Hashed with the layout.
+        int64_t lane=0;
         int64_t centreX=0,centreZ=0,scaleNum=1,scaleDen=1,limit=0;   // px
         // The members' live centroid (px) on tick liveTick: derived from
         // positions on demand (see pivotAim), so never hashed.
@@ -10954,7 +10957,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(mm->slot>=0||mm->slot==-2||mm->slot==-3)mm->slot=-1;
             mm->entryState=0;
         }
-        pt.queue.clear();pt.cells.clear();pt.assigned=false;pt.tried=false;pt.entry=-1;pt.entries.clear();pt.layout.clear();
+        pt.queue.clear();pt.cells.clear();pt.assigned=false;pt.tried=false;pt.entry=-1;pt.entries.clear();pt.layout.clear();pt.lane=0;
         handIds.erase(key);
     }
     void takeFormation(Member& m,const Unit& u,int cell) {
@@ -11077,27 +11080,32 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     //    way, nor narrower than the square of its bodies), cut to the run of ground across the way there that is
     //    legal and reached from the point by a short way (no spot past a wall from the point; a depth with none
     //    holds no row); the rows are centred on the point along the way, then moved back until the fastest group's
-    //    front row stands on the point (the area grows by as much). A row takes the next ranks whatever their group
-    //    (rows of one group each made a small click a long column: ten 5-body clicks over a long bridge left one
-    //    more body outside its disc).
+    //    front row stands on the point and its mean depth is no deeper than the formation's own shape would put it,
+    //    then forward past the point while the last row would stand on a narrowing behind it (a gate or a bridge the
+    //    click comes through; no room for that ahead: the formation's own shape); the area grows by as much. A row
+    //    takes the next ranks whatever their group (rows of one group each made a small click a long column: ten
+    //    5-body clicks over a long bridge left one more body outside its disc).
     //  - Places across a row: the click's spread scaled into the packed disc of its bodies (as the formation's own
     //    shape is), pushed apart to a pitch each, the row centred on the places asked for; a group in several rows
-    //    stands in columns on its fullest row's places. Which body takes which place of its group: the bodies in their
-    //    order across the way to the places in theirs, a column's front place to the body nearest it, a file's bodies
-    //    round the columns in turn: no two bodies of a group cross lanes, and none walks through the place of one
-    //    that gets there first.
+    //    stands in columns on its fullest row's places (a column's places on one line); rows of slower groups only
+    //    keep a lane free along the way's line through the point, a faster body and a cell wide, for faster bodies
+    //    still behind them (not for a click that comes as one file). Which body takes which place of its group: the
+    //    bodies in their order across the way to the places in theirs, a column's front place to the body nearest
+    //    it, a file's bodies round the columns in turn: no two bodies of a group cross lanes, and none walks through
+    //    the place of one that gets there first.
     // Each member's spot is the nearest origin to its target that formationCell allows (legal, in its component,
     // unclaimed, inside the area), handed out front rank first, the first at once and the rest within kSlotsPerTick
     // and the tick's budget like any formation's; a queued member takes its own spot later (slotTarget). Members pass
     // each other by it (clickPass: a faster group's body passes a slower one's anywhere on the way; laidGiveWay: a
     // slower one with no lane round it steps aside), a slower group's body on its spot waits there, still a member,
     // while a faster one of its click walks behind it (waitOnSpot), a slower group's settled body queues no faster
-    // one for kLayoutWait (settleWindow), a re-choice keeps between the faster and the slower groups' spots and
-    // within two bodies across the way of its own (rechoose), an
+    // one for kLayoutWait (settleWindow), a re-choice keeps between the faster and the slower groups' spots, within
+    // two bodies across the way of its own and, for a slower body, on its side of the lane (rechoose), an
     // exchange at the area's entrance stays within a speed group (enterArea) and an attack-move body walks on past the
     // point to its spot (the native goal circle does not end its leg). One speed group, more members than
     // kLayoutMost, or a click on its own centroid: the formation's own shape, as before. Returns whether laid out.
     bool arrivalLayout(Point& pt,const std::vector<std::pair<int,Member*>>& list,int64_t px,int64_t pz) {
+        pt.lane=0;
         if(list.size()>size_t(kLayoutMost))return false;
         const int64_t ax=px-pt.centreX,az=pz-pt.centreZ;
         const int64_t L=int64_t(isqrtFloor(uint64_t(ax*ax+az*az)));
@@ -11137,9 +11145,46 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // Returns the rows ([begin, end) of `bodies`, width, depth, their edges across the way and where each starts
         // along the way) and their whole depth.
         struct Row {size_t begin,end;int64_t width,depth,lo,hi,top;};
-        const int64_t radius=std::max<int64_t>(widest,pt.limit-widest/2);
+        const int64_t disc=std::max<int64_t>(widest,pt.limit-widest/2);
         const Plane& wp=plane(groups.find(widestMember->group)->second.plane);
         const int wfx=widestUnit->type->footX,wfz=widestUnit->type->footZ;
+        // A narrowing behind the point (a gate, a bridge's end, a door the click comes through): walking back from the
+        // point along the way, the first line across it whose run of legal places through the way's line (or the
+        // nearest to it), out to twice the disc's radius either side, is under half as long as the line's through
+        // the point. No row stands on it or past it (`narrow`, px along from the point): with the point just past a
+        // gate the slower rows stood in the gap and on the near side of the wall, and knights from the rear of a
+        // 36-body click could not get through them (10-11 of 12 settled 100-300 px off their spots, 17% later than
+        // main). The rows move forward past the point instead (below), and may be a quarter wider (the disc's radius
+        // 5/4: the ground past such a narrowing is the room the click came for, and rows as deep as the disc's moved
+        // the fast ones about 170 px past the point beyond a bridge). The run, not the line's legal places nor its
+        // walled ends: a click coming at a gate aslant has its lines cross the wall, open ground on both sides of it.
+        // The lines are read once, charged to the tick's budget.
+        int64_t narrow=INT64_MIN;
+        {
+            const int64_t K=2*disc/16+1;
+            auto run=[&](int64_t y) {
+                auto at=[&](int64_t j) {
+                    const int64_t x=px+y*ax/L+j*16*az/L,z=pz+y*az/L-j*16*ax/L;
+                    return legal(wp,footprintOrigin(Fixed::fromInt(int32_t(x)),wfx),footprintOrigin(Fixed::fromInt(int32_t(z)),wfz));
+                };
+                int64_t c=0;
+                if(!at(0)) {
+                    c=INT64_MIN;
+                    for(int64_t j=1;j<=K&&c==INT64_MIN;++j) {if(at(-j))c=-j;else if(at(j))c=j;}
+                    if(c==INT64_MIN)return int64_t(0);
+                }
+                int64_t a=c,e=c;
+                while(a>-K&&at(a-1))--a;
+                while(e<K&&at(e+1))++e;
+                return e-a+1;
+            };
+            const int64_t n0=run(0);
+            int64_t y=-16;
+            for(;y>=-4*disc;y-=16)if(2*run(y)<n0) {narrow=y+8;break;}
+            ringCells+=uint64_t(2*K+1)*uint64_t(-y/16+1);
+        }
+        const int64_t radius=narrow==INT64_MIN?disc:disc*5/4;
+        pt.limit+=radius-disc;
         int64_t back=0;   // how far behind the point the disc's centre lies (below)
         // Ground a short way from the point: every place is reached from the point's origin by legal steps of the
         // widest body (no corner cut) within 5/4 of the straight line plus 48 px. Legal ground alone let a knight's
@@ -11255,8 +11300,29 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // where they now stand.
         {
             const int64_t first=rows.front().top-rows.front().depth/2;
-            if(first>0) {back=first;depth=lay(front,rows);pt.limit+=back;}
+            if(first>0) {back=first;depth=lay(front,rows);}
         }
+        // ... and further back while the fast group's mean depth is past the one the formation's own shape gives it
+        // (its bodies' places along the way in the click, scaled into the area): knights from the rear of a click
+        // stood behind the point in their own shape and in front of it here, and walked farther than before (a
+        // 24-body click at an L-shaped wall corner: its knights 0.2% later than main with their front row on the point,
+        // 1.8% earlier so).
+        {
+            int64_t sum=0,n=0,shape=0;
+            for(const Row& r:rows)for(size_t i=r.begin;i<r.end;++i)if(bodies[i].band==0) {sum+=r.top-r.depth/2-back;shape+=bodies[i].along;++n;}
+            if(n) {
+                const int64_t mine=sum/n,theirs=shape/n*pt.scaleNum/pt.scaleDen;
+                if(mine>theirs) {back+=mine-theirs;depth=lay(front,rows);}
+            }
+        }
+        // ... and forward again, past the point, while the last row stands on a narrowing behind it or past it
+        // (`narrow`); ground ahead too short for that (a room's far wall): the formation's own shape, as before.
+        if(narrow!=INT64_MIN) {
+            auto low=[&] {return rows.back().top-rows.back().depth-back;};
+            for(int k=0;k<4&&low()<narrow;++k) {back-=narrow-low();depth=lay(front,rows);}
+            if(low()<narrow)return false;
+        }
+        pt.limit+=std::abs(back);
         // Places across a row: each body's own place across the way, scaled to the row when the click is wider, then
         // pushed apart in their order across it to a pitch each and kept inside the row.
         int64_t lo=INT64_MAX,hi=INT64_MIN;
@@ -11340,6 +11406,41 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 for(size_t i=rows[ri].begin;i<rows[ri].end;++i)place[i].second+=shift;
             }
         }
+        // ... and a lane kept free through the slower rows along the way's line through the point (`Point::lane`): the
+        // places of a row of slower groups only are pushed apart from that line, as wide as the widest faster body
+        // and a cell, so that faster bodies still behind those rows walk through them to their own spots. Without it
+        // the slower rows stood packed across the way (a cell between bodies) once the slower bodies got there, and
+        // knights from the rear of a click came to them later and could not get through: a 36-body click just past a
+        // gate had its rear knights settle 100-300 px off their spots behind the slower rows (fast 3% earlier than
+        // main, t90 6% later), a 42-body click of three speeds in interleaved rows had its knights 8% later than main
+        // (with the lane: 10% and 3% earlier). Every row's places stay on legal ground near the
+        // point (else no lane), the area grows by half the lane, and a click that comes as one file (no wider across
+        // the way than the lane) gets none: its slow bodies, steering for places pushed apart, walked two abreast down
+        // an 8-cell road and kept its rear knights behind them (one offset 1,095 against main's 959 on average).
+        {
+            std::vector<std::pair<int64_t,int64_t>> moved(place);
+            int64_t half=0;bool fits=true,any=false;
+            for(const Row& r:rows) {
+                int lowest=INT_MAX;
+                for(size_t i=r.begin;i<r.end;++i)lowest=std::min(lowest,bodies[i].band);
+                if(lowest==0)continue;
+                int64_t pitch=0;
+                for(const Body& b:bodies)if(b.band<lowest)pitch=std::max(pitch,b.pitch);
+                const int64_t lane=pitch+16;
+                half=std::max(half,pitch/2);
+                int64_t left=0,right=0;
+                for(size_t i=r.begin;i<r.end;++i) {
+                    const int64_t x=place[i].second,p=bodies[i].pitch;
+                    if(x<0)left=std::max(left,x+lane/2+p/2);else right=std::max(right,lane/2+p/2-x);
+                }
+                for(size_t i=r.begin;i<r.end;++i)moved[i].second+=place[i].second<0?-left:right;
+                auto [glo,ghi]=edges(r.top-r.depth/2,lane/2+widest);
+                if(glo>ghi||moved[r.begin].second-bodies[r.begin].pitch/2<glo||moved[r.end-1].second+bodies[r.end-1].pitch/2>ghi)fits=false;
+                any=true;
+            }
+            if(spanHi-spanLo<2*half)fits=false;
+            if(any&&fits) {place=std::move(moved);pt.lane=half;pt.limit+=half;}
+        }
         // Which body of a group takes which of its group's places: the places in columns across the way (places of
         // more than one row at most a cell apart across), the bodies in their order across it, each column taking the
         // next of them, its front place the one of them nearest it (the first there). Ranked front first
@@ -11405,6 +11506,16 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                         const int64_t x=far(a),y=far(b);
                         return x!=y?x<y:bodies[a].id<bodies[b].id;});
                     for(size_t k=0;k<column.size();++k)owner[column[k]]=mine[q+k];
+                    // The column's places on one line across the way (their mean): rows of two speed groups each
+                    // stood a few px aside, and a column's front place to the body nearest it then crossed the
+                    // other's lane by 17-32 px (a 10-body click at the rear of its knights: 7 pairs over 13 offsets,
+                    // none on main).
+                    if(column.size()>1) {
+                        int64_t sum=0;
+                        for(const size_t c:column)sum+=place[c].second;
+                        const int64_t mid=sum/int64_t(column.size());
+                        for(const size_t c:column)place[c].second=mid;
+                    }
                 }
             }
         }
@@ -17084,9 +17195,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             const int64_t wx=px-pt->centreX,wz=pz-pt->centreZ;
             const int64_t wl=std::max<int64_t>(1,int64_t(isqrtFloor(uint64_t(wx*wx+wz*wz))));
             // Nor farther across the way from its own spot than two bodies: a re-choice anywhere took a swordsman
-            // that stepped aside for a knight 100-200 px across the others' lanes.
+            // that stepped aside for a knight 100-200 px across the others' lanes. Nor, for a slower group's body,
+            // into the click's lane (Point::lane) or across it: a swordsman blocked short of its spot re-chose a free
+            // cell in the lane and stood there, in the knights' way.
             int64_t acrossLo=INT64_MIN,acrossHi=INT64_MAX;
-            if(const int band=layoutBand(*pt,u.id);band>=0)
+            if(const int band=layoutBand(*pt,u.id);band>=0) {
                 for(const Point::Spot& sp:pt->layout) {
                     const int64_t a=((sp.x-px)*wx+(sp.z-pz)*wz)/wl;
                     if(sp.band<band)alongHi=std::min(alongHi,a+8);
@@ -17094,8 +17207,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     if(sp.id==u.id) {
                         const int64_t c=((sp.x-px)*wz-(sp.z-pz)*wx)/wl,reach=int64_t(std::max(fx,fz)+1)*32;
                         acrossLo=c-reach;acrossHi=c+reach;
+                        if(band>0&&pt->lane) {const int64_t k=pt->lane+int64_t(std::max(fx,fz))*8;if(c<0)acrossHi=std::min(acrossHi,-k);else acrossLo=std::max(acrossLo,k);}
                     }
                 }
+            }
             for(const int local:queue) {
                 const int x=ox+local%S-R,z=oz+local/S-R,cell=z*W+x;
                 const uint32_t v=f.known(size_t(cell));
@@ -17354,7 +17469,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(point.assigned) {h=mix(h,uint64_t(point.centreX));h=mix(h,uint64_t(point.centreZ));
                 h=mix(h,uint64_t(point.scaleNum));h=mix(h,uint64_t(point.scaleDen));h=mix(h,uint64_t(point.limit));
                 if(!point.layout.empty()) {h=mix(h,0x6c61796f7574ull);
-                    for(const Point::Spot& sp:point.layout) {h=mix(h,uint64_t(uint32_t(sp.id))<<8|uint64_t(sp.band));h=mix(h,uint64_t(sp.x));h=mix(h,uint64_t(sp.z));}}}
+                    for(const Point::Spot& sp:point.layout) {h=mix(h,uint64_t(uint32_t(sp.id))<<8|uint64_t(sp.band));h=mix(h,uint64_t(sp.x));h=mix(h,uint64_t(sp.z));}
+                    h=mix(h,uint64_t(point.lane));}}
             for(int c:point.cells)h=mix(h,uint64_t(c));
             if(point.awareSeen) {h=mix(h,uint64_t(point.awareX));h=mix(h,uint64_t(point.awareZ));}
             if(!point.queue.empty()) {h=mix(h,0x71756575ull);for(const int id:point.queue)h=mix(h,uint64_t(id));}
