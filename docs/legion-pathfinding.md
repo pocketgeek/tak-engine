@@ -1073,18 +1073,18 @@ formation's own shape (`-gate`, `-bridge`, `-gateangle`, `-wallside`) it plays h
 the rear or in the middle of a short order walk round the slow ones to the front rows and come in later, as the
 owner expected ("for short moves them arriving later is kinda expected"): `-rear-200` fast +2.0% (t90 +30.4%) / slow
 +1.3%, `-rear-240` +58.7% (t90 +116%) / +33.0%, `-rear-300` -5.5% (t90 +35.4%) / +11.0%, `-mid-300` +20.9% (t90
-+50.2%; mid +46.5%) / +25.7%. Not earlier, and the test fails on them: the two 12-body single-file columns sent about
++50.2%; mid +46.5%) / +25.7%. Not earlier (the owner signed off on it, 2026-11-16; the test allows them 1% later): the two 12-body single-file columns sent about
 2,300 px, level with main (`-field` +0.2%, t90 -2.5%; `-road` +0.6%, t90 +0.2%): on main too every knight passes the
 swordsmen early and comes in at full speed, and a knight behind another walks at the slower one's individual pace
 either way. Per body, over all offsets: every body settles, none moves more than 25 px after settling, no two settle
-on each other's cells; off their own slot by more than 24 px 0-7 bodies a fixture on the 24 laid-out ones, but on `-rear-600` 14 of 312 (fast 11 of 104, over the 8% the test allows: knights from the rear row
+on each other's cells; off their own slot by more than 24 px 0-7 bodies a fixture on the 24 laid-out ones, but on `-rear-600` 14 of 312 (fast 11 of 104, over the general 8%; the owner signed off on per-fixture bars for knights starting behind slower rows, 2026-11-16: knights from the rear row
 held behind the mid bodies' rows that stop 30-180 px short), and on the short `-rear-240` 36 of 312 (fast 18 of 104,
 and 7 of its 104 knights more than a row behind the swordsmen's front); a faster body more than a row (48 px) behind
 every slower group's frontmost body 0-3 a fixture elsewhere; lanes crossed (pairs of one kind on opposite sides of
 each other across the way at the end, both more than 16 px apart) fewer than on main on 18 of the 24 laid-out
 fixtures (the block 4 against 280, the choke 12 against 352, `-rear-600` 2 against 59), as many on five, more on one:
 `-rear-500` 6 (main 0) -- knights of the rear row that settle off their spots and a column of swordsmen whose two
-cells round off the way's slant -- and the test fails on it. Verifier fixtures (7 offsets, fast / slow against main): 24 by a cliff of three speeds
+cells round off the way's slant -- signed off by the owner (the test allows 8 there). Verifier fixtures (7 offsets, fast / slow against main): 24 by a cliff of three speeds
 -11.7% (mid -31.9%) / -22.2%; 20 three and 7 cells short of a wall -20.8% and -27.7% / -23.0% and -22.7%; 30 by a
 wall -11.8% / -29.0%; 24 by water -13.4% / -23.4%; 24 knights at the rear by an L-shaped wall 1,400 px -1.8% /
 -19.8%; 24 knights 20 cells past a bridge -31.8% / -26.1%; 30 of three speeds 900 px -15.4% (mid -16.2%) / -19.2%;
@@ -3053,7 +3053,7 @@ Rules that come out of using them:
   +1..+33%; accepted by the owner for the fast bodies' arrival); on `-rear-240` 18 of 104 knights also stop more than
   24 px short of their spots. The slow front bodies of a short order may barely move: their spots lie behind the
   point, where they already stand. Knights from the rear of a click of three speeds, behind its mid bodies, still
-  stop short of their spots behind the mid bodies' rows (`-rear-600`: 11 of 104 over 13 offsets, the test allows 8%,
+  stop short of their spots behind the mid bodies' rows (`-rear-600`: 11 of 104 over 13 offsets, signed off by the owner,
   though they come in 2% earlier than main), and the mid bodies there come in 41% later. Knights from the back of a
   click sent 500 px can settle off their spot (`-rear-500`: 6 pairs end out of their lane order over 13 offsets, none
   on main). The 12-body single-file columns sent about 2,300 px come in level with main, not earlier (`-field` +0.2%,
