@@ -664,8 +664,6 @@
             const int tower=spawn("arakeep",kx,kz,0,0);
             const int blip=spawn("arasword",kx+rd,kz,0,1);
             check(own>0 && inside>0 && outside>0 && high>0 && below>0 && tower>0 && blip>0,"fixture spawned");
-            // A big click's spots are handed out over a few ticks (kSlotsPerTick); one second
-            // covers this one.
             for (int i=0;i<30;++i) writableWorld().tick(1.f/30);
             const char* capture=tak::devEnv("TAK_RETAIL_FOG_CAPTURE");
             const auto frame=[&](float cx,float cz,const char* tag,float zoom=1.0f) {

@@ -1861,7 +1861,8 @@ measurements](legion-pathfinding.md)):
   to keep the selected units' places shown until they arrive. Only your own
   units' places are shown. Units with no place of their own, such as flyers,
   units still waiting for theirs, and attack, guard and work orders, show just
-  the order marker where you clicked, as in Retail.
+  the order marker where you clicked, as in Retail. A Shift-queued move shows its
+  places once the unit starts on it.
 - **Arrivals settle.** Units take up places around the destination point, and
   once they are close they stop. Large groups do not keep shuffling forever:
   the last units of a group, pressed against the group's own crowd with no way
