@@ -400631,6 +400631,14 @@
    "scenario": "fight-retarget"
   },
   {
+   "cluster": "offset-spread",
+   "key": "churn.bin0",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 1113556..1270172 exceeds the band since the exact move-path shortcuts (2026-11-18, protocol 334 unchanged; docs/legion-pathfinding.md \"Exact shortcuts on the move path\"): the member descent chain and the line probe's hint take a different share of this never-hashed work sum off at each start offset (1847587..1861836 before), the state hash at every offset unchanged; gated on median-of-5 offsets",
+   "scenario": "fight-retarget"
+  },
+  {
    "cluster": "AR-06",
    "key": "churn.bin1",
    "median5": true,
