@@ -20,6 +20,52 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports: the latest release's live in [`docs/`](docs/), every earlier one's
 in the source of its tag.
 
+## 1.0.8
+*2026-11-18 · protocol 335 · replay format 15 · does not play with 1.0.7, nor its replays*
+
+With Legion pathfinding, an order to thousands of units at once no longer makes the game
+stutter, and very large armies take less processor time. In games of the usual size, up
+to a few thousand units, you will not notice a difference.
+
+- **Legion pathfinding: an order to a very large army no longer makes the game
+  stutter.** While the route for such an order was still being worked out, every unit
+  that took a step measured the room at the destination all over again. With 8,500 units
+  under one order, 21 game ticks ran late, the slowest taking 161 ms where a tick has
+  33 ms at normal speed: together they took nearly two seconds instead of 0.7, so the
+  game dragged. Now the room is measured once a tick: the slowest tick of the same order
+  takes 25 ms and none runs late. With two armies of 2,000 units each sent across
+  bridges, the slowest tick falls from 41 ms to 13 ms.
+- **Legion pathfinding: marches of thousands of units take less processor time.** Each
+  unit now keeps the next steps of its route while it stays on one cell instead of
+  working them out again every tick, and checks the straight line to its goal in one
+  pass instead of three, starting where it was blocked last time. The check for groups
+  whose paths may cross uses less arithmetic. In our measurements, with 10,000 units
+  marching over open ground the average tick falls from 25.2 ms to 20.5 ms, and the
+  ticks that run late from about 200 in 2,700 to one or two. With 5,000 units it falls
+  from 10.9 ms to 9.2 ms, with 2,500 from 4.7 ms to 4.1 ms. With 1,000 units the average
+  tick is 13% shorter through a maze and 6.5% shorter over bridges. These shortcuts by
+  themselves change nothing in how units move: with them alone, every test ends in the
+  identical state. In a game of the usual size pathfinding is a small part of each tick,
+  and you will not notice a difference.
+- **Legion pathfinding: three corrections.** Legion skips work whose answer it already
+  knows, and has a test mode that works out every such answer again and compares.
+  Checking the shortcuts above turned up three older ones that could answer differently
+  in rare cases. After two allied units swapped places head on, a unit just behind them
+  could fail to step aside for oncoming traffic for one tick (about one decision in ten
+  million, only where crowds walk through each other). A unit standing before a narrow
+  passage could take its lane up to a second late (two units in a test battle of about
+  2,000). And the room a crowd counts on at its destination was not measured again when
+  a building, a wreck or a corpse appeared or was cleared there (off by about one cell
+  of the pathfinding grid). None of this could be seen in play, and our test games
+  between computer players all end exactly as before. In our tests of crowds of 1,000
+  units and more that meet or cross each other, the first correction changes how some
+  of them turn out, sometimes better and sometimes worse, about even overall. Because
+  results can differ, this release has a new protocol number. Retail pathfinding is
+  unchanged.
+
+Full notes: [release-1.0.8-notes.md](docs/release-1.0.8-notes.md) ·
+validation: [release-1.0.8-validation.md](docs/release-1.0.8-validation.md)
+
 ## 1.0.7
 *2026-11-16 · protocol 334 · replay format 15 · does not play with 1.0.6, nor its replays*
 
@@ -85,8 +131,8 @@ arrive first.
   units' places are shown; flyers and attack, guard and work orders show just the order
   marker where you clicked, as before. Display only.
 
-Full notes: [release-1.0.7-notes.md](docs/release-1.0.7-notes.md) ·
-validation: [release-1.0.7-validation.md](docs/release-1.0.7-validation.md)
+Full notes: [release-1.0.7-notes.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.7/docs/release-1.0.7-notes.md) ·
+validation: [release-1.0.7-validation.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.7/docs/release-1.0.7-validation.md)
 
 ## 1.0.6
 *2026-11-15 · protocol 330 · replay format 15 · does not play with 1.0.5, nor its replays*

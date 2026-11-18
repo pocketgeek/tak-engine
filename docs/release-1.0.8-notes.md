@@ -1,37 +1,34 @@
-# TAK Engine 1.0.7
+# TAK Engine 1.0.8
 
 TAK Engine is a modern, clean-room recreation of *Total Annihilation: Kingdoms*
 (Cavedog, 1999), written in C++20 with SDL2, for Windows, macOS and Linux. It plays the
 original game's skirmishes, campaigns and multiplayer from your own installation, and
 comes with Cartographer, a map and scenario editor, and `takserver`, a dedicated
-multiplayer server. 1.0.7 updates 1.0.6: flyers hit with their attack runs, status
-shots stop wasting mana on the unit in the way, and with Legion pathfinding fast units
-pass slow ones and arrive first.
+multiplayer server. 1.0.8 updates 1.0.7: with Legion pathfinding, an order to thousands
+of units at once no longer makes the game stutter, and very large armies take less
+processor time.
 
 ## What's new
 
-- **Flyers on attack runs aim each shot when they release it**, not half a second
-  before: in testing a Gryphon hit with 12 of 12 spears instead of 4, and a Fallen Angel
-  with 11 of 11 instead of none. The Dirigible's and Juggernaut's arrows at flyers are
-  aimed the same way. The original game aimed early; this is TAK Engine's own.
-- **Charms, Turn to Stone and freeze shots no longer waste mana on a unit in the way**:
-  a shot that strikes a building, a Monarch, an immune unit or your own or an ally's unit
-  counts as blocked, and after three a Harpy or a Creon dragon on Freezing Breath picks
-  another target (an ordered attack is dropped); a ground caster such as the Mind Mage
-  moves to another spot first, then gives up.
-- **Legion pathfinding: fast units overtake slow ones** of yours or an ally's walking
-  the same way when there is room beside, instead of stopping and starting behind them.
-  In a recorded game the Aramon Knights' stops on the march fell by over 80%.
-- **Legion pathfinding: an order of fast and slow units arrives fast units first.** An
-  order of up to 48 units of clearly different speeds, not an Alt+N formation, is laid
-  out with the fast units in rows at the place you clicked and the slow units behind
-  them, each unit on its own spot; the slow units let the fast ones by on the way. On
-  most orders the fast units get there clearly earlier than before.
-- **Legion pathfinding: you see where each unit will stand.** A move, fight-move or
-  patrol order briefly outlines each of your units' places in your colour; hold Shift to
-  keep them shown until the units arrive.
+- **Legion pathfinding: an order to a very large army no longer makes the game
+  stutter.** With 8,500 units under one order, 21 game ticks used to run late while the
+  route was worked out, the slowest taking 161 ms where a tick has 33 ms at normal
+  speed. Now the slowest takes 25 ms and none runs late.
+- **Legion pathfinding: marches of thousands of units take less processor time.** In our
+  measurements the average tick with 10,000 units marching over open ground falls from
+  25.2 ms to 20.5 ms, with 5,000 units from 10.9 ms to 9.2 ms, and with 1,000 units it
+  is 13% shorter through a maze. These shortcuts by themselves change nothing in how
+  units move. In a game of the usual size, up to a few thousand units, you will not
+  notice a difference.
+- **Legion pathfinding: three corrections**, none of them visible in play: a unit could
+  fail to step aside for one tick after two allies swapped places just ahead of it, a
+  unit before a narrow passage could take its lane up to a second late, and the room a
+  crowd counts on at its destination was not measured again when a building, a wreck or
+  a corpse appeared or was cleared there. In our tests of crowds of 1,000 units and more
+  that meet or cross each other, the first of them changes how some turn out, sometimes
+  better and sometimes worse, so 1.0.8 has a new protocol number.
 
-The [CHANGELOG](https://github.com/pocketgeek/tak-engine/blob/v1.0.7/CHANGELOG.md) has the
+The [CHANGELOG](https://github.com/pocketgeek/tak-engine/blob/v1.0.8/CHANGELOG.md) has the
 details.
 
 ## What you need
@@ -51,19 +48,19 @@ Pick the file for your system below. Each package holds the game, Cartographer a
 
 | System | File |
 | --- | --- |
-| Windows x64 | `tak-engine-1.0.7-windows-x64-setup.exe` (installer), or `takclient-1.0.7-windows-x64.zip` |
-| Windows 11 on ARM | `takclient-1.0.7-windows-arm64.zip` |
-| macOS 14 or later, Apple Silicon | `tak-engine-1.0.7-macos-arm64.dmg`, or `takclient-1.0.7-macos-arm64.zip` |
-| macOS 14 or later, Intel | `tak-engine-1.0.7-macos-x64.dmg`, or `takclient-1.0.7-macos-x64.zip` |
-| Ubuntu 22.04 / 24.04 / 26.04 | `tak-engine-1.0.7-ubuntu<version>-amd64.deb` or `-arm64.deb` |
-| Debian 12 / 13 | `tak-engine-1.0.7-debian<version>-amd64.deb` or `-arm64.deb` |
-| Fedora 44 / 45 | `tak-engine-1.0.7-fedora<version>-x86_64.rpm` or `-aarch64.rpm` |
-| openSUSE Leap 16.0 | `tak-engine-1.0.7-opensuse-leap16.0-x86_64.rpm` or `-aarch64.rpm` |
-| openSUSE Tumbleweed | `tak-engine-1.0.7-opensuse-tumbleweed-x86_64.rpm` or `-aarch64.rpm` |
-| RHEL, Rocky Linux, AlmaLinux 9 / 10 | `tak-engine-1.0.7-el<version>-x86_64.rpm` or `-aarch64.rpm` |
-| Arch Linux (x64) | `tak-engine-1.0.7-1-x86_64.pkg.tar.zst` |
-| Slackware64 15.0 | `tak-engine-1.0.7-x86_64-1_slack15.0.txz` |
-| Any other Linux, Steam Deck | `tak-engine-1.0.7-x86_64.AppImage` or `tak-engine-1.0.7-aarch64.AppImage` |
+| Windows x64 | `tak-engine-1.0.8-windows-x64-setup.exe` (installer), or `takclient-1.0.8-windows-x64.zip` |
+| Windows 11 on ARM | `takclient-1.0.8-windows-arm64.zip` |
+| macOS 14 or later, Apple Silicon | `tak-engine-1.0.8-macos-arm64.dmg`, or `takclient-1.0.8-macos-arm64.zip` |
+| macOS 14 or later, Intel | `tak-engine-1.0.8-macos-x64.dmg`, or `takclient-1.0.8-macos-x64.zip` |
+| Ubuntu 22.04 / 24.04 / 26.04 | `tak-engine-1.0.8-ubuntu<version>-amd64.deb` or `-arm64.deb` |
+| Debian 12 / 13 | `tak-engine-1.0.8-debian<version>-amd64.deb` or `-arm64.deb` |
+| Fedora 44 / 45 | `tak-engine-1.0.8-fedora<version>-x86_64.rpm` or `-aarch64.rpm` |
+| openSUSE Leap 16.0 | `tak-engine-1.0.8-opensuse-leap16.0-x86_64.rpm` or `-aarch64.rpm` |
+| openSUSE Tumbleweed | `tak-engine-1.0.8-opensuse-tumbleweed-x86_64.rpm` or `-aarch64.rpm` |
+| RHEL, Rocky Linux, AlmaLinux 9 / 10 | `tak-engine-1.0.8-el<version>-x86_64.rpm` or `-aarch64.rpm` |
+| Arch Linux (x64) | `tak-engine-1.0.8-1-x86_64.pkg.tar.zst` |
+| Slackware64 15.0 | `tak-engine-1.0.8-x86_64-1_slack15.0.txz` |
+| Any other Linux, Steam Deck | `tak-engine-1.0.8-x86_64.AppImage` or `tak-engine-1.0.8-aarch64.AppImage` |
 
 The `-debug` downloads (`takclient-windows-<arch>-debug.zip`,
 `takclient-macos-<arch>-debug.zip`, `tak-engine-linux-<arch>-debug.tar.gz`) are for
@@ -109,22 +106,21 @@ bundled: your system provides only graphics, sound and windowing.
 - Legion pathfinding: units behind others that are attacking or guarding in a gap can
   still wait there for good; a unit cut off from its goal ends its order if the ground
   around it changes before the way opens again; armies of more than 48 units in one
-  order still take a whole-map route on a 2048x2048 map; Legion movement costs about 4
-  to 5% more simulation time.
+  order still take a whole-map route on a 2048x2048 map.
 - The original game turns a flyer on a move order back onto the map from beyond its
   edge (`VTOL_Move`); that is not ported.
 
 ## Compatibility
 
-1.0.7 uses network protocol **334**, replay format **15** and random map generator
-version **10**. Flyers, status shots and Legion pathfinding play differently, so **it
-does not play with 1.0.6 or earlier, nor play their replays**. Random maps and saved map
-files are unchanged. Everyone in a game, and the server, needs 1.0.7.
+1.0.8 uses network protocol **335**, replay format **15** and random map generator
+version **10**. The three Legion corrections can change how a game turns out, so **it
+does not play with 1.0.7 or earlier, nor play their replays**. Random maps and saved map
+files are unchanged. Everyone in a game, and the server, needs 1.0.8.
 
-The [quick start](https://github.com/pocketgeek/tak-engine/blob/v1.0.7/docs/quick-start.md),
-the [user guide](https://github.com/pocketgeek/tak-engine/blob/v1.0.7/docs/user-guide.md)
-and the [CHANGELOG](https://github.com/pocketgeek/tak-engine/blob/v1.0.7/CHANGELOG.md)
+The [quick start](https://github.com/pocketgeek/tak-engine/blob/v1.0.8/docs/quick-start.md),
+the [user guide](https://github.com/pocketgeek/tak-engine/blob/v1.0.8/docs/user-guide.md)
+and the [CHANGELOG](https://github.com/pocketgeek/tak-engine/blob/v1.0.8/CHANGELOG.md)
 cover the rest.
 
 The tests and checks behind this release are in the
-[validation report](release-1.0.7-validation.md).
+[validation report](release-1.0.8-validation.md).
