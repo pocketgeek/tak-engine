@@ -7637,6 +7637,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
     }
     void tick() {
+        boundMemo.clear();   // packedBound's: nothing kept across the service
         foldWindow();
         drainRegistrations(true);
         if(gProbe) {
@@ -17154,6 +17155,62 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // A paused build (C1) reads settled cells only and is not cached:
         // it settles more cells when it resumes.
         if(f.complete()&&cached.first==f.metric()&&cached.second.first==n)return cached.second.second;
+        // A route still building: its bound for the rest of this tick (boundMemo).
+        if(f&&!f.complete()) {
+            if(boundMemoTick!=w.tickCounter_) {boundMemo.clear();boundMemoTick=w.tickCounter_;}
+            for(const auto& e:boundMemo) {
+                if(e.route!=f.metric()||e.version!=f.version()||e.epoch!=epoch||e.plane!=g.plane||e.seed!=seed||e.n!=n||e.fx!=fx||e.fz!=fz)continue;
+#ifndef NDEBUG
+                if(gVerify) {
+                    // The scan this hit stands for, with nothing it would leave behind: the hit follows a scan of this
+                    // tick, so plane() neither rebuilds nor restamps, and the cells it counts are taken back.
+                    const Plane& p=planes[size_t(g.plane)];
+                    if(p.epoch!=epoch||p.lastUse!=w.tickCounter_)verifyFail("packedBound memo: its plane was not scanned in this tick");
+                    const uint64_t cells=stats.slotSearchCells;
+                    const uint32_t bound=packedScan(g,f,seed,n,fx,fz);
+                    stats.slotSearchCells=cells;
+                    if(bound!=e.bound)verifyFail("packedBound memo differs from the scan");
+                }
+#endif
+                return e.bound;
+            }
+            const uint32_t bound=packedScan(g,f,seed,n,fx,fz);
+            boundMemo.push_back({f.metric(),f.version(),epoch,g.plane,seed,n,fx,fz,bound});
+            return bound;
+        }
+        const uint32_t bound=packedScan(g,f,seed,n,fx,fz);
+        if(f.complete())cached={f.metric(),{n,bound}};
+        return bound;
+    }
+    // packedBound's bound of an incomplete route, kept for the rest of the
+    // tick's unit loop (an 8,500-body order otherwise rescans its whole
+    // window for every stepping member for about 16 ticks while its route
+    // builds: makeRoom, settleWindow and the blocked re-request all ask).
+    // The scan is a function of the route's settled cells (its tiles, build
+    // key `current`, done and attached tiles: RouteView::known), the plane's
+    // legality, the goal, n and the footprint, and the key holds each:
+    // - route cells, the build key and attached tiles are written only from
+    //   tick() (advance, attachNode / attachTile through serveRepairs, field
+    //   install and startField in serveFields), and version() (the field's
+    //   work) moves whenever the build moves short of done; the serial names
+    //   the field (a replaced or freed one never matches);
+    // - plane legality is written only from tick() (syncStatic's
+    //   refreshPlane, buildPlanes / prebuildStep on planes no group is on
+    //   yet) or by a rebuild: plane() rebuilds a scanned plane only once the
+    //   static epoch moves (in the key; staticChanged bumps it on every
+    //   legality change), planeReady only an unbuilt or building one, which
+    //   a scanned plane is not;
+    // - the footprint is the plane's (one per group: planeFor keys on it).
+    // It is dropped at a tick change and at the start of tick(), so a hit
+    // always follows a scan of the same tick's unit loop: that scan already
+    // stamped Plane::lastUse (eviction order) and did any rebuild, so a hit
+    // leaves the plane as the scan would. Only Stats::slotSearchCells
+    // (accounting, never hashed or a decision) counts fewer cells. move() is
+    // serial. Derived, never hashed; TAK_LEGION_VERIFY rescans on every hit.
+    struct BoundMemo {uint64_t route,version,epoch;int plane,seed,n,fx,fz;uint32_t bound;};
+    std::vector<BoundMemo> boundMemo;uint32_t boundMemoTick=kNoTick;
+    // packedBound's scan of the window round `seed` on route `f`.
+    uint32_t packedScan(Group& g,RouteView f,int seed,int n,int fx,int fz) {
         const int count=(5*n+3)/4;
         const int W=width(),H=height(),sx=seed%W,sz=seed/W,foot=std::max(fx,fz);
         uint32_t bound=0;
@@ -17180,7 +17237,6 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             }
             if(packed>=count)break;
         }
-        if(f.complete())cached={f.metric(),{n,bound}};
         return bound;
     }
     // Re-choice (C2, C28): the free slot of this member's destination it can
