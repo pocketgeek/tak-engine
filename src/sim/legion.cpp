@@ -1764,11 +1764,13 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // least 2*kPassCells-1 cells off (a superset of passAhead's peer filter,
     // which also asks state, orders and more than 2*kPassCells), over its
     // footprint widened by a cell; and OR'ed again for a member whenever its
-    // goal is set and after each of its updates, so within a tick a block
-    // keeps every direction any member standing in it has had. passAhead
-    // skips its lane scan when no block the scan reads holds a direction
-    // that can be oncoming (passOpposed): the scan would find no oncoming
-    // body. Two fight legs (attack-move or patrol) of enemies meeting are a
+    // goal is set, after each of its updates and when a swap (swapBodies)
+    // moves it as the partner, so within a tick a block keeps every
+    // direction any member standing in it has had. The invariant: whatever
+    // moves a member marks it at its new place before the mask is read
+    // again. passAhead skips its lane scan when no block the scan reads
+    // holds a direction that can be oncoming (passOpposed): the scan would
+    // find no oncoming body. Two fight legs (attack-move or patrol) of enemies meeting are a
     // fight, not traffic: to a fight leg an enemy's fight-leg body is never
     // oncoming. So each block keeps one mask per player and leg kind
     // (passSlot), and a fight leg's scan leaves out its enemies' fight slots
@@ -15857,6 +15859,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         bm.state=Moving;bm.heldSince=kNoTick;bm.holdUpdates=0;
         if(const auto g=groups.find(bm.group);g!=groups.end()&&g->second.route().usable())
             updateClaim(b,bm,planes[size_t(g->second.plane)],g->second.route(),ax,az);
+        // The partner has moved without an update of its own: mark its new
+        // place in passMask now, or a pass scanned later this tick would read
+        // the blocks it stood in at its last mark and miss it there.
+        markPass(b,bm);
     }
     // Passing within one click (2026-11-15, ours, not retail): whether this body may pass the slower body b of its own
     // click. A player's mixed selection sent with one right-click (knights with archers) shares one point, and its
