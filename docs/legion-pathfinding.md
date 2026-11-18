@@ -824,7 +824,10 @@ side that meet head on in a one-body lane, where neither has a way round (`bridg
 crossing a river in opposite directions over three bridges; `ctest:legion_swap` runs offsets -2, -1, +1 and +2 and
 needs at least 850 arrived, at most 10 stuck and a swap). The client plays the one-tick jump of 16-32 px out over 8
 ticks and sidesteps each body to the right of its jump, so the two pass side by side (`src/client/swapshow.h`, display
-only, never hashed; `World::legionSwapTick` tells it which bodies swapped).
+only, never hashed; `World::legionSwapTick` tells it which bodies swapped). The partner moves a whole footprint
+without an update of its own, so `swapBodies` marks it at its new place in `passAhead`'s oncoming mask (`markPass`;
+protocol 335): before, a pass scanned later in the same tick from behind the mover found no mark there and skipped the
+scan that would have found the partner oncoming (about one in ten million mask decisions, all in head-on crowds).
 
 **The late swap** (`swapLegLate`; `Stats::lateSwaps`, `work.late_swaps`). A fight or patrol leg takes no swap (its
 facing serves its weapons, and two armies on attack-move orders do not make way for each other), so two such bodies
@@ -1149,8 +1152,10 @@ median +0.2%, and `mixed-spacing-04x` only its aim reversals (31 -> 33).
   oncoming traffic to each other: two fight-moving armies that march at each other do not step aside. A plain move
   still makes way for any body, enemy or ally, and a fight leg still makes way for an enemy on a plain move. The
   lane-scan skip mask keeps one sector mask per player and leg kind, so a fight leg's scan whose lane holds only enemy
-  fight-leg goals is skipped. A pass turns the unit toward its step only when the lane ahead is nearly empty; in dense
-  opposing blocks it stays an unturned one-cell dodge.
+  fight-leg goals is skipped. The mask is rebuilt each tick and whatever moves a member marks it at its new place
+  before the mask is read again (its own update, and a swap for its partner), so a scan the mask skips is one that
+  would have found nothing; `TAK_LEGION_VERIFY` runs the scan on every such skip. A pass turns the unit toward its step
+  only when the lane ahead is nearly empty; in dense opposing blocks it stays an unturned one-cell dodge.
 * **In contact**: after 6 held updates against a body with orders facing more than 90 deg away, the unit commits to
   one lateral step to its own right. The step does not turn the course (turning 90 deg and back in a jam reads as
   spinning) and times out after 45 ticks. Same-direction queues never side-step: a unit steps right only when the
@@ -1899,10 +1904,14 @@ distance of the destination; the gate is the wall-to-wall cross-section at its n
 picks the gate point (points at footprint pitch, centred, as many as the free width holds) with the fewest same-player
 bodies queued within 6 cells before the line, aims at it while it is in a straight legal line, and is released once it
 crosses the gate line. The static geometry is memoised per plane epoch (`nearObstacle` and its vertex probe, which
-steering does not read); soft narrowing is computed at use. Members committed to a gate skip the pinwheel. `Member::gateMemo`
-keeps the inputs of a call that declined in open ground (the static plane, the finished field, the member's goal,
-origin, footprint and lane band) and the same inputs decline again without walking the chain (never hashed;
-`TAK_LEGION_VERIFY` recomputes every hit). Hashed only when set: `gateCell`, `gateLane`, `gateAxis`, `gateSign`.
+steering does not read); soft narrowing is computed at use. Members committed to a gate skip the pinwheel.
+`Member::gateMemo` keeps the inputs of a call that declined in open ground (the static plane with its generation, the
+finished field with its work count, the member's goal, origin, footprint and lane band) and the same inputs decline
+again without walking the chain (never hashed; `TAK_LEGION_VERIFY` recomputes every hit). The work count is in the key
+since protocol 335: a repair can still attach a tile to a finished chain route and change the estimates the walk
+reads, and a decline taken before it kept a standing member off its gate (two members, 21 and 26 ticks, in the forced
+stress battle: eight Absurd computer players, about 2,000 units on the field). Hashed only when set: `gateCell`,
+`gateLane`, `gateAxis`, `gateSign`.
 `gate_commits` / `gate_releases`, the `pivot_*`, `lane_*` and `vertex_*` work counters and `pass_filter_holds` are
 instruments and never hashed. The vertex probe (`vertexInstrument`), which no decision reads, runs only while
 `LegionNavigator::setInstrumentProbes` is on (`legion_scenario` unless `--no-vertex-probe`, and `legion_world_test`;
@@ -1955,9 +1964,9 @@ clamped to the new strip's lanes (`laneCap`, footprint pitch, centred). The poin
 point moves `kCornerLead` origins ahead of it in the same lane while it is in that strip, the field still leads along
 it and it is `kLaneNear` or more from the destination; otherwise it is released and the field, the line and the area
 rules take over. The decision reads only the static plane, the finished field, the goal, the footprint and the band; a
-decline is memoised per member as `gateCommit`'s is (`Member::cornerMemo`), and a member off every strip declines
-before walking a chain. `gateCorner` is hashed with the gate point. `ctest:legion_corner` (`corridor-corner-40`: files
-past the corner).
+decline is memoised per member as `gateCommit`'s is (`Member::cornerMemo`, the same key, every hit recomputed under
+`TAK_LEGION_VERIFY`), and a member off every strip declines before walking a chain. `gateCorner` is hashed with the
+gate point. `ctest:legion_corner` (`corridor-corner-40`: files past the corner).
 
 ### Corridor mouths one body wide
 
@@ -2649,8 +2658,11 @@ trips.
 ### Exact shortcuts on the move path
 
 Four shortcuts take repeated work off the serial unit loop and the awareness scan. Each returns exactly what the
-computation it replaces returns at that moment, keeps no hashed state and needs no protocol change; the replaced form
-stays in the source and runs only under `TAK_LEGION_VERIFY`, which recomputes every answer the shortcut gives and fails
+computation it replaces returns at that moment, keeps no hashed state and needed no protocol change (protocol 335 is
+the correction of three older shortcuts found not exact while these were checked: the oncoming mask after a swap and
+the key of the gate and corner memos, which `TAK_LEGION_VERIFY`'s existing checks reported, and the complete-route
+bound below, found in review); the replaced form stays in the source and runs only under `TAK_LEGION_VERIFY`, which
+recomputes every answer the shortcut gives and fails
 on a difference (a deliberately broken shortcut trips it: the bound off by one on a hit at tick 77 of `maze-10000` and
 530 of `crosslong --pause-all`, the box bound one short at tick 165 of `many-1000`, the hint answering clear at tick 98
 of `staticblock-own`, a stored step turned one direction at tick 3 of `mazeform`).
@@ -2658,7 +2670,8 @@ of `staticblock-own`, a stored step turned one direction at tick 3 of `mazeform`
 * **`packedBound` on a route still building** (`boundMemo`). The complete-route cache (`boundKept`) is keyed on the
   route's serial, work count and n and dropped whenever a static change reaches the group (a finished field keeps
   steering until its refresh lands, and a closure or an opening in the destination area, including at a seed covered
-  when the route was built, changes the scan); `TAK_LEGION_VERIFY` rescans on every hit. A route still building -- an
+  when the route was built, changes the scan); `TAK_LEGION_VERIFY` rescans on every hit (`ctest:legion_verify_seedlift`:
+  a 40-body order whose goal's neighbour is covered and later lifted). A route still building -- an
   8,500-body order rescanned its whole window for every stepping member for about 16 ticks while it built (`makeRoom`,
   `settleWindow` and the blocked re-request all ask) -- keeps its bound for the rest of the tick's unit loop. The scan
   (`packedScan`) reads the route's settled cells (`RouteView::known`), the plane's legality, the goal, n and the
