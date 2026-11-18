@@ -2655,18 +2655,20 @@ on a difference (a deliberately broken shortcut trips it: the bound off by one o
 530 of `crosslong --pause-all`, the box bound one short at tick 165 of `many-1000`, the hint answering clear at tick 98
 of `staticblock-own`, a stored step turned one direction at tick 3 of `mazeform`).
 
-* **`packedBound` on a route still building** (`boundMemo`). The complete-route cache (per route serial and n) is
-  unchanged; a route still building -- an 8,500-body order rescanned its whole window for every stepping member for
-  about 16 ticks while it built (`makeRoom`, `settleWindow` and the blocked re-request all ask) -- keeps its bound for
-  the rest of the tick's unit loop. The scan (`packedScan`) reads the route's settled cells (`RouteView::known`), the
-  plane's legality, the goal, n and the footprint; the key is the route's serial and work count (`version()`), the
-  static epoch, the plane, the goal cell, n and the footprint. Route cells are written only from `tick()` (`advance`,
-  the attached tiles of `advanceChain` and `serveRepairs`, the install in `serveFields`), each write moving the work
-  count; a scanned plane's legality changes only with the static epoch, and `planeReady` builds only planes that are
-  unbuilt or building, which a scanned plane is not. The memo is dropped at the start of `tick()` and at a tick
-  change, so a hit always follows a scan of the same loop, which already stamped the plane's `lastUse` and did any
-  rebuild. Only `Stats::slotSearchCells` (accounting) counts fewer cells. The cross-check also fails if the plane was
-  not scanned in the tick.
+* **`packedBound` on a route still building** (`boundMemo`). The complete-route cache (`boundKept`) is keyed on the
+  route's serial, work count and n and dropped whenever a static change reaches the group (a finished field keeps
+  steering until its refresh lands, and a closure or an opening in the destination area, including at a seed covered
+  when the route was built, changes the scan); `TAK_LEGION_VERIFY` rescans on every hit. A route still building -- an
+  8,500-body order rescanned its whole window for every stepping member for about 16 ticks while it built (`makeRoom`,
+  `settleWindow` and the blocked re-request all ask) -- keeps its bound for the rest of the tick's unit loop. The scan
+  (`packedScan`) reads the route's settled cells (`RouteView::known`), the plane's legality, the goal, n and the
+  footprint; the key is the route's serial and work count (`version()`), the static epoch, the plane, the goal cell, n
+  and the footprint. Route cells are written only from `tick()` (`advance`, the attached tiles of `advanceChain` and
+  `serveRepairs`, the install in `serveFields`), each write moving the work count; a scanned plane's legality changes
+  only with the static epoch, and `planeReady` builds only planes that are unbuilt or building, which a scanned plane is
+  not. The memo is dropped at the start of `tick()` and at a tick change, so a hit always follows a scan of the same
+  loop, which already stamped the plane's `lastUse` and did any rebuild. Only `Stats::slotSearchCells` (accounting)
+  counts fewer cells. The cross-check also fails if the plane was not scanned in the tick.
 * **The awareness scan's arithmetic** (`awareScan`). The group's way at the 31 conflict samples is taken once per group
   (`wayX`/`wayZ`) instead of walking the chain from its start for every sample of every mover: the walk's position
   rises with t (the speed is positive) and the arcs rise strictly, so a forward-only segment index stops where the walk

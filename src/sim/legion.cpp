@@ -863,14 +863,17 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // the point outward and nobody has to cross a settled body.
         struct Slots {std::vector<int> cells;std::vector<uint8_t> taken;bool built=false,stale=false;uint32_t reach=0;};
         std::map<int,Slots> slots;
-        // The destination area's bound per goal (see areaBound): (field
-        // serial, (members, bound)). A function of the field, never hashed.
-        std::map<int,std::pair<uint64_t,std::pair<int,uint32_t>>> areaBounds;
+        // The destination area's bound per goal (see areaBound and
+        // boundKept): a complete route's, kept with its serial, work count
+        // and the members it was packed for; dropped when any static change
+        // reaches the group. A function of the field and the plane, never hashed.
+        struct Bound {uint64_t route=0,version=0;int n=0;uint32_t bound=0;};
+        std::map<int,Bound> areaBounds;
         // The same for an explicit order's crowd bound (see crowdBound): per
         // goal, the bound of the point's whole crowd in this group's
         // footprint. A function of the field and the point's hashed
         // crowdPeak, never hashed.
-        std::map<int,std::pair<uint64_t,std::pair<int,uint32_t>>> crowdBounds;
+        std::map<int,Bound> crowdBounds;
         // Group awareness (see awareScan): the movers (by command) its
         // fields plan round, their corridors as planned, and the scans each
         // has been off its way.
@@ -2613,7 +2616,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 b.inflight+=f->seedKeys.size()*S::kKeyed+f->demand.size()*(S::kKeyed+S::kNode+16);   // RouteDemand: entry + index node
             }
             b.metadata+=S::kGroup+g.seeds.size()*S::kCell32+(g.sharing.size()+g.peak.size())*(S::kNode+8)+g.ids.size()*S::kCell32+
-                g.reachIds.size()*S::kCell32+(g.areaBounds.size()+g.crowdBounds.size())*(S::kNode+24)+
+                g.reachIds.size()*S::kCell32+(g.areaBounds.size()+g.crowdBounds.size())*(S::kNode+32)+
                 g.avoidCmd.size()*(8+S::kCorridor+1+1+1+4)+g.ring.cells.size()*(S::kCell32+1+S::kCell32);
             for(const auto& [seed,sl]:g.slots)b.metadata+=S::kNode+16+sl.cells.size()*S::kCell32+sl.taken.size();
         }
@@ -6907,6 +6910,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(closes&&g.field)++acct.routesClosed;
         else if(opens&&g.field)++acct.routesOpened;
         if(!g.field||(!closes&&!opens))return;
+        // The destination-area bounds were scanned on the old legality (see boundKept).
+        g.areaBounds.clear();g.crowdBounds.clear();
         if(closes) {
             g.stale=true;g.improveTick=kNoTick;   // the refresh is built on the new plane: it has the improvements too
             restaleSlots(g);
@@ -14432,9 +14437,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         const int n=peak==g.peak.end()?1:peak->second;
         if(n<=1||m.requested<0) {out=uint32_t((body+4)*kOrthogonal/16);return true;}
         const auto it=g.areaBounds.find(m.requested);
-        if(it==g.areaBounds.end()||!g.route().complete())return false;
-        if(it->second.first!=g.route().metric()||it->second.second.first!=n)return false;
-        out=it->second.second.second;return true;
+        if(it==g.areaBounds.end()||!boundKept(g,it->second,n))return false;
+        out=it->second.bound;return true;
     }
     // Is every soft body covering the footprint at origin (x,z) an Engaged (ring) body of `command`?
     // (False when none covers it.)
@@ -17439,12 +17443,31 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     }
     // The potential of the last of the ceil(1.25n) footprints nearest goal
     // origin `seed` by field potential (packed as slotsFor packs slots), cached
-    // in `cached` per field serial and n.
-    uint32_t packedBound(Group& g,std::pair<uint64_t,std::pair<int,uint32_t>>& cached,int seed,int n,int fx,int fz) {
+    // in `cached` for a complete route (boundKept).
+    uint32_t packedBound(Group& g,Group::Bound& cached,int seed,int n,int fx,int fz) {
         const RouteView f=g.route();
         // A paused build (C1) reads settled cells only and is not cached:
         // it settles more cells when it resumes.
-        if(f.complete()&&cached.first==f.metric()&&cached.second.first==n)return cached.second.second;
+        if(boundKept(g,cached,n)) {
+#ifndef NDEBUG
+            if(gVerify) {
+                // The scan this hit stands for, with nothing it would leave behind: the member's move() has
+                // fetched its group's plane this tick, so plane() neither rebuilds nor restamps; the cells it counts
+                // are taken back, and it sorts in scratch of its own (NavBytes reads the scratch's sizes, which the
+                // last real scan left: unlike boundMemo's hit, this one need not follow a scan of the same window).
+                const Plane& p=planes[size_t(g.plane)];
+                if(p.epoch!=epoch||p.lastUse!=w.tickCounter_)verifyFail("packedBound cache: its plane was not fetched in this tick");
+                const uint64_t cells=stats.slotSearchCells;
+                std::vector<std::pair<uint32_t,int>> order,sorted;std::vector<uint32_t> count;
+                pbOrder.swap(order);pbSorted.swap(sorted);pbCount.swap(count);
+                const uint32_t bound=packedScan(g,f,seed,n,fx,fz);
+                pbOrder.swap(order);pbSorted.swap(sorted);pbCount.swap(count);
+                stats.slotSearchCells=cells;
+                if(bound!=cached.bound)verifyFail("packedBound's complete-route bound differs from the scan");
+            }
+#endif
+            return cached.bound;
+        }
         // A route still building: its bound for the rest of this tick (boundMemo).
         if(f&&!f.complete()) {
             if(boundMemoTick!=w.tickCounter_) {boundMemo.clear();boundMemoTick=w.tickCounter_;}
@@ -17469,8 +17492,38 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             return bound;
         }
         const uint32_t bound=packedScan(g,f,seed,n,fx,fz);
-        if(f.complete())cached={f.metric(),{n,bound}};
+        if(f.complete())cached={f.metric(),f.version(),n,bound};
         return bound;
+    }
+    // Does `b` still hold packedScan's bound of the group's complete route
+    // for n members? The scan reads the route's estimates (known() is the
+    // estimate on a complete route), the plane's legality at the cells that
+    // hold one, the goal, n and the footprint:
+    // - estimates: a new route has a new serial; a complete one still gains
+    //   cells when serveRepairs attaches a chain's halo tile, and every
+    //   attach moves its work count (version());
+    // - legality: a finished field keeps steering after a static change
+    //   until its refresh lands (staticChanged), and legality is the scan's
+    //   only input that moves under it, and only at cells holding an
+    //   estimate. Every change at such a cell reaches its group
+    //   (reachGroup), and any change that reaches a group drops its bounds,
+    //   a closure or an opening alike. An opening matters too, and not only
+    //   after a closure: startField writes 0 at every seed with no legality
+    //   test, so a route built while a corpse or a building covered its goal
+    //   holds an estimate at an illegal cell without ever being closed, and
+    //   the scan counts that cell once the cover goes. (A key on the static
+    //   epoch would be exact too, but a battle's corpses move the epoch
+    //   nearly every tick; a drop on a reaching change costs a rescan only
+    //   for the groups the change is near.)
+    // - the goal is the map's key, n is compared and the footprint is the
+    //   plane's (one per group; a group's plane index is fixed at creation).
+    // Before 2026-11-18 the key was the serial and n alone: a repair, or a
+    // closure or opening in the destination area, left the old bound in
+    // place until the route was replaced. Derived, never hashed;
+    // TAK_LEGION_VERIFY rescans on every hit.
+    bool boundKept(const Group& g,const Group::Bound& b,int n) const {
+        const RouteView f=g.route();
+        return f.complete()&&b.route==f.metric()&&b.n==n&&b.version==f.version();
     }
     // packedBound's bound of an incomplete route, kept for the rest of the
     // tick's unit loop (an 8,500-body order otherwise rescans its whole

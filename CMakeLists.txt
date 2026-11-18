@@ -602,6 +602,12 @@ foreach(legion_scn battle-assault crosslong gap8)
   set_tests_properties(legion_verify_${legion_scn} PROPERTIES LABELS legion TIMEOUT 600
                        ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
 endforeach()
+# packedBound's complete-route cache after an opening at a seed covered when the route was built (a cache dropped
+# on closures alone aborts at tick 1069).
+add_test(NAME legion_verify_seedlift
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/verify/seedlift-40.scn --mode legion --offsets 0
+                 --serial --no-vertex-probe)
+set_tests_properties(legion_verify_seedlift PROPERTIES LABELS legion TIMEOUT 600 ENVIRONMENT "TAK_LEGION_VERIFY=1")
 # Asset-free scenario set, part A (tools/scenarios/*.scn): both modes, serial and
 # workers (the runner fails on a state or key mismatch), three start offsets.
 # No bounds yet: a later task adds `--check` against baseline.json. The long
