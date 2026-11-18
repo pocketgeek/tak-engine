@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <climits>
 #include <deque>
@@ -8070,6 +8071,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             stats.groupLoopIters+=groups.size();
         }
         std::vector<uint32_t> cand;
+        // The candidate set as a bitmap over the movers' indices, all zero between groups.
+        std::vector<uint64_t> candBits(movers.empty()?0:(movers.size()+63)/64,0);
         bool paused=false,first=true;
         for(auto& [id,g]:groups) {
             if(id<=awCursor)continue;
@@ -8114,6 +8117,9 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     std::vector<int64_t> arc(chain.size(),0);
                     for(size_t k=1;k<chain.size();++k)
                         arc[k]=arc[k-1]+(chain[k]%W!=chain[k-1]%W&&chain[k]/W!=chain[k-1]/W?23:16);
+                    const bool engages=g.kind==Kind::Fight||g.kind==Kind::Attack||g.kind==Kind::Guard||g.kind==Kind::Patrol;
+#ifndef NDEBUG
+                    // The reference forms (TAK_LEGION_VERIFY only; firstHitFast below must equal them).
                     // The group's position t ticks ahead (px): the chain point at
                     // arc length speed*t, the centroid at t=0, the chain's end after it.
                     auto at=[&](int64_t t,int64_t& x,int64_t& z) {
@@ -8125,7 +8131,6 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                         const int64_t x1=(chain[k+1]%W)*16+8,z1=(chain[k+1]/W)*16+8,span=arc[k+1]-arc[k];
                         x=x0+(x1-x0)*(s-arc[k])/span;z=z0+(z1-z0)*(s-arc[k])/span;
                     };
-                    const bool engages=g.kind==Kind::Fight||g.kind==Kind::Attack||g.kind==Kind::Guard||g.kind==Kind::Patrol;
                     // The first conflict sample (see below); `count` adds one per sample.
                     auto firstHit=[&](const Mover& mv,uint64_t* count) {
                         int64_t hit=-1;
@@ -8137,6 +8142,41 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                         }
                         return hit;
                     };
+#endif
+                    // The group's way at every conflict sample t = i*kAwareSample (px), taken once for all
+                    // movers: the chain point at arc length s = (speed*t)>>16, the chain's end after it. The
+                    // same points as the walk from the chain's start (the reference `at`): speed > 0, so s
+                    // never falls as t rises, and the arcs rise strictly (16 or 23 a step), so a segment index
+                    // that only moves forward stops where the walk does; the interpolation is the same
+                    // integer expression.
+                    static_assert(kAwareHorizon%kAwareSample==0,"the samples end on kAwareHorizon");
+                    constexpr int kWaySamples=kAwareHorizon/kAwareSample+1;
+                    std::array<int64_t,kWaySamples> wayX{},wayZ{};
+                    for(size_t i=0,k=0;i<size_t(kWaySamples);++i) {
+                        const int64_t s=(speed*(int64_t(i)*kAwareSample))>>16;
+                        while(k+1<chain.size()&&arc[k+1]<=s)++k;
+                        const int64_t x0=(chain[k]%W)*16+8,z0=(chain[k]/W)*16+8;
+                        if(k+1>=chain.size()) {wayX[i]=x0;wayZ[i]=z0;continue;}
+                        const int64_t x1=(chain[k+1]%W)*16+8,z1=(chain[k+1]/W)*16+8,span=arc[k+1]-arc[k];
+                        wayX[i]=x0+(x1-x0)*(s-arc[k])/span;wayZ[i]=z0+(z1-z0)*(s-arc[k])/span;
+                    }
+                    // The first conflict sample (see below), -1 for none; `count` adds one per sample
+                    // taken, the hit included. The box test without dividing: for L >= 1 (the mover's
+                    // isqrt, at least 1) and A, B, C >= 0 (half, tail and head start at 0 and only take
+                    // maxima; rG >= 16), trunc(n/L) is in [-B, C] with |trunc(n/L)| <= A exactly when
+                    // -(B+1)L < n < (C+1)L and |n| < (A+1)L. The bounds are far inside 64 bits (map px and
+                    // a formation's extent, each under 2^20); n is the reference's own numerator.
+                    auto firstHitFast=[&](const Mover& mv,uint64_t& count) {
+                        const int64_t qa=(mv.half+rG+33)*mv.L,sb=(mv.tail+rG+33)*mv.L,sc=(mv.head+rG+33)*mv.L;
+                        for(int i=0;i<kWaySamples;++i) {
+                            const int64_t t=int64_t(i)*kAwareSample;
+                            ++count;
+                            const int64_t rx=wayX[size_t(i)]-(mv.cx+mv.dx*t/int64_t(kAwareScan)),rz=wayZ[size_t(i)]-(mv.cz+mv.dz*t/int64_t(kAwareScan));
+                            const int64_t ns=rx*mv.dx+rz*mv.dz,nq=rx*mv.dz-rz*mv.dx;
+                            if(std::abs(nq)<qa&&ns>-sb&&ns<sc)return t;
+                        }
+                        return int64_t(-1);
+                    };
                     // The candidates (broad phase above), in the movers' order.
                     cand.clear();
                     {
@@ -8146,15 +8186,34 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                             bx0=std::min(bx0,px);bx1=std::max(bx1,px);bz0=std::min(bz0,pz);bz1=std::max(bz1,pz);
                         }
                         const int64_t c0=gridCol(bx0-2*rG),c1=gridCol(bx1+2*rG),r0=gridRow(bz0-2*rG),r1=gridRow(bz1+2*rG);
-                        for(int64_t r=r0;r<=r1;++r)for(int64_t c=c0;c<=c1;++c) {
-                            const auto& cell=grid[size_t(r*gridW+c)];
-                            cand.insert(cand.end(),cell.begin(),cell.end());
-                        }
+                        // The grid cells' movers and the planned ones marked in the bitmap, then read in
+                        // ascending index (each word cleared as it is read): the same set, in the same
+                        // ascending order without repeats, as concatenating, sorting and removing duplicates.
+                        auto mark=[&](uint32_t i) {candBits[i>>6]|=uint64_t(1)<<(i&63);};
+                        for(int64_t r=r0;r<=r1;++r)for(int64_t c=c0;c<=c1;++c)
+                            for(const uint32_t i:grid[size_t(r*gridW+c)])mark(i);
                         for(const uint64_t known:g.avoidCmd)
                             for(auto e=std::lower_bound(byCommand.begin(),byCommand.end(),std::pair<uint64_t,uint32_t>{known,0});
-                                e!=byCommand.end()&&e->first==known;++e)cand.push_back(e->second);
-                        std::sort(cand.begin(),cand.end());
-                        cand.erase(std::unique(cand.begin(),cand.end()),cand.end());
+                                e!=byCommand.end()&&e->first==known;++e)mark(e->second);
+                        for(size_t wd=0;wd<candBits.size();++wd) {
+                            for(uint64_t b=candBits[wd];b;b&=b-1)cand.push_back(uint32_t(wd*64+size_t(std::countr_zero(b))));
+                            candBits[wd]=0;
+                        }
+#ifndef NDEBUG
+                        if(gVerify) {   // the bitmap against the sorted list it replaces
+                            std::vector<uint32_t> ref;
+                            for(int64_t r=r0;r<=r1;++r)for(int64_t c=c0;c<=c1;++c) {
+                                const auto& cell=grid[size_t(r*gridW+c)];
+                                ref.insert(ref.end(),cell.begin(),cell.end());
+                            }
+                            for(const uint64_t known:g.avoidCmd)
+                                for(auto e=std::lower_bound(byCommand.begin(),byCommand.end(),std::pair<uint64_t,uint32_t>{known,0});
+                                    e!=byCommand.end()&&e->first==known;++e)ref.push_back(e->second);
+                            std::sort(ref.begin(),ref.end());
+                            ref.erase(std::unique(ref.begin(),ref.end()),ref.end());
+                            if(ref!=cand)verifyFail("awareScan's candidate bitmap differs from the sorted list");
+                        }
+#endif
                     }
 #ifndef NDEBUG
                     if(gVerify)
@@ -8221,7 +8280,15 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                         }
                         // The conflict: the first sample where the group's disc
                         // meets the mover's box, both moved on t ticks.
-                        const int64_t hit=firstHit(mv,&work);
+                        uint64_t samples=0;
+                        const int64_t hit=firstHitFast(mv,samples);
+#ifndef NDEBUG
+                        if(gVerify) {   // the division-free test against the reference: the same hit, the same samples
+                            uint64_t ref=0;
+                            if(firstHit(mv,&ref)!=hit||ref!=samples)verifyFail("awareScan's division-free conflict test differs from the reference");
+                        }
+#endif
+                        work+=samples;
                         if(hit<0)continue;
                         // Already in among each other: too late to plan round
                         // (a late swerve only reverses bodies).
