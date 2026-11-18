@@ -1098,6 +1098,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         uint8_t entryState=0;
         int lineCell=-1;                  // origin cell the line probe ran from
         bool line=false;
+        // The origin that refused the last line probe (lineClear), -1 none:
+        // where the next probe looks first. A hint only, re-tested on the
+        // state of the moment. Derived: never hashed.
+        int lineHint=-1;
         // Round 2: the line probe's bend round another command's firing ring
         // (ringBend): the point (16.16) this formation member walks to while
         // its own lane runs into the ring. Hashed while set.
@@ -9256,6 +9260,66 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         return cx==tx&&cz==tz;
     }
+    // move()'s direct-line probe from the body to (gx,gz): the AND of three
+    // traces -- every origin on the way legal (sweep), covering no soft body
+    // of another command (only while soft cells exist) and outside every
+    // mover corridor the group plans round (only while it has any). Two
+    // shortcuts, the same verdict:
+    // - One walk asks all three of each origin. trace visits the same
+    //   origins in the same order whatever it asks and stops at the first
+    //   refusal, and the probe writes nothing but Stats, so a line is clear
+    //   exactly when no origin on it fails any of the three: the AND of the
+    //   three walks.
+    // - A blocked line is first looked for at the origin that refused the
+    //   last probe and its 8 neighbours (Member::lineHint): one of them that
+    //   the segment crosses (its corners strictly on both sides of the line,
+    //   its extent inside the segment's along the dominant axis, so trace,
+    //   which follows the segment boundary by boundary, enters it) and that
+    //   fails a test now (re-tested on the state of the moment) makes some
+    //   trace false. Sufficient, never necessary: no such origin, and the
+    //   walk decides. A stale or off-map hint can only miss.
+    // TAK_LEGION_VERIFY compares every answer with the three walks.
+    bool lineClear(const Unit& u,Member& m,const Group& g,const Plane& p,Fixed gx,Fixed gz,uint64_t command,int counts) {
+        const int W=width(),H=height(),fx=u.type->footX,fz=u.type->footZ;
+        const bool soft=softCellCount!=0,avoid=!g.avoidSeg.empty();
+        auto refuses=[&](int x,int z) {
+            if(!legal(p,x,z))return true;
+            if(soft&&softAt(x,z,fx,fz,command,counts))return true;
+            if(avoid) {
+                const int64_t px=int64_t(x)*16+fx*8,pz=int64_t(z)*16+fz*8;
+                for(const auto& c:g.avoidSeg)if(c.level(px,pz)==2)return true;
+            }
+            return false;
+        };
+        if(m.lineHint>=0) {
+            // trace's coordinates: origin space, a cell 1 << 20 wide.
+            const int64_t bx=int64_t(fx-1)*8*Fixed::kOne,bz=int64_t(fz-1)*8*Fixed::kOne;
+            const int64_t ax=int64_t(u.x.v)-bx,az=int64_t(u.z.v)-bz,ex=int64_t(gx.v)-bx,ez=int64_t(gz.v)-bz;
+            const int64_t dx=ex-ax,dz=ez-az;
+            auto crosses=[&](int x,int z) {
+                const int64_t x0=int64_t(x)<<20,x1=int64_t(x+1)<<20,z0=int64_t(z)<<20,z1=int64_t(z+1)<<20;
+                auto side=[&](int64_t px,int64_t pz) {
+                    const __int128 v=__int128(px-ax)*dz-__int128(pz-az)*dx;
+                    return v>0?1:v<0?-1:0;
+                };
+                const int a=side(x0,z0),b=side(x1,z0),c=side(x0,z1),d=side(x1,z1);
+                if(!((a>0||b>0||c>0||d>0)&&(a<0||b<0||c<0||d<0)))return false;
+                if((dx<0?-dx:dx)>=(dz<0?-dz:dz))return x0>=std::min(ax,ex)&&x1<=std::max(ax,ex);
+                return z0>=std::min(az,ez)&&z1<=std::max(az,ez);
+            };
+            const int hx=m.lineHint%W,hz=m.lineHint/W;
+            for(int oz=hz-1;oz<=hz+1;++oz)for(int ox=hx-1;ox<=hx+1;++ox)
+                if(ox>=0&&oz>=0&&ox<W&&oz<H&&crosses(ox,oz)&&refuses(ox,oz)) {m.lineHint=oz*W+ox;return false;}
+        }
+        int refused=-1;
+        const bool clear=trace(u,u.x,u.z,gx,gz,[&](int x,int z) {
+            if(!refuses(x,z))return true;
+            if(x>=0&&z>=0&&x<W&&z<H)refused=z*W+x;
+            return false;
+        });
+        m.lineHint=clear?-1:refused;
+        return clear;
+    }
     // Mobile bodies at an origin (static legality is checked separately).
     bool bodiesFree(const Unit& u,int x,int z) const {
         const int fx=u.type->footX,fz=u.type->footZ;
@@ -13934,13 +13998,20 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 // round it.
                 const uint64_t command=g.soft?g.command:kNoSoft;
                 const int counts=!softCellCount?-1:softCountsFor(fx,fz);
-                m.line=std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=reach&&sweep(p,u,u.x,u.z,gx,gz)&&
-                    (!softCellCount||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {return !softAt(cx,cz,fx,fz,command,counts);}))&&
-                    // ... and so is a line through a mover the group plans round.
-                    (g.avoidSeg.empty()||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {
-                        const int64_t px=int64_t(cx)*16+fx*8,pz=int64_t(cz)*16+fz*8;
-                        for(const auto& c:g.avoidSeg)if(c.level(px,pz)==2)return false;
-                        return true;}));
+                // ... and so is a line through a mover the group plans round (lineClear).
+                m.line=std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=reach&&lineClear(u,m,g,p,gx,gz,command,counts);
+#ifndef NDEBUG
+                if(gVerify) {   // the three walks lineClear stands for (Stats untouched)
+                    StatsFence fence(stats);
+                    const bool full=std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=reach&&sweep(p,u,u.x,u.z,gx,gz)&&
+                        (!softCellCount||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {return !softAt(cx,cz,fx,fz,command,counts);}))&&
+                        (g.avoidSeg.empty()||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {
+                            const int64_t px=int64_t(cx)*16+fx*8,pz=int64_t(cz)*16+fz*8;
+                            for(const auto& c:g.avoidSeg)if(c.level(px,pz)==2)return false;
+                            return true;}));
+                    if(full!=m.line)verifyFail("the line probe's hint or single walk differs from its three walks");
+                }
+#endif
                 m.bend=false;
                 Fixed bx,bz;
                 if(m.slot>=0&&formationMember(m)&&!engagesEnemies(m.kind)&&ringBend(u,g,p,gx,gz,bx,bz)) {m.bend=true;m.bendX=bx.v;m.bendZ=bz.v;}
