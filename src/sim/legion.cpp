@@ -1344,6 +1344,24 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             int32_t x=0,z=0;int goal=-1;const UnitType* type=nullptr;
             uint64_t field=0,epoch=~0ull,work=0;int cell=-1;   // work: the field's relaxations (a paused build resumes)
         } aim;
+        // The member's descent chain (descentAt / descentStep): c[0] = from,
+        // c[k+1] = descend(c[k]) for k < steps, held as the kDirections index
+        // of each step; ended: descend(c[steps]) is -1. descend is a function
+        // of the cell, the member's goal (its tie-break) and footprint, the
+        // route's estimates and the static plane's legality, never of the
+        // exact position, so the chain is kept on the inputs aimCell's memo
+        // keys on (the route's serial and work, the static epoch) plus the
+        // plane's identity and epoch, and shifted when the body steps onto
+        // one of its cells. box / boxOpen (aimCell's string-pull): bit k
+        // known / every origin of the box spanned by c[0] and c[k] legal.
+        // Derived: never hashed, and a peer without it walks the same chain.
+        struct Descent {
+            static constexpr int kSteps=kPivotChain+1;   // c[0..kSteps]: laneTrigger's and pivotAim's look-ahead
+            int from=-1,goal=-1,fx=0,fz=0;uint32_t planeGen=0;
+            uint64_t planeEpoch=~0ull,epoch=~0ull,field=0,work=0;
+            uint8_t steps=0,box=0,boxOpen=0;bool ended=false;
+            std::array<uint8_t,kSteps> dir{};
+        } descent;
         // Memo of gateCommit's static verdict (Legion 10,000 stage 2): the
         // inputs of its last call when that call declined before reading
         // any soft body -- origin, goal, footprint, the finished field, the
@@ -10893,6 +10911,82 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         return best;
     }
+    // Member::Descent at origin `here` on (p,f): kept when its key stands
+    // and it starts at here, shifted when here is one of its cells (the rest
+    // of a chain is the chain of its cell), else started afresh. Every
+    // writer of descend's inputs changes the key: the route's estimates are
+    // written only by its build (advance's relaxations, advanceChain's and
+    // serveRepairs' attached tiles), each of which adds to its work before
+    // the estimates are read again; a new route has a new serial; the
+    // plane's legality changes only in rebuild / a finished background
+    // build (the plane's epoch takes the static epoch), the incremental
+    // refresh of syncStatic (the static epoch steps, the plane's with it)
+    // and an evicted slot's reuse (a new generation); the goal and the
+    // footprint are compared. The rest of the update reads the chain
+    // through descentStep after the same test, so a write in between (a
+    // resumed build, runOnRoute) drops it.
+    void descentAt(const Unit& u,Member& m,const Plane& p,RouteView f,int here) {
+        auto& d=m.descent;
+        const int fx=u.type->footX,fz=u.type->footZ;
+        if(d.goal==m.goal&&d.fx==fx&&d.fz==fz&&d.planeGen==p.id.generation&&d.planeEpoch==p.epoch&&d.epoch==epoch&&
+           d.field==f.metric()&&d.work==f.version()) {
+            if(d.from==here)return;
+            const int W=width();
+            for(int k=0,c=d.from;k<int(d.steps);++k) {
+                const auto& s=kDirections[d.dir[size_t(k)]];
+                c+=s[1]*W+s[0];
+                if(c!=here)continue;
+                std::copy(d.dir.begin()+k+1,d.dir.begin()+d.steps,d.dir.begin());
+                d.steps=uint8_t(d.steps-k-1);d.from=here;d.box=0;d.boxOpen=0;
+                return;
+            }
+        }
+        d.from=here;d.goal=m.goal;d.fx=fx;d.fz=fz;d.planeGen=p.id.generation;d.planeEpoch=p.epoch;d.epoch=epoch;
+        d.field=f.metric();d.work=f.version();d.steps=0;d.box=0;d.boxOpen=0;d.ended=false;
+    }
+    // c[k] of the member's chain (descentAt first), the caller holding
+    // c[k-1] = at: what descend(at) returns, without `check` (callers that
+    // pass it hold a complete route, where it is off). Read in order from
+    // c[1]; past kSteps, or out of order, it is descend itself.
+    // TAK_LEGION_VERIFY recomputes every answer the chain gives.
+    int descentStep(const Unit& u,Member& m,const Plane& p,RouteView f,int k,int at) {
+        auto& d=m.descent;
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        int next=-1;
+        if(k<1||k>Member::Descent::kSteps||k>int(d.steps)+1||(k==int(d.steps)+1&&!d.ended)) {
+            next=descend(p,f,at%W,at/W,m.goal,fx,fz);
+            if(k==int(d.steps)+1&&k<=Member::Descent::kSteps&&!d.ended) {
+                if(next<0)d.ended=true;
+                else for(size_t i=0;i<kDirections.size();++i)
+                    if(kDirections[i][1]*W+kDirections[i][0]==next-at) {d.dir[size_t(d.steps++)]=uint8_t(i);break;}
+            }
+            return next;
+        }
+        if(k<=int(d.steps)) {const auto& s=kDirections[d.dir[size_t(k-1)]];next=at+s[1]*W+s[0];}
+#ifndef NDEBUG
+        if(gVerify&&next!=descend(p,f,at%W,at/W,m.goal,fx,fz))verifyFail("a member's descent chain differs from descend");
+#endif
+        return next;
+    }
+    // Is every origin of the box spanned by c[0] and c[k] = cell legal on
+    // p (descentAt first; memoised with the chain)? A straight line from
+    // anywhere inside origin c[0] to the centre of c[k] then sweeps true:
+    // trace starts in c[0], ends in c[k], steps only toward its end on each
+    // axis and reads only origins of that box (an exact corner's side cells
+    // included).
+    bool descentBox(Member& m,const Plane& p,int k,int cell) {
+        auto& d=m.descent;
+        if(k<1||k>=8)return false;
+        const uint8_t bit=uint8_t(1u<<k);
+        if(!(d.box&bit)) {
+            const int W=width(),ax=d.from%W,az=d.from/W,bx=cell%W,bz=cell/W;
+            bool open=true;
+            for(int z=std::min(az,bz);z<=std::max(az,bz)&&open;++z)
+                for(int x=std::min(ax,bx);x<=std::max(ax,bx)&&open;++x)open=legal(p,x,z);
+            d.box|=bit;if(open)d.boxOpen|=bit;
+        }
+        return d.boxOpen&bit;
+    }
     // Stage 5: does anything the lanes react to lie on this body's way --
     // a wall end within a cell of its descent chain (the pinwheel), or a
     // cross-section narrower than kPassageSpan origins (the passage gate,
@@ -10910,12 +11004,14 @@ struct LegionNavigator::Impl : LegionWorldBinding {
            m.laneGoal==m.goal&&m.laneType==u.type)return m.laneHit;
         bool hit=false;
         int cell=here;
+        const bool chained=f.usable()&&f.metric();   // the member's chain (descentStep), keyed as aimCell's
+        if(chained)descentAt(u,m,p,f,here);
         for(int k=0;k<=kPivotChain&&!hit;++k) {
             const int x=cell%W,z=cell/W;
             for(const auto& d:kDirections)if(wallOrigin(p,x+d[0],z+d[1])) {hit=true;break;}
             const uint32_t e=spanAt(p,x,z);
             if(int(e&0xff)+int(e>>8&0xff)+1<kPassageSpan||int(e>>16&0xff)+int(e>>24)+1<kPassageSpan)hit=true;
-            const int next=descend(p,f,x,z,m.goal,u.type->footX,u.type->footZ);
+            const int next=chained?descentStep(u,m,p,f,k+1,cell):descend(p,f,x,z,m.goal,u.type->footX,u.type->footZ);
             if(next<0)break;
             cell=next;
         }
@@ -14163,7 +14259,13 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             return a.cell;
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int goalX=m.goal%W,goalZ=m.goal/W;
-        int cell=descend(p,f,ox,oz,m.goal,fx,fz);
+        // The chain from this origin (Member::Descent, on the same key as
+        // the memo above), and the open-box proof for the sweeps when the
+        // sweep starts in that origin.
+        if(memo)descentAt(u,m,p,f,oz*W+ox);
+        const bool boxed=memo&&footprintOrigin(u.x,fx)==ox&&footprintOrigin(u.z,fz)==oz;
+        auto chainAt=[&](int k,int at) {return memo?descentStep(u,m,p,f,k,at):descend(p,f,at%W,at/W,m.goal,fx,fz);};
+        int cell=chainAt(1,oz*W+ox);
         if(cell<0) {
             // Inside the goal region the field is flat (potential 0) but
             // this member's own goal is not in line: walk its seed set by
@@ -14182,9 +14284,16 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             std::array<int,4> picks{cell,-1,-1,-1};int pickCount=1;
 #endif
             for(int k=0;k<3;++k) {
-                const int next=descend(p,f,chain%W,chain/W,m.goal,fx,fz);
+                const int next=chainAt(k+2,chain);
                 if(next<0)break;
-                if(!sweep(p,u,u.x,u.z,centre(next%W,fx),centre(next/W,fz)))break;
+                if(boxed&&descentBox(m,p,k+2,next)) {
+#ifndef NDEBUG
+                    if(gVerify) {
+                        StatsFence fence(stats);
+                        if(!sweep(p,u,u.x,u.z,centre(next%W,fx),centre(next/W,fz)))verifyFail("aimCell's open box holds a sweep that fails");
+                    }
+#endif
+                } else if(!sweep(p,u,u.x,u.z,centre(next%W,fx),centre(next/W,fz)))break;
                 chain=next;
 #ifndef NDEBUG
                 picks[size_t(pickCount++)]=next;
@@ -14545,9 +14654,13 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         gm.valid=false;
         std::array<int,kVertexChain+1> chain{};int n=0;chain[size_t(n++)]=oz*W+ox;
         uint64_t work=0;
+        // On a complete route `check` is off: the member's chain (descentStep) answers.
+        const bool chained=f.complete()&&f.metric()!=0;
+        if(chained)descentAt(u,m,p,f,chain[0]);
         auto extend=[&](int upto) {
             while(n<=std::min(upto,kVertexChain)) {
-                const int next=descend(p,f,chain[size_t(n-1)]%W,chain[size_t(n-1)]/W,m.goal,fx,fz,true);
+                const int at=chain[size_t(n-1)];
+                const int next=chained?descentStep(u,m,p,f,n,at):descend(p,f,at%W,at/W,m.goal,fx,fz,true);
                 if(next<0)return;
                 chain[size_t(n++)]=next;++work;
             }
@@ -14730,8 +14843,12 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         std::array<int,kCornerLook+kCornerLead+4> chain{};int n=0;chain[size_t(n++)]=oz*W+ox;
         uint64_t work=0;
         struct Flush {uint64_t& to;uint64_t& n;~Flush() {to+=n;}} flush{stats.laneWork,work};
+        // On a complete route `check` is off: the member's chain (descentStep) answers.
+        const bool chained=f.complete()&&f.metric()!=0;
+        if(chained)descentAt(u,m,p,f,chain[0]);
         while(n<int(chain.size())) {
-            const int next=descend(p,f,chain[size_t(n-1)]%W,chain[size_t(n-1)]/W,m.goal,fx,fz,true);
+            const int at=chain[size_t(n-1)];
+            const int next=chained?descentStep(u,m,p,f,n,at):descend(p,f,at%W,at/W,m.goal,fx,fz,true);
             if(next<0)break;
             chain[size_t(n++)]=next;++work;
         }
@@ -14800,7 +14917,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         const uint32_t e=spanAt(p,ox,oz);
         const int axis=m.gateAxis,sign=m.gateSign;
         if((axis==0?int(e&0xff)+int(e>>8&0xff):int(e>>16&0xff)+int(e>>24))+1>=kLaneSpan)return false;   // out of the strip
-        const int next=descend(p,f,ox,oz,m.goal,fx,fz,true);
+        // On a complete route `check` is off: the member's chain (descentStep) answers.
+        const bool chained=f.complete()&&f.metric()!=0;
+        if(chained)descentAt(u,m,p,f,oz*W+ox);
+        const int next=chained?descentStep(u,m,p,f,1,oz*W+ox):descend(p,f,ox,oz,m.goal,fx,fz,true);
         if(unsure||next<0||(axis==0?next/W-oz:next%W-ox)!=sign)return false;   // the way leaves the strip's axis
         const int lane=axis==0?m.gateCell%W:m.gateCell/W;
         const int cx=axis==0?lane:ox+sign*kCornerLead,cz=axis==0?oz+sign*kCornerLead:lane;
@@ -15232,8 +15352,12 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         const uint32_t level=f.estimate(size_t(here));
         if(level==kUnreached)return -1;
         std::array<int,kPivotChain+1> chain{};int n=0;chain[size_t(n++)]=here;
+        // On a complete route `check` is off: the member's chain (descentStep) answers.
+        const bool chained=f.complete()&&f.metric()!=0;
+        if(chained)descentAt(u,m,p,f,here);
         while(n<=kPivotChain) {
-            const int next=descend(p,f,chain[size_t(n-1)]%W,chain[size_t(n-1)]/W,m.goal,fx,fz,true);
+            const int at=chain[size_t(n-1)];
+            const int next=chained?descentStep(u,m,p,f,n,at):descend(p,f,at%W,at/W,m.goal,fx,fz,true);
             if(next<0)break;
             chain[size_t(n++)]=next;
         }
