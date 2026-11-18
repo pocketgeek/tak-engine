@@ -1366,10 +1366,25 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // inputs of its last call when that call declined before reading
         // any soft body -- origin, goal, footprint, the finished field, the
         // static plane and the lane band -- so the same call declines again
-        // without walking the chain. Derived: never hashed.
+        // without walking the chain. The field is its serial AND its work
+        // (RouteView::version), the plane its generation and epoch: the
+        // walk is the member's descent chain, keyed as Descent is, and a
+        // complete chain route still changes its estimates when a repair
+        // attaches a halo tile to it (serveRepairs: f.work += spent+1).
+        // Keyed on the serial alone, a decline made before such a repair
+        // outlived it: a member that stood still across it was kept off a
+        // gate it now reached (the forced stress battle, tick 6155).
+        // Derived: never hashed.
         struct GateMemo {
             int ox=-1,oz=-1,goal=-1,band=-1;const UnitType* type=nullptr;
-            uint64_t field=0,epoch=~0ull,planeEpoch=~0ull;bool valid=false;
+            uint64_t field=0,work=0,epoch=~0ull,planeEpoch=~0ull;uint32_t planeGen=0;bool valid=false;
+            bool same(int x,int z,int goal_,int band_,const UnitType* type_,RouteView f,uint64_t epoch_,const Plane& p) const {
+                return valid&&ox==x&&oz==z&&goal==goal_&&band==band_&&type==type_&&field==f.metric()&&work==f.version()&&
+                       epoch==epoch_&&planeEpoch==p.epoch&&planeGen==p.id.generation;
+            }
+            void keep(int x,int z,int goal_,int band_,const UnitType* type_,RouteView f,uint64_t epoch_,const Plane& p) {
+                *this={x,z,goal_,band_,type_,f.metric(),f.version(),epoch_,p.epoch,p.id.generation,true};
+            }
         } gateMemo,cornerMemo;   // cornerMemo: cornerCommit's, the same inputs
     };
 
@@ -14646,8 +14661,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // decline (see Member::gateMemo). TAK_LEGION_VERIFY recomputes a hit.
         auto& gm=m.gateMemo;
         const bool memo=f.complete()&&f.metric()!=0;
-        const bool memoHit=memo&&gm.valid&&gm.ox==ox&&gm.oz==oz&&gm.goal==m.goal&&gm.band==band&&gm.type==u.type&&
-            gm.field==f.metric()&&gm.epoch==epoch&&gm.planeEpoch==p.epoch;
+        const bool memoHit=memo&&gm.same(ox,oz,m.goal,band,u.type,f,epoch,p);
 #ifndef NDEBUG
         if(memoHit&&!gVerify)return false;
 #else
@@ -14683,7 +14697,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
 #endif
         auto staticDecline=[&](const char* why) {
             if(unsure)return false;   // read a value a later slice could change: no verdict, nothing memoised
-            if(memo)gm={ox,oz,m.goal,band,u.type,f.metric(),epoch,p.epoch,true};
+            if(memo)gm.keep(ox,oz,m.goal,band,u.type,f,epoch,p);
             return declined(why);
         };
         if(gateStrip(gateSpan(p,chain.data(),n,0,fx,fz),band))return staticDecline("inside a strip");
@@ -14832,14 +14846,19 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         }
         // Every read below is static (the plane, the finished field, the
         // goal, the footprint and the band), so a decline is memoised as
-        // gateCommit's is (Member::cornerMemo).
+        // gateCommit's is (Member::cornerMemo). TAK_LEGION_VERIFY recomputes
+        // a hit: it must decline again.
         auto& cm=m.cornerMemo;
         const bool memo=f.complete()&&f.metric()!=0;
-        if(memo&&cm.valid&&cm.ox==ox&&cm.oz==oz&&cm.goal==m.goal&&cm.band==band&&cm.type==u.type&&
-           cm.field==f.metric()&&cm.epoch==epoch&&cm.planeEpoch==p.epoch)return false;
+        const bool memoHit=memo&&cm.same(ox,oz,m.goal,band,u.type,f,epoch,p);
+#ifndef NDEBUG
+        if(memoHit&&!gVerify)return false;
+#else
+        if(memoHit)return false;
+#endif
         cm.valid=false;
         auto decline=[&] {
-            if(memo&&!unsure)cm={ox,oz,m.goal,band,u.type,f.metric(),epoch,p.epoch,true};
+            if(memo&&!unsure)cm.keep(ox,oz,m.goal,band,u.type,f,epoch,p);
             return false;
         };
         std::array<int,kCornerLook+kCornerLead+4> chain{};int n=0;chain[size_t(n++)]=oz*W+ox;
@@ -14896,6 +14915,9 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         const int cx=out.axis==0?c:gx,cz=out.axis==0?gz:c;
         ++work;
         if(!legal(p,cx,cz))return decline();
+#ifndef NDEBUG
+        if(memoHit)verifyFail("cornerCommit's memo declined a member that commits");
+#endif
         m.gateCell=cz*W+cx;
         m.gateLane=int8_t(pick);m.gateAxis=int8_t(out.axis);m.gateSign=int8_t(out.sign);m.gateCorner=true;
         ++stats.gateCommits;
