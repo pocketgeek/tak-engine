@@ -24,7 +24,7 @@ namespace tak::net {
 // Bump it whenever the wire layout changes or the simulation can compute a different
 // result from the same inputs -- a peer or replay of another number would desync.
 // The CHANGELOG records what each release changed.
-constexpr uint32_t kNetVersion = 334;      // 334: Legion: a mixed-speed click of 48 or fewer gets an arrival layout, fast bodies in front
+constexpr uint32_t kNetVersion = 335;      // 335: Legion: a swap marks its partner for passing, gate and corner memos follow route repairs, the destination-area bound follows repairs and static changes
 constexpr uint32_t kMaxFrame = 1u << 18;   // 256 KB frame cap (hardening) -- headroom for a
                                            // big tick bundle when many units are ordered at once
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)
