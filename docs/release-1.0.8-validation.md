@@ -2,8 +2,9 @@
 
 Protocol **335**, replay format **15**, random map generator version **10**.
 
-[LANDER: tag `v1.0.8` -> `<version commit>`; annotated tag object `<id>`.
-Published `<date time>` UTC as the Latest release.]
+Tag `v1.0.8` -> `224ab2bf` (the version commit); annotated tag object `0b08f88b`.
+Published 2026-11-18 23:10:36 UTC as the Latest release; 1.0.0 to 1.0.7 stay GitHub
+releases.
 
 ## Scope and compatibility
 
@@ -124,7 +125,26 @@ determinism workflow and builds every package.
 
 ## Tag CI and packages
 
-[LANDER: main's CI on the version commit; tag CI run ids (Determinism, Linux packages,
-Windows build, macOS build with Sign + notarize); asset count and SHA-256 digest check;
-AppImage and Fedora package `--version`; Windows Authenticode on oden-win; macOS
-stapler, spctl and codesign on the MacBook; draft created before the tag; link check.]
+CI on main was green at the first attempt on the landing commit `a0d96369`
+(Determinism 44399095136, macOS 44399094962, Windows 44399095141, Linux packages
+44399094823) and on the version commit `224ab2bf` (Determinism 44407894283, macOS
+44407894330, Windows 44407894286, Linux packages 44407894544). On `3f6fa9a4`, the last
+commit of the shortcuts, the macOS arm64 job was cancelled three times before any step
+ran (GitHub: the job was not acquired by a hosted runner) and passed on the fourth
+attempt; everything else there passed at once. Tag CI on `v1.0.8`: Determinism (sim)
+44407921151 (dispatched), Linux packages 44407900644, Windows build 44407900637 and macOS
+build 44407900466 (both Sign + notarize jobs included) all green at the first attempt.
+
+39 assets, the same set as 1.0.7's. All 39 were downloaded and match the release's
+SHA-256 digests and sizes. `takclient` and `takserver` from the Ubuntu 24.04 x64 package
+report `1.0.8 (build v1.0.8)`, its `takclient` links no libsecret or GLib, and the x86_64
+AppImage reports the same version.
+Windows: on oden-win (scratch `C:/tak/w/rel108sig`), `Get-AuthenticodeSignature` reports
+**Valid** (timestamped, "Curtis Edge") for the x64 setup program and `takclient`,
+`takserver` and `cartographer` in both zips; the x64 `takclient.exe` and `takserver.exe`
+report `1.0.8 (build v1.0.8)`.
+macOS: the MacBook was not reachable, so the hands-on check was not run. In tag CI's Sign
++ notarize jobs the staple and validate step passed for both apps and the DMG of each
+architecture, and `spctl` accepted all of them as Notarized Developer ID.
+The draft was created with the notes before the tag was pushed, and tag CI uploaded into
+it. Every link in the notes answers 200.
