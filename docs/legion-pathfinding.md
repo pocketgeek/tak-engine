@@ -556,7 +556,8 @@ Each update a supported unit:
   is an exact supercover in origin space using 16.16 integers, and an exact corner crossing must clear both side
   cells. Reach is 160 cells, or 640 cells (`kFormationLineCells`) for a member with a formation slot (section 5), and
   the line is rechecked only when the origin cell changes. A single unit on open ground therefore moves in a straight
-  line, and a formation keeps its shape instead of funnelling into a file down the shared field.
+  line, and a formation keeps its shape instead of funnelling into a file down the shared field. (One walk asks each
+  origin every test, and a blocked line is looked for first where the last probe was refused: section 9.)
 * otherwise **descends the field**: it takes the legal neighbour with the steepest descent per unit of path length (an
   orthogonal drop of 5 equals a diagonal drop of 7). Ties go to the neighbour nearest the unit's own goal, then a fixed
   direction order (first-found ties pull bodies toward other members' goals and fold a formation into a file;
@@ -1465,7 +1466,7 @@ plans round itself, and a mover going the same way is followed, not avoided.
   1,024 px grid over their grown swept boxes; a group reads the cells its chain box grown by `2 rG` covers, and every
   mover already in its plan is a candidate whatever its place. Candidates are visited in the original mover order, so
   the plan and its order do not depend on the grid. `TAK_LEGION_VERIFY` samples every dropped mover and fails on a
-  conflict.
+  conflict. The group's way at the samples is taken once per group and the box test does not divide (section 9).
 * **Crossing groups take the longer route.** On a crossing way the later group never waits for the other stream to
   pass. It plans round a time-swept corridor that covers the stream's band from its tail to 450 ticks past its head,
   but only where the stream will be when the group gets there (a lead of twice the group's radius), so the cheapest
@@ -2516,9 +2517,10 @@ may pause (`jobPausable`); an idle paused build takes no window slot.
 A* with a consistent heuristic never changes a settled potential, so what a paused build has settled is final (checked
 under `TAK_LEGION_VERIFY` in `advance`; a soft view that changes between slices only raises step costs, so it cannot
 lower one either). The readers that take a paused build (`Field::usable`) read it through `Field::known`, which
-returns a potential only where it is settled: the settle rule (`settleWindow`, `pressed`, `areaBound` -- not cached for
-a paused build -- and `rechoose`), the lift walk, the aim memo (keyed on the field's work count, so a resumed build
-invalidates it), eviction, `sharedField`, and a formation's slot hand-out. The consumers that read further state their
+returns a potential only where it is settled: the settle rule (`settleWindow`, `pressed`, `areaBound` -- cached for
+a paused build only within one tick's unit loop, section 9 -- and `rechoose`), the lift walk, the aim memo (keyed on
+the field's work count, so a resumed build invalidates it), eviction, `sharedField`, and a formation's slot hand-out.
+The consumers that read further state their
 region (section 2). Field descent (`aimCell`, the drive and detour code) may read a tentative potential beyond the
 margin; descent stays sound on it, as on a half-built field. A paused build is a finished field to the blocked
 re-request (read through `known()`, `freeDescent` too), and a group whose member waited on its paused build in the
@@ -2643,6 +2645,80 @@ point pointer per member keep the move update off ordered-map lookups. The verif
 `legion_verify_{battle-assault,crosslong,gap8}` run `TAK_LEGION_VERIFY` over the join index, the awareness broad phase,
 the vertex probe switch and the gate memo; each file is one that a deliberate mutation of the matching optimisation
 trips.
+
+### Exact shortcuts on the move path
+
+Four shortcuts take repeated work off the serial unit loop and the awareness scan. Each returns exactly what the
+computation it replaces returns at that moment, keeps no hashed state and needs no protocol change; the replaced form
+stays in the source and runs only under `TAK_LEGION_VERIFY`, which recomputes every answer the shortcut gives and fails
+on a difference (a deliberately broken shortcut trips it: the bound off by one on a hit at tick 77 of `maze-10000` and
+530 of `crosslong --pause-all`, the box bound one short at tick 165 of `many-1000`, the hint answering clear at tick 98
+of `staticblock-own`, a stored step turned one direction at tick 3 of `mazeform`).
+
+* **`packedBound` on a route still building** (`boundMemo`). The complete-route cache (per route serial and n) is
+  unchanged; a route still building -- an 8,500-body order rescanned its whole window for every stepping member for
+  about 16 ticks while it built (`makeRoom`, `settleWindow` and the blocked re-request all ask) -- keeps its bound for
+  the rest of the tick's unit loop. The scan (`packedScan`) reads the route's settled cells (`RouteView::known`), the
+  plane's legality, the goal, n and the footprint; the key is the route's serial and work count (`version()`), the
+  static epoch, the plane, the goal cell, n and the footprint. Route cells are written only from `tick()` (`advance`,
+  the attached tiles of `advanceChain` and `serveRepairs`, the install in `serveFields`), each write moving the work
+  count; a scanned plane's legality changes only with the static epoch, and `planeReady` builds only planes that are
+  unbuilt or building, which a scanned plane is not. The memo is dropped at the start of `tick()` and at a tick
+  change, so a hit always follows a scan of the same loop, which already stamped the plane's `lastUse` and did any
+  rebuild. Only `Stats::slotSearchCells` (accounting) counts fewer cells. The cross-check also fails if the plane was
+  not scanned in the tick.
+* **The awareness scan's arithmetic** (`awareScan`). The group's way at the 31 conflict samples is taken once per group
+  (`wayX`/`wayZ`) instead of walking the chain from its start for every sample of every mover: the walk's position
+  rises with t (the speed is positive) and the arcs rise strictly, so a forward-only segment index stops where the walk
+  does, and the interpolation is the same integer expression. The box test compares the reference's own numerators
+  with `(bound+1)*L` instead of dividing by L (exact for truncating division with L >= 1 and bounds >= 0). The
+  candidates are marked in a bitmap over the movers' indices and read in ascending order, the same set and order as
+  concatenating, sorting and removing duplicates. Samples, `work`, the pause point and the hashed digest are those of
+  the reference. Both tables are locals of one group's turn, so nothing can go stale.
+* **The direct-line probe** (`lineClear`). One trace asks each origin all three tests (legal, no other command's soft
+  body, outside the group's mover corridors): trace visits the same origins whatever it asks and stops at the first
+  refusal, so the line is clear exactly when the three walks all are. A blocked line is looked for first at the origin
+  that refused the last probe and its 8 neighbours (`Member::lineHint`): one the segment provably enters (its corners
+  strictly on both sides of the line, its extent inside the segment's along the dominant axis) that fails a test now
+  blocks the line. The hint is re-tested on the state of the moment, so it can only miss, never answer wrongly; it is
+  derived and never hashed (`m.line` and `m.lineCell` are, unchanged).
+* **The member's descent chain** (`Member::Descent`, `descentAt` / `descentStep` / `descentBox`). `descend` is a
+  function of the cell, the member's goal and footprint, the route's estimates and the plane's legality (never the
+  cell layer), so each member keeps its chain (up to 49 steps, one direction a byte) while it stays on one of its
+  cells: a step onto a later cell shifts it (the rest of a chain is the chain of its cell). The key is the goal, the
+  footprint, the plane's generation and epoch, the static epoch, and the route's serial and work count: estimates
+  change only with the work count (`advance`, attached tiles) or a new route; legality only with a rebuild (the
+  plane's epoch takes the static epoch), `syncStatic`'s refresh (the static epoch steps) or a slot's reuse (a new
+  generation). `aimCell` and `laneTrigger` read it whenever the aim memo's conditions hold (a usable route with a
+  serial); `gateCommit`, `cornerCommit`, `cornerAdvance` and `pivotAim` only on a complete route, where `descend`
+  takes no `check`, so no `unsure` write is skipped. `aimCell`'s string-pull also keeps, per chain step, whether every
+  origin of the box between the chain's first cell and that step is legal; with the sweep starting in that first
+  origin, an open box proves the sweep. Under `TAK_LEGION_VERIFY` every chain answer is recomputed with `descend` and
+  every skipped sweep is run. `sizeof(Member)` grows from 904 to 1,024 bytes (8 for the hint, 112 for the chain), so
+  `Stats::bytes` and the observer's `scale.nav.bytes_peak` rise by that much a member; the byte budget uses the
+  constant `NavSize::kMember` and is unchanged.
+
+The work counters these skip (`line_sweeps`, `trace_cells`, `slot_search_cells` and the sums `legion_total`,
+`legion_all`, `churn.binN`) fall, and not by the same share at every start offset. Hashes, outcome keys and every
+other observer key are those of the plain forms (`tools/legion_identity.sh`, both modes, serial and workers; the stress
+battle and the natural eight-AI game against an unmodified referee). Wall time, Debug -O2, back-to-back pairs on the
+quiet timing cores (`World::tick` per tick, `--serial --no-observer`, base first then the reverse order where two pairs
+ran):
+
+| Run | mean ms | p99 ms | max ms | ticks over 33.3 ms | over 16.7 ms |
+|---|---|---|---|---|---|
+| `maze-10000`, first 400 ticks | 18.5 -> 13.1 | 130 -> 19 | 161 -> 24-25 | 21 -> 0 | 56 -> 9-11 |
+| `bridges-4000` (generated), first 400 | 7.1 -> 5.2 | 34.7 -> 9.2 | 40.9 -> 13.2 | 7 -> 0 | 22 -> 0 |
+| `maze-4000` (generated), first 400 | 6.5 -> 5.3 | 27.0 -> 10.8 | 28.0 -> 15.0 | 0 -> 0 | 14 -> 0 |
+| `many-2500`, first 3,000 | 4.71 -> 4.07 | 11.3 -> 7.7-7.9 | 13-14 -> 9-13 | 0 -> 0 | 0 -> 0 |
+| `many-5000`, first 3,000 | 10.9 -> 9.2 | 19.8 -> 14.5 | 23.4 -> 17.4 | 0 -> 0 | 169 -> 1 |
+| `many-10000`, first 2,700 | 25.2 -> 20.5 | 35.4 -> 27.5 | 41-42 -> 34 | 196-206 -> 1-2 | 2,312-2,337 -> 2,205 |
+| `attack-10000`, first 1,200 | 12.8 -> 12.4 | 15.2 -> 14.6 | 17.9 -> 18.0 | 0 -> 0 | 3 -> 1 |
+| `maze-1000`, whole | 0.75 -> 0.65 | 2.42 -> 2.16 | 14.2 -> 14.0 | 0 -> 0 | 0 -> 0 |
+| `bridges-1000`, whole | 1.09 -> 1.02 | 2.42 -> 2.33 | 11.3 -> 11.3 | 0 -> 0 | 0 -> 0 |
+
+`maze-10000`'s spikes (ticks 76 and 312-326, an 8,500-body order on a route still building) are the bound memo's;
+the steady share at 2,500-10,000 bodies is the chain's, the line probe's and the awareness scan's.
 
 ## 10. Determinism
 
@@ -2945,7 +3021,8 @@ Rules that come out of using them:
   units, as Retail does. Pockets under 256 origins hold in place; a region just above that threshold walks to its
   edge. Measured by `ctest:legion_unreachable` and `ctest:legion_acceptance_trapped_legion`.
 * **Per-unit steering is the CPU cost at large populations.** Field work is not the cost; counters point to per-unit
-  steering: line sweeps (640 cells for formation members, rerun on every origin change), descent, held rechecks and
+  steering: line sweeps (640 cells for formation members, rerun on every origin change, one walk for all three tests
+  since the exact shortcuts of section 9), descent, held rechecks and
   the per-held-member slot re-choice BFS. The 640-cell sweep and the 49x49 re-choice BFS are bounded per member, not
   globally. Those counters are `cost-open:work.line_sweeps.total`, `cost-open:work.held_rechecks.total`,
   `cost-corner:work.slot_search_cells.total`, `split-450-open:work.trace_cells.max` and
