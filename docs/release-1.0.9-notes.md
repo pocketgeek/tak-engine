@@ -25,6 +25,9 @@ factory keep out of its doorway.
   stand in front of its door, and move only if a new unit's way is blocked, only as far
   as clears it. An assisting builder walks about 40% less under Legion pathfinding and
   20% less under Retail, and production with it finishes a little sooner.
+- **Benchmark armies no longer start on ground they cannot walk.** Some units were placed
+  on slopes too steep for them and never moved; now each starts only where it can walk,
+  so Benchmark results are not directly comparable with 1.0.8's.
 
 The [CHANGELOG](https://github.com/pocketgeek/tak-engine/blob/v1.0.9/CHANGELOG.md) has the
 details.

@@ -7,9 +7,9 @@ TODO-LEAD publication line.
 
 ## Scope and compatibility
 
-1.0.9 is 1.0.8 (tag `v1.0.8` -> `224ab2bf`, validation commit `8975eac6`) plus the five
-changes below (`4096b578` to `6cd2c6d1`), all from the owner's replays and reports of
-2026-11-18 and 2026-11-19. They are listed in the CHANGELOG's 1.0.9 entry and described
+1.0.9 is 1.0.8 (tag `v1.0.8` -> `224ab2bf`, validation commit `8975eac6`) plus the six
+changes below (`4096b578` to `6cd2c6d1`, and the spawn fix found by this release's full
+suite), from the owner's replays and reports of 2026-11-18 and 2026-11-19. They are listed in the CHANGELOG's 1.0.9 entry and described
 in `docs/legion-pathfinding.md` ("Facing follows motion", the overtaking paragraph) and
 `docs/retail-engine.md` (the factory door paragraph):
 
@@ -20,6 +20,7 @@ in `docs/legion-pathfinding.md` ("Facing follows motion", the overtaking paragra
 | Legion: any leg with no slot target faces its motion (`6fad01ac`) | hashed sim (Legion only) |
 | Legion: patrol, attack and guard legs overtake as move and fight legs do (`69c39a18`; fixtures `overtake-patrol`, `-attack`, `-guard`) | hashed sim (Legion only) |
 | Guards of a land factory take no spot in the lane in front of its pad and step aside for a leaving output only off its lane (`6cd2c6d1`; new `Unit::padDx/padDz/padKnown`, hashed) | hashed sim (both modes) |
+| Match setup's spawn snap (stress and Benchmark armies, a Monarch whose authored start does not fit) requires the footprint passable for the type itself, its own maxSlope included (`World::footprintPassable`) | hashed sim (stress and Benchmark starts only; authored starts unchanged) |
 
 **Compatibility.** `kNetVersion` is 336 (`4096b578`): 1.0.9 does not play with 1.0.8 or
 earlier, nor play their replays. The replay format stays 15 and the random map recipe
@@ -60,11 +61,17 @@ Linux, Debug `-O2 -g` (`build-o2`), each against its parent:
 On the landed tree (`6cd2c6d1`), Linux, Debug `-O2 -g` (`build-o2`), built once:
 
 - **Full suite** (all labels): 1,005 tests, 1,003 passed. `harness_seat_load` failed under
-  load and passed alone (60 s). `watch_end` fails its `allai` case: the Retail game of two
-  computer players with stress armies is not decided within its 30 minutes of game time.
-  1.0.8 (`v1.0.8`, built for the check) fails the same case the same way, and so does
-  `69c39a18`, before the only change here that touches Retail: it predates this release
-  (1.0.8's cut did not run the full suite) and is left open.
+  load and passed alone (60 s). `watch_end` failed its `allai` case: the Retail game of two
+  computer players with stress armies was not decided within its 30 minutes of game time.
+  1.0.8 failed it the same way (1.0.8's cut did not run the full suite). Bisected to
+  `24a10c47` (flyers re-aim at release, protocol 331), which only changed how the seeded
+  battle went: from then on Taros survived the first clash, and Aramon's reserve stood at
+  home for good. Replayed, 128 of the 399 stress bodies spawned on cells steeper than
+  their type's `maxSlope` (the snap tested only the class grid; the mover tests the type)
+  and walked in place there. With the spawn fix the game is decided at tick 7,951 and
+  `watch_end` passes; on the fixed tree the quick suite passed 691 of 691 and the rest of
+  the suite 315 of 316 (`harness_seat_load` again under load, passing alone), and all
+  eight gates below gave the same hashes as before the fix.
 - **`tools/check-determinism.sh`**: the six x86_64 builds (g++ and clang++ at `-O0`,
   `-O2`, `-O3`) agree on golden `dcef618cd2e4d558` (the aarch64 legs skip here).
 - **`--mpai` gates**, Inner Circle (Ulasem Arena for the last), seed 1, `TAK_SPEED=80`:

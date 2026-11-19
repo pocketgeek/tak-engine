@@ -2534,6 +2534,12 @@ public:
     void startHeadbang(int player, int unitId, bool append = false);
     bool headbangTarget(int player, int unitId = 0) const;
     bool canPlace(const UnitType* type, float x, float z, int player = -1) const;
+    // Every cell of a `foot`x`foot` footprint at origin (ox,oz) passable for `t` itself: its movement class's grid
+    // and its own maxSlope / maxWaterDepth (passable). Match setup snaps spawns with it (snapSpawn).
+    bool footprintPassable(const UnitType* t, int ox, int oz, int foot) const {
+        for (int j=0;j<foot;++j) for (int i=0;i<foot;++i) if (!passable(t,ox+i,oz+j)) return false;
+        return true;
+    }
     // A builder's placement test for a site of `type` at (x,z), the one
     // startBuild runs. A building's is canPlace. A mobile type's, a conjured
     // unit, is retail's footprint test (405824 -> 507d10(type, 0, cell, 1, 0)):

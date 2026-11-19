@@ -1185,6 +1185,10 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     // formula that sized the radius to the unit count was written first and deleted:
     // it was more code, and slower to converge on the right answer than the constant.
     constexpr int kSnapCells = 96;
+    // The class grid alone is not enough: the mover also holds each type to its own maxSlope (World::passable), so
+    // a body snapped onto a slope its class allows but its type does not could never take a step (2026-11-19:
+    // watch_end's all-AI stress game, 128 of 399 bodies spawned on such cells; the winner's reserve stood at home
+    // and the game never ended). Every snap requires the footprint passable for the type itself.
     auto snapSpawn = [&](const UnitType* t, float& ux, float& uz) {
         if (!t) return true;
         if (t->canFly) {
@@ -1205,7 +1209,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                     // Same perimeter and row order; skip the unused interior
                     // directly so dense stress fills do not exhaust the load timeout.
                     const int nx = cx + i, nz = cz + j;
-                    if (!g.fits(nx, nz, foot)) continue;
+                    if (!g.fits(nx, nz, foot) || !world.footprintPassable(t, nx, nz, foot)) continue;
                     if (!claimFoot(nx, nz, foot)) continue;                  // taken
                     ux = footprintWaypoint(nx,foot).toFloat();
                     uz = footprintWaypoint(nz,foot).toFloat();
@@ -1218,7 +1222,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         int& sweepCursor = sweepCursors[{foot, sweepGridIdx(&g)}];
         for (; sweepCursor < claimW * claimH; ++sweepCursor) {
             const int nx = sweepCursor % claimW, nz = sweepCursor / claimW;
-            if (!g.fits(nx, nz, foot)) continue;
+            if (!g.fits(nx, nz, foot) || !world.footprintPassable(t, nx, nz, foot)) continue;
             if (!claimFoot(nx, nz, foot)) continue;
             ux = footprintWaypoint(nx,foot).toFloat();
             uz = footprintWaypoint(nz,foot).toFloat();

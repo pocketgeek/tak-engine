@@ -51,6 +51,12 @@ on every kind of order, and guards of a factory keep out of its doorway.
   and 20% less under Retail, and four units finish about three seconds sooner; a dozen
   guards step aside half as often. Guards of a Navy Yard, guards of other units and idle
   units still clear the whole doorway.
+- **Benchmark armies no longer start on ground they cannot walk.** Armies placed at the
+  start of a Benchmark (and of the stress test games we use for testing) were checked
+  against the ground their kind of unit can cross, but not against each unit's own limit
+  on slopes: a third of them could start on a slope too steep for them and never move.
+  Now each unit starts only where it can walk. A Benchmark's armies stand a little
+  differently, so its results are not directly comparable with 1.0.8's.
 
 Full notes: [release-1.0.9-notes.md](docs/release-1.0.9-notes.md) ·
 validation: [release-1.0.9-validation.md](docs/release-1.0.9-validation.md)
