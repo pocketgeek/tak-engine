@@ -1618,6 +1618,11 @@ struct alignas(64) Unit {
     // guard's step aside is keyed on this factory alone and never goes back.
     // Hashed with a tag when set.
     uint32_t doorSerial = 0;
+    // On a factory: its pad's offset from its centre (world px), from the last QueryBuildInfo point its BUILD
+    // stage asked for (World::productionPosition); padKnown once one was asked for. A guard of the factory keeps
+    // out of the lane in front of it (World::guardDoorLane). Hashed with a tag when set.
+    int32_t padDx = 0, padDz = 0;
+    bool padKnown = false;
     // A factory's refused output site (BUILD stage 2's point, world px), while
     // productionRetryTick lies ahead: clearYardDoor clears it with the pad (a
     // pad point on the yard's edge puts part of the site outside the yard).
@@ -3660,6 +3665,8 @@ private:
     void guardInsertJob(Unit& u, int help, int mend);
     void pushGuardFormation(Unit& u);
     RetailRingGoal guardRing(const Unit& u, const Unit& g) const;
+    bool guardInDoorLane(const Unit& u, const Unit& g, int64_t x, int64_t z) const;
+    void guardDoorPoint(const Unit& u, const Unit& g, Fixed& x, Fixed& z) const;
     Order& guardStandAside(Unit& u);
     bool guardAlarm(const Unit& u, const Unit& g) const {
         return g.attackedTick>u.guardHeard;

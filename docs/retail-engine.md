@@ -4913,6 +4913,16 @@ times the worker time, 576-1,306 ticks clear-door); medians to clear the factory
 no crowd, Retail / Legion, small then large output: Barracks 57/61 and 92/124, Keep
 42/45 and 83/99, Dungeon 33/43 and 62/80, Academy 25/27 and 20/35 ticks.
 `landdoor_exit_test` (quick label, 128 checks) fails 40 of them without the rule.
+Guards of the factory itself (2026-11-19, owner: an assisting builder "walks away from the factory too far then
+walks back"; "maybe we could just make guarding units never stand in front of the door?"): at a land factory a
+ground guard of it takes no guard spot in the lane in front of its pad (`World::guardInDoorLane`, 3 cells either
+side of the line from the factory's centre through its pad, `Unit::padDx/padDz` from its last QueryBuildInfo point;
+retail's ring takes any bearing), and for a leaving output it steps aside only off that output's lane (output to its
+leg's point, the two bodies' half-widths and half a cell wide), to the nearest free reachable point clear of it, not
+out of the whole area. Guards of anything else, idle bodies and a yard's guards keep the area rule. Against
+69c39a18: `doorway_test`'s builder walks 1,223 -> 728 px under Legion (1,395 -> 1,131 Retail) and four outputs
+finish 80-120 ticks sooner; `landdoor_exit_test`'s dozen guards of the factory step aside 43 -> 22-25 times at
+level production.
 
 Thread counts do NOT work as the test observable for the yard handshake. A factory legitimately keeps a thread open
 while active (Creon's `Go` ends with `START_SCRIPT FactoryFun`, the machinery

@@ -8982,10 +8982,12 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
         bool escorted;
         if (!u.type->canFly) {
             const RetailRingGoal ring=guardRing(u,*t);
-            escorted=ring.accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
+            escorted=ring.accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ)) &&
+                !guardInDoorLane(u,*t,u.x.floorInt(),u.z.floorInt());
             if (!escorted) {
                 const auto point=ring.navigationPoint(u.x,u.z,u.type->footX,u.type->footZ);
                 end.x=point.x;end.z=point.z;
+                guardDoorPoint(u,*t,end.x,end.z);
             }
         } else {
             const float dx = (t->x - u.x).toFloat(), dz = (t->z - u.z).toFloat();
@@ -13480,6 +13482,37 @@ RetailRingGoal World::guardRing(const Unit& u, const Unit& g) const {
             inner,outer,retailCircleRadiusSquared(outer)};
 }
 
+// Engine deviation (user-requested 2026-11-19, "maybe we could just make guarding units never stand in front of the
+// door?"): a ground guard of a factory keeps out of the lane in front of its pad, so an output never has a guard to
+// move out of its way. Retail's ring takes any bearing. The lane runs from the factory's centre through its pad
+// (Unit::padDx/padDz, known once its BUILD stage has asked for a site) and outward, 3 cells either side of its line
+// (a 4x4 output's half and a cell) plus the guard's half-width. Before the factory has asked for a site, or with a
+// pad at its centre, there is no lane; clearYardDoor still moves guards for outputs that meet one anyway.
+static constexpr int64_t kDoorLaneHalf=3*16;
+bool World::guardInDoorLane(const Unit& u, const Unit& g, int64_t x, int64_t z) const {
+    if (!g.padKnown || !g.type || !g.type->isStructure() || !g.type->producesUnits() || u.type->canFly) return false;
+    const int64_t dx=g.padDx,dz=g.padDz,len=int64_t(isqrt64(uint64_t(dx*dx+dz*dz)));
+    if (len<8) return false;
+    const int64_t rx=x-g.x.floorInt(),rz=z-g.z.floorInt();
+    const int64_t along=rx*dx+rz*dz,across=std::abs(rx*dz-rz*dx);
+    return along>0 && across<(kDoorLaneHalf+std::max(u.type->footX,u.type->footZ)*8)*len;
+}
+// A ring point in the lane goes round to the lane's edge on the guard's side, at the same distance from the centre.
+void World::guardDoorPoint(const Unit& u, const Unit& g, Fixed& x, Fixed& z) const {
+    if (!guardInDoorLane(u,g,x.floorInt(),z.floorInt())) return;
+    const int64_t dx=g.padDx,dz=g.padDz,len=int64_t(isqrt64(uint64_t(dx*dx+dz*dz)));
+    const int64_t cx=g.x.floorInt(),cz=g.z.floorInt();
+    const int64_t px=x.floorInt()-cx,pz=z.floorInt()-cz;
+    const int64_t r=int64_t(isqrt64(uint64_t(px*px+pz*pz)));
+    const int64_t need=kDoorLaneHalf+std::max(u.type->footX,u.type->footZ)*8+8;
+    if (need>=r) return;
+    const int64_t ux=u.x.floorInt()-cx,uz=u.z.floorInt()-cz;
+    const int64_t side=ux*dz-uz*dx>=0 ? 1 : -1;   // the guard's side of the lane's line
+    const int64_t along=int64_t(isqrt64(uint64_t(r*r-need*need)));
+    x=Fixed::fromInt(int32_t(cx+(dx*along+side*dz*need)/len));
+    z=Fixed::fromInt(int32_t(cz+(dz*along-side*dx*need)/len));
+}
+
 // The guard's step aside for a job put ahead of it: the guard stays one
 // order (its route corners belong to the old walk) at the front.
 Order& World::guardStandAside(Unit& u) {
@@ -17586,8 +17619,44 @@ void World::clearYardDoor(const Unit& factory) {
         if (!water && alongZ) (az>=0 ? zt : zb)=cz;
         else if (!water) (ax>=0 ? zl : zr)=cx;
     } else if (refused) {zl=pl;zr=pr;zt=pt;zb=pb;}
-    struct Mover {int id,heldBy;};   // heldBy: index into held, or -1 for the zone.
+    struct Mover {int id,heldBy;bool lane;};   // heldBy: index into held, or -1 for the zone.
     std::vector<Mover> movers;
+    // A guard of this land factory (a builder assisting it, or any guard of it) moves for a leaving output only
+    // off its lane, and only as far as clears it (2026-11-19, user: an assisting builder "walks away from the factory too
+    // far then walks back to assist with the next build"; "should only move away if it's blocking the door and
+    // should only move away the necessary amount"). The lane runs from the output to its leg's point (its PARK
+    // spot or rally), as wide as the two bodies plus half a cell: a guard closer to it than that steps across it
+    // to the nearest free, reachable point just clear of it, on its own side first. Its guard spots keep out of the
+    // lane in front of the pad besides (guardInDoorLane). Guards of anything else and idle bodies still clear the
+    // whole area: a dozen soldiers guarding one of them at the door held outputs with the lane alone (landdoor_exit
+    // guard crowds up to 20% slower), a narrower strip left idle crowds holding outputs (above), and a yard's ships
+    // leave on any PARK bearing (eight Iron Clads guarding a shore yard held its sixth output in). Measured against
+    // main 69c39a18: doorway_test's builder walks 1,223 -> 728 px under Legion (1,395 -> 1,131 Retail, medians of 54)
+    // and four outputs finish ~80-120 ticks sooner; landdoor_exit's dozen guards of the factory step aside half as
+    // often (43 -> 22-25) at level production.
+    int64_t lox=0,loz=0,lex=0,lez=0;
+    bool lane=false;
+    if (leaving) {
+        const Order& o=leaving->orders[currentLeg(leaving->orders)];
+        lox=leaving->x.floorInt();loz=leaving->z.floorInt();lex=o.x.floorInt();lez=o.z.floorInt();
+        lane=lex!=lox || lez!=loz;
+    }
+    const auto laneClear=[&](const Unit& k) {
+        return int64_t(std::max(leaving->type->footX,leaving->type->footZ)*8+std::max(k.type->footX,k.type->footZ)*8+8);
+    };
+    // The lane's point nearest (x,z).
+    const auto laneNearest=[&](int64_t x,int64_t z,int64_t& qx,int64_t& qz) {
+        const int64_t dx=lex-lox,dz=lez-loz,len2=dx*dx+dz*dz,dot=(x-lox)*dx+(z-loz)*dz;
+        if (dot<=0) {qx=lox;qz=loz;}
+        else if (dot>=len2) {qx=lex;qz=lez;}
+        else {qx=lox+dx*dot/len2;qz=loz+dz*dot/len2;}
+    };
+    const auto inLane=[&](const Unit& k) {
+        int64_t qx=0,qz=0;
+        const int64_t x=k.x.floorInt(),z=k.z.floorInt(),c=laneClear(k);
+        laneNearest(x,z,qx,qz);
+        return (x-qx)*(x-qx)+(z-qz)*(z-qz)<c*c;
+    };
     // A guard steps aside once per this factory's doorSerial: once per finished
     // output and once per refusal episode of the next one's site.
     forEachNear(float(cx),float(cz),reach,[&](int index) {
@@ -17602,10 +17671,13 @@ void World::clearYardDoor(const Unit& factory) {
         // the output leaving after it: not for every next one that walks past.
         // A guard (its own output or not) steps aside for each output once.
         const bool guarding=!k.orders.empty();
-        const bool zone=overlaps(k,zl,zr,zt,zb) && (guarding || k.builtBy!=factory.id || overlaps(k,pl,pr,pt,pb));
+        const bool byLane=guarding && lane && !water && k.orders[currentLeg(k.orders)].targetId==factory.id &&
+            !overlaps(k,yl,yr,yt,yb);
+        const bool zone=byLane ? inLane(k) :
+            overlaps(k,zl,zr,zt,zb) && (guarding || k.builtBy!=factory.id || overlaps(k,pl,pr,pt,pb));
         if (guarding && (zone || at>=0) && k.doorYieldFactory==factory.id && k.doorYieldSerial==factory.doorSerial) return;
-        if (zone) movers.push_back({k.id,-1});
-        else if (at>=0) movers.push_back({k.id,at});
+        if (zone) movers.push_back({k.id,-1,byLane});
+        else if (at>=0) movers.push_back({k.id,at,false});
     });
     if (movers.empty()) return;
     std::sort(movers.begin(),movers.end(),[](const Mover& a,const Mover& b){return a.id<b.id;});
@@ -17620,11 +17692,40 @@ void World::clearYardDoor(const Unit& factory) {
             taken.push_back({footprintOrigin(target.first,k.type->footX),footprintOrigin(target.second,k.type->footZ),
                              k.type->footX,k.type->footZ});
     }
-    for (const auto& [id,at]:movers) {
+    // Just clear of the lane, across it: own side first, half a cell further each try, up to 4 cells past clear.
+    const auto offLane=[&](const Unit& k,int& px,int& pz) {
+        int64_t qx=0,qz=0;
+        const int64_t x=k.x.floorInt(),z=k.z.floorInt(),c=laneClear(k);
+        laneNearest(x,z,qx,qz);
+        int64_t nx=x-qx,nz=z-qz;
+        if (!nx && !nz) {nx=-(lez-loz);nz=lex-lox;}   // on the lane's line: its left
+        const int64_t len=int64_t(isqrt64(uint64_t(nx*nx+nz*nz)));
+        if (!len) return false;
+        for (int side:{1,-1})
+            for (int64_t d=c+8;d<=c+8+64;d+=8) {
+                const int64_t tx=qx+side*nx*d/len,tz=qz+side*nz*d/len;
+                if (tx<16 || tz<16 || tx>=terW_*16-16 || tz>=terH_*16-16) continue;
+                const int ox=footprintOrigin(Fixed::fromInt(int32_t(tx)),k.type->footX);
+                const int oz=footprintOrigin(Fixed::fromInt(int32_t(tz)),k.type->footZ);
+                if (ox*16<yr && yl<(ox+k.type->footX)*16 && oz*16<yb && yt<(oz+k.type->footZ)*16) continue;
+                bool clash=false;
+                for (const auto& t:taken)
+                    clash|=ox<t[0]+t[2] && t[0]<ox+k.type->footX && oz<t[1]+t[3] && t[1]<oz+k.type->footZ;
+                if (clash) continue;
+                const auto bodies=searchBodyRect(ox,oz,k.type->footX,k.type->footZ,k.id);
+                if (std::any_of(bodies.cells.begin(),bodies.cells.end(),[](const Unit* b){return b!=nullptr;})) continue;
+                if (!passable(k.type,int(tx)/16,int(tz)/16) || !pathExists(k.type,float(tx),float(tz),float(x),float(z))) continue;
+                px=int(tx);pz=int(tz);
+                return true;
+            }
+        return false;
+    };
+    for (const auto& [id,at,byLane]:movers) {
         Unit& k=*unit(id);
         const int kx=k.x.floorInt(),kz=k.z.floorInt();
         int px=0,pz=0;
-        if (at>=0) {
+        if (byLane && offLane(k,px,pz)) {}
+        else if (at>=0) {
             // Off what it holds up: out of the cells round that output, away
             // from it.
             const auto& h=held[size_t(at)];
@@ -19152,6 +19253,7 @@ bool World::productionPosition(int builderId,const UnitType* t,Fixed& spawnX,Fix
         const auto offset=retailPieceOrigin(u.type->productionModel,it->second.peek().pieces,
                                            std::bit_cast<int32_t>(args[0]),portHeadingToRetail(u.heading));
         spawnX=u.x+Fixed::raw(offset[0]); spawnZ=u.z+Fixed::raw(offset[2]);
+        u.padDx=(spawnX-u.x).floorInt();u.padDz=(spawnZ-u.z).floorInt();u.padKnown=true;
         const int cx=std::clamp(u.x.floorInt()/16,0,std::max(0,terW_-1));
         const int cz=std::clamp(u.z.floorInt()/16,0,std::max(0,terH_-1));
         spawnY=Fixed::fromInt(heights_.empty() ? 0 : heights_[size_t(cz)*terW_+cx])+Fixed::raw(offset[1]);
@@ -19892,7 +19994,8 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         float dist = std::sqrt(dx * dx + dz * dz);
         if (o.guard) {
             const Unit* t = unit(o.targetId);
-            if (t && t->type && guardRing(u,*t).accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ)))
+            if (t && t->type && guardRing(u,*t).accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ)) &&
+                !guardInDoorLane(u,*t,u.x.floorInt(),u.z.floorInt()))
                 return;   // in escort position, not merely near a waypoint
         }
         // A FINAL move goal completes a little short, so a crowd sharing one
@@ -22443,6 +22546,7 @@ uint64_t World::stateHash() const {
         if (u.guardHeard) { mix(0x47484541u); mix(u.guardHeard); }
         if (u.doorYieldFactory) { mix(0x444f4f52u); mix(uint32_t(u.doorYieldFactory)); mix(u.doorYieldSerial); }
         if (u.doorSerial) { mix(0x44534552u); mix(u.doorSerial); }
+        if (u.padKnown) { mix(0x50414444u); mix(uint32_t(u.padDx)); mix(uint32_t(u.padDz)); }
         if (u.reviveTarget) {
             mix(0x52455649u);mix(uint32_t(u.reviveTarget));mix(uint32_t(u.reviveWork));mix(uint8_t(u.reviveMode));
         }

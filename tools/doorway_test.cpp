@@ -64,10 +64,21 @@ bool doorCase(const TypeRegistry& registry,const UnitType& factory,const UnitTyp
     else world.assist(builder,firstSite,false);
     const Rect yard=footprint(*world.unit(id));
     int complete=0,tick=0,helped=0;
+    // Once it has helped: its farthest from the factory's rectangle (px) and the ground it walked.
+    int stray=0;double walked=0;float lastX=0,lastZ=0;
     for(;tick<20000 && complete<4;++tick) {
         world.tick(1.f/30);complete=0;
         const Unit* b=world.unit(builder);
         if(b && b->buildSiteId)helped=std::max(helped,1);
+        if(b && helped) {
+            const int bx0=footprintOrigin(b->x,b->type->footX)*16,bz0=footprintOrigin(b->z,b->type->footZ)*16;
+            const int gx=std::max({0,yard.x*16-(bx0+b->type->footX*16),bx0-(yard.x+yard.w)*16});
+            const int gz=std::max({0,yard.z*16-(bz0+b->type->footZ*16),bz0-(yard.z+yard.h)*16});
+            stray=std::max(stray,std::max(gx,gz));
+            if(lastX || lastZ)walked+=std::sqrt(double(b->x.toFloat()-lastX)*(b->x.toFloat()-lastX)+
+                                                double(b->z.toFloat()-lastZ)*(b->z.toFloat()-lastZ));
+            lastX=b->x.toFloat();lastZ=b->z.toFloat();
+        }
         for(const auto& u:world.units())
             if(u.id!=id && u.id!=builder && u.alive() && u.type==output && !u.underConstruction)++complete;
     }
@@ -78,9 +89,9 @@ bool doorCase(const TypeRegistry& registry,const UnitType& factory,const UnitTyp
             ++inYard;who+=" "+u.type->id+(u.id==builder?"(helper)":"");
         }
     const bool pass=complete>=4 && inYard==0 && helped;
-    std::printf("%s: balance=%s mode=%s %s side=%d factory=%s output=%s helper=%s completed=%d helped=%d inYard=%d%s ticks=%d hash=%016llx\n",
+    std::printf("%s: balance=%s mode=%s %s side=%d factory=%s output=%s helper=%s completed=%d helped=%d inYard=%d%s ticks=%d stray=%d walked=%d hash=%016llx\n",
         pass?"PASS":"FAIL",crusades?"Crusades":"standard",legion?"Legion":"Retail",mode==Mode::Guard?"guard":"assist",side,
-        factory.id.c_str(),output->id.c_str(),helper.id.c_str(),complete,helped,inYard,who.c_str(),tick,
+        factory.id.c_str(),output->id.c_str(),helper.id.c_str(),complete,helped,inYard,who.c_str(),tick,stray,int(walked),
         (unsigned long long)world.stateHash());
     return pass;
 }

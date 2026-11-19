@@ -85,6 +85,8 @@ struct Result {
     // the farthest one's distance from the factory's centre (px), and moves
     // aside of one unit while the same output was the first one leaving.
     int guarding=0,farthest=0,twice=0,asides=0,kept=0;
+    // Guards: the farthest any one strayed from where it stood when production began (px).
+    int stray=0;
     std::vector<int> clear,door;
     static int median(std::vector<int> v) {
         if(v.empty())return -1;
@@ -202,6 +204,11 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,const cha
             }
             lastAside[i]=aside;
         }
+        if(crowd==Crowd::Ward || crowd==Crowd::Twin || guardCrowd(crowd))
+            for(size_t i=guardCrowd(crowd) ? 1 : 0;i<idle.size();++i)if(const auto* u=w.unit(idle[i]);u && u->alive()) {
+                const double dx=u->x.toFloat()-crowdAt[i].first,dz=u->z.toFloat()-crowdAt[i].second;
+                r.stray=std::max(r.stray,int(std::sqrt(dx*dx+dz*dz)));
+            }
         for(const auto& u:w.units()) {
             if(!u.alive() || u.type!=output || u.underConstruction || u.id==id || u.builtBy!=id)continue;
             if(std::find(idle.begin(),idle.end(),u.id)!=idle.end())continue;
@@ -249,9 +256,9 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,const cha
     for(int k:idle)if(const auto* u=w.unit(k);u && u->alive())r.inDoor+=intersects(footprint(*u),strip);
     r.crowdMoved=exitOrder;
     std::printf("exit mode=%s factory=%s output=%s crowd=%s produced=%d/%d stuck=%d lastDone=%d inDoor=%d nudged=%d "
-                "exitOrder=%d asides=%d twice=%d guarding=%d farthest=%d clear med=%d max=%d door med=%d max=%d hash=%016llx\n",
+                "exitOrder=%d asides=%d twice=%d guarding=%d farthest=%d stray=%d clear med=%d max=%d door med=%d max=%d hash=%016llx\n",
         mode==sim::PathfindingMode::Legion?"Legion":"Retail",factoryName,outputName,crowdName(crowd),r.produced,kOutputs,
-        r.stuck,r.lastDone,r.inDoor,r.nudged,int(exitOrder),r.asides,r.twice,r.guarding,r.farthest,Result::median(r.clear),Result::max(r.clear),
+        r.stuck,r.lastDone,r.inDoor,r.nudged,int(exitOrder),r.asides,r.twice,r.guarding,r.farthest,r.stray,Result::median(r.clear),Result::max(r.clear),
         Result::median(r.door),Result::max(r.door),(unsigned long long)w.stateHash());
     return r;
 }
