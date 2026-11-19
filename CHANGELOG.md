@@ -20,6 +20,41 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports: the latest release's live in [`docs/`](docs/), every earlier one's
 in the source of its tag.
 
+## 1.0.9
+*2026-11-19 · protocol 336 · replay format 15 · does not play with 1.0.8, nor its replays*
+
+Units walk round others still being conjured, face the way they walk, pass slower allies
+on every kind of order, and guards of a factory keep out of its doorway.
+
+- **Legion pathfinding: units walk round units still being conjured.** A Zhon Beast
+  Handler conjuring one unit after another left its Hunters standing behind the next
+  unit being made, often for over ten seconds, until it finished: Legion took the
+  unfinished body for empty ground. Units now see it as in the way and take a detour at
+  once.
+- **Legion pathfinding: units face the way they walk unless they are shooting.** Slow
+  units on an attack-move walked whole detours sideways, and units attacking or guarding
+  side-stepped round their target's ring facing away from their steps. Now any unit with
+  no weapon on a target turns to its motion: units round an attack or guard target step
+  sideways and backward 50 to 85% less, and reach it as soon as before.
+- **Legion pathfinding: fast units pass slower allies on patrol, attack and guard
+  orders, and no longer fall in behind them.** Fast units sometimes passed slow ones and
+  sometimes did not: one walking close behind a slower ally matched its pace instead of
+  going round it, and on patrol, attack and guard orders fast units never passed at all.
+  Now they pass wherever there is room. In a column of fast and slow units, the fast
+  ones arrive in less than half the time on attack and guard orders (the last of them
+  after 909 ticks instead of 2,049 on attack), and the slow ones no later.
+- **Guards of a factory keep out of its doorway.** A builder assisting a factory walked
+  well away from it each time a unit came out, then walked back to help with the next
+  one. Guards of a land factory, builders and soldiers alike, no longer stand in front
+  of its door, and when a unit comes out they move only if they are in its way, and only
+  as far as clears it. An assisting builder walks about 40% less under Legion pathfinding
+  and 20% less under Retail, and four units finish about three seconds sooner; a dozen
+  guards step aside half as often. Guards of a Navy Yard, guards of other units and idle
+  units still clear the whole doorway.
+
+Full notes: [release-1.0.9-notes.md](docs/release-1.0.9-notes.md) ·
+validation: [release-1.0.9-validation.md](docs/release-1.0.9-validation.md)
+
 ## 1.0.8
 *2026-11-18 · protocol 335 · replay format 15 · does not play with 1.0.7, nor its replays*
 
@@ -63,8 +98,8 @@ to a few thousand units, you will not notice a difference.
   results can differ, this release has a new protocol number. Retail pathfinding is
   unchanged.
 
-Full notes: [release-1.0.8-notes.md](docs/release-1.0.8-notes.md) ·
-validation: [release-1.0.8-validation.md](docs/release-1.0.8-validation.md)
+Full notes: [release-1.0.8-notes.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.8/docs/release-1.0.8-notes.md) ·
+validation: [release-1.0.8-validation.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.8/docs/release-1.0.8-validation.md)
 
 ## 1.0.7
 *2026-11-16 · protocol 334 · replay format 15 · does not play with 1.0.6, nor its replays*

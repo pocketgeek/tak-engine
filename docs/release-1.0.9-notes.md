@@ -1,34 +1,32 @@
-# TAK Engine 1.0.8
+# TAK Engine 1.0.9
 
 TAK Engine is a modern, clean-room recreation of *Total Annihilation: Kingdoms*
 (Cavedog, 1999), written in C++20 with SDL2, for Windows, macOS and Linux. It plays the
 original game's skirmishes, campaigns and multiplayer from your own installation, and
 comes with Cartographer, a map and scenario editor, and `takserver`, a dedicated
-multiplayer server. 1.0.8 updates 1.0.7: with Legion pathfinding, an order to thousands
-of units at once no longer makes the game stutter, and very large armies take less
-processor time.
+multiplayer server. 1.0.9 updates 1.0.9: units walk round others still being conjured,
+face the way they walk, pass slower allies on every kind of order, and guards of a
+factory keep out of its doorway.
 
 ## What's new
 
-- **Legion pathfinding: an order to a very large army no longer makes the game
-  stutter.** With 8,500 units under one order, 21 game ticks used to run late while the
-  route was worked out, the slowest taking 161 ms where a tick has 33 ms at normal
-  speed. Now the slowest takes 25 ms and none runs late.
-- **Legion pathfinding: marches of thousands of units take less processor time.** In our
-  measurements the average tick with 10,000 units marching over open ground falls from
-  25.2 ms to 20.5 ms, with 5,000 units from 10.9 ms to 9.2 ms, and with 1,000 units it
-  is 13% shorter through a maze. These shortcuts by themselves change nothing in how
-  units move. In a game of the usual size, up to a few thousand units, you will not
-  notice a difference.
-- **Legion pathfinding: three corrections**, none of them visible in play: a unit could
-  fail to step aside for one tick after two allies swapped places just ahead of it, a
-  unit before a narrow passage could take its lane up to a second late, and the room a
-  crowd counts on at its destination was not measured again when a building, a wreck or
-  a corpse appeared or was cleared there. In our tests of crowds of 1,000 units and more
-  that meet or cross each other, the first of them changes how some turn out, sometimes
-  better and sometimes worse, so 1.0.8 has a new protocol number.
+- **Legion pathfinding: units walk round units still being conjured.** A Zhon Beast
+  Handler conjuring one unit after another left its Hunters waiting behind the next
+  unit being made, often for over ten seconds. Now they take a detour at once.
+- **Legion pathfinding: units face the way they walk unless they are shooting.** No more
+  slow units walking whole detours sideways on an attack-move; units round an attack or
+  guard target step sideways and backward 50 to 85% less and reach it as soon as before.
+- **Legion pathfinding: fast units pass slower allies on patrol, attack and guard
+  orders**, and no longer fall in behind a slower ally on any order. In a column of fast
+  and slow units, the fast ones arrive in less than half the time on attack and guard
+  orders, and the slow ones no later.
+- **Guards of a factory keep out of its doorway.** A builder assisting a factory no longer
+  walks well away from it each time a unit comes out: guards of a land factory do not
+  stand in front of its door, and move only if a new unit's way is blocked, only as far
+  as clears it. An assisting builder walks about 40% less under Legion pathfinding and
+  20% less under Retail, and production with it finishes a little sooner.
 
-The [CHANGELOG](https://github.com/pocketgeek/tak-engine/blob/v1.0.8/CHANGELOG.md) has the
+The [CHANGELOG](https://github.com/pocketgeek/tak-engine/blob/v1.0.9/CHANGELOG.md) has the
 details.
 
 ## What you need
@@ -48,19 +46,19 @@ Pick the file for your system below. Each package holds the game, Cartographer a
 
 | System | File |
 | --- | --- |
-| Windows x64 | `tak-engine-1.0.8-windows-x64-setup.exe` (installer), or `takclient-1.0.8-windows-x64.zip` |
-| Windows 11 on ARM | `takclient-1.0.8-windows-arm64.zip` |
-| macOS 14 or later, Apple Silicon | `tak-engine-1.0.8-macos-arm64.dmg`, or `takclient-1.0.8-macos-arm64.zip` |
-| macOS 14 or later, Intel | `tak-engine-1.0.8-macos-x64.dmg`, or `takclient-1.0.8-macos-x64.zip` |
-| Ubuntu 22.04 / 24.04 / 26.04 | `tak-engine-1.0.8-ubuntu<version>-amd64.deb` or `-arm64.deb` |
-| Debian 12 / 13 | `tak-engine-1.0.8-debian<version>-amd64.deb` or `-arm64.deb` |
-| Fedora 44 / 45 | `tak-engine-1.0.8-fedora<version>-x86_64.rpm` or `-aarch64.rpm` |
-| openSUSE Leap 16.0 | `tak-engine-1.0.8-opensuse-leap16.0-x86_64.rpm` or `-aarch64.rpm` |
-| openSUSE Tumbleweed | `tak-engine-1.0.8-opensuse-tumbleweed-x86_64.rpm` or `-aarch64.rpm` |
-| RHEL, Rocky Linux, AlmaLinux 9 / 10 | `tak-engine-1.0.8-el<version>-x86_64.rpm` or `-aarch64.rpm` |
-| Arch Linux (x64) | `tak-engine-1.0.8-1-x86_64.pkg.tar.zst` |
-| Slackware64 15.0 | `tak-engine-1.0.8-x86_64-1_slack15.0.txz` |
-| Any other Linux, Steam Deck | `tak-engine-1.0.8-x86_64.AppImage` or `tak-engine-1.0.8-aarch64.AppImage` |
+| Windows x64 | `tak-engine-1.0.9-windows-x64-setup.exe` (installer), or `takclient-1.0.9-windows-x64.zip` |
+| Windows 11 on ARM | `takclient-1.0.9-windows-arm64.zip` |
+| macOS 14 or later, Apple Silicon | `tak-engine-1.0.9-macos-arm64.dmg`, or `takclient-1.0.9-macos-arm64.zip` |
+| macOS 14 or later, Intel | `tak-engine-1.0.9-macos-x64.dmg`, or `takclient-1.0.9-macos-x64.zip` |
+| Ubuntu 22.04 / 24.04 / 26.04 | `tak-engine-1.0.9-ubuntu<version>-amd64.deb` or `-arm64.deb` |
+| Debian 12 / 13 | `tak-engine-1.0.9-debian<version>-amd64.deb` or `-arm64.deb` |
+| Fedora 44 / 45 | `tak-engine-1.0.9-fedora<version>-x86_64.rpm` or `-aarch64.rpm` |
+| openSUSE Leap 16.0 | `tak-engine-1.0.9-opensuse-leap16.0-x86_64.rpm` or `-aarch64.rpm` |
+| openSUSE Tumbleweed | `tak-engine-1.0.9-opensuse-tumbleweed-x86_64.rpm` or `-aarch64.rpm` |
+| RHEL, Rocky Linux, AlmaLinux 9 / 10 | `tak-engine-1.0.9-el<version>-x86_64.rpm` or `-aarch64.rpm` |
+| Arch Linux (x64) | `tak-engine-1.0.9-1-x86_64.pkg.tar.zst` |
+| Slackware64 15.0 | `tak-engine-1.0.9-x86_64-1_slack15.0.txz` |
+| Any other Linux, Steam Deck | `tak-engine-1.0.9-x86_64.AppImage` or `tak-engine-1.0.9-aarch64.AppImage` |
 
 The `-debug` downloads (`takclient-windows-<arch>-debug.zip`,
 `takclient-macos-<arch>-debug.zip`, `tak-engine-linux-<arch>-debug.tar.gz`) are for
@@ -112,15 +110,15 @@ bundled: your system provides only graphics, sound and windowing.
 
 ## Compatibility
 
-1.0.8 uses network protocol **335**, replay format **15** and random map generator
-version **10**. The three Legion corrections can change how a game turns out, so **it
-does not play with 1.0.7 or earlier, nor play their replays**. Random maps and saved map
-files are unchanged. Everyone in a game, and the server, needs 1.0.8.
+1.0.9 uses network protocol **336**, replay format **15** and random map generator
+version **10**. The changes to how units walk can change how a game turns out, so **it
+does not play with 1.0.8 or earlier, nor play their replays**. Random maps and saved map
+files are unchanged. Everyone in a game, and the server, needs 1.0.9.
 
-The [quick start](https://github.com/pocketgeek/tak-engine/blob/v1.0.8/docs/quick-start.md),
-the [user guide](https://github.com/pocketgeek/tak-engine/blob/v1.0.8/docs/user-guide.md)
-and the [CHANGELOG](https://github.com/pocketgeek/tak-engine/blob/v1.0.8/CHANGELOG.md)
+The [quick start](https://github.com/pocketgeek/tak-engine/blob/v1.0.9/docs/quick-start.md),
+the [user guide](https://github.com/pocketgeek/tak-engine/blob/v1.0.9/docs/user-guide.md)
+and the [CHANGELOG](https://github.com/pocketgeek/tak-engine/blob/v1.0.9/CHANGELOG.md)
 cover the rest.
 
 The tests and checks behind this release are in the
-[validation report](release-1.0.8-validation.md).
+[validation report](release-1.0.9-validation.md).
