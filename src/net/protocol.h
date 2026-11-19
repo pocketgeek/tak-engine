@@ -24,7 +24,7 @@ namespace tak::net {
 // Bump it whenever the wire layout changes or the simulation can compute a different
 // result from the same inputs -- a peer or replay of another number would desync.
 // The CHANGELOG records what each release changed.
-constexpr uint32_t kNetVersion = 336;      // 336: Legion: unfinished ground bodies (conjures, sites) block and are walked round
+constexpr uint32_t kNetVersion = 337;      // 337: a factory guard's held step aside ends once the door is clear
 constexpr uint32_t kMaxFrame = 1u << 18;   // 256 KB frame cap (hardening) -- headroom for a
                                            // big tick bundle when many units are ordered at once
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)
