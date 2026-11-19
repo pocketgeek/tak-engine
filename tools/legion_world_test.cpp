@@ -1194,6 +1194,36 @@ void staticidle() {
 // reference), 2 the block takes off soon after the order (its cells must
 // clear at once for ground steering). Retail runs the same layout for
 // reference (measured, not asserted).
+// An unfinished ground body (a conjure in progress, a decaying site) stands in
+// retail's ground grid, so mobilePlacement refuses a step into it, but World::occ_
+// leaves it out. Legion once saw free ground there: a body whose way ran through
+// the site held against it with no blocker to detour round or ask, and walked on
+// only once the site finished (a Beast Handler's repeat-conjured Hunters, each
+// waiting out the next one's conjure). The mover must walk round the site, which
+// stays unfinished and unmoved (nothing may part or yield it).
+void unfinishedsite() {
+    Fixture f(48,24);
+    f.publish();
+    const UnitType t=mover(2);
+    const int site=f.spawn(t,12,12),body=f.spawn(t,6,12);
+    f.world.unit(site)->underConstruction=true;
+    f.start();
+    const Fixed sx=f.world.unit(site)->x,sz=f.world.unit(site)->z;
+    tak::net::Command c;c.kind=tak::net::Cmd::Move;c.player=0;c.unitId=body;c.x=36*16.f;c.z=12*16.f;
+    TypeRegistry reg;applyCommand(f.world,reg,c);
+    int arrived=-1;
+    // The straight walk takes ~267 ticks; an unattended site decays well after 300.
+    for(int k=0;k<300&&arrived<0;++k) {
+        f.world.tick(1.f/30);
+        check(f.legal(body),"unfinishedsite: the mover stands on the site");
+        if(f.world.unit(body)->orders.empty())arrived=k;
+    }
+    const Unit* s=f.world.unit(site);
+    std::printf("unfinishedsite arrived=%d\n",arrived);
+    check(s&&s->alive()&&s->underConstruction&&s->x==sx&&s->z==sz,"unfinishedsite: the site was moved, finished or lost");
+    check(arrived>=0,"unfinishedsite: the mover waited at the unfinished site");
+}
+
 struct FlyerRun {uint64_t hash=0;int arrived=0,ticks=0,half=-1,most=-1;uint64_t holds=0,pushes=0,stuck=0,overlap=0,spins=0,reversals=0;};
 FlyerRun landedflyersRun(int layout,bool legion,int flyerFoot,bool serial=true) {
     Fixture f(200,100,serial);f.publish();
@@ -5227,7 +5257,7 @@ void destinations() {
 int main(int argc,char** argv) {
     LegionNavigator::setInstrumentProbes(true);   // lanegeom reads the vertex probe's counters
     const std::map<std::string_view,std::function<void()>> cases{
-        {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},{"longroute",longroute},
+        {"clearance",clearance},{"unfinishedsite",unfinishedsite},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},{"longroute",longroute},
         {"crowdhold",crowdhold},{"replace",replace},{"unreachable",unreachable},{"quota",quota},{"pens",pens},
         {"determinism",determinism},{"formation",formation},{"slotblock",slotblock},
         {"staticblock",staticblock},{"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn},

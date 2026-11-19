@@ -1774,7 +1774,39 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // tick with `grounded`; never hashed.
     PackedWhenKept<int32_t> liftHome;
     std::vector<int> liftHomeCells,liftedIds;
-    int32_t occAt(size_t c) const {const int32_t o=w.occ_[c];return o||groundedCells.empty()?o:grounded[c];}
+    // Unfinished ground bodies (a conjure in progress, a decaying site) are
+    // in retail's ground grid as well, so mobilePlacement refuses a step into
+    // one, but World::occ_ leaves them out. Legion saw free ground there: a
+    // body bound past a conjurer's next site held against it with nothing to
+    // detour round or ask, until the site finished and walked off (a Beast
+    // Handler's repeat-conjured Hunters, each waiting out the next one's
+    // conjure). `sites` overlays them on occ_ like `grounded`; allocated on
+    // the first site, rebuilt each tick from hashed unit state, never hashed.
+    PackedWhenKept<int32_t> sites;       // per cell: an unfinished ground body covering it (0 none)
+    std::vector<int> siteCells;
+    int32_t occAt(size_t c) const {
+        const int32_t o=w.occ_[c];
+        if(o)return o;
+        if(!groundedCells.empty()&&grounded[c])return grounded[c];
+        return siteCells.empty()?0:sites[c];
+    }
+    bool overlaid() const {return !groundedCells.empty()||!siteCells.empty();}
+    // Is footprint origin (x,z) blocked by unfinished bodies alone (cells of `sites`, nothing in occ_ or
+    // `grounded`)? Nothing moves, parts or yields one until it is finished.
+    bool siteBlocked(const Unit& u,int x,int z) const {
+        if(siteCells.empty())return false;
+        bool any=false;
+        for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
+            const int cx=x+i,cz=z+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            const size_t c=size_t(cz)*w.occW_+cx;
+            const int32_t o=occAt(c);
+            if(!o||o==u.id)continue;
+            if(o!=sites[c])return false;
+            any=true;
+        }
+        return any;
+    }
     // passAhead's oncoming-sector mask (A7): per kPassBlock x kPassBlock
     // block of cells, the 16-sector directions (sector16) to their goals
     // of the members that may stand there, each widened by a sector either
@@ -1950,6 +1982,25 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // not at the next scan.
         for(int id:groundedIds)if(!std::binary_search(ids.begin(),ids.end(),id))unstamp(id);
         groundedIds.swap(ids);
+    }
+    void stampSites() {
+        for(int c:siteCells)sites[size_t(c)]=0;
+        siteCells.clear();
+        if(w.occW_<=0)return;
+        const size_t n=size_t(w.occW_)*w.occH_;
+        if(!sites.empty()&&sites.size()!=n)sites.clear();
+        for(const Unit& u:w.units_) {
+            if(!u.underConstruction||!u.alive()||u.embarked()||!u.type||u.type->canFly||u.type->isStructure())continue;
+            if(sites.empty())sites.assign(n,0);
+            const int fx=u.type->footX,fz=u.type->footZ;
+            const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+                const int cx=ox+i,cz=oz+j;
+                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                int32_t& o=sites[size_t(cz)*w.occW_+cx];
+                if(!o) {o=u.id;siteCells.push_back(cz*w.occW_+cx);}
+            }
+        }
     }
     static uint64_t commandKey(int player,uint32_t issue) {return uint64_t(uint32_t(player))<<32|issue;}
     static constexpr uint64_t kNoSoft=~0ull-1;   // a field / line that ignores soft obstacles
@@ -2634,7 +2685,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         b.metadata+=(anchors.size()+yielding.size()+approachDone.size()+parts.size()+anchorsAt.size())*(S::kNode+32);
         b.metadata+=resolved.size()*(S::kNode+24);
         b.scratch+=soft.size()*S::kCell32+softKind.size()*S::kCell8+softOwner.size()*S::kMemo+softBodies.size()*32+
-            grounded.size()*S::kCell32+liftHome.size()*S::kCell32+passMask.size()*S::kCell16+liftBuckets.size()*S::kCell16+
+            grounded.size()*S::kCell32+liftHome.size()*S::kCell32+sites.size()*S::kCell32+passMask.size()*S::kCell16+liftBuckets.size()*S::kCell16+
             watchMark.size()+anchorMark.size();
         for(const auto& k:softCounts)b.scratch+=k.at.size()*S::kCell32;
         // Retained scratch: the plane refresh's split-search marks, the lift walk's goal map, the
@@ -2642,7 +2693,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         b.scratch+=refreshScratch.seenGen.size()*S::kCell32+refreshScratch.seenBy.size()*S::kCell32+
             liftGoal.size()*S::kCell32+liftGoalCells.size()*S::kCell32+(stamps.size()+nowStamps.size())*24+
             structurePtrs.size()*S::kKeyed+touch.size()*S::kKeyed+refreshList.size()*S::kKeyed+refreshResults.size()*24+
-            groundedCells.size()*S::kCell32+groundedIds.size()*S::kCell32+liftHomeCells.size()*S::kCell32+
+            groundedCells.size()*S::kCell32+groundedIds.size()*S::kCell32+siteCells.size()*S::kCell32+liftHomeCells.size()*S::kCell32+
             liftedIds.size()*S::kCell32+passMaskList.size()*S::kCell32+liftBucketList.size()*S::kCell32;
         b.queues+=regQueue.size()*24+regSeq.size()*S::kCell32+regPlane.size()+planeWant.size()*S::kCell32+
             regAreas.size()*(S::kNode+16)+regAreaOf.size()*S::kMemo;
@@ -7691,7 +7742,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             const auto t0=Clock::now();
             syncStatic();buildPlanes();
             const auto t1=Clock::now();
-            stampGrounded();
+            stampGrounded();stampSites();
             const auto t2=Clock::now();
             scanStill();
             const auto t3=Clock::now();
@@ -7701,7 +7752,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(ms(t0,t1)>probeSyncMaxMs) {probeSyncMaxMs=ms(t0,t1);probeSyncMax=probeSync;}
         } else {
             syncStatic();buildPlanes();
-            stampGrounded();
+            stampGrounded();stampSites();
             scanStill();
             liftFlyers();
         }
@@ -8806,8 +8857,9 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     }
     bool partable(const Unit& u,int id) const {
         const Unit* b=w.unit(id);
-        // Friendly bodies part: the mover's own and its allies' (never an enemy's).
-        if(!b||!b->alive()||!w.allied(b->player,u.player)||b->speed!=Fixed()||!b->type||b->type->isStructure()||b->type->canFly)return false;
+        // Friendly bodies part: the mover's own and its allies' (never an enemy's, never an unfinished one).
+        if(!b||!b->alive()||!w.allied(b->player,u.player)||b->speed!=Fixed()||!b->type||b->type->isStructure()||b->type->canFly||
+           b->underConstruction)return false;
         if(anchors.count(id)||yielding.count(id))return false;
         if(!b->orders.empty()&&!partableMember(id))return false;
         const auto part=parts.find(id);
@@ -9363,7 +9415,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // Mobile bodies at an origin (static legality is checked separately).
     bool bodiesFree(const Unit& u,int x,int z) const {
         const int fx=u.type->footX,fz=u.type->footZ;
-        const int ox=groundedCells.empty()?0:footprintOrigin(u.x,fx),oz=groundedCells.empty()?0:footprintOrigin(u.z,fz);
+        const int ox=overlaid()?footprintOrigin(u.x,fx):0,oz=overlaid()?footprintOrigin(u.z,fz):0;
         if(w.occW_>0) {
             for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
                 const int cx=x+i,cz=z+j;
@@ -9373,7 +9425,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     // Leave-only (W6 FL-03): a grounded flyer's cell the body
                     // already stands on does not block it (a flyer that came
                     // down over it), so it can step out; a cell it does not
-                    // stand on does, so it never goes deeper.
+                    // stand on does, so it never goes deeper. A site begun
+                    // over a standing body is left the same way.
                     if(!w.occ_[size_t(cz)*w.occW_+cx]&&ox<=cx&&cx<ox+fx&&oz<=cz&&cz<oz+fz)continue;
                     return false;
                 }
@@ -16458,7 +16511,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 sx=Fixed::raw(swapWith->x.v-u.x.v);sz=Fixed::raw(swapWith->z.v-u.z.v);nx=footprintOrigin(swapWith->x,fx);nz=footprintOrigin(swapWith->z,fz);
                 moved=true;face=false;
             }
-            if(!moved&&f&&!livelock(u)&&!(m.stillSince!=kNoTick&&stillTarget(m)&&!shadowWalk(u,m))) {
+            // Blocked by an unfinished body alone: no shuffle. A plain order's shuffles creep at the facing
+            // cap, and one down the field away from a site (which nothing moves) only backs the body off
+            // for a side-step's 45 ticks before it holds and detours anyway: it plans the detour at once.
+            const bool site=siteBlocked(u,nx0,nz0);
+            if(!moved&&f&&!site&&!livelock(u)&&!(m.stillSince!=kNoTick&&stillTarget(m)&&!shadowWalk(u,m))) {
                 // Direct-line members measure progress toward their own goal
                 // cell; field followers by the group potential.
                 const int goalX=m.goal%W,goalZ=m.goal/W;
@@ -16598,7 +16655,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 // long enough to ask (a livelock).
                 const bool settled=f&&m.detour<0&&m.route.empty()&&blockedBySettled(u,m,nx,nz);
                 if(settled&&int64_t(m.nearest)==m.detourBest&&m.holdUpdates>=6&&yieldLane(u,m,p,nx,nz)) {m.why=LegionNavigator::WhyHoldAsk;hold(u,m);restartHold(m);return;}
-                if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=m.nextDetour&&
+                if(f&&m.detour<0&&m.route.empty()&&(m.holdUpdates>=m.nextDetour||(site&&!m.detourCount))&&
                    (settled||(m.holdUpdates>=60&&(formationMember(m)||blockedByJam(u,m,nx,nz))))) {
                     // Back off geometrically after each attempt: a crowd that
                     // stays jammed stops re-planning instead of shuffling

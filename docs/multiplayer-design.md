@@ -3,7 +3,7 @@
 How TAK Engine's multiplayer works: one server (`takserver`) relays every game, every
 peer runs the same deterministic simulation, and only commands cross the wire
 (`src/net/lockstep.h` holds the command format). The protocol version is
-`kNetVersion` = 335 (`src/net/protocol.h`).
+`kNetVersion` = 336 (`src/net/protocol.h`).
 
 Single player runs the same way: the client starts a private local `takserver`
 (`--local --no-auth`) and plays through it ([sp-mp-equivalence.md](sp-mp-equivalence.md)).
@@ -1151,7 +1151,7 @@ are sequenced and recorded as usual.
 
 ## 15. Versions and replays
 
-Peers, the server and replays must all match `kNetVersion` (335) exactly: the
+Peers, the server and replays must all match `kNetVersion` (336) exactly: the
 handshake refuses a peer of any other protocol, and a replay plays only under the
 replay format and protocol that recorded it (`supportedReplayProtocol`,
 `src/net/replayhdr.h`). The loader reads the current format (`kReplayFormat` =
