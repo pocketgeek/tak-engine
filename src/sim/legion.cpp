@@ -16104,8 +16104,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // body's own lane forward is free of that body, then forward far enough for it to clear the slow body's front at
     // the two speeds. Every cell is a legal step, reachable and free of bodies now -- past the first body length of the
     // run, allies walking the same way may stand in it: they move on ahead -- and the run must end nearer the goal;
-    // otherwise (a corridor one body wide, slow bodies abreast, a packed crowd) nothing changes. Move and fight legs
-    // only, never within 2*kPassCells of the goal (bodies packing into place; past a body of its own click laid out
+    // otherwise (a corridor one body wide, slow bodies abreast, a packed crowd) nothing changes. Any leg that walks
+    // to a point it may share (move, fight, patrol, attack, guard; not a job's exact spot nor a door exit: 2026-11-19,
+    // owner "try all three", after fast bodies on patrol, attack and guard legs kept station behind slow ones all the
+    // way, guard-leg fast stops 2,674 -> 7 on overtake-guard), never within 2*kPassCells of the goal (bodies packing into place; past a body of its own click laid out
     // for arrival it may, see clickPass), and past a body of the same click
     // (Member::point) only of another speed group (speedApart) and as clickPass allows, after which the passer takes a slot at the front of its click's
     // slots (overtakeSlot; in a click laid out for arrival it holds one ahead already). The slow body must be a
@@ -16115,7 +16117,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     bool overtakeRoute(const Unit& u,Member& m,const Plane& p,RouteView f,bool towardGoal,int ox,int oz,int nx,int nz,
                        int64_t aimDx,int64_t aimDz,Fixed full) {
         if(!f||u.type->canFly||livelock(u)||!m.route.empty()||m.approach||m.pressX!=kNoPress||full<=Fixed())return false;
-        if(!policy(m.kind).completes||policy(m.kind).exact||policy(m.kind).exitClear||(engagesEnemies(m.kind)&&m.kind!=Kind::Fight))return false;
+        if(policy(m.kind).exact||policy(m.kind).exitClear)return false;
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int goalX=m.goal%W,goalZ=m.goal/W;
         if(m.goal<0)return false;

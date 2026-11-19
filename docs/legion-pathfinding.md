@@ -856,8 +856,9 @@ lane ahead is clear of that body, then straight on far enough to clear the slow 
 most `kOvertakeCells`, 24). Every cell must be a legal step (diagonals clear both side cells), reachable, and free of
 bodies, except that cells of the forward run past the first body length may hold allies walking the same way, who move
 on ahead; the run must end nearer the goal. Where no lane qualifies -- a corridor one body wide, slow bodies walking
-abreast, a packed crowd -- nothing changes. Only plain move and fight legs (no attack, guard, patrol or mission leg),
-never within `2*kPassCells` of the goal (bodies packing into place), never by a livelocked body or one already on a
+abreast, a packed crowd -- nothing changes. Move, fight, patrol, attack and guard legs (since 2026-11-19, owner: "try all three"; before,
+only move and fight legs passed, and a fast body on patrol, attack or guard kept station behind a slow one all the
+way: overtake-guard's fast stops 2,674 -> 7), not a job's exact spot nor a door exit, never within `2*kPassCells` of the goal (bodies packing into place), never by a livelocked body or one already on a
 route, approach or press. The computer player orders each unit of an army to a point of its own, so its armies pass
 under these rules alone.
 

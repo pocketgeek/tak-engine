@@ -19,7 +19,10 @@ spawn inside the walls.
   overtake-corridor (4 cells wide: no room to pass, attack-move orders), offsets 0, +-1, 2. Parent: fast mean
     2,178..2,230, slow bodies' last 2,709..2,761; now 2,117..2,171 and 2,682..2,734. Checked: no worse -- the fast
     mean at most 2,250 and the slow bodies' last at most 2,780 at every offset.
-Every body arrives in all three, and the slow bodies' last arrival is no later than tick 2,800 on field and road
+  overtake-patrol, -attack, -guard (overtake-field's column on patrol, attack and guard orders; 2026-11-19), offsets
+    0, +-1..3. Main 6fad01ac passed on move and fight legs only: fast stops 706 / 786 / 2,674 in all; now 66 / 12 / 7.
+    Checked: at least one overtake each, at most 150 / 60 / 60 fast stops.
+Every body arrives in the first three, and the slow bodies' last arrival is no later than tick 2,800 on field and road
 (parent 2,640..2,784): nobody pays for a pass.
 
 The same columns sent with ONE right-click to one point (overtake-click-*, as a player sends a mixed selection), and
@@ -116,6 +119,20 @@ def main():
                   f"slow last {max(r['Sdone'])} stops {r['Sstops']}; overtakes {r['overtakes']}")
             if min(r["Fdone"] + r["Sdone"]) < 0:
                 bad.append(f"{name} offset {r['offset']}: a body never arrived")
+    # Patrol, attack and guard legs pass too (2026-11-19, owner: "try all three"): overtake-field's column on those
+    # orders. Before, only move and fight legs passed: a fast body kept station behind a slow one all the way.
+    # Fast stops over the 7 offsets, main 6fad01ac -> now: patrol 706 -> 66, attack 786 -> 12, guard 2,674 -> 7.
+    # Checked: at least one overtake and at most the bar's fast stops in all.
+    for name, most in (("overtake-patrol", 150), ("overtake-attack", 60), ("overtake-guard", 60)):
+        rows = run(exe, scenarios, name, "0,1,-1,2,-2,3,-3")
+        if rows is None:
+            return 2
+        stops, passes = sum(r["Fstops"] for r in rows), sum(r["overtakes"] for r in rows)
+        print(f"{name}: fast stops {stops}, overtakes {passes}")
+        if passes < 1:
+            bad.append(f"{name}: no overtake")
+        if stops > most:
+            bad.append(f"{name}: {stops} fast stops (at most {most})")
     if bad:
         for b in bad:
             print("FAIL:", b)
