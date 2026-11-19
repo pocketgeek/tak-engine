@@ -614,16 +614,20 @@ wall). Legion keeps the route decision in the member's *course* and turns the bo
   least half the mean step length: a dodge one way and back nets nothing and turns nothing). It turns only on a step
   it made, so a held, stuck or trapped body never turns in place.
 * A body aiming a weapon that needs its facing (`Unit::faceRequest`) and a member of a fight, attack, guard or patrol
-  leg keep the route rule: their facing serves their weapons (shots wait on it, and retail scores targets by the turn
-  from it, 412a77). A creep sideways (a side-step, a shuffle at the cap), a yield step (`serviceYields`) and a body on
-  an engaging leg still slide unturned.
+  leg with a weapon on something (a slot target) keep the route rule: their facing serves their weapons (shots wait on
+  it, and retail scores targets by the turn from it, 412a77). A member of an engaging leg that is not shooting faces
+  its motion like any other (protocol 336, 2026-11-19, owner: "face the way it goes unless shooting", after conjured
+  Trolls on a fight rally walked whole detour routes sideways): attack and guard rings sidestep and back 50-85% less,
+  ring reach and arrival unchanged, at signed-off costs (attackring-f1-64 and -squad-64 spins 258 -> 281,
+  battle-field-2x60 contact aware pairs +12%). A creep sideways (a side-step, a shuffle at the cap), a yield step
+  (`serviceYields`) and a shooting body still slide unturned.
 * Readers that judge the route by the body's heading read the course instead: `World::updateLegionStill`'s livelock
   window (`courseTurnCorrection`: a turn toward a sideways step is no headway and no to-and-fro) and the formation
   flyers' direction of travel (`planLegionFlightStations`).
 * Rejected: averaged motion for every step, committed ones included (a body reversing its route creeps backward at
   the cap for about 8 updates before its average flips; `legion_ringroutespeed`), turning on creeps at the cap (a
-  side-step in a jam turns the body 90 deg and back: crowdheld spin), and facing motion on engaging legs (battles plan
-  more, past the combat-lag tolerance). Turning the body on detours, passes or shuffles by the route rule instead of
+  side-step in a jam turns the body 90 deg and back: crowdheld spin), and facing motion on shooting bodies (their
+  weapons need the facing). Turning the body on detours, passes or shuffles by the route rule instead of
   by its motion reads as spinning.
 
 `legion_facing` (a crowd round a wall end, a group round a standing block, a turn-400 group round a wall's top at five

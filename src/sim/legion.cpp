@@ -16757,15 +16757,12 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         const Member* m=member(u.id);
         return m&&m->faced==int32_t(u.heading.v)?m->course:u.heading;
     }
-    // A fight or patrol leg walking a detour route round still bodies with no weapon on anything faces
-    // its motion too (2026-11-18, user: conjured Trolls on a fight rally "do a strange sideways
-    // moonwalk"): a slow body walked a whole route's 40 px sideways at travel speed. Not an attack or
-    // guard leg: its routes circle its target's ring, and facing them spun the attackring fixtures
-    // (+27%) and stalled attackring-fight-60's ring.
-    static bool roundStill(const Unit& u,const Member& m) {
-        return (m.kind==Kind::Fight||m.kind==Kind::Patrol)&&!m.route.empty()&&!u.slotPoint&&
-               !u.slotTarget[0]&&!u.slotTarget[1]&&!u.slotTarget[2];
-    }
+    // Any leg with no weapon on anything faces its motion (2026-11-18, user: conjured Trolls on a fight
+    // rally "do a strange sideways moonwalk"; then "face the way it goes unless shooting"). Only a body
+    // with a slot target keeps its heading on that target while it steps. Attack and guard rings sidestep
+    // 50-85% less; signed off: attackring-f1-64/squad-64 spins 258 -> 281, battle-field-2x60 aware
+    // pairs +12%.
+    static bool notShooting(const Unit& u) {return !u.slotPoint&&!u.slotTarget[0]&&!u.slotTarget[1]&&!u.slotTarget[2];}
     static constexpr int64_t kFaceAverage=4;
     static constexpr int64_t kFaceFloor=Fixed::kOne/32,kFacePace=4;
     int32_t faceMotion(Unit& u,Member& m,int64_t sx,int64_t sz,Bam wanted,bool face,int32_t turn,Fixed full) const {
@@ -16784,7 +16781,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 u.heading=m.course;return turned?diff:0;
             }
         }
-        else if(u.faceRequest<0&&(!engagesEnemies(m.kind)||roundStill(u,m))&&kFacePace*step>=full.v) {
+        else if(u.faceRequest<0&&(!engagesEnemies(m.kind)||notShooting(u))&&kFacePace*step>=full.v) {
             const int64_t fx=m.faceX,fz=m.faceZ,net=int64_t(isqrtFloor(uint64_t(fx*fx+fz*fz)));
             if(net>=kFaceFloor&&2*net>=m.faceLen)
                 diff=retailTurnRequest(retailHeadingToPort(uint16_t(retailDirection(Fixed::raw(int32_t(-fx)),Fixed::raw(int32_t(-fz))).v)),u.heading);

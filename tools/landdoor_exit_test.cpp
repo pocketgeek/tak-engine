@@ -329,7 +329,10 @@ int main(int argc,char** argv) {
                 const Result guard=run(registry,mode,c.factory,output,c.crowd,Crowd::Guard);
                 check(guard.produced==kOutputs && int(guard.clear.size())==kOutputs && guard.stuck==0,
                       label+"a dozen at the door guarding one of them hold no output in");
-                check(guard.produced==kOutputs && guard.lastDone<=clear.lastDone+clear.lastDone*15/100,
+                // 20%, not 15%: guards stepping aside face their motion (protocol 336, 2026-11-19), and
+                // verkeep verpult's guard crowd went 1400 -> 1439 against a 1242 clear door (all 36 Legion
+                // cases together 165 ticks faster).
+                check(guard.produced==kOutputs && guard.lastDone<=clear.lastDone+clear.lastDone*20/100,
                       label+"with them the factory builds near its clear-door rate ("+std::to_string(guard.lastDone)+
                       " vs "+std::to_string(clear.lastDone)+" ticks)");
                 check(guard.guarding==11,label+"each guard ends back on its guard near its ward ("+
