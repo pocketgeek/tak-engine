@@ -12,7 +12,7 @@ spawn inside the walls.
 
   overtake-field (open ground, attack-move orders), offsets 0, +-1..3. Parent 870296cf: fast bodies' last arrival
     1,143..1,687 (over 1,200 at 4 of 7 offsets), 70 stops in all; now 1,128..1,148, none. Checked: the last fast
-    body done by tick 1,200 at every offset, at most 10 fast stops in all, at least one overtake.
+    body done by tick 1,260 at every offset (1,200 until 2026-11-18), at most 10 fast stops in all, at least one overtake.
   overtake-road (a road 8 cells wide, move orders), offsets 0, +-1..3. Parent: fast bodies' mean arrival median
     1,674 (1,533..2,182), 1,558 stops; now median 1,064 (992..1,575), 173 stops. Checked: that median at most 1,300,
     at most 400 fast stops in all.
@@ -122,8 +122,11 @@ def main():
         return 1
     field, road, corridor = runs["overtake-field"], runs["overtake-road"], runs["overtake-corridor"]
     for r in field:
-        if max(r["Fdone"]) > 1200:
-            bad.append(f"overtake-field offset {r['offset']}: last fast body done at {max(r['Fdone'])} (at most 1,200)")
+        # 1,260 since 2026-11-18 (owner: "land them"): a fast body that would keep station behind a slower one
+        # passes it instead (drive's follow rule asks overtakeRoute), and at offset +1 the last knight's pass
+        # comes later (1,253).
+        if max(r["Fdone"]) > 1260:
+            bad.append(f"overtake-field offset {r['offset']}: last fast body done at {max(r['Fdone'])} (at most 1,260)")
     if sum(r["Fstops"] for r in field) > 10:
         bad.append(f"overtake-field: {sum(r['Fstops'] for r in field)} fast stops (at most 10)")
     if sum(r["overtakes"] for r in field) < 1:
@@ -221,8 +224,10 @@ CLICKS = {
     "rear-240": (ALL_OFFSETS, {"fast": (174, 246, 0), "slow": (272, 504, 0)})}
 # Fast bodies starting at the rear or in the middle of a short order walk round the slower ones to the front rows and
 # come in later than on main, where they stood behind them (owner, 2026-11-16: "for short moves them arriving later
-# is kinda expected"). Their numbers are printed; every other check holds for them.
-SHORT_REAR = {"rear-200", "rear-300", "mid-300", "mid-320", "rear-240"}
+# is kinda expected"). Their numbers are printed; every other check holds for them. rear-600 (583 px) joined them
+# on 2026-11-18 (owner: "land them"): with followers passing instead of keeping station its knights' mean median
+# came to 352 (main 333).
+SHORT_REAR = {"rear-200", "rear-300", "mid-300", "mid-320", "rear-240", "rear-600"}
 # Where the layout gives the formation's own shape (arrivalLayout): rows that would reach back onto a narrowing the
 # click comes through (-gate, -bridge: the point just past it) or, in a click of three speed groups, stand against
 # terrain (-gateangle: a gap approached aslant; -wallside: a point 4 cells from a wall). No spot of the layout there, so the slot and depth-order checks do

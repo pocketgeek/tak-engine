@@ -16420,7 +16420,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             // chain a whole queue down to a crawl, so it is not followed.
             const int64_t adx=std::abs(dx),adz=std::abs(dz);
             const int sdx=adx*5>=adz*2?(dx>0?1:-1):0,sdz=adz*5>=adx*2?(dz>0?1:-1):0;
-            const Unit* lead=nullptr;
+            const Unit* lead=nullptr;int leadK=0;
             for(int k=1;k<=2&&!lead;++k)for(int j=0;j<fz&&!lead;++j)for(int i=0;i<fx&&!lead;++i) {
                 const int cx=ox+k*sdx+i,cz=oz+k*sdz+j;
                 if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
@@ -16428,8 +16428,16 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 if(!o||o==u.id)continue;
                 const Unit* other=w.unit(o);
                 if(other&&other->player==u.player&&other->speed>Fixed()&&other->speed<speed&&int64_t(other->speed.v)*2>=cap.v&&
-                   std::abs(retailTurnRequest(courseOf(*other),m.course))<8192)lead=other;
+                   std::abs(retailTurnRequest(courseOf(*other),m.course))<8192) {lead=other;leadK=k;}
             }
+            // A leader slow enough to overtake (under three quarters of this body's cap, overtakeRoute's own gap)
+            // is passed where there is room, not followed (2026-11-18, user: "sometimes fast walkers go around slow
+            // walkers and sometimes they don't"). Matched to it, the body was never blocked, so the overtake (asked
+            // only by a blocked body) never ran: Hunters (1.77 px/tick) kept station behind Trolls (0.96, just
+            // over half) for 1,000+ ticks, and passed only where a Troll slowed under half or was met off its line.
+            // The committed route is walked from the next update; this one steps on at this body's own speed.
+            if(lead&&int64_t(lead->speed.v)*4<int64_t(full.v)*3&&
+               overtakeRoute(u,m,p,f,towardGoal,ox,oz,ox+leadK*sdx,oz+leadK*sdz,aimDx,aimDz,full))lead=nullptr;
             if(lead)speed=fxMax(lead->speed,Fixed::raw(std::max(1,speed.v/2)));
         }
         int64_t travel=std::min<int64_t>(speed.v,length);
@@ -16749,6 +16757,15 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         const Member* m=member(u.id);
         return m&&m->faced==int32_t(u.heading.v)?m->course:u.heading;
     }
+    // A fight or patrol leg walking a detour route round still bodies with no weapon on anything faces
+    // its motion too (2026-11-18, user: conjured Trolls on a fight rally "do a strange sideways
+    // moonwalk"): a slow body walked a whole route's 40 px sideways at travel speed. Not an attack or
+    // guard leg: its routes circle its target's ring, and facing them spun the attackring fixtures
+    // (+27%) and stalled attackring-fight-60's ring.
+    static bool roundStill(const Unit& u,const Member& m) {
+        return (m.kind==Kind::Fight||m.kind==Kind::Patrol)&&!m.route.empty()&&!u.slotPoint&&
+               !u.slotTarget[0]&&!u.slotTarget[1]&&!u.slotTarget[2];
+    }
     static constexpr int64_t kFaceAverage=4;
     static constexpr int64_t kFaceFloor=Fixed::kOne/32,kFacePace=4;
     int32_t faceMotion(Unit& u,Member& m,int64_t sx,int64_t sz,Bam wanted,bool face,int32_t turn,Fixed full) const {
@@ -16767,7 +16784,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 u.heading=m.course;return turned?diff:0;
             }
         }
-        else if(u.faceRequest<0&&!engagesEnemies(m.kind)&&kFacePace*step>=full.v) {
+        else if(u.faceRequest<0&&(!engagesEnemies(m.kind)||roundStill(u,m))&&kFacePace*step>=full.v) {
             const int64_t fx=m.faceX,fz=m.faceZ,net=int64_t(isqrtFloor(uint64_t(fx*fx+fz*fz)));
             if(net>=kFaceFloor&&2*net>=m.faceLen)
                 diff=retailTurnRequest(retailHeadingToPort(uint16_t(retailDirection(Fixed::raw(int32_t(-fx)),Fixed::raw(int32_t(-fz))).v)),u.heading);
