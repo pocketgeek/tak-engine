@@ -2,8 +2,9 @@
 
 Protocol **336**, replay format **15**, random map generator version **10**.
 
-Tag `v1.0.9` -> TODO-LEAD (the version commit); annotated tag object TODO-LEAD.
-TODO-LEAD publication line.
+Tag `v1.0.9` -> `a2641214` (the spawn fix, after the version commits `2651eebe` and `6648775b`);
+annotated tag object `16deb896`. Published 2026-11-19 16:36:40 UTC as the Latest release; 1.0.0 to
+1.0.8 stay GitHub releases.
 
 ## Scope and compatibility
 
@@ -99,4 +100,33 @@ workflow and builds every package.
 
 ## Tag CI and packages
 
-TODO-LEAD
+`v1.0.9` was first tagged on `6648775b`. The full suite then found the spawn fault above, and
+before anything was published the draft and the tag were deleted and made again on `a2641214`
+(owner: "Ship it in 1.0.9"); that first tag's CI was cancelled. CI on main for `6cd2c6d1`:
+Determinism, macOS and Windows green; Linux packages failed at an openSUSE mirror (repository
+metadata not retrieved), the infrastructure fault seen before (for `69c39a18` the macOS
+`hdiutil` "Resource busy" and an Ubuntu mirror timeout). Main's runs for the tagged commits were
+cancelled: tag CI builds the same commit.
+
+Tag CI on `v1.0.9` (`a2641214`): Determinism (sim) 44551714100 (dispatched), Linux packages
+44551714842 and Windows build 44551714638 green at the first attempt; macOS build 44551714802
+green after one rerun of the arm64 Sign + notarize job, which GitHub cancelled before it
+started. The first tag's CI had made a draft of its own ("TAK Engine v1.0.9"), and the second
+tag's CI uploaded into it, replacing every file: all 39 assets carry upload times after the
+second tag's CI began. That draft was given the notes and published; the empty draft made with
+the notes was deleted. It published without its tag (the tag had been deleted and made again
+since the draft was created) and was bound to `v1.0.9` about a minute later.
+
+39 assets, the same set as 1.0.8's. All 39 were downloaded and match the release's SHA-256
+digests and sizes. `takclient` and `takserver` from the Ubuntu 24.04 x64 package report
+`1.0.9 (build v1.0.9)`, its `takclient` links no libsecret or GLib, and the x86_64 AppImage
+reports the same version.
+Windows: on oden-win (scratch `C:/tak/w/rel109sig`), `Get-AuthenticodeSignature` reports
+**Valid** (timestamped, "Curtis Edge") for the x64 setup program and `takclient`, `takserver`
+and `cartographer` in both zips; the x64 `takclient.exe` and `takserver.exe` report
+`1.0.9 (build v1.0.9)`.
+macOS: the MacBook was not reachable, so the hands-on check was not run. In tag CI's Sign +
+notarize jobs Apple accepted all three submissions of each architecture, the staple and
+validate step passed for both apps and the DMG of each, and `spctl` accepted all of them as
+Notarized Developer ID.
+Every link in the notes answers 200.
