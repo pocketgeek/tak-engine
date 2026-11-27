@@ -20,6 +20,34 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports: the latest release's live in [`docs/`](docs/), every earlier one's
 in the source of its tag.
 
+## 1.0.10
+*2026-11-27 · protocol 337 · replay format 15 · does not play with 1.0.9, nor its replays*
+
+Legion pathfinding does far less work placing units round a target, and two guards of a
+factory no longer hold each other in its doorway.
+
+- **Legion pathfinding: much less work placing units that surround a target.** When many
+  units ring one target, each with its own spot (long-range attackers stand in deep
+  rings), handing out those spots repeated the same searches and sight tests hundreds of
+  times. The repeats are gone; every unit gets the spot it got before, so games play
+  out exactly as in 1.0.9. ta-engine, a sister project built on the same code, measured
+  the worst game tick of its Benchmark falling from 1.3 seconds to 47 ms with this
+  change; TAK Engine's own test battles play identically, and big fights with archers
+  and other long-range units should hitch less.
+- **Two guards of a factory no longer hold each other in its doorway.** Guards stepping
+  aside for a unit leaving a factory could each be sent behind the other and hold each
+  other at the one gap, walking out and back for the rest of the game. Once nothing is
+  leaving the door, a guard held up while stepping aside now stops there and goes back
+  to guarding.
+- **Every game is built from a clean start.** The game screen first loads the menu's
+  map, then builds the match on top of it. A match is now built in a fresh game state,
+  as the server builds it, so nothing from that first map can carry over into the
+  match. (In ta-engine, a leftover of this kind made a game fall out of step at ten
+  seconds; no such case is known in TAK Engine.)
+
+Full notes: [release-1.0.10-notes.md](docs/release-1.0.10-notes.md) ·
+validation: [release-1.0.10-validation.md](docs/release-1.0.10-validation.md)
+
 ## 1.0.9
 *2026-11-19 · protocol 336 · replay format 15 · does not play with 1.0.8, nor its replays*
 
@@ -58,8 +86,8 @@ on every kind of order, and guards of a factory keep out of its doorway.
   Now each unit starts only where it can walk. A Benchmark's armies stand a little
   differently, so its results are not directly comparable with 1.0.8's.
 
-Full notes: [release-1.0.9-notes.md](docs/release-1.0.9-notes.md) ·
-validation: [release-1.0.9-validation.md](docs/release-1.0.9-validation.md)
+Full notes: [release-1.0.9-notes.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.9/docs/release-1.0.9-notes.md) ·
+validation: [release-1.0.9-validation.md](https://github.com/pocketgeek/tak-engine/blob/v1.0.9/docs/release-1.0.9-validation.md)
 
 ## 1.0.8
 *2026-11-18 · protocol 335 · replay format 15 · does not play with 1.0.7, nor its replays*

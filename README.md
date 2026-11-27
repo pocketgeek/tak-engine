@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-1.0.9-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.0.10-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,7 +26,7 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## TAK Engine 1.0.9
+## TAK Engine 1.0.10
 
 - The original game on Windows, macOS and Linux: skirmish, both campaigns and
   multiplayer, read from your own installation.
@@ -39,11 +39,11 @@ interface art and sound straight from its installation folder.
 - Random maps, the Cartographer editor, mods, replays, voice chat, YouTube
   streaming and a Benchmark.
 
-New in 1.0.9: with Legion pathfinding, units walk round others still being conjured, face
-the way they walk, and pass slower allies on every kind of order; guards of a factory keep
-out of its doorway.
+New in 1.0.10: Legion pathfinding does far less work placing units that surround a target
+from long range, with the same results; two guards of a factory no longer hold each other
+in its doorway.
 
-Network protocol 336, replay format 15 (1.0.9 does not play with 1.0.8). Details in the
+Network protocol 337, replay format 15 (1.0.10 does not play with 1.0.9). Details in the
 [CHANGELOG](CHANGELOG.md).
 
 ## Features
@@ -222,7 +222,7 @@ package and covers certificates, limits, status queries and
 
 ## Project status
 
-TAK Engine 1.0.9 is complete: skirmish, both campaigns, multiplayer with its own
+TAK Engine 1.0.10 is complete: skirmish, both campaigns, multiplayer with its own
 server, replays, the Benchmark and the Cartographer editor are all in place and
 supported. It aims to behave as the original game did; that is not a claim that
 every mission, animation or interaction is identical or fully verified.
