@@ -2,7 +2,8 @@
 
 Protocol **337**, replay format **15**, random map generator version **10**.
 
-Tag `v1.0.10` -> TAG-COMMIT (the version commit after `870cd097`). TAG-PUBLICATION
+Tag `v1.0.10` -> `0f4e2a11` (the version commit after `870cd097`); annotated tag object
+`bd781aeb`. Published 2026-11-27 21:52 UTC as the Latest release; 1.0.0 to 1.0.9 stay GitHub releases.
 
 ## Scope and compatibility
 
@@ -68,4 +69,21 @@ determinism workflow and builds every package.
 
 ## Tag CI and packages
 
-TAG-CI
+Main's CI runs for `870cd097` and `0f4e2a11` were cancelled: tag CI builds the same code.
+Tag CI on `v1.0.10` (`0f4e2a11`), all green at the first attempt: Determinism (sim)
+46066487032 (dispatched), Linux packages 46066477638, Windows build 46066477589, macOS build
+46066477580.
+
+39 assets, the same set as 1.0.9's. All 39 were downloaded and match the release's SHA-256
+digests and sizes. `takclient` and `takserver` from the Ubuntu 24.04 x64 package report
+`1.0.10 (build v1.0.10)`, its `takclient` links no libsecret or GLib, and the x86_64 AppImage
+reports the same version.
+Windows: oden-win was not reachable under its name, and the machine answering at its usual
+address showed a different SSH host key, which was not overridden, so `Get-AuthenticodeSignature`
+was not run. Tag CI's signing step signed every executable and the installer and verified 13
+signatures with 0 errors, and each `.exe` in both zips and the x64 setup program carries a
+15,616-byte certificate table.
+macOS: on the MacBook, both DMGs and both apps in each pass `stapler validate`, and `spctl`
+accepts all of them as Notarized Developer ID; the arm64 `takclient` reports
+`1.0.10 (build v1.0.10)`.
+Every link in the notes answers 200.
