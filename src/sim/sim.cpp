@@ -22954,6 +22954,18 @@ uint64_t World::copyOnWriteBytes() const {
     if(legion_)bytes+=legion_->copyOnWriteBytes();
     return bytes;
 }
+void World::resetForMatch() {
+    const World fresh;
+    auto pool=std::move(pool_);
+    auto cpus=std::move(simCpus_);
+    const int workers=simWorkers_,autoWorkers=autoWorkers_;
+    const bool pin=simPin_,serial=serialThreads_;
+    *this=fresh;
+    adoptCopy(fresh);
+    pool_=std::move(pool);
+    simCpus_=std::move(cpus);
+    simWorkers_=workers;autoWorkers_=autoWorkers;simPin_=pin;serialThreads_=serial;
+}
 void World::restoreFrom(const World& from) {
     auto pool=std::move(pool_);
     const int autoWorkers=autoWorkers_;   // the pool's AUTO width stays with the pool

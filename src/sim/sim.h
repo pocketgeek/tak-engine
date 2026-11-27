@@ -2815,6 +2815,16 @@ public:
     void setCrtRngObserver(std::function<void(const RngObservation&)> observer) {
         crtRngObserver_=std::move(observer);
     }
+    // Make this a default-constructed World again, as the referee's is when it runs
+    // setupMatch / setupMission, keeping only how this process ticks it (setSimWorkers,
+    // setSimCpus, setSerialThreads and the pool). A client's World is not fresh when a
+    // match is built in it: GameView's constructor sets it up on the launch map first
+    // (the menu's fallback map for a lobby game), and setupMatch resets only what it
+    // rebuilds; anything it misses would carry the launch map into the match and
+    // desync the client from the referee (ta-engine hit this with its ore map,
+    // tools/match_rebuild_test). Copied from a fresh World, so a member added later is
+    // reset without anyone remembering to, unlike the hand-kept list in resetForReplay.
+    void resetForMatch();
     // Reset all simulation state so a match can be rebuilt (via setupMatch) and
     // replayed from tick 0 deterministically -- crucially nextId_ resets so the
     // replayed spawns get the SAME unit ids as the original run. setTerrain and

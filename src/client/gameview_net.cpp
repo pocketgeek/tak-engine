@@ -251,6 +251,11 @@
         featureDefs_.clear(); featurePals_.clear();
         for (auto& [name, art] : featureArt_) art.destroyTextures();
         featureArt_.clear();
+        // The referee builds the match in a fresh World, and so must we. This one was set
+        // up on the launch map by the constructor (a lobby game's is the menu's fallback),
+        // and setup rebuilds only what it knows to: whatever it missed would carry that
+        // map into the match (World::resetForMatch).
+        writableWorld().resetForMatch();
         if ((room.opts.crusades != 0) != crusades_) {
             crusades_ = room.opts.crusades != 0;
             registry_ = tak::sim::TypeRegistry{};
